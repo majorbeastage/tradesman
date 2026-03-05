@@ -1,0 +1,20 @@
+.toolbox-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);  /* This makes 3 columns */
+  gap: 20px;
+  padding: 20px;
+  justify-items: center;
+}
+
+.toolbox-item {
+  background-color: transparent;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.toolbox-image {
+  width: 100%;
+  max-width: 180px;
+  height: auto;
+  object-fit: contain;
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tradesman Systems</string>
+    <string name="title_activity_main">Tradesman Systems</string>
+    <string name="package_name">com.tradesman.systems</string>
+    <string name="custom_url_scheme">com.tradesman.systems</string>
+</resources>

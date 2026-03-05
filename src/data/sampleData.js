@@ -1,0 +1,77 @@
+export const companies = [
+  { id: "c1", name: "Easley HVAC Pros", trade: "HVAC" },
+  { id: "c2", name: "Upstate Glass & Door", trade: "Glass" },
+  { id: "c3", name: "Carolina Build Co.", trade: "GC" },
+  { id: "c4", name: "GreenLine Landscaping", trade: "Landscaping" },
+];
+
+export const sampleLeads = [
+  {
+    id: "l1",
+    companyId: "c1",
+    name: "Mark D.",
+    phone: "(864) 555-1122",
+    trade: "HVAC",
+    status: "New",
+    summary: "AC not cooling • Easley 29640 • wants this week",
+    createdAt: "3m ago",
+    info: {
+      serviceType: "Not cooling",
+      addressZip: "Easley, SC 29640",
+      urgency: "This week",
+      bestTime: "After 4pm",
+      notes: "Thermostat shows error E3.",
+    },
+    timeline: [
+      { t: "2:14pm", e: "Missed call" },
+      { t: "2:14pm", e: "Auto-text sent" },
+      { t: "2:16pm", e: "Customer replied" },
+      { t: "2:16pm", e: "Lead qualified" },
+      { t: "2:17pm", e: "Contractor notified" },
+    ],
+  },
+  {
+    id: "l2",
+    companyId: "c2",
+    name: "Unknown Caller",
+    phone: "(864) 555-8891",
+    trade: "Glass",
+    status: "Needs Call",
+    summary: "Cracked window • Greer 29650 • prefers text",
+    createdAt: "22m ago",
+    info: {
+      serviceType: "Window glass",
+      addressZip: "Greer, SC 29650",
+      urgency: "ASAP",
+      bestTime: "Anytime",
+      notes: "Can send photos.",
+    },
+    timeline: [
+      { t: "10:02am", e: "Missed call" },
+      { t: "10:02am", e: "Auto-text sent" },
+      { t: "10:05am", e: "Customer replied" },
+    ],
+  },
+  {
+    id: "l3",
+    companyId: "c3",
+    name: "Amy R.",
+    phone: "(864) 555-4433",
+    trade: "GC",
+    status: "Waiting on Customer",
+    summary: "Deck repair • Spartanburg 29301 • flexible timeline",
+    createdAt: "1d ago",
+    info: {
+      serviceType: "Deck repair",
+      addressZip: "Spartanburg, SC 29301",
+      urgency: "Flexible",
+      bestTime: "Mornings",
+      notes: "Asks about budget range.",
+    },
+    timeline: [
+      { t: "Yesterday", e: "Inbound email received" },
+      { t: "Yesterday", e: "Auto-reply sent" },
+      { t: "Today", e: "Waiting on customer" },
+    ],
+  },
+];

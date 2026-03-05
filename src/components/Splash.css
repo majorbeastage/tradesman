@@ -1,0 +1,12 @@
+.splash {
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #111;
+}
+
+.logo {
+  width: 200px;
+  border: 2px solid red;
+}
