@@ -599,7 +599,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 <button
                   disabled={addToCalendarLoading}
                   onClick={async () => {
-                    if (!calTitle.trim()) return
+                    if (!supabase || !calTitle.trim()) return
                     setAddToCalendarLoading(true)
                     const quoteTotal = selectedQuoteItems.reduce((sum, item) => {
                       const { tot } = getItemDisplay(item)

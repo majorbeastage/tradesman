@@ -199,16 +199,6 @@ export default function CalendarPage() {
     setAddCustomerId(null)
   }
 
-  function openAddFromQuote(quoteId: string, customerId: string, customerName: string) {
-    setAddQuoteId(quoteId)
-    setAddCustomerId(customerId)
-    setAddTitle(`${customerName} – Quote`)
-    setAddStartDate(new Date().toISOString().slice(0, 10))
-    setAddStartTime("09:00")
-    setAddDuration(60)
-    setShowAddItem(true)
-  }
-
   async function saveJobType() {
     if (!supabase || !jtName.trim()) return
     setJtSaving(true)
