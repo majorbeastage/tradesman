@@ -65,6 +65,7 @@ export default function LeadsPage() {
         )
       `)
       .is("converted_at", null)
+      .is("removed_at", null)
       .order("created_at", { ascending: false })
 
     if (error) {
@@ -759,6 +760,24 @@ export default function LeadsPage() {
           >
             Add Lead to my Conversations
           </button>
+
+          <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!supabase || !selectedLead?.id) return
+                if (!confirm("Remove this lead? It can be recalled from Customers later.")) return
+                const { error } = await supabase.from("leads").update({ removed_at: new Date().toISOString() }).eq("id", selectedLead.id)
+                if (error) { alert(error.message); return }
+                setSelectedLead(null)
+                setSelectedLeadId(null)
+                loadLeads()
+              }}
+              style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+            >
+              Remove
+            </button>
+          </div>
 
         </div>
 

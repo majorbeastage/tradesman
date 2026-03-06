@@ -23,21 +23,24 @@
 --   created_at TIMESTAMPTZ DEFAULT now()
 -- );
 
--- RLS for quotes (if enabled on public.quotes)
--- ALTER TABLE public.quotes ENABLE ROW LEVEL SECURITY;
--- DROP POLICY IF EXISTS "Allow anon quotes for dev user" ON public.quotes;
--- CREATE POLICY "Allow anon quotes for dev user"
--- ON public.quotes FOR ALL TO anon
--- USING (user_id = '00000000-0000-0000-0000-000000000001')
--- WITH CHECK (user_id = '00000000-0000-0000-0000-000000000001');
+-- ========== RUN THIS BLOCK IN SUPABASE SQL EDITOR ==========
+-- Fixes: "new row violates row-level security policy for table quotes"
 
--- RLS for quote_items (if enabled; allow when the quote belongs to dev user)
--- ALTER TABLE public.quote_items ENABLE ROW LEVEL SECURITY;
--- CREATE POLICY "Allow anon quote_items for dev quotes"
--- ON public.quote_items FOR ALL TO anon
--- USING (
---   EXISTS (SELECT 1 FROM public.quotes q WHERE q.id = quote_items.quote_id AND q.user_id = '00000000-0000-0000-0000-000000000001')
--- )
--- WITH CHECK (
---   EXISTS (SELECT 1 FROM public.quotes q WHERE q.id = quote_items.quote_id AND q.user_id = '00000000-0000-0000-0000-000000000001')
--- );
+-- 1) Allow anon to use quotes for your dev user (replace UUID if your DEV_USER_ID is different)
+DROP POLICY IF EXISTS "Allow anon quotes for dev user" ON public.quotes;
+CREATE POLICY "Allow anon quotes for dev user"
+ON public.quotes FOR ALL TO anon
+USING (user_id = '00000000-0000-0000-0000-000000000001')
+WITH CHECK (user_id = '00000000-0000-0000-0000-000000000001');
+
+-- 2) If quote_items has RLS enabled, run this too (so you can add line items)
+DROP POLICY IF EXISTS "Allow anon quote_items for dev quotes" ON public.quote_items;
+CREATE POLICY "Allow anon quote_items for dev quotes"
+ON public.quote_items FOR ALL TO anon
+USING (
+  EXISTS (SELECT 1 FROM public.quotes q WHERE q.id = quote_items.quote_id AND q.user_id = '00000000-0000-0000-0000-000000000001')
+)
+WITH CHECK (
+  EXISTS (SELECT 1 FROM public.quotes q WHERE q.id = quote_items.quote_id AND q.user_id = '00000000-0000-0000-0000-000000000001')
+);
+-- ========== END ==========

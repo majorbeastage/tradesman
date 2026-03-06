@@ -18,7 +18,8 @@ type QuoteRow = {
   conversations?: { messages?: MessageRow[] | null } | null
 }
 
-export default function QuotesPage() {
+type QuotesPageProps = { setPage?: (page: string) => void }
+export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [showSettings, setShowSettings] = useState(false)
   const [showAutoResponseOptions, setShowAutoResponseOptions] = useState(false)
   const [search, setSearch] = useState("")
@@ -45,6 +46,16 @@ export default function QuotesPage() {
   const [newItemQuantity, setNewItemQuantity] = useState("1")
   const [newItemUnitPrice, setNewItemUnitPrice] = useState("")
   const [addItemLoading, setAddItemLoading] = useState(false)
+  // Add to Calendar (from quote detail)
+  const [showAddToCalendar, setShowAddToCalendar] = useState(false)
+  const [calTitle, setCalTitle] = useState("")
+  const [calDate, setCalDate] = useState("")
+  const [calTime, setCalTime] = useState("09:00")
+  const [calDuration, setCalDuration] = useState(60)
+  const [calJobTypeId, setCalJobTypeId] = useState("")
+  const [calNotes, setCalNotes] = useState("")
+  const [jobTypes, setJobTypes] = useState<{ id: string; name: string; duration_minutes: number }[]>([])
+  const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
 
   // Settings (localStorage)
   const [defaultQuoteStatus, setDefaultQuoteStatus] = useState(() => {
@@ -101,6 +112,8 @@ export default function QuotesPage() {
         )
       `)
       .eq("user_id", DEV_USER_ID)
+      .is("scheduled_at", null)
+      .is("removed_at", null)
       .order("updated_at", { ascending: false })
 
     if (error) {
@@ -200,6 +213,7 @@ export default function QuotesPage() {
         updated_at,
         customer_id,
         conversation_id,
+        scheduled_at,
         customers (
           display_name,
           customer_identifiers (
@@ -511,7 +525,117 @@ export default function QuotesPage() {
                 {addItemLoading ? "Adding..." : "Add line item"}
               </button>
             </div>
+
+            {!selectedQuote.scheduled_at && (
+              <div style={{ marginTop: "20px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCalTitle(`${selectedQuote.customers?.display_name ?? "Customer"} – Quote`)
+                  setCalDate(new Date().toISOString().slice(0, 10))
+                  setCalTime("09:00")
+                  setCalDuration(60)
+                  setCalJobTypeId("")
+                  setCalNotes("")
+                  setShowAddToCalendar(true)
+                    if (supabase) {
+                      supabase.from("job_types").select("id, name, duration_minutes").eq("user_id", DEV_USER_ID).order("name").then(({ data }) => setJobTypes(data || []))
+                    }
+                  }}
+                  style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Add to Calendar
+                </button>
+              </div>
+            )}
+            <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!supabase || !selectedQuote?.id) return
+                  if (!confirm("Remove this quote? It can be recalled from Customers later.")) return
+                  const { error } = await supabase.from("quotes").update({ removed_at: new Date().toISOString() }).eq("id", selectedQuote.id)
+                  if (error) { alert(error.message); return }
+                  setSelectedQuote(null)
+                  setSelectedQuoteId(null)
+                  loadQuotes()
+                }}
+                style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+              >
+                Remove
+              </button>
+            </div>
           </div>
+        )}
+
+        {showAddToCalendar && selectedQuote && supabase && (
+          <>
+            <div onClick={() => setShowAddToCalendar(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
+            <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+              <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add quote to calendar</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, flex: 1 }} />
+                  <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Duration (minutes)</label>
+                  <input type="number" min={15} step={15} value={calDuration} onChange={(e) => setCalDuration(parseInt(e.target.value, 10) || 60)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
+                  <select value={calJobTypeId} onChange={(e) => setCalJobTypeId(e.target.value)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}>
+                    <option value="">— None —</option>
+                    {jobTypes.map((jt) => (
+                      <option key={jt.id} value={jt.id}>{jt.name} ({jt.duration_minutes} min)</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Notes</label>
+                  <input placeholder="Optional notes" value={calNotes} onChange={(e) => setCalNotes(e.target.value)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                </div>
+                <button
+                  disabled={addToCalendarLoading}
+                  onClick={async () => {
+                    if (!calTitle.trim()) return
+                    setAddToCalendarLoading(true)
+                    const quoteTotal = selectedQuoteItems.reduce((sum, item) => {
+                      const { tot } = getItemDisplay(item)
+                      return sum + (typeof tot === "number" && !Number.isNaN(tot) ? tot : 0)
+                    }, 0)
+                    const start = new Date(`${calDate}T${calTime}`)
+                    const end = new Date(start.getTime() + calDuration * 60 * 1000)
+                    const { error } = await supabase.from("calendar_events").insert({
+                      user_id: DEV_USER_ID,
+                      title: calTitle.trim(),
+                      start_at: start.toISOString(),
+                      end_at: end.toISOString(),
+                      job_type_id: calJobTypeId || null,
+                      quote_id: selectedQuote.id,
+                      customer_id: selectedQuote.customer_id,
+                      notes: calNotes.trim() || null,
+                      quote_total: quoteTotal > 0 ? quoteTotal : null
+                    })
+                    if (error) { setAddToCalendarLoading(false); alert(error.message); return }
+                    const { error: updateErr } = await supabase.from("quotes").update({ scheduled_at: new Date().toISOString() }).eq("id", selectedQuote.id)
+                    setAddToCalendarLoading(false)
+                    if (updateErr) { alert(updateErr.message); return }
+                    setShowAddToCalendar(false)
+                    setSelectedQuote(null)
+                    setSelectedQuoteId(null)
+                    loadQuotes()
+                    if (setPage) setPage("calendar")
+                  }}
+                  style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
+                >
+                  {addToCalendarLoading ? "Adding..." : "Add to calendar"}
+                </button>
+                <button onClick={() => setShowAddToCalendar(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
+              </div>
+            </div>
+          </>
         )}
 
         {showAddCustomer && (

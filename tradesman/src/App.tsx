@@ -4,6 +4,7 @@ import CustomersPage from "./modules/customers/CustomersPage"
 import LeadsPage from "./modules/leads/LeadsPage"
 import ConversationsPage from "./modules/conversations/ConversationsPage"
 import QuotesPage from "./modules/quotes/QuotesPage"
+import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
 import { supabase } from "./lib/supabase"
@@ -65,7 +66,14 @@ function App() {
       {page === "dashboard" && (
         <>
           <h1>Dashboard</h1>
-          <p>Welcome to Tradesman</p>
+          <div style={{ maxWidth: "720px", marginTop: "24px", padding: "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "8px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
+            <p style={{ margin: "0 0 1em" }}>
+              Thank you for visiting our company. We are committed to assisting contractors and small businesses in their day to day operations. Whether it be by reaching new clients, or managing existing clients and scheduling. We are here to help in any way we can.
+            </p>
+            <p style={{ margin: "0 0 1em" }}>
+              Our primary purpose is to utilize as many modern tools as possible, to save you time and help you earn more revenue in the process. Please take a look around and do not hesitate to reach out to us. Thank you.
+            </p>
+          </div>
         </>
       )}
 
@@ -82,7 +90,11 @@ function App() {
       )}
 
       {page === "quotes" && (
-        <QuotesPage />
+        <QuotesPage setPage={setPage} />
+      )}
+
+      {page === "calendar" && (
+        <CalendarPage />
       )}
 
       {page === "web-support" && (

@@ -82,6 +82,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         )
       `)
       .eq("user_id", DEV_USER_ID)
+      .is("removed_at", null)
       .order("created_at", { ascending: false })
 
     if (error) {
@@ -652,6 +653,25 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
             >
               Send to Quotes
             </button>
+
+            <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!supabase || !selectedConversation?.id) return
+                  if (!confirm("Remove this conversation? It can be recalled from Customers later.")) return
+                  const { error } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", selectedConversation.id)
+                  if (error) { alert(error.message); return }
+                  setSelectedConversation(null)
+                  setSelectedConversationId(null)
+                  setMessages([])
+                  loadConversations()
+                }}
+                style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+              >
+                Remove
+              </button>
+            </div>
           </div>
         )}
 
