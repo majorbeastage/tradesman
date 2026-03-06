@@ -10,6 +10,8 @@ type LeadRow = {
   id: string
   title: string | null
   created_at?: string
+  description?: string | null
+  last_message?: string | null
   customers: CustomerRow | null
 }
 
@@ -50,6 +52,7 @@ export default function LeadsPage() {
       .select(`
         id,
         title,
+        description,
         created_at,
         converted_at,
         customers (
@@ -647,10 +650,10 @@ export default function LeadsPage() {
                 <td style={{ padding: "8px" }}>{phone}</td>
                 <td style={{ padding: "8px" }}>{lead.title ?? "—"}</td>
                 <td style={{ padding: "8px" }}>
-                  {(lead.last_message || "").slice(0, 15)}
+                  {(lead.last_message ?? lead.description ?? "").slice(0, 15) || "—"}
                 </td>
                 <td style={{ padding: "8px" }}>
-                  {new Date(lead.created_at).toLocaleDateString()}
+                  {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "—"}
                 </td>
               </tr>
             )

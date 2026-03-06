@@ -20,7 +20,8 @@ function App() {
       return
     }
     setConnectionError("")
-    supabase.from("customers").select("id").limit(1)
+    const p = supabase.from("customers").select("id").limit(1)
+    void Promise.resolve(p)
       .then(({ error }) => {
         if (error) {
           setConnectionStatus("failed")
@@ -29,9 +30,9 @@ function App() {
           setConnectionStatus("ok")
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         setConnectionStatus("failed")
-        setConnectionError(err?.message || String(err))
+        setConnectionError(err instanceof Error ? err.message : String(err))
       })
   }, [])
 
