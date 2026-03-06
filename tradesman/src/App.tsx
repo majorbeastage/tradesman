@@ -20,20 +20,20 @@ function App() {
       return
     }
     setConnectionError("")
-    const p = supabase.from("customers").select("id").limit(1)
-    void Promise.resolve(p)
-      .then(({ error }) => {
+    void (async () => {
+      try {
+        const { error } = await supabase.from("customers").select("id").limit(1)
         if (error) {
           setConnectionStatus("failed")
           setConnectionError(error.message)
         } else {
           setConnectionStatus("ok")
         }
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         setConnectionStatus("failed")
         setConnectionError(err instanceof Error ? err.message : String(err))
-      })
+      }
+    })()
   }, [])
 
   return (
