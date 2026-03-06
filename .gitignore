@@ -18,6 +18,9 @@ dist-ssr
 .idea
 .cursor
 .DS_Store
+
+# Nested duplicate / backup (optional; remove this line if you want to track tradesman-crm)
+tradesman/tradesman-crm
 *.suo
 *.ntvs*
 *.njsproj
