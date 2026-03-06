@@ -3,8 +3,8 @@ import leads from "../assets/toolboxes/leads.png";
 import communications from "../assets/toolboxes/conversations.png";
 import quoties from "../assets/toolboxes/quotes.png";
 import calendar from "../assets/toolboxes/calendar.png";
-import techSupport from "../assets/toolboxes/tech support.png";
-import webSupport from "../assets/toolboxes/web support.png";
+import techSupport from "../assets/toolboxes/tech-support.png";
+import webSupport from "../assets/toolboxes/web-support.png";
 
 export default function MainScreen() {
   const tools = [
