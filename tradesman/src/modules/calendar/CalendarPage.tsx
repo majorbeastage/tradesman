@@ -107,6 +107,7 @@ export default function CalendarPage() {
 
   async function loadEvents() {
     if (!supabase) return
+    const client = supabase
     setLoadError("")
     const start = new Date(currentDate)
     const end = new Date(currentDate)
@@ -125,7 +126,7 @@ export default function CalendarPage() {
       end.setHours(23, 59, 59, 999)
     }
     const baseQuery = () =>
-      supabase
+      client
         .from("calendar_events")
         .select("id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
         .eq("user_id", DEV_USER_ID)

@@ -151,7 +151,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         setQuotes([])
         return
       }
-      data = res.data || []
+      data = (res.data || []).map((q: any) => ({ ...q, scheduled_at: q.scheduled_at ?? null, removed_at: q.removed_at ?? null }))
     } else if (error) {
       setQuotesError(error.message)
       setQuotes([])

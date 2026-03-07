@@ -51,18 +51,21 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     }
     const selectFull = "id, title, description, created_at, customer_id, user_id, converted_at, removed_at"
     const selectMinimal = "id, title, description, created_at, customer_id"
-    let res = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
-
-    if (res.error) {
-      res = await supabase.from("leads").select(selectMinimal).order("created_at", { ascending: false })
+    const resFull = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
+    let rawData: any[] = []
+    if (resFull.error) {
+      const resMin = await supabase.from("leads").select(selectMinimal).order("created_at", { ascending: false })
+      if (resMin.error) {
+        console.error("loadLeads error:", resMin.error.message)
+        setLeads([])
+        return
+      }
+      rawData = resMin.data || []
+    } else {
+      rawData = resFull.data || []
     }
-    if (res.error) {
-      console.error("loadLeads error:", res.error.message)
-      setLeads([])
-      return
-    }
 
-    const raw = (res.data || []) as any[]
+    const raw = rawData as any[]
     const rows = raw
       .filter((r) => {
         if (r.user_id != null && r.user_id !== DEV_USER_ID) return false
@@ -72,6 +75,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       })
       .map((r) => ({
         ...r,
+        user_id: r.user_id ?? null,
+        converted_at: r.converted_at ?? null,
+        removed_at: r.removed_at ?? null,
         customers: r.customers ?? { display_name: null, customer_identifiers: null },
       }))
 

@@ -114,7 +114,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         console.error(res.error)
         return
       }
-      data = res.data || []
+      data = (res.data || []).map((c: any) => ({ ...c, removed_at: c.removed_at ?? null }))
     } else if (error) {
       console.error(error)
       return
