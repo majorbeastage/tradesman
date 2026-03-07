@@ -15,7 +15,9 @@ type LeadRow = {
   customers: CustomerRow | null
 }
 
-export default function LeadsPage() {
+type LeadsPageProps = { setPage?: (page: string) => void }
+
+export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [sendAutoResponse, setSendAutoResponse] = useState(false)
@@ -47,33 +49,45 @@ export default function LeadsPage() {
       console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
       return
     }
-    const { data, error } = await supabase
-      .from("leads")
-      .select(`
-        id,
-        title,
-        description,
-        created_at,
-        converted_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value,
-            is_primary
-          )
-        )
-      `)
-      .is("converted_at", null)
-      .is("removed_at", null)
-      .order("created_at", { ascending: false })
+    const selectFull = "id, title, description, created_at, customer_id, user_id, converted_at, removed_at"
+    const selectMinimal = "id, title, description, created_at, customer_id"
+    let res = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
 
-    if (error) {
-      console.error(error)
+    if (res.error) {
+      res = await supabase.from("leads").select(selectMinimal).order("created_at", { ascending: false })
+    }
+    if (res.error) {
+      console.error("loadLeads error:", res.error.message)
+      setLeads([])
       return
     }
 
-    setLeads((data as any[]) || [])
+    const raw = (res.data || []) as any[]
+    const rows = raw
+      .filter((r) => {
+        if (r.user_id != null && r.user_id !== DEV_USER_ID) return false
+        if (r.converted_at != null) return false
+        if (r.removed_at != null) return false
+        return true
+      })
+      .map((r) => ({
+        ...r,
+        customers: r.customers ?? { display_name: null, customer_identifiers: null },
+      }))
+
+    const customerIds = [...new Set(rows.map((r: any) => r.customer_id).filter(Boolean))]
+    if (customerIds.length > 0) {
+      const { data: custData } = await supabase
+        .from("customers")
+        .select("id, display_name, customer_identifiers(type, value, is_primary)")
+        .in("id", customerIds)
+      const custMap = new Map((custData || []).map((c: any) => [c.id, c]))
+      rows.forEach((r: any) => {
+        if (r.customer_id && custMap.has(r.customer_id)) r.customers = custMap.get(r.customer_id)
+      })
+    }
+
+    setLeads(rows)
   }
 
   useEffect(() => {
@@ -82,19 +96,36 @@ export default function LeadsPage() {
 
   async function moveLeadToConversations() {
     if (!supabase || !selectedLead?.id) return
+    const customerId = selectedLead.customer_id ?? selectedLead.customers?.id
+    if (!customerId) {
+      alert("No customer linked to this lead.")
+      return
+    }
+    const { error: convoErr } = await supabase
+      .from("conversations")
+      .insert({
+        user_id: DEV_USER_ID,
+        customer_id: customerId,
+        channel: "sms",
+        status: "open",
+      })
+    if (convoErr) {
+      alert("Could not create conversation: " + convoErr.message)
+      return
+    }
     const { error } = await supabase
       .from("leads")
       .update({ converted_at: new Date().toISOString() })
       .eq("id", selectedLead.id)
+      .eq("user_id", DEV_USER_ID)
     if (error) {
-      console.error(error)
-      alert("Failed to move lead. Check console.")
-      return
+      alert("Lead moved to Conversations but could not mark as converted: " + error.message)
     }
-    await loadLeads()
+    setLeads((prev) => prev.filter((l: any) => l.id !== selectedLead.id))
     setSelectedLead(null)
     setSelectedLeadId(null)
     setMessages([])
+    if (setPage) setPage("conversations")
   }
 
   async function openLead(leadId: string) {
@@ -152,83 +183,67 @@ export default function LeadsPage() {
     }
     setLoading(true)
     try {
-      // 1) Create Customer
-      const displayName =
-        customerName.trim() ||
-        (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
+      let customerId: string | null = null
 
-      const { data: customer, error: customerErr } = await supabase
-        .from("customers")
-        .insert({
-          user_id: DEV_USER_ID,
-          display_name: displayName,
-          notes: null,
-        })
-        .select("id")
-        .single()
-
-      if (customerErr) throw customerErr
-
-      const customerId = customer.id as string
-
-      // 2) Add identifiers (optional)
-      const identifiers: Array<{ type: string; value: string; is_primary: boolean }> = []
-
-      if (phone.trim()) identifiers.push({ type: "phone", value: phone.trim(), is_primary: true })
-      if (email.trim()) identifiers.push({ type: "email", value: email.trim(), is_primary: identifiers.length === 0 })
-      if (customerName.trim()) identifiers.push({ type: "name", value: customerName.trim(), is_primary: false })
-
-      if (identifiers.length > 0) {
-        const { error: identErr } = await supabase
-          .from("customer_identifiers")
-          .insert(
-            identifiers.map((i) => ({
-              user_id: DEV_USER_ID,
-              customer_id: customerId,
-              type: i.type,
-              value: i.value,
-              is_primary: i.is_primary,
-              verified: false,
-            }))
-          )
-
-        if (identErr) throw identErr
+      // If phone or email provided, reuse existing customer with that identifier (avoids unique_identifier_per_user violation)
+      if (phone.trim() || email.trim()) {
+        if (phone.trim()) {
+          const { data: byPhone } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", DEV_USER_ID).eq("type", "phone").eq("value", phone.trim()).limit(1).maybeSingle()
+          if (byPhone?.customer_id) customerId = byPhone.customer_id as string
+        }
+        if (!customerId && email.trim()) {
+          const { data: byEmail } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", DEV_USER_ID).eq("type", "email").eq("value", email.trim()).limit(1).maybeSingle()
+          if (byEmail?.customer_id) customerId = byEmail.customer_id as string
+        }
       }
 
-      // 3) Create Conversation (required toolbox)
-      const { data: convo, error: convoErr } = await supabase
-        .from("conversations")
-        .insert({
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          channel: "sms",
-          status: "open",
-        })
-        .select("id")
-        .single()
+      if (!customerId) {
+        // 1) Create new customer
+        const displayName =
+          customerName.trim() ||
+          (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
 
-      if (convoErr) throw convoErr
-      const conversationId = convo.id as string
+        const { data: customer, error: customerErr } = await supabase
+          .from("customers")
+          .insert({
+            user_id: DEV_USER_ID,
+            display_name: displayName,
+            notes: null,
+          })
+          .select("id")
+          .single()
 
-      // 4) Add first message (optional but great for demo)
-      const firstMsg = initialMessage.trim() || leadDescription.trim() || "New lead received."
-      const { data: msg, error: msgErr } = await supabase
-        .from("messages")
-        .insert({
-          user_id: DEV_USER_ID,
-          conversation_id: conversationId,
-          sender: "customer",
-          content: firstMsg,
-          metadata: {},
-        })
-        .select("id")
-        .single()
+        if (customerErr) throw customerErr
+        customerId = customer.id as string
 
-      if (msgErr) throw msgErr
+        // 2) Add identifiers only for new customer (avoids duplicate key on same phone/email per user)
+        const identifiers: Array<{ type: string; value: string; is_primary: boolean }> = []
 
-      const messageId = msg.id as string
+        if (phone.trim()) identifiers.push({ type: "phone", value: phone.trim(), is_primary: true })
+        if (email.trim()) identifiers.push({ type: "email", value: email.trim(), is_primary: identifiers.length === 0 })
+        if (customerName.trim()) identifiers.push({ type: "name", value: customerName.trim(), is_primary: false })
 
-      // 5) Create Lead
+        if (identifiers.length > 0) {
+          const { error: identErr } = await supabase
+            .from("customer_identifiers")
+            .insert(
+              identifiers.map((i) => ({
+                user_id: DEV_USER_ID,
+                customer_id: customerId,
+                type: i.type,
+                value: i.value,
+                is_primary: i.is_primary,
+                verified: false,
+              }))
+            )
+
+          if (identErr) throw identErr
+        }
+      }
+
+      if (!customerId) throw new Error("Could not resolve or create customer.")
+
+      // 3) Create Lead (sends to Leads box only; no conversation)
       const { data: lead, error: leadErr } = await supabase
         .from("leads")
         .insert({
@@ -244,49 +259,38 @@ export default function LeadsPage() {
 
       if (leadErr) throw leadErr
 
-      // 6) Log Activities (simple + useful)
-      const { error: actErr } = await supabase.from("activities").insert([
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "lead_created",
-          reference_table: "leads",
-          reference_id: lead.id,
-          summary: `Job description: ${leadTitle.trim() || "New"}`,
-          metadata: {},
-        },
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "conversation_created",
-          reference_table: "conversations",
-          reference_id: conversationId,
-          summary: "Conversation created",
-          metadata: { channel: "sms" },
-        },
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "message_received",
-          reference_table: "messages",
-          reference_id: messageId,
-          summary: "Initial message received",
-          metadata: { preview: firstMsg.slice(0, 120) },
-        },
-      ])
+      // 4) Log activity (non-blocking)
+      void supabase.from("activities").insert({
+        user_id: DEV_USER_ID,
+        customer_id: customerId,
+        type: "lead_created",
+        reference_table: "leads",
+        reference_id: lead.id,
+        summary: `Job description: ${leadTitle.trim() || "New"}`,
+        metadata: {},
+      })
 
-      if (actErr) throw actErr
+      const displayName = customerName.trim() || (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
+      const newLeadRow = {
+        id: lead.id,
+        title: leadTitle.trim() || "New Lead",
+        description: leadDescription.trim() || null,
+        created_at: new Date().toISOString(),
+        customer_id: customerId,
+        converted_at: null,
+        removed_at: null,
+        customers: { display_name: displayName, customer_identifiers: [{ type: "phone", value: phone.trim(), is_primary: true }].filter((x) => x.value) },
+      }
 
-      // 7) Refresh list + clear form
-      await loadLeads()
+      setLeads((prev) => [newLeadRow as any, ...prev])
       setCustomerName("")
       setPhone("")
       setEmail("")
       setLeadTitle("")
       setLeadDescription("")
       setInitialMessage("")
-
       setShowForm(false)
+      if (setPage) setPage("leads")
     } catch (err: any) {
       console.error(err)
       const msg = err?.message ?? err?.error_description ?? String(err)

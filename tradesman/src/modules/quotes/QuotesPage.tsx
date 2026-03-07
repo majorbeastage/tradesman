@@ -88,9 +88,30 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   async function loadQuotes() {
     if (!supabase) return
     setQuotesError("")
-    const { data, error } = await supabase
-      .from("quotes")
-      .select(`
+    const selectWith = `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+        scheduled_at,
+        removed_at,
+        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        ),
+        conversations (
+          messages (
+            content,
+            created_at
+          )
+        )
+      `
+    const selectWithout = `
         id,
         status,
         created_at,
@@ -110,13 +131,28 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             created_at
           )
         )
-      `)
+      `
+    let { data, error } = await supabase
+      .from("quotes")
+      .select(selectWith)
       .eq("user_id", DEV_USER_ID)
       .is("scheduled_at", null)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
 
-    if (error) {
+    if (error && (error.message?.includes("scheduled_at") || error.message?.includes("removed_at"))) {
+      const res = await supabase
+        .from("quotes")
+        .select(selectWithout)
+        .eq("user_id", DEV_USER_ID)
+        .order("updated_at", { ascending: false })
+      if (res.error) {
+        setQuotesError(res.error.message)
+        setQuotes([])
+        return
+      }
+      data = res.data || []
+    } else if (error) {
       setQuotesError(error.message)
       setQuotes([])
       return

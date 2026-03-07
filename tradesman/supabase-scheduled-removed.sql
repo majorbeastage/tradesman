@@ -15,3 +15,6 @@ ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
 
 -- Conversations: Remove action
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+
+-- Calendar: Complete action (completed events count as archived for Customers)
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;

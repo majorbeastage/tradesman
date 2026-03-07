@@ -62,30 +62,60 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       console.error("Supabase not configured.")
       return
     }
-    const { data, error } = await supabase
-      .from("conversations")
-      .select(`
-        id,
-        channel,
-        status,
-        created_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        ),
-        messages (
-          content,
-          created_at
+    const selectWithRemoved = `
+      id,
+      channel,
+      status,
+      created_at,
+      removed_at,
+      customers (
+        display_name,
+        customer_identifiers (
+          type,
+          value
         )
-      `)
+      ),
+      messages (
+        content,
+        created_at
+      )
+    `
+    const selectWithoutRemoved = `
+      id,
+      channel,
+      status,
+      created_at,
+      customers (
+        display_name,
+        customer_identifiers (
+          type,
+          value
+        )
+      ),
+      messages (
+        content,
+        created_at
+      )
+    `
+    let { data, error } = await supabase
+      .from("conversations")
+      .select(selectWithRemoved)
       .eq("user_id", DEV_USER_ID)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
 
-    if (error) {
+    if (error && error.message?.includes("removed_at")) {
+      const res = await supabase
+        .from("conversations")
+        .select(selectWithoutRemoved)
+        .eq("user_id", DEV_USER_ID)
+        .order("created_at", { ascending: false })
+      if (res.error) {
+        console.error(res.error)
+        return
+      }
+      data = res.data || []
+    } else if (error) {
       console.error(error)
       return
     }
@@ -638,6 +668,13 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   alert(error.message + (error.message.includes("row-level security") || error.message.includes("policy") ? " Run supabase-quotes-table.sql in Supabase." : ""))
                   return
                 }
+                const idToRemove = selectedConversation.id
+                setSelectedConversation(null)
+                setSelectedConversationId(null)
+                setMessages([])
+                setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
+                const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", DEV_USER_ID)
+                if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
                 if (setPage) setPage("quotes")
               }}
               style={{
@@ -660,12 +697,13 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 onClick={async () => {
                   if (!supabase || !selectedConversation?.id) return
                   if (!confirm("Remove this conversation? It can be recalled from Customers later.")) return
-                  const { error } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", selectedConversation.id)
-                  if (error) { alert(error.message); return }
+                  const idToRemove = selectedConversation.id
                   setSelectedConversation(null)
                   setSelectedConversationId(null)
                   setMessages([])
-                  loadConversations()
+                  setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
+                  const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", DEV_USER_ID)
+                  if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
                 }}
                 style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
               >

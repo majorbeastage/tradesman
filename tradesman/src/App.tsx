@@ -82,7 +82,7 @@ function App() {
       )}
 
       {page === "leads" && (
-        <LeadsPage />
+        <LeadsPage setPage={setPage} />
       )}
 
       {page === "conversations" && (

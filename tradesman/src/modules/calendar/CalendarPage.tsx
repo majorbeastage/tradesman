@@ -22,6 +22,7 @@ type CalendarEvent = {
   notes: string | null
   quote_total?: number | null
   removed_at?: string | null
+  completed_at?: string | null
   job_types?: JobType | null
 }
 
@@ -76,6 +77,7 @@ export default function CalendarPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
+  const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
 
   // Add item form
   const [addTitle, setAddTitle] = useState("")
@@ -122,14 +124,27 @@ export default function CalendarPage() {
       end.setDate(0)
       end.setHours(23, 59, 59, 999)
     }
-    const { data, error } = await supabase
-      .from("calendar_events")
-      .select("id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
-      .eq("user_id", DEV_USER_ID)
-      .is("removed_at", null)
-      .lte("start_at", end.toISOString())
-      .gte("end_at", start.toISOString())
-      .order("start_at")
+    const baseQuery = () =>
+      supabase
+        .from("calendar_events")
+        .select("id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
+        .eq("user_id", DEV_USER_ID)
+        .is("removed_at", null)
+        .lte("start_at", end.toISOString())
+        .gte("end_at", start.toISOString())
+        .order("start_at")
+    const { data, error } = await baseQuery().is("completed_at", null)
+    if (error && error.message?.includes("completed_at")) {
+      setHasCompletedAtColumn(false)
+      const { data: data2, error: error2 } = await baseQuery()
+      if (error2) {
+        setLoadError(error2.message)
+        setEvents([])
+        return
+      }
+      setEvents((data2 || []) as CalendarEvent[])
+      return
+    }
     if (error) {
       setLoadError(error.message)
       setEvents([])
@@ -624,19 +639,34 @@ export default function CalendarPage() {
               </p>
             )}
             {selectedEvent.notes && <p style={{ margin: 0, fontSize: "14px", color: "#6b7280" }}>{selectedEvent.notes}</p>}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", gap: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", gap: "8px", flexWrap: "wrap" }}>
               <button onClick={() => setSelectedEvent(null)} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Close</button>
-              <button
-                onClick={async () => {
-                  if (!supabase || !selectedEvent.id) return
-                  const { error: err } = await supabase.from("calendar_events").update({ removed_at: new Date().toISOString() }).eq("id", selectedEvent.id)
-                  if (err) alert(err.message)
-                  else { setSelectedEvent(null); loadEvents() }
-                }}
-                style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
-              >
-                Remove
-              </button>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {hasCompletedAtColumn && (
+                  <button
+                    onClick={async () => {
+                      if (!supabase || !selectedEvent.id) return
+                      const { error: err } = await supabase.from("calendar_events").update({ completed_at: new Date().toISOString() }).eq("id", selectedEvent.id)
+                      if (err) { alert(err.message); return }
+                      setSelectedEvent(null); loadEvents()
+                    }}
+                    style={{ padding: "8px 14px", borderRadius: "6px", background: theme.primary, color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+                  >
+                    Complete
+                  </button>
+                )}
+                <button
+                  onClick={async () => {
+                    if (!supabase || !selectedEvent.id) return
+                    const { error: err } = await supabase.from("calendar_events").update({ removed_at: new Date().toISOString() }).eq("id", selectedEvent.id)
+                    if (err) alert(err.message)
+                    else { setSelectedEvent(null); loadEvents() }
+                  }}
+                  style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           </div>
         </>
