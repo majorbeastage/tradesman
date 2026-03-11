@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
@@ -20,6 +20,7 @@ type QuoteRow = {
 
 type QuotesPageProps = { setPage?: (page: string) => void }
 export default function QuotesPage({ setPage }: QuotesPageProps) {
+  const { userId } = useAuth()
   const [showSettings, setShowSettings] = useState(false)
   const [showAutoResponseOptions, setShowAutoResponseOptions] = useState(false)
   const [search, setSearch] = useState("")
@@ -86,7 +87,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   })
 
   async function loadQuotes() {
-    if (!supabase) return
+    if (!userId || !supabase) return
     setQuotesError("")
     const selectWith = `
         id,
@@ -135,7 +136,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     let { data, error } = await supabase
       .from("quotes")
       .select(selectWith)
-      .eq("user_id", DEV_USER_ID)
+      .eq("user_id", userId)
       .is("scheduled_at", null)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
@@ -144,7 +145,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       const res = await supabase
         .from("quotes")
         .select(selectWithout)
-        .eq("user_id", DEV_USER_ID)
+        .eq("user_id", userId)
         .order("updated_at", { ascending: false })
       if (res.error) {
         setQuotesError(res.error.message)
@@ -162,7 +163,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   useEffect(() => {
     loadQuotes()
-  }, [])
+  }, [userId])
 
   async function loadCustomerList() {
     if (!supabase) return
@@ -215,7 +216,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       const { error: quoteErr } = await supabase
         .from("quotes")
         .insert({
-          user_id: DEV_USER_ID,
+          user_id: userId,
           customer_id: customerId,
           status: defaultQuoteStatus,
           conversation_id: null
@@ -575,7 +576,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   setCalNotes("")
                   setShowAddToCalendar(true)
                     if (supabase) {
-                      supabase.from("job_types").select("id, name, duration_minutes").eq("user_id", DEV_USER_ID).order("name").then(({ data }) => setJobTypes(data || []))
+                      supabase.from("job_types").select("id, name, duration_minutes").eq("user_id", userId).order("name").then(({ data }) => setJobTypes(data || []))
                     }
                   }}
                   style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
@@ -644,7 +645,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     const start = new Date(`${calDate}T${calTime}`)
                     const end = new Date(start.getTime() + calDuration * 60 * 1000)
                     const { error } = await supabase.from("calendar_events").insert({
-                      user_id: DEV_USER_ID,
+                      user_id: userId,
                       title: calTitle.trim(),
                       start_at: start.toISOString(),
                       end_at: end.toISOString(),

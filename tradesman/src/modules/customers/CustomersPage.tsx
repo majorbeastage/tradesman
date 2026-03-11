@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
@@ -11,6 +11,7 @@ type CustomerRow = {
 }
 
 export default function CustomersPage() {
+  const { userId } = useAuth()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
@@ -24,8 +25,8 @@ export default function CustomersPage() {
   const [loadError, setLoadError] = useState<string>("")
 
   async function loadCustomers() {
-    if (!supabase) {
-      setLoadError("Supabase not configured.")
+    if (!userId || !supabase) {
+      if (!supabase) setLoadError("Supabase not configured.")
       return
     }
     setLoadError("")
@@ -33,7 +34,7 @@ export default function CustomersPage() {
     // 1) Active = has at least one non-removed, non-completed item (else customer shows in Archived)
     const activeIds = new Set<string>()
 
-    const base = { user_id: DEV_USER_ID }
+    const base = { user_id: userId }
     const addActive = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
       if (!r.error && r.data) r.data.forEach((row) => row.customer_id && activeIds.add(row.customer_id))
     }
@@ -59,10 +60,10 @@ export default function CustomersPage() {
     // 2) All customer IDs that appear in any of the four tabs (so we only show app customers)
     const allIds = new Set<string>()
     const [allLeads, allConvos, allQuotes, allEvents] = await Promise.all([
-      supabase.from("leads").select("customer_id").eq("user_id", DEV_USER_ID),
-      supabase.from("conversations").select("customer_id").eq("user_id", DEV_USER_ID),
-      supabase.from("quotes").select("customer_id").eq("user_id", DEV_USER_ID),
-      supabase.from("calendar_events").select("customer_id").eq("user_id", DEV_USER_ID),
+      supabase.from("leads").select("customer_id").eq("user_id", userId),
+      supabase.from("conversations").select("customer_id").eq("user_id", userId),
+      supabase.from("quotes").select("customer_id").eq("user_id", userId),
+      supabase.from("calendar_events").select("customer_id").eq("user_id", userId),
     ])
     ;[allLeads.data, allConvos.data, allQuotes.data, allEvents.data].forEach((data) => {
       if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && allIds.add(row.customer_id))
@@ -103,7 +104,7 @@ export default function CustomersPage() {
 
   useEffect(() => {
     loadCustomers()
-  }, [])
+  }, [userId])
 
   const currentList = section === "active" ? activeCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {

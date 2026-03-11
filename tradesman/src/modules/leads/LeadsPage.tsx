@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
@@ -18,6 +18,7 @@ type LeadRow = {
 type LeadsPageProps = { setPage?: (page: string) => void }
 
 export default function LeadsPage({ setPage }: LeadsPageProps) {
+  const { userId } = useAuth()
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [sendAutoResponse, setSendAutoResponse] = useState(false)
@@ -45,8 +46,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [initialMessage, setInitialMessage] = useState("")
 
   async function loadLeads() {
-    if (!supabase) {
-      console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
+    if (!userId || !supabase) {
+      if (!supabase) console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
       return
     }
     const selectFull = "id, title, description, created_at, customer_id, user_id, converted_at, removed_at"
@@ -68,7 +69,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     const raw = rawData as any[]
     const rows = raw
       .filter((r) => {
-        if (r.user_id != null && r.user_id !== DEV_USER_ID) return false
+        if (r.user_id != null && r.user_id !== userId) return false
         if (r.converted_at != null) return false
         if (r.removed_at != null) return false
         return true
@@ -98,7 +99,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   useEffect(() => {
     loadLeads()
-  }, [])
+  }, [userId])
 
   async function moveLeadToConversations() {
     if (!supabase || !selectedLead?.id) return
@@ -110,7 +111,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     const { error: convoErr } = await supabase
       .from("conversations")
       .insert({
-        user_id: DEV_USER_ID,
+        user_id: userId,
         customer_id: customerId,
         channel: "sms",
         status: "open",
@@ -123,7 +124,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       .from("leads")
       .update({ converted_at: new Date().toISOString() })
       .eq("id", selectedLead.id)
-      .eq("user_id", DEV_USER_ID)
+      .eq("user_id", userId)
     if (error) {
       alert("Lead moved to Conversations but could not mark as converted: " + error.message)
     }
@@ -194,11 +195,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       // If phone or email provided, reuse existing customer with that identifier (avoids unique_identifier_per_user violation)
       if (phone.trim() || email.trim()) {
         if (phone.trim()) {
-          const { data: byPhone } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", DEV_USER_ID).eq("type", "phone").eq("value", phone.trim()).limit(1).maybeSingle()
+          const { data: byPhone } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", userId).eq("type", "phone").eq("value", phone.trim()).limit(1).maybeSingle()
           if (byPhone?.customer_id) customerId = byPhone.customer_id as string
         }
         if (!customerId && email.trim()) {
-          const { data: byEmail } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", DEV_USER_ID).eq("type", "email").eq("value", email.trim()).limit(1).maybeSingle()
+          const { data: byEmail } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", userId).eq("type", "email").eq("value", email.trim()).limit(1).maybeSingle()
           if (byEmail?.customer_id) customerId = byEmail.customer_id as string
         }
       }
@@ -212,7 +213,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         const { data: customer, error: customerErr } = await supabase
           .from("customers")
           .insert({
-            user_id: DEV_USER_ID,
+            user_id: userId,
             display_name: displayName,
             notes: null,
           })
@@ -234,7 +235,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
             .from("customer_identifiers")
             .insert(
               identifiers.map((i) => ({
-                user_id: DEV_USER_ID,
+                user_id: userId,
                 customer_id: customerId,
                 type: i.type,
                 value: i.value,
@@ -253,7 +254,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       const { data: lead, error: leadErr } = await supabase
         .from("leads")
         .insert({
-          user_id: DEV_USER_ID,
+          user_id: userId,
           customer_id: customerId,
           status_id: null, // we'll set this once we seed lead_status per user in-app
           title: leadTitle.trim() || "New Lead",
@@ -267,7 +268,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
       // 4) Log activity (non-blocking)
       void supabase.from("activities").insert({
-        user_id: DEV_USER_ID,
+        user_id: userId,
         customer_id: customerId,
         type: "lead_created",
         reference_table: "leads",

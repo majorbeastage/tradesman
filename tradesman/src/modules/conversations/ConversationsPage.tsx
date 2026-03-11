@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
@@ -19,6 +19,7 @@ type ConversationRow = {
 type ConversationsPageProps = { setPage?: (page: string) => void }
 
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
+  const { userId } = useAuth()
   const [showSettings, setShowSettings] = useState(false)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
@@ -58,8 +59,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addInternalConvoLoading, setAddInternalConvoLoading] = useState(false)
 
   async function loadConversations() {
-    if (!supabase) {
-      console.error("Supabase not configured.")
+    if (!userId || !supabase) {
+      if (!supabase) console.error("Supabase not configured.")
       return
     }
     const selectWithRemoved = `
@@ -100,7 +101,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     let { data, error } = await supabase
       .from("conversations")
       .select(selectWithRemoved)
-      .eq("user_id", DEV_USER_ID)
+      .eq("user_id", userId)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
 
@@ -108,7 +109,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       const res = await supabase
         .from("conversations")
         .select(selectWithoutRemoved)
-        .eq("user_id", DEV_USER_ID)
+        .eq("user_id", userId)
         .order("created_at", { ascending: false })
       if (res.error) {
         console.error(res.error)
@@ -125,7 +126,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
   useEffect(() => {
     loadConversations()
-  }, [])
+  }, [userId])
 
   async function loadCustomerList() {
     if (!supabase) return
@@ -178,7 +179,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       const { error: convoErr } = await supabase
         .from("conversations")
         .insert({
-          user_id: DEV_USER_ID,
+          user_id: userId,
           customer_id: customerId,
           channel: "manual",
           status: "active"
@@ -659,7 +660,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               onClick={async () => {
                 if (!supabase || !selectedConversation?.customer_id) return
                 const { error } = await supabase.from("quotes").insert({
-                  user_id: DEV_USER_ID,
+                  user_id: userId,
                   customer_id: selectedConversation.customer_id,
                   status: "draft"
                 })
@@ -673,7 +674,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 setSelectedConversationId(null)
                 setMessages([])
                 setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
-                const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", DEV_USER_ID)
+                const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", userId)
                 if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
                 if (setPage) setPage("quotes")
               }}
@@ -702,7 +703,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   setSelectedConversationId(null)
                   setMessages([])
                   setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
-                  const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", DEV_USER_ID)
+                  const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", userId)
                   if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
                 }}
                 style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}

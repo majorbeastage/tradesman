@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 
 type JobType = {
@@ -65,6 +65,7 @@ function isToday(d: Date): boolean {
 }
 
 export default function CalendarPage() {
+  const { userId } = useAuth()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
   const [loading, setLoading] = useState(true)
@@ -106,7 +107,7 @@ export default function CalendarPage() {
   })
 
   async function loadEvents() {
-    if (!supabase) return
+    if (!userId || !supabase) return
     const client = supabase
     setLoadError("")
     const start = new Date(currentDate)
@@ -129,7 +130,7 @@ export default function CalendarPage() {
       client
         .from("calendar_events")
         .select("id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
-        .eq("user_id", DEV_USER_ID)
+        .eq("user_id", userId)
         .is("removed_at", null)
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
@@ -160,23 +161,25 @@ export default function CalendarPage() {
   }
 
   async function loadJobTypes() {
-    if (!supabase) return
+    if (!userId || !supabase) return
     const { data } = await supabase
       .from("job_types")
       .select("id, name, description, duration_minutes, color_hex")
-      .eq("user_id", DEV_USER_ID)
+      .eq("user_id", userId)
       .order("name")
     setJobTypes((data as JobType[]) || [])
   }
 
   useEffect(() => {
+    if (!userId) return
     setLoading(true)
     void loadEvents().then(() => setLoading(false))
-  }, [currentDate, view, jobTypes.length])
+  }, [userId, currentDate, view, jobTypes.length])
 
   useEffect(() => {
+    if (!userId) return
     loadJobTypes()
-  }, [])
+  }, [userId])
 
   async function saveEvent() {
     if (!supabase || !addTitle.trim()) return
@@ -184,7 +187,7 @@ export default function CalendarPage() {
     const start = new Date(`${addStartDate}T${addStartTime}`)
     const end = new Date(start.getTime() + addDuration * 60 * 1000)
     const { error } = await supabase.from("calendar_events").insert({
-      user_id: DEV_USER_ID,
+      user_id: userId,
       title: addTitle.trim(),
       start_at: start.toISOString(),
       end_at: end.toISOString(),
@@ -219,7 +222,7 @@ export default function CalendarPage() {
     if (!supabase || !jtName.trim()) return
     setJtSaving(true)
     const { error } = await supabase.from("job_types").insert({
-      user_id: DEV_USER_ID,
+      user_id: userId,
       name: jtName.trim(),
       description: jtDescription.trim() || null,
       duration_minutes: jtDuration,

@@ -7,10 +7,12 @@ import QuotesPage from "./modules/quotes/QuotesPage"
 import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
+import LoginPage from "./modules/auth/LoginPage"
+import { useAuth } from "./contexts/AuthContext"
 import { supabase } from "./lib/supabase"
 
 function App() {
-
+  const { user, loading: authLoading } = useAuth()
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
@@ -20,6 +22,7 @@ function App() {
       setConnectionStatus("no-config")
       return
     }
+    if (!user) return
     setConnectionError("")
     void (async () => {
       try {
@@ -35,7 +38,18 @@ function App() {
         setConnectionError(err instanceof Error ? err.message : String(err))
       }
     })()
-  }, [])
+  }, [user])
+
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f3f4f6" }}>
+        <p style={{ color: "#374151" }}>Loading…</p>
+      </div>
+    )
+  }
+  if (!user) {
+    return <LoginPage />
+  }
 
   return (
     <AppLayout setPage={setPage}>
