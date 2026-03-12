@@ -1,11 +1,13 @@
 import { useState } from "react"
 import Sidebar from "../components/Sidebar"
 import { useAuth } from "../contexts/AuthContext"
+import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
 
 export default function AppLayout({ children, setPage }: any) {
   const [showAccount, setShowAccount] = useState(false)
   const { user, signOut } = useAuth()
+  const { setView } = useView()
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
@@ -45,18 +47,24 @@ export default function AppLayout({ children, setPage }: any) {
                 ✕
               </button>
             </div>
-            {user?.email && (
+            {user?.email ? (
               <p style={{ color: theme.text, fontSize: "14px", margin: "0 0 16px" }}>
                 Signed in as <strong>{user.email}</strong>
               </p>
+            ) : (
+              <p style={{ color: theme.text, fontSize: "14px", margin: "0 0 16px" }}>
+                Not signed in. You're using the app with shared dev data.
+              </p>
             )}
-            <button
-              type="button"
-              onClick={() => { signOut(); setShowAccount(false) }}
-              style={{ padding: "8px 16px", background: "#ef4444", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
-            >
-              Sign out
-            </button>
+            {user && (
+              <button
+                type="button"
+                onClick={() => { signOut(); setView("home"); setShowAccount(false) }}
+                style={{ padding: "8px 16px", background: "#ef4444", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </>
       )}

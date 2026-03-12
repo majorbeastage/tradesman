@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
+import { ViewProvider } from "./contexts/ViewContext"
 import AppLayout from "./layout/AppLayout"
 import CustomersPage from "./modules/customers/CustomersPage"
 import LeadsPage from "./modules/leads/LeadsPage"
@@ -7,12 +8,19 @@ import QuotesPage from "./modules/quotes/QuotesPage"
 import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
+import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
+import DemoPage from "./modules/demo/DemoPage"
+import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
+import AdminApp from "./modules/admin/AdminApp"
 import { useAuth } from "./contexts/AuthContext"
+import type { UserRole } from "./contexts/AuthContext"
 import { supabase } from "./lib/supabase"
 
-function App() {
-  const { user, loading: authLoading } = useAuth()
+type View = "home" | "login" | "admin-login" | "demo" | "app" | "office" | "admin"
+type LoginType = "user" | "office_manager" | "admin"
+
+function MainApp() {
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
@@ -22,7 +30,6 @@ function App() {
       setConnectionStatus("no-config")
       return
     }
-    if (!user) return
     setConnectionError("")
     void (async () => {
       try {
@@ -38,18 +45,7 @@ function App() {
         setConnectionError(err instanceof Error ? err.message : String(err))
       }
     })()
-  }, [user])
-
-  if (authLoading) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f3f4f6" }}>
-        <p style={{ color: "#374151" }}>Loading…</p>
-      </div>
-    )
-  }
-  if (!user) {
-    return <LoginPage />
-  }
+  }, [])
 
   return (
     <AppLayout setPage={setPage}>
@@ -91,35 +87,97 @@ function App() {
         </>
       )}
 
-      {page === "customers" && (
-        <CustomersPage />
-      )}
-
-      {page === "leads" && (
-        <LeadsPage setPage={setPage} />
-      )}
-
-      {page === "conversations" && (
-        <ConversationsPage setPage={setPage} />
-      )}
-
-      {page === "quotes" && (
-        <QuotesPage setPage={setPage} />
-      )}
-
-      {page === "calendar" && (
-        <CalendarPage />
-      )}
-
-      {page === "web-support" && (
-        <WebSupportPage />
-      )}
-
-      {page === "tech-support" && (
-        <TechSupportPage />
-      )}
-
+      {page === "customers" && <CustomersPage />}
+      {page === "leads" && <LeadsPage setPage={setPage} />}
+      {page === "conversations" && <ConversationsPage setPage={setPage} />}
+      {page === "quotes" && <QuotesPage setPage={setPage} />}
+      {page === "calendar" && <CalendarPage />}
+      {page === "web-support" && <WebSupportPage />}
+      {page === "tech-support" && <TechSupportPage />}
     </AppLayout>
+  )
+}
+
+function App() {
+  const { user, role, loading } = useAuth()
+  const [view, setView] = useState<View>("home")
+  const [loginType, setLoginType] = useState<LoginType>("user")
+  const [loginError, setLoginError] = useState("")
+
+  // If already logged in (e.g. refresh), send to the right portal
+  useEffect(() => {
+    if (loading || !user || !role) return
+    if (view !== "home") return
+    setView(role === "admin" ? "admin" : role === "office_manager" ? "office" : "app")
+  }, [loading, user, role, view])
+
+  const handleLoginSuccess = useCallback((r: UserRole) => {
+    setLoginError("")
+    if (view === "admin-login") {
+      if (r !== "admin") {
+        setLoginError("This account is not an admin.")
+        return
+      }
+      setView("admin")
+      return
+    }
+    if (r === "admin") setView("admin")
+    else if (r === "office_manager") setView("office")
+    else setView("app")
+  }, [view])
+
+  if (view === "home") {
+    return (
+      <HomePage
+        onLogin={() => { setLoginType("user"); setView("login"); setLoginError("") }}
+        onOfficeManagerLogin={() => { setLoginType("office_manager"); setView("login"); setLoginError("") }}
+        onAdminLogin={() => { setLoginType("admin"); setView("admin-login"); setLoginError("") }}
+        onRequestDemo={() => setView("demo")}
+      />
+    )
+  }
+
+  if (view === "demo") {
+    return <DemoPage onBack={() => setView("home")} />
+  }
+
+  if (view === "login" || view === "admin-login") {
+    return (
+      <>
+        {loginError && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, padding: 12, background: "#fecaca", color: "#991b1b", textAlign: "center", zIndex: 10000 }}>
+            {loginError}
+          </div>
+        )}
+        <LoginPage
+          loginType={loginType}
+          onSuccess={handleLoginSuccess}
+          onBack={() => { setView("home"); setLoginError("") }}
+        />
+      </>
+    )
+  }
+
+  if (view === "admin") {
+    return (
+      <ViewProvider setView={setView}>
+        <AdminApp />
+      </ViewProvider>
+    )
+  }
+
+  if (view === "office") {
+    return (
+      <ViewProvider setView={setView}>
+        <OfficeManagerApp />
+      </ViewProvider>
+    )
+  }
+
+  return (
+    <ViewProvider setView={setView}>
+      <MainApp />
+    </ViewProvider>
   )
 }
 
