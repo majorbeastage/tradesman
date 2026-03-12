@@ -5,6 +5,8 @@ import { DEV_USER_ID } from "../core/dev"
 
 export type UserRole = "user" | "office_manager" | "admin"
 
+export type ProfileFetchResult = { role: UserRole | null; error?: string }
+
 type AuthState = {
   user: User | null
   /** When not signed in, falls back to DEV_USER_ID so the app works without login. */
@@ -16,6 +18,8 @@ type AuthState = {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>
   signOut: () => Promise<void>
+  /** Refetch profile from DB and return role (e.g. to retry after login). */
+  refetchProfile: () => Promise<ProfileFetchResult>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -79,6 +83,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (supabase) await supabase.auth.signOut()
   }, [])
 
+  const refetchProfile = useCallback(async (): Promise<ProfileFetchResult> => {
+    if (!supabase || !user?.id) return { role: null }
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single()
+    if (error) {
+      const fallback: UserRole = "user"
+      setRole(fallback)
+      return { role: fallback, error: error.message }
+    }
+    const roleFromDb = (data?.role as UserRole) ?? "user"
+    setRole(roleFromDb)
+    return { role: roleFromDb }
+  }, [user?.id])
+
   const value: AuthState = {
     user,
     userId: user?.id ?? DEV_USER_ID,
@@ -88,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signUp,
     signOut,
+    refetchProfile,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

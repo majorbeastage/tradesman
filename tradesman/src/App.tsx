@@ -99,7 +99,7 @@ function MainApp() {
 }
 
 function App() {
-  const { user, role, loading } = useAuth()
+  const { user, role, loading, refetchProfile } = useAuth()
   const [view, setView] = useState<View>("home")
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
@@ -111,11 +111,19 @@ function App() {
     setView(role === "admin" ? "admin" : role === "office_manager" ? "office" : "app")
   }, [loading, user, role, view])
 
-  const handleLoginSuccess = useCallback((r: UserRole) => {
+  const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")
     if (view === "admin-login") {
       if (r !== "admin") {
-        setLoginError("This account is not an admin.")
+        // Retry once in case profile wasn't ready right after sign-in
+        const { role: refetched, error: fetchErr } = await refetchProfile()
+        if (refetched === "admin") {
+          setView("admin")
+          return
+        }
+        const roleLabel = refetched ?? "none"
+        const errDetail = fetchErr ? ` Profile fetch error: ${fetchErr}` : ""
+        setLoginError(`This account is not an admin. (App sees role: ${roleLabel}.${errDetail} In Supabase Table Editor → profiles, ensure this account's row has role = admin.)`)
         return
       }
       setView("admin")
@@ -124,7 +132,7 @@ function App() {
     if (r === "admin") setView("admin")
     else if (r === "office_manager") setView("office")
     else setView("app")
-  }, [view])
+  }, [view, refetchProfile])
 
   if (view === "home") {
     return (
