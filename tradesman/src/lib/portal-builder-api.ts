@@ -1,6 +1,8 @@
 import { supabase } from './supabase'
 import type { Client, PortalTab, CustomField, CustomFieldDependency, DropdownOption } from '../types/portal-builder'
 
+export type { Client, PortalTab, CustomField, CustomFieldDependency, DropdownOption }
+
 const CLIENTS = 'clients'
 const PORTAL_TABS = 'portal_tabs'
 const CUSTOM_FIELDS = 'custom_fields'
