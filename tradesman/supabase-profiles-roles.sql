@@ -25,6 +25,20 @@ CREATE TABLE IF NOT EXISTS public.office_manager_clients (
   CHECK (office_manager_id != user_id)
 );
 
+-- Helper: check if current user is admin (avoids RLS recursion when used in profiles policies)
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
 -- RLS: users can read own profile; admins can read/update all; office managers can read their clients' profiles
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -45,16 +59,12 @@ CREATE POLICY "Users can insert own profile"
   ON public.profiles FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = id);
 
--- Admins can do anything on profiles (for role assignment)
+-- Admins can do anything on profiles (for role assignment) — uses is_admin() to avoid recursion
 DROP POLICY IF EXISTS "Admins full access profiles" ON public.profiles;
 CREATE POLICY "Admins full access profiles"
   ON public.profiles FOR ALL TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
-  )
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
-  );
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 -- Office manager clients: office managers can read/manage their own client list; admins can do everything
 ALTER TABLE public.office_manager_clients ENABLE ROW LEVEL SECURITY;
@@ -68,12 +78,8 @@ CREATE POLICY "Office managers can manage own clients"
 DROP POLICY IF EXISTS "Admins full access office_manager_clients" ON public.office_manager_clients;
 CREATE POLICY "Admins full access office_manager_clients"
   ON public.office_manager_clients FOR ALL TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
-  )
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
-  );
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 -- Optional: trigger to create profile on signup (assigns default role 'user')
 CREATE OR REPLACE FUNCTION public.handle_new_user()
