@@ -4,7 +4,14 @@ import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
 
-export default function AppLayout({ children, setPage }: any) {
+type AppLayoutProps = {
+  children: React.ReactNode
+  setPage: (page: string) => void
+  /** Portal tabs from admin config (user or office manager). When set, sidebar is driven by config. */
+  portalTabs?: Array<{ tab_id: string; label: string | null }>
+}
+
+export default function AppLayout({ children, setPage, portalTabs }: AppLayoutProps) {
   const [showAccount, setShowAccount] = useState(false)
   const { user, signOut } = useAuth()
   const { setView } = useView()
@@ -17,7 +24,7 @@ export default function AppLayout({ children, setPage }: any) {
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      <Sidebar setPage={setPage} onOpenAccount={() => setShowAccount(true)} onLogout={handleLogout} />
+      <Sidebar setPage={setPage} onOpenAccount={() => setShowAccount(true)} onLogout={handleLogout} portalTabs={portalTabs} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px" }}>
         <main style={{ flex: 1 }}>{children}</main>

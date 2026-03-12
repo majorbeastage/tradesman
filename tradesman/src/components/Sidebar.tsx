@@ -1,9 +1,26 @@
 import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
+import { TAB_ID_LABELS } from "../types/portal-builder"
 
-export default function Sidebar({ setPage, onOpenAccount, onLogout }: any) {
+type SidebarProps = {
+  setPage: (page: string) => void
+  onOpenAccount?: () => void
+  onLogout?: () => void
+  /** When set, sidebar items are driven by portal config (admin-customizable). */
+  portalTabs?: Array<{ tab_id: string; label: string | null }>
+}
+
+const DEFAULT_TABS = [
+  "dashboard", "leads", "conversations", "quotes", "calendar",
+  "customers", "web-support", "tech-support", "settings",
+]
+
+export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }: SidebarProps) {
   const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
+  const tabs = portalTabs && portalTabs.length > 0
+    ? portalTabs
+    : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
 
   const grainUrl =
     "data:image/svg+xml," +
@@ -59,23 +76,11 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout }: any) {
       </div>
 
       <div style={{ marginTop: "30px", flex: 1 }}>
-        <p onClick={() => setPage("dashboard")} style={itemStyle}>Dashboard</p>
-        <p onClick={() => setPage("leads")} style={itemStyle}>Leads</p>
-        <p onClick={() => setPage("conversations")} style={itemStyle}>Conversations</p>
-        <p onClick={() => setPage("quotes")} style={itemStyle}>Quotes</p>
-        <p onClick={() => setPage("calendar")} style={itemStyle}>Calendar</p>
-
-        <div
-          style={{
-            margin: "16px 0",
-            borderTop: `1px solid ${theme.primary}`
-          }}
-        />
-
-        <p onClick={() => setPage("customers")} style={itemStyle}>Customers</p>
-        <p onClick={() => setPage("web-support")} style={itemStyle}>Web Support</p>
-        <p onClick={() => setPage("tech-support")} style={itemStyle}>Tech Support</p>
-        <p onClick={() => setPage("settings")} style={itemStyle}>Settings</p>
+        {tabs.map((t) => (
+          <p key={t.tab_id} onClick={() => setPage(t.tab_id)} style={itemStyle}>
+            {t.label ?? TAB_ID_LABELS[t.tab_id] ?? t.tab_id}
+          </p>
+        ))}
       </div>
 
       {onLogout && (

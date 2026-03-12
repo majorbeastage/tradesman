@@ -8,6 +8,7 @@ import QuotesPage from "./modules/quotes/QuotesPage"
 import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
+import SettingsPage from "./modules/settings/SettingsPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -15,6 +16,7 @@ import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
+import { usePortalTabs } from "./hooks/usePortalTabs"
 import { supabase } from "./lib/supabase"
 
 type View = "home" | "login" | "admin-login" | "demo" | "app" | "office" | "admin"
@@ -24,6 +26,8 @@ function MainApp() {
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
+  const { clientId } = useAuth()
+  const { tabs: portalTabs } = usePortalTabs(clientId, "user")
 
   useEffect(() => {
     if (!supabase) {
@@ -48,7 +52,7 @@ function MainApp() {
   }, [])
 
   return (
-    <AppLayout setPage={setPage}>
+    <AppLayout setPage={setPage} portalTabs={portalTabs}>
       {connectionStatus !== "ok" && (
         <div style={{
           position: "fixed",
@@ -94,6 +98,7 @@ function MainApp() {
       {page === "calendar" && <CalendarPage />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
+      {page === "settings" && <SettingsPage />}
     </AppLayout>
   )
 }

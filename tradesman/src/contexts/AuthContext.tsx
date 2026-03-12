@@ -7,12 +7,16 @@ export type UserRole = "user" | "office_manager" | "admin"
 
 export type ProfileFetchResult = { role: UserRole | null; error?: string }
 
+const DEFAULT_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
+
 type AuthState = {
   user: User | null
   /** When not signed in, falls back to DEV_USER_ID so the app works without login. */
   userId: string
   /** From profiles table; null until loaded or no profile. */
   role: UserRole | null
+  /** From profiles.client_id; used for portal config. Defaults to DEFAULT_CLIENT_ID if null. */
+  clientId: string
   session: Session | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
@@ -28,6 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
+  const [clientId, setClientId] = useState<string>(DEFAULT_CLIENT_ID)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -52,17 +57,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!supabase || !user?.id) {
       setRole(null)
+      setClientId(DEFAULT_CLIENT_ID)
       return
     }
     let cancelled = false
     supabase
       .from("profiles")
-      .select("role")
+      .select("role, client_id")
       .eq("id", user.id)
       .single()
       .then(({ data, error }) => {
         if (!cancelled && !error && data?.role) setRole(data.role as UserRole)
         else if (!cancelled) setRole("user")
+        if (!cancelled && data?.client_id) setClientId(data.client_id as string)
+        else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
       })
     return () => { cancelled = true }
   }, [user?.id])
@@ -87,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase || !user?.id) return { role: null }
     const { data, error } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, client_id")
       .eq("id", user.id)
       .single()
     if (error) {
@@ -97,6 +105,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const roleFromDb = (data?.role as UserRole) ?? "user"
     setRole(roleFromDb)
+    if (data?.client_id) setClientId(data.client_id as string)
+    else setClientId(DEFAULT_CLIENT_ID)
     return { role: roleFromDb }
   }, [user?.id])
 
@@ -104,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     userId: user?.id ?? DEV_USER_ID,
     role,
+    clientId,
     session,
     loading,
     signIn,

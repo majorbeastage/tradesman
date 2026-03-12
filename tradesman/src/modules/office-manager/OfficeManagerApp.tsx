@@ -7,6 +7,9 @@ import QuotesPage from "../quotes/QuotesPage"
 import CalendarPage from "../calendar/CalendarPage"
 import WebSupportPage from "../web-support/WebSupportPage"
 import TechSupportPage from "../tech-support/TechSupportPage"
+import SettingsPage from "../settings/SettingsPage"
+import { useAuth } from "../../contexts/AuthContext"
+import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 
 /**
@@ -15,9 +18,11 @@ import { theme } from "../../styles/theme"
  */
 export default function OfficeManagerApp() {
   const [page, setPage] = useState("dashboard")
+  const { clientId } = useAuth()
+  const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
 
   return (
-    <AppLayout setPage={setPage}>
+    <AppLayout setPage={setPage} portalTabs={portalTabs}>
       {page === "dashboard" && (
         <>
           <h1 style={{ color: theme.text }}>Office Manager</h1>
@@ -38,6 +43,7 @@ export default function OfficeManagerApp() {
       {page === "calendar" && <CalendarPage />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
+      {page === "settings" && <SettingsPage />}
     </AppLayout>
   )
 }
