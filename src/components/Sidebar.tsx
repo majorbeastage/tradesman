@@ -1,8 +1,26 @@
 import { theme } from "../styles/theme"
+import logo from "../assets/logo.png"
+import accountIcon from "../assets/MyT.png"
+import { TAB_ID_LABELS } from "../types/portal-builder"
 
-export default function Sidebar({ setPage }: any) {
+type SidebarProps = {
+  setPage: (page: string) => void
+  onOpenAccount?: () => void
+  onLogout?: () => void
+  /** When set, sidebar items are driven by portal config (admin-customizable). */
+  portalTabs?: Array<{ tab_id: string; label: string | null }>
+}
+
+const DEFAULT_TABS = [
+  "dashboard", "leads", "conversations", "quotes", "calendar",
+  "customers", "web-support", "tech-support", "settings",
+]
+
+export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }: SidebarProps) {
   const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
-  const headerStyle = { color: theme.primary }
+  const tabs = portalTabs && portalTabs.length > 0
+    ? portalTabs
+    : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
 
   const grainUrl =
     "data:image/svg+xml," +
@@ -18,28 +36,91 @@ export default function Sidebar({ setPage }: any) {
         backgroundImage: grainUrl,
         color: theme.primary,
         padding: "20px",
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh"
       }}
     >
-      <h2 style={headerStyle}>Tradesman</h2>
-
-      <div style={{ marginTop: "30px" }}>
-        <p onClick={() => setPage("dashboard")} style={itemStyle}>Dashboard</p>
-        <p onClick={() => setPage("leads")} style={itemStyle}>Leads</p>
-        <p onClick={() => setPage("conversations")} style={itemStyle}>Conversations</p>
-        <p onClick={() => setPage("quotes")} style={itemStyle}>Quotes</p>
-        <p onClick={() => setPage("calendar")} style={itemStyle}>Calendar</p>
-
-        <div
-          style={{
-            margin: "16px 0",
-            borderTop: `1px solid ${theme.primary}`
-          }}
-        />
-
-        <p onClick={() => setPage("customers")} style={itemStyle}>Customers</p>
-        <p onClick={() => setPage("toolboxes")} style={itemStyle}>Toolboxes</p>
-        <p onClick={() => setPage("settings")} style={itemStyle}>Settings</p>
+      <style>{`
+        @keyframes logoGlowPulse {
+          0%, 100% { opacity: 0.45; transform: translate(-50%, -50%) scale(1); }
+          50% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.12); }
+        }
+        .logo-glow-wrapper {
+          position: relative;
+          display: block;
+          width: 100%;
+        }
+        .logo-glow-wrapper .logo-glow {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 85%;
+          height: 85%;
+          transform: translate(-50%, -50%);
+          background: ${theme.primary};
+          border-radius: 8px;
+          filter: blur(22px);
+          z-index: 0;
+          animation: logoGlowPulse 2.5s ease-in-out infinite;
+          pointer-events: none;
+        }
+        .logo-glow-wrapper img {
+          position: relative;
+          z-index: 1;
+        }
+      `}</style>
+      <div className="logo-glow-wrapper">
+        <div className="logo-glow" aria-hidden />
+        <img src={logo} alt="Tradesman" style={{ maxHeight: "128px", width: "100%", maxWidth: "240px", display: "block" }} />
       </div>
+
+      <div style={{ marginTop: "30px", flex: 1 }}>
+        {tabs.map((t) => (
+          <p key={t.tab_id} onClick={() => setPage(t.tab_id)} style={itemStyle}>
+            {t.label ?? TAB_ID_LABELS[t.tab_id] ?? t.tab_id}
+          </p>
+        ))}
+      </div>
+
+      {onLogout && (
+        <button
+          type="button"
+          onClick={onLogout}
+          style={{
+            marginTop: "auto",
+            marginBottom: 8,
+            padding: "8px 0",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            color: theme.primary,
+            fontSize: 14,
+            fontWeight: 500,
+            textAlign: "left",
+          }}
+        >
+          Log out
+        </button>
+      )}
+      {onOpenAccount && (
+        <button
+          type="button"
+          onClick={onOpenAccount}
+          style={{
+            marginTop: "auto",
+            marginBottom: "24px",
+            padding: "4px",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            alignSelf: "flex-start"
+          }}
+          title="Account & Profile"
+        >
+          <img src={accountIcon} alt="Account" style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
+        </button>
+      )}
     </div>
   )
 }

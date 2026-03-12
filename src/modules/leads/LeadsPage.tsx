@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { DEV_USER_ID } from "../../core/dev"
+import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
+import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -9,11 +10,21 @@ type LeadRow = {
   id: string
   title: string | null
   created_at?: string
+  description?: string | null
+  last_message?: string | null
   customers: CustomerRow | null
 }
 
-export default function LeadsPage() {
+type LeadsPageProps = { setPage?: (page: string) => void }
+
+export default function LeadsPage({ setPage }: LeadsPageProps) {
+  const { userId } = useAuth()
   const [showForm, setShowForm] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [sendAutoResponse, setSendAutoResponse] = useState(false)
+  const [autoResponseMessage, setAutoResponseMessage] = useState("")
+  const [sendLeadToConversationsOnResponse, setSendLeadToConversationsOnResponse] = useState(false)
+  const [pauseLeadCaptures, setPauseLeadCaptures] = useState(false)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
   const [sortField, setSortField] = useState<string>("name")
@@ -23,6 +34,8 @@ export default function LeadsPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
   const [selectedLead, setSelectedLead] = useState<any>(null)
   const [messages, setMessages] = useState<any[]>([])
+  const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
+  const [notesCustomerName, setNotesCustomerName] = useState<string>("")
 
   // New lead form state
   const [customerName, setCustomerName] = useState("")
@@ -33,38 +46,94 @@ export default function LeadsPage() {
   const [initialMessage, setInitialMessage] = useState("")
 
   async function loadLeads() {
-    if (!supabase) {
-      console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
+    if (!userId || !supabase) {
+      if (!supabase) console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
       return
     }
-    const { data, error } = await supabase
-      .from("leads")
-      .select(`
-        id,
-        title,
-        created_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value,
-            is_primary
-          )
-        )
-      `)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error(error)
-      return
+    const selectFull = "id, title, description, created_at, customer_id, user_id, converted_at, removed_at"
+    const selectMinimal = "id, title, description, created_at, customer_id"
+    const resFull = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
+    let rawData: any[] = []
+    if (resFull.error) {
+      const resMin = await supabase.from("leads").select(selectMinimal).order("created_at", { ascending: false })
+      if (resMin.error) {
+        console.error("loadLeads error:", resMin.error.message)
+        setLeads([])
+        return
+      }
+      rawData = resMin.data || []
+    } else {
+      rawData = resFull.data || []
     }
 
-    setLeads((data as any[]) || [])
+    const raw = rawData as any[]
+    const rows = raw
+      .filter((r) => {
+        if (r.user_id != null && r.user_id !== userId) return false
+        if (r.converted_at != null) return false
+        if (r.removed_at != null) return false
+        return true
+      })
+      .map((r) => ({
+        ...r,
+        user_id: r.user_id ?? null,
+        converted_at: r.converted_at ?? null,
+        removed_at: r.removed_at ?? null,
+        customers: r.customers ?? { display_name: null, customer_identifiers: null },
+      }))
+
+    const customerIds = [...new Set(rows.map((r: any) => r.customer_id).filter(Boolean))]
+    if (customerIds.length > 0) {
+      const { data: custData } = await supabase
+        .from("customers")
+        .select("id, display_name, customer_identifiers(type, value, is_primary)")
+        .in("id", customerIds)
+      const custMap = new Map((custData || []).map((c: any) => [c.id, c]))
+      rows.forEach((r: any) => {
+        if (r.customer_id && custMap.has(r.customer_id)) r.customers = custMap.get(r.customer_id)
+      })
+    }
+
+    setLeads(rows)
   }
 
   useEffect(() => {
     loadLeads()
-  }, [])
+  }, [userId])
+
+  async function moveLeadToConversations() {
+    if (!supabase || !selectedLead?.id) return
+    const customerId = selectedLead.customer_id ?? selectedLead.customers?.id
+    if (!customerId) {
+      alert("No customer linked to this lead.")
+      return
+    }
+    const { error: convoErr } = await supabase
+      .from("conversations")
+      .insert({
+        user_id: userId,
+        customer_id: customerId,
+        channel: "sms",
+        status: "open",
+      })
+    if (convoErr) {
+      alert("Could not create conversation: " + convoErr.message)
+      return
+    }
+    const { error } = await supabase
+      .from("leads")
+      .update({ converted_at: new Date().toISOString() })
+      .eq("id", selectedLead.id)
+      .eq("user_id", userId)
+    if (error) {
+      alert("Lead moved to Conversations but could not mark as converted: " + error.message)
+    }
+    setLeads((prev) => prev.filter((l: any) => l.id !== selectedLead.id))
+    setSelectedLead(null)
+    setSelectedLeadId(null)
+    setMessages([])
+    if (setPage) setPage("conversations")
+  }
 
   async function openLead(leadId: string) {
     setSelectedLeadId(leadId)
@@ -121,87 +190,71 @@ export default function LeadsPage() {
     }
     setLoading(true)
     try {
-      // 1) Create Customer
-      const displayName =
-        customerName.trim() ||
-        (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
+      let customerId: string | null = null
 
-      const { data: customer, error: customerErr } = await supabase
-        .from("customers")
-        .insert({
-          user_id: DEV_USER_ID,
-          display_name: displayName,
-          notes: null,
-        })
-        .select("id")
-        .single()
-
-      if (customerErr) throw customerErr
-
-      const customerId = customer.id as string
-
-      // 2) Add identifiers (optional)
-      const identifiers: Array<{ type: string; value: string; is_primary: boolean }> = []
-
-      if (phone.trim()) identifiers.push({ type: "phone", value: phone.trim(), is_primary: true })
-      if (email.trim()) identifiers.push({ type: "email", value: email.trim(), is_primary: identifiers.length === 0 })
-      if (customerName.trim()) identifiers.push({ type: "name", value: customerName.trim(), is_primary: false })
-
-      if (identifiers.length > 0) {
-        const { error: identErr } = await supabase
-          .from("customer_identifiers")
-          .insert(
-            identifiers.map((i) => ({
-              user_id: DEV_USER_ID,
-              customer_id: customerId,
-              type: i.type,
-              value: i.value,
-              is_primary: i.is_primary,
-              verified: false,
-            }))
-          )
-
-        if (identErr) throw identErr
+      // If phone or email provided, reuse existing customer with that identifier (avoids unique_identifier_per_user violation)
+      if (phone.trim() || email.trim()) {
+        if (phone.trim()) {
+          const { data: byPhone } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", userId).eq("type", "phone").eq("value", phone.trim()).limit(1).maybeSingle()
+          if (byPhone?.customer_id) customerId = byPhone.customer_id as string
+        }
+        if (!customerId && email.trim()) {
+          const { data: byEmail } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", userId).eq("type", "email").eq("value", email.trim()).limit(1).maybeSingle()
+          if (byEmail?.customer_id) customerId = byEmail.customer_id as string
+        }
       }
 
-      // 3) Create Conversation (required toolbox)
-      const { data: convo, error: convoErr } = await supabase
-        .from("conversations")
-        .insert({
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          channel: "sms",
-          status: "open",
-        })
-        .select("id")
-        .single()
+      if (!customerId) {
+        // 1) Create new customer
+        const displayName =
+          customerName.trim() ||
+          (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
 
-      if (convoErr) throw convoErr
-      const conversationId = convo.id as string
+        const { data: customer, error: customerErr } = await supabase
+          .from("customers")
+          .insert({
+            user_id: userId,
+            display_name: displayName,
+            notes: null,
+          })
+          .select("id")
+          .single()
 
-      // 4) Add first message (optional but great for demo)
-      const firstMsg = initialMessage.trim() || leadDescription.trim() || "New lead received."
-      const { data: msg, error: msgErr } = await supabase
-        .from("messages")
-        .insert({
-          user_id: DEV_USER_ID,
-          conversation_id: conversationId,
-          sender: "customer",
-          content: firstMsg,
-          metadata: {},
-        })
-        .select("id")
-        .single()
+        if (customerErr) throw customerErr
+        customerId = customer.id as string
 
-      if (msgErr) throw msgErr
+        // 2) Add identifiers only for new customer (avoids duplicate key on same phone/email per user)
+        const identifiers: Array<{ type: string; value: string; is_primary: boolean }> = []
 
-      const messageId = msg.id as string
+        if (phone.trim()) identifiers.push({ type: "phone", value: phone.trim(), is_primary: true })
+        if (email.trim()) identifiers.push({ type: "email", value: email.trim(), is_primary: identifiers.length === 0 })
+        if (customerName.trim()) identifiers.push({ type: "name", value: customerName.trim(), is_primary: false })
 
-      // 5) Create Lead
+        if (identifiers.length > 0) {
+          const { error: identErr } = await supabase
+            .from("customer_identifiers")
+            .insert(
+              identifiers.map((i) => ({
+                user_id: userId,
+                customer_id: customerId,
+                type: i.type,
+                value: i.value,
+                is_primary: i.is_primary,
+                verified: false,
+              }))
+            )
+
+          if (identErr) throw identErr
+        }
+      }
+
+      if (!customerId) throw new Error("Could not resolve or create customer.")
+
+      // 3) Create Lead (sends to Leads box only; no conversation)
       const { data: lead, error: leadErr } = await supabase
         .from("leads")
         .insert({
-          user_id: DEV_USER_ID,
+          user_id: userId,
           customer_id: customerId,
           status_id: null, // we'll set this once we seed lead_status per user in-app
           title: leadTitle.trim() || "New Lead",
@@ -213,50 +266,38 @@ export default function LeadsPage() {
 
       if (leadErr) throw leadErr
 
-      // 6) Log Activities (simple + useful)
-      const { error: actErr } = await supabase.from("activities").insert([
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "lead_created",
-          reference_table: "leads",
-          reference_id: lead.id,
-          summary: `Job description: ${leadTitle.trim() || "New"}`,
-          metadata: {},
-        },
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "conversation_created",
-          reference_table: "conversations",
-          reference_id: conversationId,
-          summary: "Conversation created",
-          metadata: { channel: "sms" },
-        },
-        {
-          user_id: DEV_USER_ID,
-          customer_id: customerId,
-          type: "message_received",
-          reference_table: "messages",
-          reference_id: messageId,
-          summary: "Initial message received",
-          metadata: { preview: firstMsg.slice(0, 120) },
-        },
-      ])
+      // 4) Log activity (non-blocking)
+      void supabase.from("activities").insert({
+        user_id: userId,
+        customer_id: customerId,
+        type: "lead_created",
+        reference_table: "leads",
+        reference_id: lead.id,
+        summary: `Job description: ${leadTitle.trim() || "New"}`,
+        metadata: {},
+      })
 
-      if (actErr) throw actErr
+      const displayName = customerName.trim() || (phone.trim() ? `Unknown (${phone.trim()})` : "Unknown")
+      const newLeadRow = {
+        id: lead.id,
+        title: leadTitle.trim() || "New Lead",
+        description: leadDescription.trim() || null,
+        created_at: new Date().toISOString(),
+        customer_id: customerId,
+        converted_at: null,
+        removed_at: null,
+        customers: { display_name: displayName, customer_identifiers: [{ type: "phone", value: phone.trim(), is_primary: true }].filter((x) => x.value) },
+      }
 
-      // 7) Refresh list + clear form
-      await loadLeads()
+      setLeads((prev) => [newLeadRow as any, ...prev])
       setCustomerName("")
       setPhone("")
       setEmail("")
       setLeadTitle("")
       setLeadDescription("")
       setInitialMessage("")
-
       setShowForm(false)
-      alert("✅ Lead created (and customer + conversation).")
+      if (setPage) setPage("leads")
     } catch (err: any) {
       console.error(err)
       const msg = err?.message ?? err?.error_description ?? String(err)
@@ -331,7 +372,17 @@ export default function LeadsPage() {
             + Create Lead
           </button>
 
-          <button>
+          <button
+            onClick={() => setShowSettings(true)}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "6px",
+              border: "1px solid #d1d5db",
+              background: "white",
+              cursor: "pointer",
+              color: theme.text
+            }}
+          >
             Settings
           </button>
 
@@ -340,48 +391,163 @@ export default function LeadsPage() {
       </div>
 
       {showForm && (
+        <>
+          <div
+            onClick={() => setShowForm(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 9998
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "90%",
+              maxWidth: "480px",
+              maxHeight: "90vh",
+              overflow: "auto",
+              background: "white",
+              borderRadius: "8px",
+              padding: "24px",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 9999
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ margin: 0 }}>Create Lead</h3>
+              <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <input placeholder="Customer name (optional)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <input placeholder="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Job description</label>
+              <input placeholder="e.g. Roof Leak" value={leadTitle} onChange={(e) => setLeadTitle(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <textarea placeholder="Lead description (optional)" value={leadDescription} onChange={(e) => setLeadDescription(e.target.value)} rows={3} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <textarea placeholder='Initial message (optional)' value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={3} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <button onClick={createLeadFlow} disabled={loading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
+                {loading ? "Creating..." : "Create Lead"}
+              </button>
+              <button onClick={() => setShowForm(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer" }}>Cancel</button>
+            </div>
+          </div>
+        </>
+      )}
 
-        <div
-          style={{
-            position: "fixed",
-            right: 0,
-            top: 0,
-            height: "100%",
-            width: "400px",
-            background: "white",
-            borderLeft: "1px solid #ddd",
-            padding: "20px",
-            boxShadow: "-4px 0 10px rgba(0,0,0,0.1)"
-          }}
-        >
-
-          <div style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "20px"
-          }}>
-            <h3>Create Lead</h3>
-
-            <button onClick={() => setShowForm(false)}>
-              ✕
+      {showSettings && (
+        <>
+          <div
+            onClick={() => setShowSettings(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 9998
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "90%",
+              maxWidth: "480px",
+              background: "white",
+              borderRadius: "8px",
+              padding: "24px",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 9999
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>Leads Settings</h3>
+              <button onClick={() => setShowSettings(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px", color: theme.text }}>
+              <div>
+                <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "6px" }}>Default lead status</label>
+                <select style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}>
+                  <option>New</option>
+                  <option>Contacted</option>
+                  <option>Qualified</option>
+                  <option>Lost</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "6px" }}>Lead source</label>
+                <select style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}>
+                  <option>Email</option>
+                  <option>Text</option>
+                  <option>Phone call</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: theme.text, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={sendAutoResponse}
+                    onChange={(e) => setSendAutoResponse(e.target.checked)}
+                  />
+                  <span>Send Auto Response if Lead is New</span>
+                </label>
+                {sendAutoResponse && (
+                  <div style={{ marginTop: "8px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "4px" }}>Auto response (sent to text or email)</label>
+                    <textarea
+                      placeholder="e.g. Thanks for reaching out! We'll get back to you shortly."
+                      value={autoResponseMessage}
+                      onChange={(e) => setAutoResponseMessage(e.target.value)}
+                      rows={4}
+                      style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text, resize: "vertical" }}
+                    />
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: theme.text, cursor: "pointer", marginTop: "12px" }}>
+                      <input
+                        type="checkbox"
+                        checked={sendLeadToConversationsOnResponse}
+                        onChange={(e) => setSendLeadToConversationsOnResponse(e.target.checked)}
+                      />
+                      <span>If response is received from customer, send Lead to Conversations</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+              <div style={{ paddingTop: "8px", borderTop: `1px solid ${theme.border}` }}>
+                <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "8px" }}>Notifications</label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", fontSize: "14px", color: theme.text }}>
+                  <input type="checkbox" />
+                  <span>Email when new lead is created</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: theme.text }}>
+                  <input type="checkbox" />
+                  <span>Notify when lead is assigned to me</span>
+                </label>
+              </div>
+              <div style={{ paddingTop: "8px", borderTop: `1px solid ${theme.border}` }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: theme.text, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={pauseLeadCaptures}
+                    onChange={(e) => setPauseLeadCaptures(e.target.checked)}
+                  />
+                  <span>Pause Lead Captures</span>
+                </label>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowSettings(false)}
+              style={{ marginTop: "20px", padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
+            >
+              Done
             </button>
           </div>
-
-          {/* YOUR EXISTING FORM GOES HERE */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            <input placeholder="Customer name (optional)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
-            <input placeholder="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
-            <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151" }}>Job description</label>
-            <input placeholder="e.g. Roof Leak" value={leadTitle} onChange={(e) => setLeadTitle(e.target.value)} />
-            <textarea placeholder="Lead description (optional)" value={leadDescription} onChange={(e) => setLeadDescription(e.target.value)} rows={3} />
-            <textarea placeholder='Initial message (optional)' value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={3} />
-            <button onClick={createLeadFlow} disabled={loading}>{loading ? "Creating..." : "Create Lead"}</button>
-            <button onClick={() => setShowForm(false)}>Cancel</button>
-          </div>
-
-        </div>
-
+        </>
       )}
 
       <div style={{
@@ -496,10 +662,10 @@ export default function LeadsPage() {
                 <td style={{ padding: "8px" }}>{phone}</td>
                 <td style={{ padding: "8px" }}>{lead.title ?? "—"}</td>
                 <td style={{ padding: "8px" }}>
-                  {(lead.last_message || "").slice(0, 15)}
+                  {(lead.last_message ?? lead.description ?? "").slice(0, 15) || "—"}
                 </td>
                 <td style={{ padding: "8px" }}>
-                  {new Date(lead.created_at).toLocaleDateString()}
+                  {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "—"}
                 </td>
               </tr>
             )
@@ -535,6 +701,18 @@ export default function LeadsPage() {
           <p>
             <strong>Customer:</strong>{" "}
             {selectedLead.customers?.display_name}
+            {" "}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setNotesCustomerId(selectedLead.customer_id ?? null)
+                setNotesCustomerName(selectedLead.customers?.display_name ?? "")
+              }}
+              style={{ marginLeft: "8px", padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
+            >
+              Notes
+            </button>
           </p>
 
           <p>
@@ -578,10 +756,51 @@ export default function LeadsPage() {
 
           </div>
 
+          <button
+            onClick={moveLeadToConversations}
+            style={{
+              marginTop: "24px",
+              padding: "10px 16px",
+              background: theme.primary,
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontWeight: 600
+            }}
+          >
+            Add Lead to my Conversations
+          </button>
+
+          <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!supabase || !selectedLead?.id) return
+                if (!confirm("Remove this lead? It can be recalled from Customers later.")) return
+                const { error } = await supabase.from("leads").update({ removed_at: new Date().toISOString() }).eq("id", selectedLead.id)
+                if (error) { alert(error.message); return }
+                setSelectedLead(null)
+                setSelectedLeadId(null)
+                loadLeads()
+              }}
+              style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+            >
+              Remove
+            </button>
+          </div>
+
         </div>
 
       )}
 
+        {notesCustomerId && (
+          <CustomerNotesPanel
+            customerId={notesCustomerId}
+            customerName={notesCustomerName}
+            onClose={() => { setNotesCustomerId(null); setNotesCustomerName("") }}
+          />
+        )}
       </div>
     </div>
   )
