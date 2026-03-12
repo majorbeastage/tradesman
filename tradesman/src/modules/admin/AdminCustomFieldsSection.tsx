@@ -4,7 +4,6 @@ import type { CustomField, CustomFieldType, DropdownOption } from "../../types/p
 import {
   fetchCustomFields,
   createCustomField,
-  updateCustomField,
   deleteCustomField,
   addCustomFieldDependency,
   removeCustomFieldDependency,

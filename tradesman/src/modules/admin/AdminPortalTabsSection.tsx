@@ -1,11 +1,8 @@
 import { useState, useEffect } from "react"
 import { theme } from "../../styles/theme"
 import { TAB_ID_LABELS } from "../../types/portal-builder"
-import {
-  fetchPortalTabs,
-  upsertPortalTab,
-  type PortalTab,
-} from "../../lib/portal-builder-api"
+import { fetchPortalTabs, upsertPortalTab } from "../../lib/portal-builder-api"
+import type { PortalTab } from "../../types/portal-builder"
 
 type PortalKind = "user" | "office_manager"
 
