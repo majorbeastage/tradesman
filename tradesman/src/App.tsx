@@ -129,10 +129,16 @@ function App() {
       setView("admin")
       return
     }
+    // Regular login: send to the portal they chose on the home page
+    if (view === "login") {
+      if (loginType === "office_manager") setView("office")
+      else setView("app")
+      return
+    }
     if (r === "admin") setView("admin")
     else if (r === "office_manager") setView("office")
     else setView("app")
-  }, [view, refetchProfile])
+  }, [view, loginType, refetchProfile])
 
   if (view === "home") {
     return (
