@@ -2,7 +2,7 @@ import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
 
-export default function Sidebar({ setPage, onOpenAccount }: any) {
+export default function Sidebar({ setPage, onOpenAccount, onLogout }: any) {
   const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
 
   const grainUrl =
@@ -78,6 +78,26 @@ export default function Sidebar({ setPage, onOpenAccount }: any) {
         <p onClick={() => setPage("settings")} style={itemStyle}>Settings</p>
       </div>
 
+      {onLogout && (
+        <button
+          type="button"
+          onClick={onLogout}
+          style={{
+            marginTop: "auto",
+            marginBottom: 8,
+            padding: "8px 0",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            color: theme.primary,
+            fontSize: 14,
+            fontWeight: 500,
+            textAlign: "left",
+          }}
+        >
+          Log out
+        </button>
+      )}
       {onOpenAccount && (
         <button
           type="button"

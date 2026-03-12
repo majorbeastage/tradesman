@@ -9,9 +9,15 @@ export default function AppLayout({ children, setPage }: any) {
   const { user, signOut } = useAuth()
   const { setView } = useView()
 
+  const handleLogout = () => {
+    signOut()
+    setView("home")
+    setShowAccount(false)
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      <Sidebar setPage={setPage} onOpenAccount={() => setShowAccount(true)} />
+      <Sidebar setPage={setPage} onOpenAccount={() => setShowAccount(true)} onLogout={handleLogout} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px" }}>
         <main style={{ flex: 1 }}>{children}</main>
@@ -59,10 +65,10 @@ export default function AppLayout({ children, setPage }: any) {
             {user && (
               <button
                 type="button"
-                onClick={() => { signOut(); setView("home"); setShowAccount(false) }}
+                onClick={handleLogout}
                 style={{ padding: "8px 16px", background: "#ef4444", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
               >
-                Sign out
+                Log out
               </button>
             )}
           </div>

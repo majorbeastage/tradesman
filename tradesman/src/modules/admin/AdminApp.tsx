@@ -68,7 +68,7 @@ export default function AdminApp() {
             onClick={() => { signOut(); setView("home") }}
             style={{ marginTop: 8, padding: "6px 12px", background: "#ef4444", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
           >
-            Sign out
+            Log out
           </button>
         </div>
       </aside>
