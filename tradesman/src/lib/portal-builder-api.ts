@@ -11,7 +11,7 @@ const CUSTOM_FIELD_DEPS = 'custom_field_dependencies'
 export async function fetchClients(): Promise<Client[]> {
   if (!supabase) return []
   const { data, error } = await supabase.from(CLIENTS).select('*').order('name')
-  if (error) throw error
+  if (error) return [] // Don't throw so admin UI can still show a fallback
   return (data ?? []) as Client[]
 }
 
