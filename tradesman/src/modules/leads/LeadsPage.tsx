@@ -423,13 +423,13 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer" }}>✕</button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <input placeholder="Customer name (optional)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
-              <input placeholder="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
-              <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <input placeholder="Customer name (optional)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} style={{ ...theme.formInput }} />
+              <input placeholder="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ ...theme.formInput }} />
+              <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} style={{ ...theme.formInput }} />
               <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Job description</label>
-              <input placeholder="e.g. Roof Leak" value={leadTitle} onChange={(e) => setLeadTitle(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
-              <textarea placeholder="Lead description (optional)" value={leadDescription} onChange={(e) => setLeadDescription(e.target.value)} rows={3} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
-              <textarea placeholder='Initial message (optional)' value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={3} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px" }} />
+              <input placeholder="e.g. Roof Leak" value={leadTitle} onChange={(e) => setLeadTitle(e.target.value)} style={{ ...theme.formInput }} />
+              <textarea placeholder="Lead description (optional)" value={leadDescription} onChange={(e) => setLeadDescription(e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} />
+              <textarea placeholder='Initial message (optional)' value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} />
               <button onClick={createLeadFlow} disabled={loading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                 {loading ? "Creating..." : "Create Lead"}
               </button>
@@ -472,7 +472,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
             <div style={{ display: "flex", flexDirection: "column", gap: "16px", color: theme.text }}>
               <div>
                 <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "6px" }}>Default lead status</label>
-                <select style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}>
+                <select style={{ ...theme.formInput }}>
                   <option>New</option>
                   <option>Contacted</option>
                   <option>Qualified</option>
@@ -481,7 +481,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               </div>
               <div>
                 <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "6px" }}>Lead source</label>
-                <select style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}>
+                <select style={{ ...theme.formInput }}>
                   <option>Email</option>
                   <option>Text</option>
                   <option>Phone call</option>
@@ -505,7 +505,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                       value={autoResponseMessage}
                       onChange={(e) => setAutoResponseMessage(e.target.value)}
                       rows={4}
-                      style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text, resize: "vertical" }}
+                      style={{ ...theme.formInput, resize: "vertical" }}
                     />
                     <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: theme.text, cursor: "pointer", marginTop: "12px" }}>
                       <input
@@ -569,14 +569,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               placeholder="By name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ ...theme.formInput, padding: "6px 10px", width: "160px" }}
             />
             <input
               type="text"
               placeholder="By phone..."
               value={filterPhone}
               onChange={(e) => setFilterPhone(e.target.value)}
-              style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ ...theme.formInput, padding: "6px 10px", width: "160px" }}
             />
           </div>
         </div>
@@ -586,7 +586,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
             <select
               value={sortField}
               onChange={(e) => setSortField(e.target.value)}
-              style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
+              style={{ ...theme.formInput, padding: "6px 10px", cursor: "pointer" }}
             >
               <option value="name">Name</option>
               <option value="title">Job Description</option>
@@ -595,7 +595,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
             <button
               type="button"
               onClick={() => setSortAsc(!sortAsc)}
-              style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
+              style={{ ...theme.formInput, padding: "6px 10px", cursor: "pointer" }}
             >
               {sortAsc ? "↑ Asc" : "↓ Desc"}
             </button>
