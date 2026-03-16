@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { DEV_USER_ID } from "../core/dev"
+import type { PortalConfig } from "../types/portal-builder"
 
 export type UserRole = "user" | "office_manager" | "admin"
 
@@ -17,6 +18,8 @@ type AuthState = {
   role: UserRole | null
   /** From profiles.client_id; used for portal config. Defaults to DEFAULT_CLIENT_ID if null. */
   clientId: string
+  /** From profiles.portal_config; per-user tabs/settings/dropdowns visibility. {} = all visible. */
+  portalConfig: PortalConfig | null
   session: Session | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
@@ -33,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [clientId, setClientId] = useState<string>(DEFAULT_CLIENT_ID)
+  const [portalConfig, setPortalConfig] = useState<PortalConfig | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -58,12 +62,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase || !user?.id) {
       setRole(null)
       setClientId(DEFAULT_CLIENT_ID)
+      setPortalConfig(null)
       return
     }
     let cancelled = false
     supabase
       .from("profiles")
-      .select("role, client_id")
+      .select("role, client_id, portal_config")
       .eq("id", user.id)
       .single()
       .then(({ data, error }) => {
@@ -71,6 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         else if (!cancelled) setRole("user")
         if (!cancelled && data?.client_id) setClientId(data.client_id as string)
         else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
+        if (!cancelled) setPortalConfig((data?.portal_config as PortalConfig) ?? null)
       })
     return () => { cancelled = true }
   }, [user?.id])
@@ -95,7 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase || !user?.id) return { role: null }
     const { data, error } = await supabase
       .from("profiles")
-      .select("role, client_id")
+      .select("role, client_id, portal_config")
       .eq("id", user.id)
       .single()
     if (error) {
@@ -107,6 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setRole(roleFromDb)
     if (data?.client_id) setClientId(data.client_id as string)
     else setClientId(DEFAULT_CLIENT_ID)
+    setPortalConfig((data?.portal_config as PortalConfig) ?? null)
     return { role: roleFromDb }
   }, [user?.id])
 
@@ -115,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     userId: user?.id ?? DEV_USER_ID,
     role,
     clientId,
+    portalConfig,
     session,
     loading,
     signIn,

@@ -1,65 +1,84 @@
-# Admin portal: profiles created only through Admin
+# Admin portal setup (one-time)
 
-All user profiles are created from the **Admin portal** (no public sign-up). You do **not** need new tables; the existing **`profiles`** and **`office_manager_clients`** tables are enough.
+Do these steps once. **No Edge Function is required** to create users from the Admin portal.
 
-## 1. First admin (one-time)
+---
 
-You need one admin to log in and create everyone else:
+## 1. Run SQL in Supabase (in this order)
 
-1. **Option A – Supabase Dashboard**  
-   - **Authentication** → **Users** → **Invite user** (or **Add user**).  
-   - Create a user with the email you want for the first admin.  
-   - In **SQL Editor** run (use the new user’s id from Authentication → Users):
+In **Supabase Dashboard → SQL Editor**, run each script as a **New query**:
+
+1. **`supabase-profiles-roles.sql`**  
+   Creates `profiles` (role, display_name) and a trigger that creates a profile when someone signs up. Creates `is_admin()` and RLS.
+
+2. **`supabase-admin-portal-config.sql`**  
+   Adds **`portal_config`** (JSONB) to `profiles`. The admin portal uses this for per-user visibility (tabs, settings, dropdowns). Default `{}` = all visible.
+
+Optional: **`supabase-admin-portal-builder.sql`** (clients, portal_tabs, custom_fields). Not required for the new admin portal. “—”
+---
+
+## 2. First admin user
+
+You need one user with role **admin** so they can open the Admin portal and create others.
+
+**Option A – Supabase Dashboard**
+
+1. **Authentication → Users → Add user** (or Invite). Create a user with the email you want for the first admin.
+2. Copy that user’s **UUID** from the table.
+3. In **SQL Editor** run (replace with the real UUID):
 
    ```sql
-   INSERT INTO public.profiles (id, role) VALUES ('<that-user-uuid>', 'admin')
+   INSERT INTO public.profiles (id, role) VALUES ('PASTE-USER-UUID-HERE', 'admin')
    ON CONFLICT (id) DO UPDATE SET role = 'admin';
    ```
 
-2. **Option B – Self-signup then promote**  
-   - Temporarily keep sign-up enabled.  
-   - Sign up once with the admin email.  
-   - Run the same `INSERT` / `ON CONFLICT` SQL above with that user’s id.  
-   - Then disable sign-up (see below) so only admins can create users.
+**Option B – Sign up in the app, then promote**
 
-After that, log in to the app with that email, use **Admin Login** on the home page, and you’ll land in the Admin portal.
+1. In Supabase: **Authentication → Providers → Email** → turn **Enable Sign Up** on.
+2. In your app, sign up once with the admin email.
+3. In Supabase **Authentication → Users**, copy that user’s UUID.
+4. Run the same `INSERT ... ON CONFLICT` SQL above with that UUID.
 
-## 2. Create users (including admins) from Admin portal
+Then log in to the app, go to the home page, and use **Admin Login** to open the Admin portal.
 
-- In **Admin** → **Users** you can:
-  - **Add user**: email, password, role (**User**, **Office Manager**, or **Admin**).  
-  - **List users**: all users and their role (loaded via the Edge Function).
+---
 
-This uses the **Edge Function** `admin-users`, which calls Supabase’s Auth Admin API (service role) to create the user and then upsert **`profiles`** with the chosen role.
+## 3. Environment variables
 
-## 3. Deploy the Edge Function
+In your app folder, create or edit **`.env`** (or `.env.local`):
 
-The Admin **Users** page calls `https://<your-project>.supabase.co/functions/v1/admin-users`. You must deploy the function once:
+```env
+VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
+```
 
-1. Install Supabase CLI and log in (see [Supabase Functions](https://supabase.com/docs/guides/functions)).
-2. From the **tradesman** folder (where `supabase/functions/admin-users` lives):
+Get both from **Supabase Dashboard → Project Settings → API**. Restart the dev server after changing `.env`.
 
-   ```bash
-   supabase functions deploy admin-users
-   ```
+---
 
-3. The function uses **SUPABASE_URL** and **SUPABASE_SERVICE_ROLE_KEY**; these are set automatically in the Supabase project for Edge Functions. No extra env needed.
+## 4. Supabase Auth settings
 
-4. Optional: restrict who can call the function (e.g. only your app origin) via **Supabase** → **Edge Functions** → **admin-users** → settings.
+- **Authentication → Providers → Email** → **Enable Sign Up** must be **on** so the Admin “Create user” flow can create new users.
+- **Authentication → URL Configuration** → add your app URL (e.g. `http://localhost:5173` or your production URL) if you have redirect/email links.
 
-## 4. Disable public sign-up (recommended)
+---
 
-So that only admins create users:
+## 5. What the Admin portal does
 
-1. **Supabase Dashboard** → **Authentication** → **Providers** → **Email**.  
-2. Turn **off** “Enable sign up” (or equivalent).  
-3. Leave “Confirm email” on or off as you prefer.
+- **Select user**: Dropdown lists all users (profiles) from Supabase. Pick one to configure their portal.
+- **Configure view**: For that user you can toggle **visibility** for:
+  - **Sidebar tabs**: Dashboard, Leads, Conversations, Quotes, Calendar, Customers, Web Support, Tech Support, Settings. Checked = visible, unchecked = hidden. Default = all visible.
+  - **Settings sections**: Custom fields, working hours, quote/lead/conversation settings. Same on/off. Default = all visible.
+  - **Dropdowns**: Lead source, job type, status, priority. Same on/off. Default = all visible.
+- **Save**: Updates `profiles.portal_config` for that user. When they log in, the main app uses this to show or hide tabs (and in future, settings/dropdowns).
 
-Then only users created via the Admin portal (or via Dashboard invite + SQL profile) can log in.
+---
 
-## 5. Tables involved (no new ones)
+## Troubleshooting
 
-- **`public.profiles`** – one row per user: `id` (auth user id), `role` (`user` | `office_manager` | `admin`), `display_name`, timestamps.  
-- **`public.office_manager_clients`** – which users each office manager manages (for future Office Manager features).
-
-The Edge Function creates the user in **auth.users** (Supabase Auth) and then inserts/updates **`profiles`** with the chosen role. No extra tables are required for “all profiles created through admin” or for adding Admin profiles.
+| Issue | Check |
+|-------|--------|
+| “Supabase not configured” | `.env` has `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; restart dev server. |
+| “Could not reach Supabase” / “Failed to fetch” | Same as above; also ensure the project is not **paused** (Dashboard → Project Settings). |
+| No profiles in dropdown | Run **`supabase-profiles-roles.sql`** and create at least one user (e.g. sign up or add in Supabase Auth), then set one profile to admin (see step 2). |
+| “column portal_config does not exist” | Run **`supabase-admin-portal-config.sql`** in the SQL Editor. |

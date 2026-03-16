@@ -17,17 +17,31 @@ import AdminApp from "./modules/admin/AdminApp"
 import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
 import { usePortalTabs } from "./hooks/usePortalTabs"
+import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
 
 type View = "home" | "login" | "admin-login" | "demo" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
 
+function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
+  if (!portalConfig) return undefined
+  const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
+  if (!hasTabs) return undefined
+  const defaultEntries = USER_PORTAL_TAB_IDS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? null }))
+  const customEntries = (portalConfig.customTabs ?? []).map((t) => ({ tab_id: t.id, label: t.label }))
+  const all = [...defaultEntries, ...customEntries]
+  const visible = all.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  return visible.length > 0 ? visible : undefined
+}
+
 function MainApp() {
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
-  const { clientId } = useAuth()
-  const { tabs: portalTabs } = usePortalTabs(clientId, "user")
+  const { clientId, portalConfig } = useAuth()
+  const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
+  // Prefer per-user portal_config from admin (default + custom tabs, filtered by visibility)
+  const portalTabs = buildPortalTabsFromConfig(portalConfig) ?? portalTabsFromApi
 
   useEffect(() => {
     if (!supabase) {
@@ -99,6 +113,12 @@ function MainApp() {
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
       {page === "settings" && <SettingsPage />}
+      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "web-support", "tech-support", "settings"].includes(page) && (
+        <div style={{ padding: 24 }}>
+          <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
+          <p style={{ color: "var(--text, #6b7280)" }}>This section is configured by your admin. Content can be added here later.</p>
+        </div>
+      )}
     </AppLayout>
   )
 }
@@ -109,11 +129,11 @@ function App() {
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
 
-  // If already logged in (e.g. refresh), send to the right portal
+  // If already logged in (e.g. refresh), send to main app (or office for office managers). Admins land in main app by default; use Home → Admin Login to open admin portal.
   useEffect(() => {
     if (loading || !user || !role) return
     if (view !== "home") return
-    setView(role === "admin" ? "admin" : role === "office_manager" ? "office" : "app")
+    setView(role === "office_manager" ? "office" : "app")
   }, [loading, user, role, view])
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
