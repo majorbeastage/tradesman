@@ -361,7 +361,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       }}
                       placeholder="Message to send when a new conversation is added..."
                       rows={3}
-                      style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }}
+                      style={{ ...theme.formInput, resize: "vertical" }}
                     />
                   </div>
                 )}
@@ -561,7 +561,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 placeholder="Conversation title (e.g. Project Alpha)"
                 value={newInternalConvoTitle}
                 onChange={(e) => setNewInternalConvoTitle(e.target.value)}
-                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, marginBottom: "12px" }}
+                style={{ ...theme.formInput, marginBottom: "12px" }}
               />
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
@@ -732,7 +732,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     value={addConvoExistingId}
                     onFocus={loadCustomerList}
                     onChange={(e) => setAddConvoExistingId(e.target.value)}
-                    style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                    style={{ ...theme.formInput }}
                   >
                     <option value="">— Select customer —</option>
                     {customerList.map((c) => (
@@ -746,9 +746,9 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 </label>
                 {addConvoUseNew && (
                   <>
-                    <input placeholder="Customer name" value={addConvoNewName} onChange={(e) => setAddConvoNewName(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-                    <input placeholder="Phone" value={addConvoNewPhone} onChange={(e) => setAddConvoNewPhone(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-                    <input placeholder="Email" value={addConvoNewEmail} onChange={(e) => setAddConvoNewEmail(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                    <input placeholder="Customer name" value={addConvoNewName} onChange={(e) => setAddConvoNewName(e.target.value)} style={{ ...theme.formInput }} />
+                    <input placeholder="Phone" value={addConvoNewPhone} onChange={(e) => setAddConvoNewPhone(e.target.value)} style={{ ...theme.formInput }} />
+                    <input placeholder="Email" value={addConvoNewEmail} onChange={(e) => setAddConvoNewEmail(e.target.value)} style={{ ...theme.formInput }} />
                   </>
                 )}
                 <button onClick={createConversationFlow} disabled={addConvoLoading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>

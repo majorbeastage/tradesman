@@ -27,8 +27,36 @@ type CalendarEvent = {
 }
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const WEEKDAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-const HOURS = Array.from({ length: 14 }, (_, i) => i + 6) // 6am–8pm
+const HOUR_HEIGHT = 48
+const DAY_START_HOUR = 6
+const DAY_END_HOUR = 20
+
+function getAllDayTimes12hr(): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = []
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const value = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+      let label: string
+      if (h === 0) label = `12:${String(m).padStart(2, "0")} AM`
+      else if (h < 12) label = `${h}:${String(m).padStart(2, "0")} AM`
+      else if (h === 12) label = `12:${String(m).padStart(2, "0")} PM`
+      else label = `${h - 12}:${String(m).padStart(2, "0")} PM`
+      options.push({ value, label })
+    }
+  }
+  return options
+}
+
+const ALL_DAY_TIMES_12HR = getAllDayTimes12hr()
+
+function hourLabel12hr(hour: number, minute = 0): string {
+  if (hour === 0) return `12:${String(minute).padStart(2, "0")} AM`
+  if (hour < 12) return `${hour}:${String(minute).padStart(2, "0")} AM`
+  if (hour === 12) return `12:${String(minute).padStart(2, "0")} PM`
+  return `${hour - 12}:${String(minute).padStart(2, "0")} PM`
+}
 
 function getWeekStart(d: Date): Date {
   const date = new Date(d)
@@ -64,10 +92,21 @@ function isToday(d: Date): boolean {
   return isSameDay(d, new Date())
 }
 
+function getTimeOptions(incrementMinutes: 15 | 60): string[] {
+  const options: string[] = []
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += incrementMinutes) {
+      options.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`)
+    }
+  }
+  return options
+}
+
 export default function CalendarPage() {
   const { userId } = useAuth()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
+  const [jobTypesLoadError, setJobTypesLoadError] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>("")
   const [view, setView] = useState<"day" | "week" | "month">("month")
@@ -97,6 +136,7 @@ export default function CalendarPage() {
   const [jtDuration, setJtDuration] = useState(60)
   const [jtColor, setJtColor] = useState("#F97316")
   const [jtSaving, setJtSaving] = useState(false)
+  const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
 
   // Settings (localStorage)
   const [firstDayOfWeek, setFirstDayOfWeek] = useState(() => {
@@ -105,6 +145,22 @@ export default function CalendarPage() {
   const [arReminderMins, setArReminderMins] = useState(() => {
     try { return localStorage.getItem("calendar_arReminderMins") ?? "15" } catch { return "15" }
   })
+  const [timeIncrement, setTimeIncrement] = useState<15 | 60>(() => {
+    try { const v = localStorage.getItem("calendar_timeIncrement"); return v === "60" ? 60 : 15 } catch { return 15 }
+  })
+  const [noDuplicateTimes, setNoDuplicateTimes] = useState(() => {
+    try { return localStorage.getItem("calendar_noDuplicateTimes") === "true" } catch { return false }
+  })
+  const [workingHoursEnabled, setWorkingHoursEnabled] = useState(() => {
+    try { return localStorage.getItem("calendar_workingHoursEnabled") === "true" } catch { return false }
+  })
+  const [workingStart, setWorkingStart] = useState(() => {
+    try { return localStorage.getItem("calendar_workingStart") ?? "08:00" } catch { return "08:00" }
+  })
+  const [workingEnd, setWorkingEnd] = useState(() => {
+    try { return localStorage.getItem("calendar_workingEnd") ?? "17:00" } catch { return "17:00" }
+  })
+  const [addError, setAddError] = useState("")
 
   async function loadEvents() {
     if (!userId || !supabase) return
@@ -162,11 +218,17 @@ export default function CalendarPage() {
 
   async function loadJobTypes() {
     if (!userId || !supabase) return
-    const { data } = await supabase
+    setJobTypesLoadError("")
+    const { data, error } = await supabase
       .from("job_types")
       .select("id, name, description, duration_minutes, color_hex")
       .eq("user_id", userId)
       .order("name")
+    if (error) {
+      setJobTypesLoadError(error.message)
+      setJobTypes([])
+      return
+    }
     setJobTypes((data as JobType[]) || [])
   }
 
@@ -182,10 +244,26 @@ export default function CalendarPage() {
   }, [userId])
 
   async function saveEvent() {
-    if (!supabase || !addTitle.trim()) return
-    setAddSaving(true)
+    if (!supabase || !userId || !addTitle.trim()) return
+    setAddError("")
     const start = new Date(`${addStartDate}T${addStartTime}`)
     const end = new Date(start.getTime() + addDuration * 60 * 1000)
+
+    if (noDuplicateTimes) {
+      const { data: existing } = await supabase
+        .from("calendar_events")
+        .select("id, start_at, end_at")
+        .eq("user_id", userId)
+        .is("removed_at", null)
+        .lt("start_at", end.toISOString())
+        .gt("end_at", start.toISOString())
+      if (existing && existing.length > 0) {
+        setAddError("This time overlaps an existing event. Choose a different time or turn off \"Do not allow duplicate times\" in Settings.")
+        return
+      }
+    }
+
+    setAddSaving(true)
     const { error } = await supabase.from("calendar_events").insert({
       user_id: userId,
       title: addTitle.trim(),
@@ -198,7 +276,7 @@ export default function CalendarPage() {
     })
     setAddSaving(false)
     if (error) {
-      alert(error.message)
+      setAddError(error.message)
       return
     }
     setShowAddItem(false)
@@ -219,24 +297,71 @@ export default function CalendarPage() {
   }
 
   async function saveJobType() {
-    if (!supabase || !jtName.trim()) return
+    if (!jtName.trim()) {
+      alert("Please enter a name for the job type.")
+      return
+    }
+    if (!supabase) {
+      alert("App is not connected to Supabase. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env")
+      return
+    }
+    if (!userId) {
+      alert("You must be signed in to add or update job types.")
+      return
+    }
     setJtSaving(true)
-    const { error } = await supabase.from("job_types").insert({
-      user_id: userId,
+    const payload = {
       name: jtName.trim(),
       description: jtDescription.trim() || null,
       duration_minutes: jtDuration,
       color_hex: jtColor
-    })
+    }
+    const { error } = editingJobTypeId
+      ? await supabase.from("job_types").update(payload).eq("id", editingJobTypeId).eq("user_id", userId)
+      : await supabase.from("job_types").insert({ user_id: userId, ...payload })
     setJtSaving(false)
     if (error) {
-      alert(error.message)
+      const msg = error.message || String(error)
+      console.error("[Job type save failed]", { error, userId, payload })
+      const hint = (msg.includes("policy") || msg.includes("RLS") || msg.includes("row-level") || msg.includes("permission") || msg.includes("does not exist"))
+        ? "\n\nFix: In Supabase Dashboard → SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql (creates job_types table + RLS policies), then try again."
+        : ""
+      alert("Could not save job type: " + msg + hint)
       return
     }
     setJtName("")
     setJtDescription("")
     setJtDuration(60)
     setJtColor("#F97316")
+    setEditingJobTypeId(null)
+    loadJobTypes()
+  }
+
+  function startEditJobType(jt: JobType) {
+    setJtName(jt.name)
+    setJtDescription(jt.description ?? "")
+    setJtDuration(jt.duration_minutes)
+    setJtColor(jt.color_hex ?? "#F97316")
+    setEditingJobTypeId(jt.id)
+  }
+
+  function cancelEditJobType() {
+    setJtName("")
+    setJtDescription("")
+    setJtDuration(60)
+    setJtColor("#F97316")
+    setEditingJobTypeId(null)
+  }
+
+  async function removeJobType(jt: JobType) {
+    if (!supabase || !userId) return
+    if (!confirm(`Remove job type "${jt.name}"? Events using this type will keep their color but the type will no longer appear in the list.`)) return
+    const { error } = await supabase.from("job_types").delete().eq("id", jt.id).eq("user_id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    if (editingJobTypeId === jt.id) cancelEditJobType()
     loadJobTypes()
   }
 
@@ -251,8 +376,22 @@ export default function CalendarPage() {
     })
   }
 
+  function minutesFromDayStart(d: Date, dayStart: Date): number {
+    return (d.getTime() - dayStart.getTime()) / (60 * 1000)
+  }
+
   const grid = view === "month" ? getMonthGrid(currentDate) : []
   const weekStart = view === "week" ? getWeekStart(currentDate) : new Date(currentDate)
+  const timeOptions = getTimeOptions(timeIncrement)
+  const dayViewStartHour = workingHoursEnabled ? parseInt(workingStart.slice(0, 2), 10) : DAY_START_HOUR
+  const dayViewEndHour = workingHoursEnabled ? parseInt(workingEnd.slice(0, 2), 10) : DAY_END_HOUR
+  const dayViewHours = Array.from(
+    { length: Math.max(1, dayViewEndHour - dayViewStartHour + 1) },
+    (_, i) => dayViewStartHour + i
+  )
+  const addInputStyle: React.CSSProperties = {
+    ...theme.formInput,
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -270,6 +409,12 @@ export default function CalendarPage() {
           style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
         >
           Auto Response Options
+        </button>
+        <button
+          onClick={() => setShowJobTypes(true)}
+          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+        >
+          Job Types
         </button>
         <button
           onClick={() => setShowSettings(true)}
@@ -331,12 +476,6 @@ export default function CalendarPage() {
             style={{ marginLeft: "auto", padding: "6px 12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}
           >
             {expanded ? "Collapse" : "Expand"}
-          </button>
-          <button
-            onClick={() => setShowJobTypes(true)}
-            style={{ padding: "6px 12px", background: theme.charcoalSmoke, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-          >
-            Job Types
           </button>
         </div>
 
@@ -404,94 +543,151 @@ export default function CalendarPage() {
               </tbody>
             </table>
           ) : view === "week" ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", gap: "1px", background: theme.border, border: `1px solid ${theme.border}` }}>
-                <div style={{ background: "#f9fafb", padding: "8px", fontSize: "12px" }} />
+            <div style={{ display: "flex", flexDirection: "column", border: `1px solid ${theme.border}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", borderBottom: `1px solid ${theme.border}` }}>
+                <div style={{ background: "#f9fafb", padding: "8px" }} />
                 {Array.from({ length: 7 }, (_, i) => {
                   const d = new Date(weekStart)
                   d.setDate(d.getDate() + i)
                   return (
-                    <div key={i} style={{ background: "#f9fafb", padding: "8px", fontSize: "12px", fontWeight: 600, textAlign: "center" }}>
+                    <div key={i} style={{ background: "#f9fafb", padding: "6px 8px", fontSize: "12px", fontWeight: 600, textAlign: "center", color: theme.text }}>
+                      <div style={{ fontSize: "11px", color: "#6b7280", marginBottom: "2px" }}>{WEEKDAY_NAMES_FULL[d.getDay()]}</div>
                       {WEEKDAY_NAMES[d.getDay()]} {d.getDate()}
                     </div>
                   )
                 })}
-                {HOURS.map((hour) => (
-                  <div key={hour} style={{ display: "contents" }}>
-                    <div style={{ background: "#f9fafb", padding: "4px", fontSize: "11px", color: "#6b7280" }}>
-                      {hour === 12 ? "12p" : hour > 12 ? `${hour - 12}p` : `${hour}a`}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", overflow: "hidden" }}>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {dayViewHours.map((hour) => (
+                    <div key={hour} style={{ height: HOUR_HEIGHT, padding: "2px 4px", fontSize: "11px", color: theme.text, background: "#f9fafb", borderBottom: `1px solid ${theme.border}` }}>
+                      {hourLabel12hr(hour, 0)}
                     </div>
-                    {Array.from({ length: 7 }, (_, i) => {
-                      const d = new Date(weekStart)
-                      d.setDate(d.getDate() + i)
-                      d.setHours(hour, 0, 0, 0)
-                      const cellEvents = events.filter((e) => {
-                        const start = new Date(e.start_at)
-                        return isSameDay(start, d) && start.getHours() === hour
-                      })
-                      return (
-                        <div key={`${hour}-${i}`} style={{ minHeight: "32px", background: "white", padding: "2px", borderBottom: `1px solid ${theme.border}` }}>
-                          {cellEvents.map((ev) => (
-                            <div
-                              key={ev.id}
-                              onClick={() => setSelectedEvent(ev)}
-                              style={{
-                                fontSize: "11px",
-                                padding: "2px 4px",
-                                borderRadius: "4px",
-                                background: getEventColor(ev),
-                                color: "#fff",
-                                cursor: "pointer",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis"
-                              }}
-                              title={ev.title}
-                            >
-                              {ev.title}
-                            </div>
-                          ))}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
+                  ))}
+                </div>
+                {Array.from({ length: 7 }, (_, dayIdx) => {
+                  const dayStart = new Date(weekStart)
+                  dayStart.setDate(dayStart.getDate() + dayIdx)
+                  dayStart.setHours(dayViewStartHour, 0, 0, 0)
+                  const dayEnd = new Date(dayStart)
+                  dayEnd.setHours(dayViewEndHour, 0, 0, 0)
+                  const dayEvents = events.filter((e) => {
+                    const start = new Date(e.start_at)
+                    const end = new Date(e.end_at)
+                    return isSameDay(start, dayStart) && start < dayEnd && end > dayStart
+                  })
+                  return (
+                    <div key={dayIdx} style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", borderLeft: `1px solid ${theme.border}` }}>
+                      {dayEvents.map((ev) => {
+                        const start = new Date(ev.start_at)
+                        const end = new Date(ev.end_at)
+                        const clipStart = start < dayStart ? dayStart : start
+                        const clipEnd = end > dayEnd ? dayEnd : end
+                        const topMin = minutesFromDayStart(clipStart, dayStart)
+                        const durMin = (clipEnd.getTime() - clipStart.getTime()) / (60 * 1000)
+                        const topPx = (topMin / 60) * HOUR_HEIGHT
+                        const heightPx = Math.max(2, (durMin / 60) * HOUR_HEIGHT)
+                        return (
+                          <div
+                            key={ev.id}
+                            onClick={() => setSelectedEvent(ev)}
+                            style={{
+                              position: "absolute",
+                              left: 2,
+                              right: 2,
+                              top: topPx,
+                              height: heightPx,
+                              padding: "2px 4px",
+                              borderRadius: "4px",
+                              background: getEventColor(ev),
+                              color: "#fff",
+                              cursor: "pointer",
+                              fontSize: "11px",
+                              overflow: "hidden",
+                              boxSizing: "border-box"
+                            }}
+                            title={`${new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} ${ev.title}`}
+                          >
+                            {new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} {ev.title}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: "0", border: `1px solid ${theme.border}` }}>
-              {HOURS.map((hour) => (
-                <div key={hour} style={{ display: "contents" }}>
-                  <div style={{ padding: "8px", fontSize: "12px", background: "#f9fafb", borderBottom: `1px solid ${theme.border}` }}>
-                    {hour === 12 ? "12:00 PM" : hour > 12 ? `${hour - 12}:00 PM` : `${hour}:00 AM`}
+            <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: "0", border: `1px solid ${theme.border}` }}>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {dayViewHours.map((hour) => (
+                  <div key={hour} style={{ padding: "4px 8px", fontSize: "12px", fontWeight: 500, background: "#f9fafb", borderBottom: `1px solid ${theme.border}`, height: HOUR_HEIGHT, boxSizing: "border-box", color: theme.text }}>
+                    {hourLabel12hr(hour, 0)}
                   </div>
-                  <div style={{ minHeight: "48px", padding: "4px", background: "white", borderBottom: `1px solid ${theme.border}` }}>
-                    {events
-                      .filter((e) => {
-                        const start = new Date(e.start_at)
-                        return isSameDay(start, currentDate) && start.getHours() === hour
-                      })
-                      .map((ev) => (
+                ))}
+              </div>
+              <div style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white" }}>
+                {dayViewHours.map((hour, i) => (
+                  <div
+                    key={hour}
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      top: i * HOUR_HEIGHT,
+                      height: 1,
+                      background: theme.border,
+                      pointerEvents: "none"
+                    }}
+                  />
+                ))}
+                {(() => {
+                  const dayStart = new Date(currentDate)
+                  dayStart.setHours(dayViewStartHour, 0, 0, 0)
+                  const dayEnd = new Date(currentDate)
+                  dayEnd.setHours(dayViewEndHour, 0, 0, 0)
+                  return events
+                    .filter((e) => {
+                      const start = new Date(e.start_at)
+                      const end = new Date(e.end_at)
+                      return isSameDay(start, currentDate) && start < dayEnd && end > dayStart
+                    })
+                    .map((ev) => {
+                      const start = new Date(ev.start_at)
+                      const end = new Date(ev.end_at)
+                      const clipStart = start < dayStart ? dayStart : start
+                      const clipEnd = end > dayEnd ? dayEnd : end
+                      const topMin = minutesFromDayStart(clipStart, dayStart)
+                      const durMin = (clipEnd.getTime() - clipStart.getTime()) / (60 * 1000)
+                      const topPx = (topMin / 60) * HOUR_HEIGHT
+                      const heightPx = Math.max(2, (durMin / 60) * HOUR_HEIGHT)
+                      return (
                         <div
                           key={ev.id}
                           onClick={() => setSelectedEvent(ev)}
                           style={{
-                            padding: "6px 8px",
-                            borderRadius: "6px",
+                            position: "absolute",
+                            left: 4,
+                            right: 4,
+                            top: topPx,
+                            height: heightPx,
+                            padding: "4px 6px",
+                            borderRadius: "4px",
                             background: getEventColor(ev),
                             color: "#fff",
                             cursor: "pointer",
-                            marginBottom: "4px"
+                            fontSize: "12px",
+                            overflow: "hidden",
+                            boxSizing: "border-box"
                           }}
+                          title={ev.title}
                         >
-                          <strong>{ev.title}</strong>
-                          <div style={{ fontSize: "12px", opacity: 0.9 }}>
-                            {new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – {new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                          </div>
+                          <strong>{new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</strong> {ev.title}
                         </div>
-                      ))}
-                  </div>
-                </div>
-              ))}
+                      )
+                    })
+                })()}
+              </div>
             </div>
           )}
         </div>
@@ -500,18 +696,30 @@ export default function CalendarPage() {
       {/* Add item modal */}
       {showAddItem && (
         <>
-          <div onClick={() => setShowAddItem(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
+          <div onClick={() => { setShowAddItem(false); setAddError("") }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add to calendar</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+              <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={addInputStyle} />
               <div style={{ display: "flex", gap: "8px" }}>
-                <input type="date" value={addStartDate} onChange={(e) => setAddStartDate(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, flex: 1 }} />
-                <input type="time" value={addStartTime} onChange={(e) => setAddStartTime(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-              </div>
-              <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Duration (minutes)</label>
-                <input type="number" min={15} step={15} value={addDuration} onChange={(e) => setAddDuration(parseInt(e.target.value, 10) || 60)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                <input type="date" value={addStartDate} onChange={(e) => setAddStartDate(e.target.value)} style={{ ...addInputStyle, flex: 1 }} />
+                <select
+                  value={addStartTime}
+                  onChange={(e) => setAddStartTime(e.target.value)}
+                  style={addInputStyle}
+                >
+                  {timeOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {(() => {
+                        const [h, m] = t.split(":").map(Number)
+                        if (h === 0) return `12:${String(m).padStart(2, "0")} AM`
+                        if (h < 12) return `${h}:${String(m).padStart(2, "0")} AM`
+                        if (h === 12) return `12:${String(m).padStart(2, "0")} PM`
+                        return `${h - 12}:${String(m).padStart(2, "0")} PM`
+                      })()}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
@@ -521,9 +729,12 @@ export default function CalendarPage() {
                     const id = e.target.value
                     setAddJobTypeId(id)
                     const jt = jobTypes.find((j) => j.id === id)
-                    if (jt) setAddDuration(jt.duration_minutes)
+                    if (jt) {
+                      const mins = jt.duration_minutes
+                      setAddDuration(timeIncrement === 60 ? Math.max(60, Math.round(mins / 60) * 60) : mins)
+                    }
                   }}
-                  style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                  style={addInputStyle}
                 >
                   <option value="">— None —</option>
                   {jobTypes.map((jt) => (
@@ -531,11 +742,49 @@ export default function CalendarPage() {
                   ))}
                 </select>
               </div>
-              <textarea placeholder="Notes" value={addNotes} onChange={(e) => setAddNotes(e.target.value)} rows={2} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }} />
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text }}>Time increments</label>
+                <select
+                  value={timeIncrement}
+                  onChange={(e) => {
+                    const v = e.target.value === "60" ? 60 : 15
+                    setTimeIncrement(v)
+                    const rounded = Math.max(v, Math.round(addDuration / v) * v)
+                    setAddDuration(rounded)
+                    try { localStorage.setItem("calendar_timeIncrement", String(v)) } catch { /* ignore */ }
+                  }}
+                  style={addInputStyle}
+                >
+                  <option value={15}>15 minute increments</option>
+                  <option value={60}>Hourly increments</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text }}>
+                  {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+                </label>
+                <input
+                  type="number"
+                  min={timeIncrement === 60 ? 1 : timeIncrement}
+                  step={timeIncrement === 60 ? 1 : timeIncrement}
+                  value={timeIncrement === 60 ? Math.max(1, Math.round(addDuration / 60)) : addDuration}
+                  onChange={(e) => {
+                    const raw = parseInt(e.target.value, 10)
+                    if (timeIncrement === 60) {
+                      setAddDuration((raw || 1) * 60)
+                    } else {
+                      setAddDuration(raw || timeIncrement)
+                    }
+                  }}
+                  style={addInputStyle}
+                />
+              </div>
+              <textarea placeholder="Notes" value={addNotes} onChange={(e) => setAddNotes(e.target.value)} rows={2} style={{ ...addInputStyle, resize: "vertical" }} />
+              {addError && <p style={{ color: "#b91c1c", fontSize: "14px", margin: 0 }}>{addError}</p>}
               <button onClick={saveEvent} disabled={addSaving} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                 {addSaving ? "Saving..." : "Add to calendar"}
               </button>
-              <button onClick={() => setShowAddItem(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
+              <button onClick={() => { setShowAddItem(false); setAddError("") }} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
             </div>
           </div>
         </>
@@ -547,27 +796,52 @@ export default function CalendarPage() {
           <div onClick={() => setShowJobTypes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "480px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
+            {jobTypesLoadError && (
+              <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
+                Could not load job types: {jobTypesLoadError}
+                <br />
+                <strong>Fix:</strong> In Supabase Dashboard → SQL Editor, run the full script in <code style={{ fontSize: "12px" }}>tradesman/supabase-job-types-setup.sql</code>, then close and reopen this window.
+              </p>
+            )}
             <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>Create job types with description, time required, and a custom color for the calendar.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "20px" }}>
-              <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-              <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+              <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
+              <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <input type="number" min={15} step={15} placeholder="Duration (min)" value={jtDuration} onChange={(e) => setJtDuration(parseInt(e.target.value, 10) || 60)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, width: "120px" }} />
+                <input type="number" min={15} step={15} placeholder="Duration (min)" value={jtDuration} onChange={(e) => setJtDuration(parseInt(e.target.value, 10) || 60)} style={{ ...theme.formInput, width: "120px" }} />
                 <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
                 <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
               </div>
-              <button onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
-                {jtSaving ? "Adding..." : "Add job type"}
-              </button>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
+                  {jtSaving ? (editingJobTypeId ? "Updating..." : "Adding...") : editingJobTypeId ? "Update job type" : "Add job type"}
+                </button>
+                {editingJobTypeId && (
+                  <button onClick={cancelEditJobType} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
             <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: "12px" }}>
-              {jobTypes.map((jt) => (
-                <div key={jt.id} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", padding: "8px", background: "#f9fafb", borderRadius: "6px" }}>
-                  <div style={{ width: "16px", height: "16px", borderRadius: "4px", background: jt.color_hex ?? theme.primary }} />
-                  <span style={{ flex: 1, fontWeight: 600, color: theme.text }}>{jt.name}</span>
-                  <span style={{ fontSize: "13px", color: "#6b7280" }}>{jt.duration_minutes} min</span>
-                </div>
-              ))}
+              <h4 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>Your job types</h4>
+              {jobTypes.length === 0 && !jobTypesLoadError ? (
+                <p style={{ margin: 0, fontSize: "13px", color: "#6b7280" }}>No job types yet. Create one above; they will appear here and in the &quot;Add to calendar&quot; job type dropdown.</p>
+              ) : jobTypes.length === 0 ? null : (
+                jobTypes.map((jt) => (
+                  <div key={jt.id} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", padding: "8px", background: "#f9fafb", borderRadius: "6px" }}>
+                    <div style={{ width: "16px", height: "16px", borderRadius: "4px", background: jt.color_hex ?? theme.primary, flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontWeight: 600, color: theme.text }}>{jt.name}</span>
+                    <span style={{ fontSize: "13px", color: "#6b7280" }}>{jt.duration_minutes} min</span>
+                    <button type="button" onClick={() => startEditJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => removeJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: "1px solid #fca5a5", borderRadius: "6px", background: "white", cursor: "pointer", color: "#b91c1c" }}>
+                      Remove
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
             <button onClick={() => setShowJobTypes(false)} style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Done</button>
           </div>
@@ -590,12 +864,72 @@ export default function CalendarPage() {
                     setFirstDayOfWeek(v)
                     try { localStorage.setItem("calendar_firstDayOfWeek", String(v)) } catch { /* ignore */ }
                   }}
-                  style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                  style={{ ...theme.formInput }}
                 >
                   <option value={0}>Sunday</option>
                   <option value={1}>Monday</option>
                 </select>
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: theme.text }}>
+                <input
+                  type="checkbox"
+                  checked={workingHoursEnabled}
+                  onChange={(e) => {
+                    const v = e.target.checked
+                    setWorkingHoursEnabled(v)
+                    try { localStorage.setItem("calendar_workingHoursEnabled", v ? "true" : "false") } catch { /* ignore */ }
+                  }}
+                />
+                Have calendar reflect time of day start and end
+              </label>
+              {workingHoursEnabled && (
+                <div style={{ display: "flex", gap: "12px", marginLeft: "20px" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Start time</label>
+                    <select
+                      value={workingStart}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setWorkingStart(v)
+                        try { localStorage.setItem("calendar_workingStart", v) } catch { /* ignore */ }
+                      }}
+                      style={{ ...theme.formInput }}
+                    >
+                      {ALL_DAY_TIMES_12HR.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>End time</label>
+                    <select
+                      value={workingEnd}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setWorkingEnd(v)
+                        try { localStorage.setItem("calendar_workingEnd", v) } catch { /* ignore */ }
+                      }}
+                      style={{ ...theme.formInput }}
+                    >
+                      {ALL_DAY_TIMES_12HR.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: theme.text }}>
+                <input
+                  type="checkbox"
+                  checked={noDuplicateTimes}
+                  onChange={(e) => {
+                    const v = e.target.checked
+                    setNoDuplicateTimes(v)
+                    try { localStorage.setItem("calendar_noDuplicateTimes", v ? "true" : "false") } catch { /* ignore */ }
+                  }}
+                />
+                Do not allow duplicate times to be installed
+              </label>
             </div>
             <button onClick={() => setShowSettings(false)} style={{ marginTop: "20px", padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Done</button>
           </div>
@@ -619,7 +953,7 @@ export default function CalendarPage() {
                     setArReminderMins(e.target.value)
                     try { localStorage.setItem("calendar_arReminderMins", e.target.value) } catch { /* ignore */ }
                   }}
-                  style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                  style={{ ...theme.formInput }}
                 />
               </div>
             </div>

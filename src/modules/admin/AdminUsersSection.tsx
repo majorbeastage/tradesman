@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
+import { supabase } from "../../lib/supabase"
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
@@ -24,26 +25,54 @@ export default function AdminUsersSection() {
   const [message, setMessage] = useState("")
 
   async function loadUsers() {
-    if (!session?.access_token || !supabaseUrl) {
+    if (!session?.access_token) {
       setLoading(false)
       return
     }
     setLoading(true)
     setError("")
     try {
-      const res = await fetch(`${supabaseUrl}/functions/v1/admin-users`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || res.statusText)
-        setUsers([])
+      if (supabaseUrl) {
+        const res = await fetch(`${supabaseUrl}/functions/v1/admin-users`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        })
+        const data = await res.json()
+        if (res.ok && Array.isArray(data.users)) {
+          setUsers(data.users)
+          return
+        }
+      }
+      if (!supabase) {
+        setError("Supabase not configured")
+        setLoading(false)
         return
       }
-      setUsers(data.users || [])
+      const { data: list, error: listError } = await supabase
+        .from("admin_users_list")
+        .select("id, email, created_at, role, display_name")
+      if (!listError && list?.length) {
+        setUsers(list as UserRow[])
+        return
+      }
+      const { data: profiles } = await supabase.from("profiles").select("id, role, display_name, created_at")
+      if (profiles?.length) {
+        setUsers(
+          profiles.map((p) => ({
+            id: p.id,
+            email: null,
+            created_at: (p as { created_at?: string }).created_at ?? "",
+            role: (p as { role: string }).role,
+            display_name: (p as { display_name: string | null }).display_name ?? null,
+          }))
+        )
+        setError("Users from profiles (no email). Deploy admin-users Edge Function for full list.")
+        return
+      }
+      setUsers([])
+      if (!supabaseUrl) setError("Set VITE_SUPABASE_URL. Or run supabase-admin-users-view.sql and supabase-profiles-roles.sql.")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load users")
       setUsers([])

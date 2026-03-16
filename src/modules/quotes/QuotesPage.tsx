@@ -533,7 +533,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 placeholder="Description"
                 value={newItemDescription}
                 onChange={(e) => setNewItemDescription(e.target.value)}
-                style={{ padding: "6px 10px", width: "200px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                style={{ ...theme.formInput, padding: "6px 10px", width: "200px" }}
               />
               <input
                 type="number"
@@ -542,7 +542,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 placeholder="Qty"
                 value={newItemQuantity}
                 onChange={(e) => setNewItemQuantity(e.target.value)}
-                style={{ padding: "6px 10px", width: "80px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
               />
               <input
                 type="number"
@@ -551,7 +551,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 placeholder="Unit price"
                 value={newItemUnitPrice}
                 onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                style={{ padding: "6px 10px", width: "100px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
               />
               <button
                 type="button"
@@ -611,18 +611,18 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
               <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add quote to calendar</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ ...theme.formInput }} />
                 <div style={{ display: "flex", gap: "8px" }}>
-                  <input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, flex: 1 }} />
-                  <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                  <input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} style={{ ...theme.formInput, flex: 1 }} />
+                  <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ ...theme.formInput }} />
                 </div>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Duration (minutes)</label>
-                  <input type="number" min={15} step={15} value={calDuration} onChange={(e) => setCalDuration(parseInt(e.target.value, 10) || 60)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                  <input type="number" min={15} step={15} value={calDuration} onChange={(e) => setCalDuration(parseInt(e.target.value, 10) || 60)} style={{ ...theme.formInput }} />
                 </div>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
-                  <select value={calJobTypeId} onChange={(e) => setCalJobTypeId(e.target.value)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}>
+                  <select value={calJobTypeId} onChange={(e) => setCalJobTypeId(e.target.value)} style={{ ...theme.formInput }}>
                     <option value="">— None —</option>
                     {jobTypes.map((jt) => (
                       <option key={jt.id} value={jt.id}>{jt.name} ({jt.duration_minutes} min)</option>
@@ -631,7 +631,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </div>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Notes</label>
-                  <input placeholder="Optional notes" value={calNotes} onChange={(e) => setCalNotes(e.target.value)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                  <input placeholder="Optional notes" value={calNotes} onChange={(e) => setCalNotes(e.target.value)} style={{ ...theme.formInput }} />
                 </div>
                 <button
                   disabled={addToCalendarLoading}
@@ -693,7 +693,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     value={addExistingId}
                     onFocus={loadCustomerList}
                     onChange={(e) => setAddExistingId(e.target.value)}
-                    style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                    style={{ ...theme.formInput }}
                   >
                     <option value="">— Select customer —</option>
                     {customerList.map((c) => (
@@ -707,9 +707,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </label>
                 {addUseNew && (
                   <>
-                    <input placeholder="Customer name" value={addNewName} onChange={(e) => setAddNewName(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-                    <input placeholder="Phone" value={addNewPhone} onChange={(e) => setAddNewPhone(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
-                    <input placeholder="Email" value={addNewEmail} onChange={(e) => setAddNewEmail(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }} />
+                    <input placeholder="Customer name" value={addNewName} onChange={(e) => setAddNewName(e.target.value)} style={{ ...theme.formInput }} />
+                    <input placeholder="Phone" value={addNewPhone} onChange={(e) => setAddNewPhone(e.target.value)} style={{ ...theme.formInput }} />
+                    <input placeholder="Email" value={addNewEmail} onChange={(e) => setAddNewEmail(e.target.value)} style={{ ...theme.formInput }} />
                   </>
                 )}
                 <button onClick={addCustomerToQuotesFlow} disabled={addLoading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
@@ -738,7 +738,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       setDefaultQuoteStatus(e.target.value)
                       try { localStorage.setItem("quotes_defaultStatus", e.target.value) } catch { /* ignore */ }
                     }}
-                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+                    style={{ ...theme.formInput }}
                   >
                     <option value="draft">Draft</option>
                     <option value="sent">Sent</option>
@@ -784,7 +784,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       }}
                       placeholder="Message to send when a new quote is added..."
                       rows={3}
-                      style={{ width: "100%", marginTop: "10px", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }}
+                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
                     />
                   )}
                 </div>
@@ -810,7 +810,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       }}
                       placeholder="Message to send when quote is sent to customer..."
                       rows={3}
-                      style={{ width: "100%", marginTop: "10px", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }}
+                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
                     />
                   )}
                 </div>
@@ -836,7 +836,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       }}
                       placeholder="Message to send when customer views the quote..."
                       rows={3}
-                      style={{ width: "100%", marginTop: "10px", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }}
+                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
                     />
                   )}
                 </div>
@@ -850,7 +850,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       setArDelayMinutes(e.target.value)
                       try { localStorage.setItem("quotes_arDelayMinutes", e.target.value) } catch { /* ignore */ }
                     }}
-                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text }}
+                    style={{ ...theme.formInput }}
                   />
                 </div>
               </div>

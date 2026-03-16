@@ -7,6 +7,8 @@ import type { Client } from "../../types/portal-builder"
 import AdminUsersSection from "./AdminUsersSection"
 import AdminPortalBuilder from "./AdminPortalBuilder"
 
+const DEFAULT_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
+
 /**
  * Admin portal: client selector, portal builder (custom fields, tabs), users, dropdowns, office manager clients.
  */
@@ -16,15 +18,25 @@ export default function AdminApp() {
   const [section, setSection] = useState<"users" | "portal-builder" | "settings" | "dropdowns" | "office-managers">("users")
   const [clients, setClients] = useState<Client[]>([])
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  const [clientsError, setClientsError] = useState("")
 
   useEffect(() => {
     fetchClients()
-      .then(setClients)
-      .catch(() => setClients([]))
+      .then((list) => {
+        setClientsError("")
+        setClients(list)
+      })
+      .catch((e) => {
+        setClientsError(e instanceof Error ? e.message : "Failed to load clients")
+        setClients([])
+      })
   }, [])
 
   useEffect(() => {
-    if (clients.length > 0 && !selectedClientId) setSelectedClientId(clients[0].id)
+    if (!selectedClientId) {
+      if (clients.length > 0) setSelectedClientId(clients[0].id)
+      else setSelectedClientId(DEFAULT_CLIENT_ID)
+    }
   }, [clients, selectedClientId])
 
   const navStyle: React.CSSProperties = {
@@ -66,10 +78,19 @@ export default function AdminApp() {
               fontSize: 14,
             }}
           >
+            {clients.length === 0 && (
+              <option value={DEFAULT_CLIENT_ID}>Default</option>
+            )}
             {clients.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          {clientsError && (
+            <p style={{ margin: "4px 0 0", fontSize: 11, opacity: 0.9 }}>{clientsError}</p>
+          )}
+          {clients.length === 0 && !clientsError && (
+            <p style={{ margin: "4px 0 0", fontSize: 11, opacity: 0.8 }}>Run supabase-admin-portal-builder.sql to add clients.</p>
+          )}
         </label>
         <button
           style={section === "users" ? navActiveStyle : navStyle}
