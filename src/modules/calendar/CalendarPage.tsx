@@ -394,8 +394,11 @@ export default function CalendarPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <h1>Calendar</h1>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
+      <h1 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        Calendar
+        <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
+      </h1>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
         <button
