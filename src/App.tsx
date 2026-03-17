@@ -124,7 +124,7 @@ function MainApp() {
 }
 
 function App() {
-  const { user, role, loading, refetchProfile } = useAuth()
+  const { refetchProfile } = useAuth()
   const [view, setView] = useState<View>("home")
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
