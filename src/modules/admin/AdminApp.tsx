@@ -4,7 +4,7 @@ import { useView } from "../../contexts/ViewContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
-import type { PortalConfig, PortalCustomItem, PageControl } from "../../types/portal-builder"
+import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   USER_PORTAL_TAB_IDS,
   TAB_ID_LABELS,
@@ -14,7 +14,19 @@ import {
   PORTAL_DROPDOWN_LABELS,
   PAGE_CONTROLS,
   DEFAULT_OPTIONS,
+  LEADS_TABLE_COLUMN_IDS,
+  LEADS_TABLE_COLUMN_LABELS,
+  getDefaultControlItems,
 } from "../../types/portal-builder"
+
+function getCustomActionButtonsFromConfig(cfg: PortalConfig, tabId: string): CustomActionButton[] {
+  if (tabId === "leads") {
+    if ((cfg.customActionButtons ?? []).length > 0) return cfg.customActionButtons!
+    const legacy = (cfg as { customHeaderButtons?: PortalCustomItem[] }).customHeaderButtons
+    if (legacy?.length) return legacy.map((b) => ({ id: b.id, label: b.label, items: [] }))
+  }
+  return cfg.customActionButtonsByTab?.[tabId] ?? []
+}
 
 type ProfileRow = {
   id: string
@@ -73,7 +85,7 @@ function getAllDropdownIds(config: PortalConfig): { id: string; label: string }[
   return [...default_, ...custom]
 }
 
-type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null) => React.ReactNode
+type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null, config?: PortalConfig) => React.ReactNode
 
 /** What each tab shows in the real app; mock can be static or a function for clickable controls */
 const TAB_PREVIEW: Record<string, { title: string; description: string; mock: React.ReactNode | MockFn }> = {
@@ -89,20 +101,22 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
   },
   leads: {
     title: "Leads",
-    description: "Click a button or dropdown below to edit its options on the right.",
-    mock: ((onSelect, selectedId) => {
+    description: "Click any element to customize it. Matches what the user sees on the Leads page.",
+    mock: ((onSelect, selectedId, cfg) => {
+      const config = cfg ?? {}
+      const getLabel = (id: string, fallback: string) => (config.controlLabels?.[id]?.trim() || fallback)
       const btn = (id: string, label: string, primary?: boolean) => (
         <button
           key={id}
           type="button"
           onClick={(e) => { e.preventDefault(); onSelect(id) }}
           style={{
-            padding: "6px 12px",
+            padding: "8px 14px",
             borderRadius: 6,
             border: `2px solid ${selectedId === id ? theme.primary : theme.border}`,
-            background: selectedId === id ? theme.primary : primary ? theme.primary : theme.background,
+            background: selectedId === id ? theme.primary : primary ? "#F97316" : "white",
             color: selectedId === id || primary ? "white" : theme.text,
-            fontSize: 12,
+            fontSize: 13,
             cursor: "pointer",
             fontWeight: selectedId === id ? 600 : 400,
           }}
@@ -110,68 +124,218 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
           {label}
         </button>
       )
+      const colIds = (config.optionValues?.leads_table_columns?.length ? config.optionValues.leads_table_columns : [...LEADS_TABLE_COLUMN_IDS]) as string[]
       return (
-        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "10px 12px", background: theme.charcoalSmoke, color: "white", fontSize: 12, fontWeight: 600 }}>Leads</div>
-          <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {btn("filter", "Filter")}
-            {btn("add_lead", "+ Add lead", true)}
-            <span style={{ fontSize: 11, color: theme.text, opacity: 0.8 }}>Dropdowns:</span>
-            {btn("lead_source", "Lead source")}
-            {btn("status", "Status")}
-            {btn("priority", "Priority")}
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden", background: "white" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
+            <h1
+              onClick={(e) => { e.preventDefault(); onSelect("page_title") }}
+              style={{
+                margin: 0,
+                fontSize: 24,
+                color: theme.text,
+                cursor: "pointer",
+                border: `2px solid ${selectedId === "page_title" ? theme.primary : "transparent"}`,
+                borderRadius: 4,
+                padding: "2px 6px",
+                display: "inline-block",
+              }}
+            >
+              Leads
+            </h1>
           </div>
-          <div style={{ padding: "8px 12px", borderTop: `1px solid ${theme.border}`, fontSize: 12, color: theme.text }}>
-            Name · Source · Status · Date
+          <div style={{ padding: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {btn("create_lead", getLabel("create_lead", "+ Create Lead"), true)}
+                {btn("settings", getLabel("settings", "Settings"))}
+                {getCustomActionButtonsFromConfig(config, "leads").map((b) => {
+                  const cid = "custom_action_button:" + b.id
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); onSelect(cid) }}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 6,
+                        border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`,
+                        background: selectedId === cid ? theme.primary : "white",
+                        color: selectedId === cid ? "white" : theme.text,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {b.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", marginBottom: 16, padding: 12, background: theme.charcoalSmoke, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
+                <div
+                  onClick={(e) => { e.preventDefault(); onSelect("filter") }}
+                  style={{
+                    padding: "6px 10px",
+                    width: 160,
+                    background: "white",
+                    borderRadius: 6,
+                    border: `2px solid ${selectedId === "filter" ? theme.primary : theme.border}`,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: theme.text,
+                  }}
+                >
+                  By name... · By phone...
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
+                <div
+                  onClick={(e) => { e.preventDefault(); onSelect("sort_by") }}
+                  style={{
+                    padding: "6px 10px",
+                    minWidth: 120,
+                    background: "white",
+                    borderRadius: 6,
+                    border: `2px solid ${selectedId === "sort_by" ? theme.primary : theme.border}`,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: theme.text,
+                  }}
+                >
+                  Name ▾
+                </div>
+              </div>
+              {["lead_source", "status", "priority"].map((id) => (
+                <div key={id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#e5e7eb" }}>{PAGE_CONTROLS.leads.find((c) => c.id === id)?.label ?? id}</label>
+                  <div
+                    onClick={(e) => { e.preventDefault(); onSelect(id) }}
+                    style={{
+                      padding: "6px 10px",
+                      minWidth: 100,
+                      background: "white",
+                      borderRadius: 6,
+                      border: `2px solid ${selectedId === id ? theme.primary : theme.border}`,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      color: theme.text,
+                    }}
+                  >
+                    {id === "lead_source" ? "Web" : id === "status" ? "New" : "Low"} ▾
+                  </div>
+                </div>
+              ))}
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+                  {colIds.map((colId) => (
+                    <th
+                      key={colId}
+                      onClick={(e) => { e.preventDefault(); onSelect("table_columns") }}
+                      style={{
+                        padding: 8,
+                        cursor: "pointer",
+                        border: `2px solid ${selectedId === "table_columns" ? theme.primary : "transparent"}`,
+                        borderRadius: 4,
+                        color: theme.text,
+                        fontSize: 12,
+                      }}
+                    >
+                      {LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colSpan={colIds.length} style={{ padding: 12, fontSize: 12, color: theme.text, opacity: 0.7 }}>Lead rows appear here</td></tr>
+              </tbody>
+            </table>
           </div>
-          <div style={{ padding: "12px", fontSize: 12, color: theme.text, opacity: 0.7 }}>Lead list rows appear here</div>
         </div>
       )
     }) as MockFn,
   },
   conversations: {
     title: "Conversations",
-    description: "Click a control to edit its options on the right.",
-    mock: ((onSelect, selectedId) => (
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ padding: "10px 12px", background: theme.charcoalSmoke, color: "white", fontSize: 12 }}>Conversations</div>
-        <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => onSelect("conversation_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "conversation_settings" ? theme.primary : theme.border}`, background: selectedId === "conversation_settings" ? theme.primary : theme.background, color: selectedId === "conversation_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Conversation settings</button>
+    description: "Click a control to edit its options on the right. Same item options (checkboxes, dropdowns, custom fields, dependency) on every tab.",
+    mock: ((onSelect, selectedId, cfg) => {
+      const buttons = getCustomActionButtonsFromConfig(cfg ?? {}, "conversations")
+      return (
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
+            <h1 onClick={() => onSelect("page_title")} style={{ margin: 0, fontSize: 24, color: theme.text, cursor: "pointer", border: `2px solid ${selectedId === "page_title" ? theme.primary : "transparent"}`, borderRadius: 4, padding: "2px 6px", display: "inline-block" }}>Conversations</h1>
+          </div>
+          <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {buttons.map((b) => {
+              const cid = "custom_action_button:" + b.id
+              return (
+                <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
+              )
+            })}
+            <button type="button" onClick={() => onSelect("conversation_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "conversation_settings" ? theme.primary : theme.border}`, background: selectedId === "conversation_settings" ? theme.primary : theme.background, color: selectedId === "conversation_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Conversation settings</button>
+          </div>
+          <div style={{ padding: 12, fontSize: 12, color: theme.text, opacity: 0.8 }}>Thread list · Reply</div>
         </div>
-        <div style={{ padding: 12, fontSize: 12, color: theme.text, opacity: 0.8 }}>Thread list · Reply</div>
-      </div>
-    )) as MockFn,
+      )
+    }) as MockFn,
   },
   quotes: {
     title: "Quotes",
     description: "Click a control to edit its options on the right.",
-    mock: ((onSelect, selectedId) => (
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ padding: "10px 12px", background: theme.charcoalSmoke, color: "white", fontSize: 12 }}>Quotes</div>
-        <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => onSelect("quote_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "quote_settings" ? theme.primary : theme.border}`, background: selectedId === "quote_settings" ? theme.primary : theme.background, color: selectedId === "quote_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Quote settings</button>
-          <button type="button" onClick={() => onSelect("status")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "status" ? theme.primary : theme.border}`, background: selectedId === "status" ? theme.primary : theme.background, color: selectedId === "status" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Status</button>
+    mock: ((onSelect, selectedId, cfg) => {
+      const buttons = getCustomActionButtonsFromConfig(cfg ?? {}, "quotes")
+      return (
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
+            <h1 onClick={() => onSelect("page_title")} style={{ margin: 0, fontSize: 24, color: theme.text, cursor: "pointer", border: `2px solid ${selectedId === "page_title" ? theme.primary : "transparent"}`, borderRadius: 4, padding: "2px 6px", display: "inline-block" }}>Quotes</h1>
+          </div>
+          <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {buttons.map((b) => {
+              const cid = "custom_action_button:" + b.id
+              return (
+                <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
+              )
+            })}
+            <button type="button" onClick={() => onSelect("quote_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "quote_settings" ? theme.primary : theme.border}`, background: selectedId === "quote_settings" ? theme.primary : theme.background, color: selectedId === "quote_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Quote settings</button>
+            <button type="button" onClick={() => onSelect("status")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "status" ? theme.primary : theme.border}`, background: selectedId === "status" ? theme.primary : theme.background, color: selectedId === "status" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Status</button>
+          </div>
         </div>
-      </div>
-    )) as MockFn,
+      )
+    }) as MockFn,
   },
   calendar: {
     title: "Calendar",
     description: "Click a control to edit its options on the right.",
-    mock: ((onSelect, selectedId) => (
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ padding: "10px 12px", background: theme.charcoalSmoke, color: "white", fontSize: 12 }}>Calendar</div>
-        <div style={{ padding: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Working hours</button>
-          <button type="button" onClick={() => onSelect("job_type")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_type" ? theme.primary : theme.border}`, background: selectedId === "job_type" ? theme.primary : theme.background, color: selectedId === "job_type" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job type</button>
+    mock: ((onSelect, selectedId, cfg) => {
+      const buttons = getCustomActionButtonsFromConfig(cfg ?? {}, "calendar")
+      return (
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
+            <h1 onClick={() => onSelect("page_title")} style={{ margin: 0, fontSize: 24, color: theme.text, cursor: "pointer", border: `2px solid ${selectedId === "page_title" ? theme.primary : "transparent"}`, borderRadius: 4, padding: "2px 6px", display: "inline-block" }}>Calendar</h1>
+          </div>
+          <div style={{ padding: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {buttons.map((b) => {
+              const cid = "custom_action_button:" + b.id
+              return (
+                <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
+              )
+            })}
+            <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Working hours</button>
+            <button type="button" onClick={() => onSelect("job_type")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_type" ? theme.primary : theme.border}`, background: selectedId === "job_type" ? theme.primary : theme.background, color: selectedId === "job_type" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job type</button>
+          </div>
+          <div style={{ padding: 8, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11, color: theme.text }}>
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+              <div key={d} style={{ padding: 4, textAlign: "center", border: `1px solid ${theme.border}`, borderRadius: 4 }}>{d}</div>
+            ))}
+          </div>
         </div>
-        <div style={{ padding: 8, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11, color: theme.text }}>
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-            <div key={d} style={{ padding: 4, textAlign: "center", border: `1px solid ${theme.border}`, borderRadius: 4 }}>{d}</div>
-          ))}
-        </div>
-      </div>
-    )) as MockFn,
+      )
+    }) as MockFn,
   },
   customers: {
     title: "Customers",
@@ -204,14 +368,25 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
   settings: {
     title: "Settings",
     description: "Click a control to edit its options on the right.",
-    mock: ((onSelect, selectedId) => (
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ padding: "10px 12px", background: theme.charcoalSmoke, color: "white", fontSize: 12 }}>Settings</div>
-        <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => onSelect("custom_fields")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "custom_fields" ? theme.primary : theme.border}`, background: selectedId === "custom_fields" ? theme.primary : theme.background, color: selectedId === "custom_fields" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Custom fields</button>
+    mock: ((onSelect, selectedId, cfg) => {
+      const buttons = getCustomActionButtonsFromConfig(cfg ?? {}, "settings")
+      return (
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
+            <h1 onClick={() => onSelect("page_title")} style={{ margin: 0, fontSize: 24, color: theme.text, cursor: "pointer", border: `2px solid ${selectedId === "page_title" ? theme.primary : "transparent"}`, borderRadius: 4, padding: "2px 6px", display: "inline-block" }}>Settings</h1>
+          </div>
+          <div style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {buttons.map((b) => {
+              const cid = "custom_action_button:" + b.id
+              return (
+                <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
+              )
+            })}
+            <button type="button" onClick={() => onSelect("custom_fields")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "custom_fields" ? theme.primary : theme.border}`, background: selectedId === "custom_fields" ? theme.primary : theme.background, color: selectedId === "custom_fields" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Custom fields</button>
+          </div>
         </div>
-      </div>
-    )) as MockFn,
+      )
+    }) as MockFn,
   },
 }
 
@@ -225,7 +400,7 @@ function getPreviewForTab(
   if (builtIn) {
     const mock: React.ReactNode =
       typeof builtIn.mock === "function"
-        ? builtIn.mock(onSelectControl ?? (() => {}), selectedControlId ?? null)
+        ? builtIn.mock(onSelectControl ?? (() => {}), selectedControlId ?? null, config)
         : builtIn.mock
     return { title: builtIn.title, description: builtIn.description, mock }
   }
@@ -259,12 +434,20 @@ export default function AdminApp() {
 
   // Preview: which control is selected (tab + controlId) for showing options on the right
   const [selectedControl, setSelectedControl] = useState<{ tab: string; controlId: string } | null>(null)
+  // When control is custom_action_button, which specific button (by id) is selected for editing its items
+  const [selectedCustomActionButtonId, setSelectedCustomActionButtonId] = useState<string | null>(null)
 
   // Add custom (inline new id/label)
   const [newTabLabel, setNewTabLabel] = useState("")
   const [newSettingLabel, setNewSettingLabel] = useState("")
   const [newDropdownLabel, setNewDropdownLabel] = useState("")
-  const [newOptionValue, setNewOptionValue] = useState("")
+  const [newHeaderButtonLabel, setNewHeaderButtonLabel] = useState("")
+  const [newSettingItemLabel, setNewSettingItemLabel] = useState("")
+  const [newSettingItemType, setNewSettingItemType] = useState<'checkbox' | 'dropdown' | 'custom_field'>('checkbox')
+  const [newSettingItemOptions, setNewSettingItemOptions] = useState("")
+  const [selectedCustomButtonItemId, setSelectedCustomButtonItemId] = useState<string | null>(null)
+  const [selectedControlItemId, setSelectedControlItemId] = useState<string | null>(null)
+  const [newDropdownOptionValue, setNewDropdownOptionValue] = useState("")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -304,6 +487,7 @@ export default function AdminApp() {
     const p = profiles.find((x) => x.id === selectedId)
     setConfig(p?.portal_config ?? {})
   }, [selectedId, profiles])
+
 
   // When current preview tab is hidden, switch to first visible tab
   const visibleTabIds = getVisibleTabs(config).map((t) => t.tab_id)
@@ -434,10 +618,145 @@ export default function AdminApp() {
     setConfig({ ...config, optionValues })
   }
 
+  function setControlLabel(controlId: string, label: string) {
+    setConfig({ ...config, controlLabels: { ...config.controlLabels, [controlId]: label } })
+  }
+
+  function addCustomActionButton(label: string) {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    const id = trimmed.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "custom-" + Date.now()
+    const arr = getCustomActionButtons()
+    if (arr.some((x) => x.id === id)) return
+    if (previewPage === "leads") {
+      setConfig({ ...config, customActionButtons: [...arr, { id, label: trimmed, items: [] }] })
+    } else {
+      setConfig({ ...config, customActionButtonsByTab: { ...config.customActionButtonsByTab, [previewPage]: [...arr, { id, label: trimmed, items: [] }] } })
+    }
+    setNewHeaderButtonLabel("")
+  }
+
+  function removeCustomActionButton(id: string) {
+    const arr = getCustomActionButtons().filter((x) => x.id !== id)
+    if (previewPage === "leads") {
+      setConfig({ ...config, customActionButtons: arr.length ? arr : undefined })
+    } else {
+      setConfig({ ...config, customActionButtonsByTab: { ...config.customActionButtonsByTab, [previewPage]: arr } })
+    }
+    if (selectedCustomActionButtonId === id) setSelectedCustomActionButtonId(null)
+  }
+
+  const controlItemsKey = (tabId: string, controlId: string) => `${tabId}:${controlId}`
+
+  function getControlItems(tabId: string, controlId: string): PortalSettingItem[] {
+    const key = controlItemsKey(tabId, controlId)
+    if (key === "leads:settings") {
+      return config.controlItems?.[key] ?? config.leadsSettingsItems ?? getDefaultControlItems(tabId, controlId)
+    }
+    return config.controlItems?.[key] ?? getDefaultControlItems(tabId, controlId)
+  }
+
+  function setControlItems(tabId: string, controlId: string, items: PortalSettingItem[]) {
+    const key = controlItemsKey(tabId, controlId)
+    const next = { ...config, controlItems: { ...config.controlItems, [key]: items } }
+    if (key === "leads:settings") (next as PortalConfig).leadsSettingsItems = items
+    setConfig(next)
+  }
+
+  function addControlItem(tabId: string, controlId: string, item: PortalSettingItem) {
+    const current = getControlItems(tabId, controlId)
+    if (current.some((x) => x.id === item.id)) return
+    setControlItems(tabId, controlId, [...current, item])
+  }
+
+  function updateControlItem(tabId: string, controlId: string, itemId: string, updates: Partial<PortalSettingItem>) {
+    setControlItems(tabId, controlId, getControlItems(tabId, controlId).map((x) => (x.id === itemId ? { ...x, ...updates } : x)))
+  }
+
+  function setControlItemVisible(tabId: string, controlId: string, itemId: string, visibleToUser: boolean) {
+    setControlItems(tabId, controlId, getControlItems(tabId, controlId).map((x) => (x.id === itemId ? { ...x, visibleToUser } : x)))
+  }
+
+  function addControlItemOption(tabId: string, controlId: string, itemId: string, option: string) {
+    const items = getControlItems(tabId, controlId)
+    const item = items.find((x) => x.id === itemId)
+    if (!item || !option.trim()) return
+    const opts = item.options ?? []
+    if (opts.includes(option.trim())) return
+    updateControlItem(tabId, controlId, itemId, { options: [...opts, option.trim()] })
+  }
+
+  function removeControlItemOption(tabId: string, controlId: string, itemId: string, index: number) {
+    const item = getControlItems(tabId, controlId).find((x) => x.id === itemId)
+    if (!item?.options) return
+    updateControlItem(tabId, controlId, itemId, { options: item.options.filter((_, i) => i !== index) })
+  }
+
+  function getCustomActionButtons(): CustomActionButton[] {
+    return getCustomActionButtonsFromConfig(config, previewPage)
+  }
+
+  function getCustomActionButton(id: string): CustomActionButton | undefined {
+    return getCustomActionButtons().find((b) => b.id === id)
+  }
+
+  function updateCustomActionButton(id: string, updates: Partial<CustomActionButton>) {
+    const arr = getCustomActionButtons()
+    const next = arr.map((b) => (b.id === id ? { ...b, ...updates } : b))
+    if (previewPage === "leads") {
+      setConfig({ ...config, customActionButtons: next })
+    } else {
+      setConfig({ ...config, customActionButtonsByTab: { ...config.customActionButtonsByTab, [previewPage]: next } })
+    }
+  }
+
+  function addCustomActionButtonItem(buttonId: string, item: PortalSettingItem) {
+    const btn = getCustomActionButton(buttonId)
+    if (!btn || btn.items.some((x) => x.id === item.id)) return
+    updateCustomActionButton(buttonId, { items: [...btn.items, item] })
+  }
+
+  function setCustomActionButtonItemVisible(buttonId: string, itemId: string, visibleToUser: boolean) {
+    const btn = getCustomActionButton(buttonId)
+    if (!btn) return
+    updateCustomActionButton(buttonId, {
+      items: btn.items.map((x) => (x.id === itemId ? { ...x, visibleToUser } : x)),
+    })
+  }
+
+  function updateCustomActionButtonItem(buttonId: string, itemId: string, updates: Partial<PortalSettingItem>) {
+    const btn = getCustomActionButton(buttonId)
+    if (!btn) return
+    updateCustomActionButton(buttonId, {
+      items: btn.items.map((x) => (x.id === itemId ? { ...x, ...updates } : x)),
+    })
+  }
+
+  function addCustomActionButtonItemOption(buttonId: string, itemId: string, option: string) {
+    const btn = getCustomActionButton(buttonId)
+    const item = btn?.items.find((x) => x.id === itemId)
+    if (!item || !option.trim()) return
+    const opts = item.options ?? []
+    if (opts.includes(option.trim())) return
+    updateCustomActionButtonItem(buttonId, itemId, { options: [...opts, option.trim()] })
+  }
+
+  function removeCustomActionButtonItemOption(buttonId: string, itemId: string, index: number) {
+    const btn = getCustomActionButton(buttonId)
+    const item = btn?.items.find((x) => x.id === itemId)
+    if (!item?.options) return
+    updateCustomActionButtonItem(buttonId, itemId, { options: item.options.filter((_, i) => i !== index) })
+  }
+
   const pageControls: PageControl[] = PAGE_CONTROLS[previewPage] ?? []
   const showGlobalToggles = previewPage === "dashboard" || pageControls.length === 0
   const selectedControlForPage =
     selectedControl?.tab === previewPage ? selectedControl.controlId : null
+
+  useEffect(() => {
+    setSelectedCustomButtonItemId(null)
+    setSelectedControlItemId(null)
+  }, [selectedControlForPage])
 
   const labelStyle: React.CSSProperties = {
     display: "flex",
@@ -766,37 +1085,361 @@ export default function AdminApp() {
                             {c.label}
                           </button>
                         ))}
+                        {getCustomActionButtons().map((b) => {
+                          const cid = "custom_action_button:" + b.id
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => setSelectedControl({ tab: previewPage, controlId: cid })}
+                              style={{
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                border: `2px solid ${selectedControlForPage === cid ? theme.primary : theme.border}`,
+                                background: selectedControlForPage === cid ? theme.primary : theme.background,
+                                color: selectedControlForPage === cid ? "white" : theme.text,
+                                fontSize: 12,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {b.label}
+                            </button>
+                          )
+                        })}
                       </div>
                     </section>
                     {selectedControlForPage && (
                       <section style={{ marginBottom: 24, padding: 12, background: "rgba(0,0,0,0.03)", borderRadius: 8, border: `1px solid ${theme.border}` }}>
                         <h3 style={{ color: theme.text, fontSize: 14, margin: "0 0 8px" }}>
-                          Options for {pageControls.find((c) => c.id === selectedControlForPage)?.label ?? selectedControlForPage}
+                          {selectedControlForPage.startsWith("custom_action_button:")
+                            ? (getCustomActionButton(selectedControlForPage.replace("custom_action_button:", ""))?.label ?? "Custom button")
+                            : (pageControls.find((c) => c.id === selectedControlForPage)?.label ?? selectedControlForPage)}
                         </h3>
-                        <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Current options (user will see these). Add or remove below.</p>
-                        <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: theme.text }}>
-                          {getOptionValues(selectedControlForPage).map((opt, i) => (
-                            <li key={i} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
-                              <span>{opt}</span>
-                              <button type="button" onClick={() => removeOptionValue(selectedControlForPage, i)} style={{ fontSize: 11, padding: "2px 6px", color: "#b91c1c" }}>Remove</button>
-                            </li>
-                          ))}
-                        </ul>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <input
-                            type="text"
-                            placeholder="Add option"
-                            value={newOptionValue}
-                            onChange={(e) => setNewOptionValue(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addOptionValue(selectedControlForPage, newOptionValue); setNewOptionValue("") } }}
-                            style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }}
-                          />
-                          <button type="button" onClick={() => { addOptionValue(selectedControlForPage, newOptionValue); setNewOptionValue("") }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 13 }}>Add</button>
-                        </div>
-                        {DEFAULT_OPTIONS[selectedControlForPage] && (
-                          <p style={{ fontSize: 11, color: theme.text, opacity: 0.7, marginTop: 8 }}>
-                            Suggested: {DEFAULT_OPTIONS[selectedControlForPage].join(", ")}
-                          </p>
+                        {selectedControlForPage === "custom_header_button" && (
+                          <>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Custom buttons appear next to Settings. Add below; click a button to add/remove checkboxes, dropdowns, and custom fields inside it.</p>
+                            <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: theme.text }}>
+                              {getCustomActionButtons().map((b) => (
+                                <li key={b.id} style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span>{b.label}</span>
+                                  <button type="button" onClick={() => setSelectedControl({ tab: previewPage, controlId: "custom_action_button:" + b.id })} style={{ fontSize: 11, padding: "2px 6px" }}>Edit</button>
+                                  <button type="button" onClick={() => removeCustomActionButton(b.id)} style={{ fontSize: 11, padding: "2px 6px", color: "#b91c1c" }}>Remove</button>
+                                </li>
+                              ))}
+                            </ul>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <input
+                                type="text"
+                                placeholder="Button label"
+                                value={newHeaderButtonLabel}
+                                onChange={(e) => setNewHeaderButtonLabel(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomActionButton(newHeaderButtonLabel) } }}
+                                style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }}
+                              />
+                              <button type="button" onClick={() => addCustomActionButton(newHeaderButtonLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 13 }}>Add button</button>
+                            </div>
+                          </>
+                        )}
+                        {selectedControlForPage.startsWith("custom_action_button:") && (() => {
+                          const buttonId = selectedControlForPage.replace("custom_action_button:", "")
+                          const btn = getCustomActionButton(buttonId)
+                          if (!btn) return null
+                          const otherItemsInButton = (itemId: string) => btn.items.filter((x) => x.id !== itemId)
+                          return (
+                            <>
+                              <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label and items. Edit type, dropdown options (click Options), and dependency for checkboxes.</p>
+                              <input
+                                type="text"
+                                value={btn.label}
+                                onChange={(e) => updateCustomActionButton(buttonId, { label: e.target.value })}
+                                placeholder="Button label"
+                                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13, marginBottom: 12 }}
+                              />
+                              <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 6 }}>Items inside this button</p>
+                              <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
+                                {btn.items.map((item) => {
+                                  const isSelected = selectedCustomButtonItemId === item.id
+                                  const otherItems = otherItemsInButton(item.id)
+                                  return (
+                                    <li key={item.id} style={{ marginBottom: 10, padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
+                                        <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                        <select
+                                          value={item.type}
+                                          onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { type: e.target.value as PortalSettingItem["type"], options: e.target.value === "dropdown" ? (item.options ?? []) : undefined })}
+                                          style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 11 }}
+                                        >
+                                          <option value="checkbox">Checkbox</option>
+                                          <option value="dropdown">Dropdown</option>
+                                          <option value="custom_field">Custom field</option>
+                                        </select>
+                                        {item.type === "dropdown" && (
+                                          <button type="button" onClick={() => setSelectedCustomButtonItemId(selectedCustomButtonItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
+                                            Options ({(item.options ?? []).length}) ▾
+                                          </button>
+                                        )}
+                                        {(item.type === "checkbox" || item.type === "custom_field") && (
+                                          <button type="button" onClick={() => setSelectedCustomButtonItemId(selectedCustomButtonItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
+                                            Dependency ▾
+                                          </button>
+                                        )}
+                                        {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
+                                          <span style={{ fontSize: 10, color: theme.text, opacity: 0.8 }}>
+                                            {item.dependency ? `When ${otherItems.find((o) => o.id === item.dependency!.dependsOnItemId)?.label ?? item.dependency.dependsOnItemId} = ${item.dependency.showWhenValue}` : "No dependency"}
+                                          </span>
+                                        )}
+                                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
+                                          <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setCustomActionButtonItemVisible(buttonId, item.id, e.target.checked)} />
+                                          <span>Visible to user</span>
+                                        </label>
+                                      </div>
+                                      {isSelected && (
+                                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
+                                          {item.type === "dropdown" && (
+                                            <div style={{ marginBottom: 8 }}>
+                                              <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dropdown options</p>
+                                              <ul style={{ margin: "0 0 6px", paddingLeft: 18, fontSize: 12 }}>
+                                                {(item.options ?? []).map((opt, i) => (
+                                                  <li key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                    <span>{opt}</span>
+                                                    <button type="button" onClick={() => removeCustomActionButtonItemOption(buttonId, item.id, i)} style={{ fontSize: 10, padding: "2px 4px", color: "#b91c1c" }}>Remove</button>
+                                                  </li>
+                                                ))}
+                                              </ul>
+                                              <div style={{ display: "flex", gap: 6 }}>
+                                                <input type="text" placeholder="Add option" value={newDropdownOptionValue} onChange={(e) => setNewDropdownOptionValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomActionButtonItemOption(buttonId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); } }} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
+                                                <button type="button" onClick={() => { addCustomActionButtonItemOption(buttonId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                                              </div>
+                                            </div>
+                                          )}
+                                          <div style={{ marginBottom: 8 }}>
+                                            <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dependency (show when)</p>
+                                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                              <select
+                                                value={item.dependency?.dependsOnItemId ?? ""}
+                                                onChange={(e) => { const id = e.target.value; if (!id) { updateCustomActionButtonItem(buttonId, item.id, { dependency: undefined }); return }; const dep = otherItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateCustomActionButtonItem(buttonId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
+                                                style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
+                                              >
+                                                <option value="">— None —</option>
+                                                {otherItems.map((o) => (
+                                                  <option key={o.id} value={o.id}>{o.label}</option>
+                                                ))}
+                                              </select>
+                                              {item.dependency?.dependsOnItemId && (() => {
+                                                const depItem = otherItems.find((x) => x.id === item.dependency!.dependsOnItemId)
+                                                if (depItem?.type === "checkbox") {
+                                                  return (
+                                                    <select value={item.dependency.showWhenValue} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                      <option value="checked">Checked</option>
+                                                      <option value="unchecked">Unchecked</option>
+                                                    </select>
+                                                  )
+                                                }
+                                                if (depItem?.type === "dropdown" && depItem.options?.length) {
+                                                  return (
+                                                    <select value={item.dependency.showWhenValue} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                      {depItem.options.map((opt) => (
+                                                        <option key={opt} value={opt}>{opt}</option>
+                                                      ))}
+                                                    </select>
+                                                  )
+                                                }
+                                                if (depItem?.type === "custom_field") {
+                                                  return (
+                                                    <select value={item.dependency.showWhenValue || "filled"} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                      <option value="filled">Has value</option>
+                                                      <option value="empty">Empty</option>
+                                                    </select>
+                                                  )
+                                                }
+                                                return null
+                                              })()}
+                                            </div>
+                                          </div>
+                                          <button type="button" onClick={() => setSelectedCustomButtonItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer" }}>Done</button>
+                                        </div>
+                                      )}
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
+                                <p style={{ fontSize: 11, color: theme.text, marginBottom: 6 }}>Add item</p>
+                                <input type="text" placeholder="Label" value={newSettingItemLabel} onChange={(e) => setNewSettingItemLabel(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
+                                <select value={newSettingItemType} onChange={(e) => setNewSettingItemType(e.target.value as 'checkbox' | 'dropdown' | 'custom_field')} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                  <option value="checkbox">Checkbox</option>
+                                  <option value="dropdown">Dropdown</option>
+                                  <option value="custom_field">Custom field (text/textarea)</option>
+                                </select>
+                                {newSettingItemType === "dropdown" && <input type="text" placeholder="Options (comma-separated)" value={newSettingItemOptions} onChange={(e) => setNewSettingItemOptions(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />}
+                                <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addCustomActionButtonItem(buttonId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                              </div>
+                            </>
+                          )
+                        })()}
+                        {selectedControlForPage === "page_title" && (
+                          <p style={{ fontSize: 11, color: theme.text, opacity: 0.8 }}>Page title. Custom buttons are next to Settings.</p>
+                        )}
+                        {selectedControlForPage === "create_lead" && (
+                          <>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label the user sees.</p>
+                            <input
+                              type="text"
+                              value={config.controlLabels?.[selectedControlForPage] ?? "+ Create Lead"}
+                              onChange={(e) => setControlLabel(selectedControlForPage, e.target.value)}
+                              placeholder="+ Create Lead"
+                              style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13, marginBottom: 8 }}
+                            />
+                          </>
+                        )}
+                        {(() => {
+                          const isItemsControl = selectedControlForPage && selectedControlForPage !== "page_title" && selectedControlForPage !== "create_lead" && selectedControlForPage !== "table_columns" && selectedControlForPage !== "custom_header_button" && !selectedControlForPage.startsWith("custom_action_button:")
+                          if (!isItemsControl) return null
+                          const tabId = previewPage
+                          const controlId = selectedControlForPage
+                          const items = getControlItems(tabId, controlId)
+                          const otherItemsFor = (itemId: string) => items.filter((x) => x.id !== itemId)
+                          return (
+                          <>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Edit each item: change type, dropdown options (Options), dependency (Dependency), and visible to user. Same options on every tab.</p>
+                            <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
+                              {items.map((item) => {
+                                const isSelected = selectedControlItemId === item.id
+                                const otherItems = otherItemsFor(item.id)
+                                return (
+                                  <li key={item.id} style={{ marginBottom: 10, padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
+                                      <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                      <select
+                                        value={item.type}
+                                        onChange={(e) => updateControlItem(tabId, controlId, item.id, { type: e.target.value as PortalSettingItem["type"], options: e.target.value === "dropdown" ? (item.options ?? []) : undefined })}
+                                        style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 11 }}
+                                      >
+                                        <option value="checkbox">Checkbox</option>
+                                        <option value="dropdown">Dropdown</option>
+                                        <option value="custom_field">Custom field</option>
+                                      </select>
+                                      {item.type === "dropdown" && (
+                                        <button type="button" onClick={() => setSelectedControlItemId(selectedControlItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
+                                          Options ({(item.options ?? []).length}) ▾
+                                        </button>
+                                      )}
+                                      {(item.type === "checkbox" || item.type === "custom_field") && (
+                                        <button type="button" onClick={() => setSelectedControlItemId(selectedControlItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
+                                          Dependency ▾
+                                        </button>
+                                      )}
+                                      {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
+                                        <span style={{ fontSize: 10, color: theme.text, opacity: 0.8 }}>
+                                          {item.dependency ? `When ${otherItems.find((o) => o.id === item.dependency!.dependsOnItemId)?.label ?? item.dependency.dependsOnItemId} = ${item.dependency.showWhenValue}` : "No dependency"}
+                                        </span>
+                                      )}
+                                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
+                                        <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setControlItemVisible(tabId, controlId, item.id, e.target.checked)} />
+                                        <span>Visible to user</span>
+                                      </label>
+                                    </div>
+                                    {isSelected && (
+                                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
+                                        {item.type === "dropdown" && (
+                                          <div style={{ marginBottom: 8 }}>
+                                            <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dropdown options</p>
+                                            <ul style={{ margin: "0 0 6px", paddingLeft: 18, fontSize: 12 }}>
+                                              {(item.options ?? []).map((opt, i) => (
+                                                <li key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                  <span>{opt}</span>
+                                                  <button type="button" onClick={() => removeControlItemOption(tabId, controlId, item.id, i)} style={{ fontSize: 10, padding: "2px 4px", color: "#b91c1c" }}>Remove</button>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                            <div style={{ display: "flex", gap: 6 }}>
+                                              <input type="text" placeholder="Add option" value={newDropdownOptionValue} onChange={(e) => setNewDropdownOptionValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addControlItemOption(tabId, controlId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); } }} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
+                                              <button type="button" onClick={() => { addControlItemOption(tabId, controlId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                                            </div>
+                                          </div>
+                                        )}
+                                        <div style={{ marginBottom: 8 }}>
+                                          <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dependency (show when)</p>
+                                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                            <select
+                                              value={item.dependency?.dependsOnItemId ?? ""}
+                                              onChange={(e) => { const id = e.target.value; if (!id) { updateControlItem(tabId, controlId, item.id, { dependency: undefined }); return }; const dep = items.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateControlItem(tabId, controlId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
+                                              style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
+                                            >
+                                              <option value="">— None —</option>
+                                              {otherItems.map((o) => (
+                                                <option key={o.id} value={o.id}>{o.label}</option>
+                                              ))}
+                                            </select>
+                                            {item.dependency?.dependsOnItemId && (() => {
+                                              const depItem = items.find((x) => x.id === item.dependency!.dependsOnItemId)
+                                              if (depItem?.type === "checkbox") {
+                                                return (
+                                                  <select value={item.dependency.showWhenValue} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                    <option value="checked">Checked</option>
+                                                    <option value="unchecked">Unchecked</option>
+                                                  </select>
+                                                )
+                                              }
+                                              if (depItem?.type === "dropdown" && depItem.options?.length) {
+                                                return (
+                                                  <select value={item.dependency.showWhenValue} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                    {depItem.options.map((opt) => (
+                                                      <option key={opt} value={opt}>{opt}</option>
+                                                    ))}
+                                                  </select>
+                                                )
+                                              }
+                                              if (depItem?.type === "custom_field") {
+                                                return (
+                                                  <select value={item.dependency.showWhenValue || "filled"} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                                    <option value="filled">Has value</option>
+                                                    <option value="empty">Empty</option>
+                                                  </select>
+                                                )
+                                              }
+                                              return null
+                                            })()}
+                                          </div>
+                                        </div>
+                                        <button type="button" onClick={() => setSelectedControlItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer" }}>Done</button>
+                                      </div>
+                                    )}
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
+                              <p style={{ fontSize: 11, color: theme.text, marginBottom: 6 }}>Add item</p>
+                              <input type="text" placeholder="Label" value={newSettingItemLabel} onChange={(e) => setNewSettingItemLabel(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
+                              <select value={newSettingItemType} onChange={(e) => setNewSettingItemType(e.target.value as 'checkbox' | 'dropdown' | 'custom_field')} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
+                                <option value="checkbox">Checkbox</option>
+                                <option value="dropdown">Dropdown</option>
+                                <option value="custom_field">Custom field (text/textarea)</option>
+                              </select>
+                              {newSettingItemType === "dropdown" && <input type="text" placeholder="Options (comma-separated)" value={newSettingItemOptions} onChange={(e) => setNewSettingItemOptions(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />}
+                              <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addControlItem(tabId, controlId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                            </div>
+                          </>
+                          )
+                        })()}
+                        {selectedControlForPage === "table_columns" && (
+                          <>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Columns shown in the leads table. Remove to hide; add back below.</p>
+                            <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: theme.text }}>
+                              {getOptionValues("leads_table_columns").map((colId, i) => (
+                                <li key={colId} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span>{LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}</span>
+                                  <button type="button" onClick={() => removeOptionValue("leads_table_columns", i)} style={{ fontSize: 11, padding: "2px 6px", color: "#b91c1c" }}>Remove</button>
+                                </li>
+                              ))}
+                            </ul>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              {(LEADS_TABLE_COLUMN_IDS as readonly string[]).filter((colId) => !getOptionValues("leads_table_columns").includes(colId)).map((colId) => (
+                                <button key={colId} type="button" onClick={() => addOptionValue("leads_table_columns", colId)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>{LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}</button>
+                              ))}
+                            </div>
+                          </>
                         )}
                       </section>
                     )}

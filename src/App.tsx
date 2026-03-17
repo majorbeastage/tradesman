@@ -129,12 +129,7 @@ function App() {
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
 
-  // If already logged in (e.g. refresh), send to main app (or office for office managers). Admins land in main app by default; use Home → Admin Login to open admin portal.
-  useEffect(() => {
-    if (loading || !user || !role) return
-    if (view !== "home") return
-    setView(role === "office_manager" ? "office" : "app")
-  }, [loading, user, role, view])
+  // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")
