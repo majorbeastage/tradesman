@@ -1,0 +1,10 @@
+---
+description: Tradesman project root and workspace
+alwaysApply: true
+---
+
+# Tradesman project root
+
+- **Project root:** `C:\Users\snyde\tradesman`. All code, edits, terminal commands, and git operations for this app are done in this directory.
+- **Do not use** `tradesman-systems` or any other copy; this folder is the single source of truth.
+- When the user says "push", "deploy", "run", or "build", use `C:\Users\snyde\tradesman` as the working directory.

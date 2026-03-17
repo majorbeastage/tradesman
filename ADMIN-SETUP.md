@@ -14,7 +14,7 @@ In **Supabase Dashboard → SQL Editor**, run each script as a **New query**:
 2. **`supabase-admin-portal-config.sql`**  
    Adds **`portal_config`** (JSONB) to `profiles`. The admin portal uses this for per-user visibility (tabs, settings, dropdowns). Default `{}` = all visible.
 
-Optional: **`supabase-admin-portal-builder.sql`** (clients, portal_tabs, custom_fields). Not required for the new admin portal. “—”
+Optional: **`supabase-admin-portal-builder.sql`** (clients, portal_tabs, custom_fields). Not required for the new admin portal. "—"
 ---
 
 ## 2. First admin user
@@ -24,7 +24,7 @@ You need one user with role **admin** so they can open the Admin portal and crea
 **Option A – Supabase Dashboard**
 
 1. **Authentication → Users → Add user** (or Invite). Create a user with the email you want for the first admin.
-2. Copy that user’s **UUID** from the table.
+2. Copy that user's **UUID** from the table.
 3. In **SQL Editor** run (replace with the real UUID):
 
    ```sql
@@ -36,7 +36,7 @@ You need one user with role **admin** so they can open the Admin portal and crea
 
 1. In Supabase: **Authentication → Providers → Email** → turn **Enable Sign Up** on.
 2. In your app, sign up once with the admin email.
-3. In Supabase **Authentication → Users**, copy that user’s UUID.
+3. In Supabase **Authentication → Users**, copy that user's UUID.
 4. Run the same `INSERT ... ON CONFLICT` SQL above with that UUID.
 
 Then log in to the app, go to the home page, and use **Admin Login** to open the Admin portal.
@@ -58,7 +58,7 @@ Get both from **Supabase Dashboard → Project Settings → API**. Restart the d
 
 ## 4. Supabase Auth settings
 
-- **Authentication → Providers → Email** → **Enable Sign Up** must be **on** so the Admin “Create user” flow can create new users.
+- **Authentication → Providers → Email** → **Enable Sign Up** must be **on** so the Admin "Create user" flow can create new users.
 - **Authentication → URL Configuration** → add your app URL (e.g. `http://localhost:5173` or your production URL) if you have redirect/email links.
 
 ---
@@ -78,7 +78,7 @@ Get both from **Supabase Dashboard → Project Settings → API**. Restart the d
 
 | Issue | Check |
 |-------|--------|
-| “Supabase not configured” | `.env` has `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; restart dev server. |
-| “Could not reach Supabase” / “Failed to fetch” | Same as above; also ensure the project is not **paused** (Dashboard → Project Settings). |
+| "Supabase not configured" | `.env` has `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; restart dev server. |
+| "Could not reach Supabase" / "Failed to fetch" | Same as above; also ensure the project is not **paused** (Dashboard → Project Settings). |
 | No profiles in dropdown | Run **`supabase-profiles-roles.sql`** and create at least one user (e.g. sign up or add in Supabase Auth), then set one profile to admin (see step 2). |
-| “column portal_config does not exist” | Run **`supabase-admin-portal-config.sql`** in the SQL Editor. |
+| "column portal_config does not exist" | Run **`supabase-admin-portal-config.sql`** in the SQL Editor. |
