@@ -194,11 +194,12 @@ export default function AdminUsersSection({ clients }: Props) {
         setEmail("")
         setPassword("")
         setRole("user")
+        const newId = userCreatedId
         setUsers((prev) => {
-          if (prev.some((u) => u.id === userCreatedId)) return prev
+          if (prev.some((u) => u.id === newId)) return prev
           return [
             {
-              id: userCreatedId,
+              id: newId,
               email: trimmedEmail,
               created_at: new Date().toISOString(),
               role,

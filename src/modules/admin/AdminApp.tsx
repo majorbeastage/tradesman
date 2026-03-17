@@ -223,9 +223,9 @@ function getPreviewForTab(
 ): { title: string; description: string; mock: React.ReactNode } {
   const builtIn = TAB_PREVIEW[tabId]
   if (builtIn) {
-    const mock =
-      typeof builtIn.mock === "function" && onSelectControl != null
-        ? builtIn.mock(onSelectControl, selectedControlId ?? null)
+    const mock: React.ReactNode =
+      typeof builtIn.mock === "function"
+        ? builtIn.mock(onSelectControl ?? (() => {}), selectedControlId ?? null)
         : builtIn.mock
     return { title: builtIn.title, description: builtIn.description, mock }
   }
