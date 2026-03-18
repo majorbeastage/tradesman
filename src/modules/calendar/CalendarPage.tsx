@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { supabase } from "../../lib/supabase"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
+import PortalSettingsModal from "../../components/PortalSettingsModal"
+import { getControlItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
+import type { PortalSettingItem } from "../../types/portal-builder"
 
 type JobType = {
   id: string
@@ -32,24 +35,6 @@ const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "Ju
 const HOUR_HEIGHT = 48
 const DAY_START_HOUR = 6
 const DAY_END_HOUR = 20
-
-function getAllDayTimes12hr(): { value: string; label: string }[] {
-  const options: { value: string; label: string }[] = []
-  for (let h = 0; h < 24; h++) {
-    for (let m = 0; m < 60; m += 30) {
-      const value = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
-      let label: string
-      if (h === 0) label = `12:${String(m).padStart(2, "0")} AM`
-      else if (h < 12) label = `${h}:${String(m).padStart(2, "0")} AM`
-      else if (h === 12) label = `12:${String(m).padStart(2, "0")} PM`
-      else label = `${h - 12}:${String(m).padStart(2, "0")} PM`
-      options.push({ value, label })
-    }
-  }
-  return options
-}
-
-const ALL_DAY_TIMES_12HR = getAllDayTimes12hr()
 
 function hourLabel12hr(hour: number, minute = 0): string {
   if (hour === 0) return `12:${String(minute).padStart(2, "0")} AM`
@@ -103,7 +88,7 @@ function getTimeOptions(incrementMinutes: 15 | 60): string[] {
 }
 
 export default function CalendarPage() {
-  const { userId } = useAuth()
+  const { userId, portalConfig } = useAuth()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
   const [jobTypesLoadError, setJobTypesLoadError] = useState<string>("")
@@ -115,6 +100,9 @@ export default function CalendarPage() {
   const [showAddItem, setShowAddItem] = useState(false)
   const [showJobTypes, setShowJobTypes] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
+  const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
+  const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
@@ -138,26 +126,68 @@ export default function CalendarPage() {
   const [jtSaving, setJtSaving] = useState(false)
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
 
+  const calendarSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "working_hours"), [portalConfig])
+  const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "calendar"), [portalConfig])
+
+  useEffect(() => {
+    if (!showSettings || calendarSettingsItems.length === 0) return
+    const next: Record<string, string> = {}
+    calendarSettingsItems.forEach((item) => {
+      if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+      else next[item.id] = ""
+    })
+    setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
+  }, [showSettings, calendarSettingsItems])
+
+  function isCalendarSettingItemVisible(item: PortalSettingItem): boolean {
+    if (!item.dependency) return true
+    const depId = item.dependency.dependsOnItemId
+    const depItem = calendarSettingsItems.find((i) => i.id === depId)
+    let depValue = settingsFormValues[depId] ?? ""
+    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+    return depValue === item.dependency.showWhenValue
+  }
+
+  useEffect(() => {
+    if (!openCustomButtonId) return
+    const btn = customActionButtons.find((b) => b.id === openCustomButtonId)
+    if (!btn?.items?.length) return
+    const next: Record<string, string> = {}
+    btn.items.forEach((item) => {
+      if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+      else next[item.id] = ""
+    })
+    setCustomButtonFormValues((prev) => (Object.keys(next).length ? next : prev))
+  }, [openCustomButtonId, customActionButtons])
+
+  function isCustomButtonItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
+    if (!item.dependency) return true
+    const depId = item.dependency.dependsOnItemId
+    const depItem = items.find((i) => i.id === depId)
+    let depValue = formValues[depId] ?? ""
+    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+    return depValue === item.dependency.showWhenValue
+  }
+
   // Settings (localStorage)
-  const [firstDayOfWeek, setFirstDayOfWeek] = useState(() => {
-    try { return parseInt(localStorage.getItem("calendar_firstDayOfWeek") ?? "0", 10) } catch { return 0 }
-  })
   const [arReminderMins, setArReminderMins] = useState(() => {
     try { return localStorage.getItem("calendar_arReminderMins") ?? "15" } catch { return "15" }
   })
   const [timeIncrement, setTimeIncrement] = useState<15 | 60>(() => {
     try { const v = localStorage.getItem("calendar_timeIncrement"); return v === "60" ? 60 : 15 } catch { return 15 }
   })
-  const [noDuplicateTimes, setNoDuplicateTimes] = useState(() => {
+  const [noDuplicateTimes] = useState(() => {
     try { return localStorage.getItem("calendar_noDuplicateTimes") === "true" } catch { return false }
   })
-  const [workingHoursEnabled, setWorkingHoursEnabled] = useState(() => {
+  const [workingHoursEnabled] = useState(() => {
     try { return localStorage.getItem("calendar_workingHoursEnabled") === "true" } catch { return false }
   })
-  const [workingStart, setWorkingStart] = useState(() => {
+  const [workingStart] = useState(() => {
     try { return localStorage.getItem("calendar_workingStart") ?? "08:00" } catch { return "08:00" }
   })
-  const [workingEnd, setWorkingEnd] = useState(() => {
+  const [workingEnd] = useState(() => {
     try { return localStorage.getItem("calendar_workingEnd") ?? "17:00" } catch { return "17:00" }
   })
   const [addError, setAddError] = useState("")
@@ -425,6 +455,9 @@ export default function CalendarPage() {
         >
           Settings
         </button>
+        {customActionButtons.map((btn) => (
+          <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
+        ))}
       </div>
 
       {/* Calendar area: view switcher + expand + job types */}
@@ -846,98 +879,69 @@ export default function CalendarPage() {
                 ))
               )}
             </div>
-            <button onClick={() => setShowJobTypes(false)} style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Done</button>
+            <button onClick={() => setShowJobTypes(false)} style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, cursor: "pointer", color: theme.text }}>Done</button>
           </div>
         </>
       )}
 
-      {/* Settings modal */}
       {showSettings && (
-        <>
-          <div onClick={() => setShowSettings(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "400px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-            <h3 style={{ margin: "0 0 16px", color: theme.text }}>Calendar Settings</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div>
-                <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>First day of week</label>
-                <select
-                  value={firstDayOfWeek}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10)
-                    setFirstDayOfWeek(v)
-                    try { localStorage.setItem("calendar_firstDayOfWeek", String(v)) } catch { /* ignore */ }
-                  }}
-                  style={{ ...theme.formInput }}
-                >
-                  <option value={0}>Sunday</option>
-                  <option value={1}>Monday</option>
-                </select>
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: theme.text }}>
-                <input
-                  type="checkbox"
-                  checked={workingHoursEnabled}
-                  onChange={(e) => {
-                    const v = e.target.checked
-                    setWorkingHoursEnabled(v)
-                    try { localStorage.setItem("calendar_workingHoursEnabled", v ? "true" : "false") } catch { /* ignore */ }
-                  }}
-                />
-                Have calendar reflect time of day start and end
-              </label>
-              {workingHoursEnabled && (
-                <div style={{ display: "flex", gap: "12px", marginLeft: "20px" }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Start time</label>
-                    <select
-                      value={workingStart}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setWorkingStart(v)
-                        try { localStorage.setItem("calendar_workingStart", v) } catch { /* ignore */ }
-                      }}
-                      style={{ ...theme.formInput }}
-                    >
-                      {ALL_DAY_TIMES_12HR.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>End time</label>
-                    <select
-                      value={workingEnd}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setWorkingEnd(v)
-                        try { localStorage.setItem("calendar_workingEnd", v) } catch { /* ignore */ }
-                      }}
-                      style={{ ...theme.formInput }}
-                    >
-                      {ALL_DAY_TIMES_12HR.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
-              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: theme.text }}>
-                <input
-                  type="checkbox"
-                  checked={noDuplicateTimes}
-                  onChange={(e) => {
-                    const v = e.target.checked
-                    setNoDuplicateTimes(v)
-                    try { localStorage.setItem("calendar_noDuplicateTimes", v ? "true" : "false") } catch { /* ignore */ }
-                  }}
-                />
-                Do not allow duplicate times to be installed
-              </label>
-            </div>
-            <button onClick={() => setShowSettings(false)} style={{ marginTop: "20px", padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Done</button>
-          </div>
-        </>
+        <PortalSettingsModal
+          title="Calendar Settings"
+          items={calendarSettingsItems}
+          formValues={settingsFormValues}
+          setFormValue={(id, value) => setSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
+          isItemVisible={isCalendarSettingItemVisible}
+          onClose={() => setShowSettings(false)}
+        />
       )}
+
+      {openCustomButtonId && (() => {
+        const btn = customActionButtons.find((b) => b.id === openCustomButtonId)
+        if (!btn) return null
+        const items = btn.items ?? []
+        const formValues = customButtonFormValues
+        const setFormValue = (itemId: string, value: string) => setCustomButtonFormValues((prev) => ({ ...prev, [itemId]: value }))
+        return (
+          <>
+            <div onClick={() => setOpenCustomButtonId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
+            <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "480px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>{btn.label}</h3>
+                <button onClick={() => setOpenCustomButtonId(null)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px", color: theme.text }}>
+                {items.length === 0 && <p style={{ fontSize: "14px", opacity: 0.8 }}>No options configured.</p>}
+                {items.map((item) => {
+                  if (!isCustomButtonItemVisible(item, items, formValues)) return null
+                  if (item.type === "checkbox") return (
+                    <label key={item.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", cursor: "pointer" }}>
+                      <input type="checkbox" checked={formValues[item.id] === "checked"} onChange={(e) => setFormValue(item.id, e.target.checked ? "checked" : "unchecked")} />
+                      <span>{item.label}</span>
+                    </label>
+                  )
+                  if (item.type === "dropdown" && item.options?.length) return (
+                    <div key={item.id}>
+                      <label style={{ fontSize: "14px", fontWeight: 600, display: "block", marginBottom: "6px" }}>{item.label}</label>
+                      <select value={formValues[item.id] ?? item.options[0]} onChange={(e) => setFormValue(item.id, e.target.value)} style={{ ...theme.formInput }}>{item.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}</select>
+                    </div>
+                  )
+                  if (item.type === "custom_field") {
+                    const value = formValues[item.id] ?? ""
+                    return (
+                      <div key={item.id}>
+                        <label style={{ fontSize: "14px", fontWeight: 600, display: "block", marginBottom: "6px" }}>{item.label}</label>
+                        {item.customFieldSubtype === "textarea" ? <textarea value={value} onChange={(e) => setFormValue(item.id, e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} /> : <input value={value} onChange={(e) => setFormValue(item.id, e.target.value)} style={{ ...theme.formInput }} />}
+                      </div>
+                    )
+                  }
+                  return null
+                })}
+              </div>
+              <button onClick={() => setOpenCustomButtonId(null)} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}>Done</button>
+            </div>
+          </>
+        )
+      })()}
 
       {/* Auto Response Options modal */}
       {showAutoResponse && (
@@ -960,7 +964,7 @@ export default function CalendarPage() {
                 />
               </div>
             </div>
-            <button onClick={() => setShowAutoResponse(false)} style={{ marginTop: "20px", padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Done</button>
+            <button onClick={() => setShowAutoResponse(false)} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
           </div>
         </>
       )}

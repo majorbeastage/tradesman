@@ -66,19 +66,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return
     }
     let cancelled = false
+    const timeoutMs = 8000
+    const timeoutId = window.setTimeout(() => {
+      if (!cancelled) setRole("user")
+    }, timeoutMs)
     supabase
       .from("profiles")
       .select("role, client_id, portal_config")
       .eq("id", user.id)
       .single()
       .then(({ data, error }) => {
-        if (!cancelled && !error && data?.role) setRole(data.role as UserRole)
-        else if (!cancelled) setRole("user")
+        if (!cancelled) {
+          clearTimeout(timeoutId)
+          if (!error && data?.role) setRole(data.role as UserRole)
+          else setRole("user")
+        }
         if (!cancelled && data?.client_id) setClientId(data.client_id as string)
         else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
         if (!cancelled) setPortalConfig((data?.portal_config as PortalConfig) ?? null)
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
   }, [user?.id])
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -116,6 +126,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPortalConfig((data?.portal_config as PortalConfig) ?? null)
     return { role: roleFromDb }
   }, [user?.id])
+
+  // When user returns to the tab, refetch profile so portal_config updates from admin appear without full refresh.
+  useEffect(() => {
+    const onFocus = () => { if (user?.id && refetchProfile) void refetchProfile() }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [user?.id, refetchProfile])
 
   const value: AuthState = {
     user,

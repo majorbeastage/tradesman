@@ -16,6 +16,7 @@ import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
+import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
@@ -194,9 +195,25 @@ function App() {
 
   if (view === "admin") {
     return (
-      <ViewProvider setView={setView}>
-        <AdminApp />
-      </ViewProvider>
+      <ErrorBoundary
+        fallback={
+          <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "sans-serif" }}>
+            <h1 style={{ color: "#b91c1c", margin: 0 }}>Something went wrong in the admin portal</h1>
+            <p style={{ color: "#6b7280", margin: 0 }}>Check the browser console for details.</p>
+            <button
+              type="button"
+              onClick={() => setView("home")}
+              style={{ padding: "10px 20px", background: "#f97316", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}
+            >
+              Back to home
+            </button>
+          </div>
+        }
+      >
+        <ViewProvider setView={setView}>
+          <AdminApp />
+        </ViewProvider>
+      </ErrorBoundary>
     )
   }
 

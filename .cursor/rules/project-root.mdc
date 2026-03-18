@@ -5,6 +5,6 @@ alwaysApply: true
 
 # Tradesman project root
 
-- **Project root:** `C:\Users\snyde\tradesman`. All code, edits, terminal commands, and git operations for this app are done in this directory.
-- **Do not use** `tradesman-systems` or any other copy; this folder is the single source of truth.
-- When the user says "push", "deploy", "run", or "build", use `C:\Users\snyde\tradesman` as the working directory.
+- **Project root:** `C:\Users\snyde\tradesman`. Use this directory for **all** work by default—code, edits, terminal commands, file paths, and git operations.
+- **Unless the user says otherwise**, always use `C:\Users\snyde\tradesman`; do not use `tradesman-systems` or any other folder.
+- This folder is the single source of truth for the app. When the user says "push", "deploy", "run", "build", or similar, use `C:\Users\snyde\tradesman` as the working directory.

@@ -161,7 +161,7 @@ export default function AdminCustomFieldsSection({ clientId }: Props) {
       ))}
 
       {!showAdd ? (
-        <button type="button" onClick={() => setShowAdd(true)} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
+        <button type="button" onClick={() => setShowAdd(true)} style={{ padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: 6, background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}>
           + Add field
         </button>
       ) : (
@@ -218,10 +218,10 @@ export default function AdminCustomFieldsSection({ clientId }: Props) {
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button type="button" onClick={addField} disabled={saving} style={{ padding: "8px 16px", background: theme.primary, color: "white", border: "none", borderRadius: 6, cursor: "pointer" }}>
+            <button type="button" onClick={addField} disabled={saving} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: 6, background: theme.background, color: theme.text, cursor: "pointer" }}>
               {saving ? "Saving…" : "Add"}
             </button>
-            <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "8px 16px", background: "transparent", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}>
+            <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: 6, background: theme.background, color: theme.text, cursor: "pointer" }}>
               Cancel
             </button>
           </div>

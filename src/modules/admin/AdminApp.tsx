@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
+import type { CSSProperties, FormEvent, ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useView } from "../../contexts/ViewContext"
 import { theme } from "../../styles/theme"
@@ -21,11 +22,13 @@ import {
 
 function getCustomActionButtonsFromConfig(cfg: PortalConfig, tabId: string): CustomActionButton[] {
   if (tabId === "leads") {
-    if ((cfg.customActionButtons ?? []).length > 0) return cfg.customActionButtons!
+    const arr = cfg.customActionButtons
+    if (Array.isArray(arr) && arr.length > 0) return arr
     const legacy = (cfg as { customHeaderButtons?: PortalCustomItem[] }).customHeaderButtons
-    if (legacy?.length) return legacy.map((b) => ({ id: b.id, label: b.label, items: [] }))
+    if (Array.isArray(legacy) && legacy.length > 0) return legacy.map((b) => ({ id: b.id, label: b.label, items: [] }))
   }
-  return cfg.customActionButtonsByTab?.[tabId] ?? []
+  const byTab = cfg.customActionButtonsByTab?.[tabId]
+  return Array.isArray(byTab) ? byTab : []
 }
 
 type ProfileRow = {
@@ -36,6 +39,9 @@ type ProfileRow = {
   /** From admin_users_list when available */
   email?: string | null
 }
+
+/** Batch-edit only: apply config to all profiles. Not used for login or admin auth — login uses the signed-in user's profile. */
+const ALL_USERS_ID = "__all__"
 
 /** User dropdown label: prefer email, then display_name, then role + short id */
 function profileOptionLabel(p: ProfileRow): string {
@@ -51,6 +57,57 @@ function getVisible(config: PortalConfig | null, section: "tabs" | "settings" | 
   return sectionConfig[key] === true
 }
 
+/** True if config has any visibility set to false, any control/custom item hidden, fewer options than default, or fewer control items than default. */
+function hasRemovals(config: PortalConfig): boolean {
+  try {
+    const sectionHasFalse = (section: "tabs" | "settings" | "dropdowns") => {
+      const s = config[section]
+      if (!s || typeof s !== "object" || Array.isArray(s)) return false
+      return Object.values(s).some((v) => v === false)
+    }
+    if (sectionHasFalse("tabs") || sectionHasFalse("settings") || sectionHasFalse("dropdowns")) return true
+    // Control items: any item hidden from user, or fewer items than default (item was removed)
+    const items = config.controlItems ?? {}
+    for (const [key, list] of Object.entries(items)) {
+      if (!Array.isArray(list)) continue
+      if (list.some((item) => item?.visibleToUser === false)) return true
+      const [tabId, controlId] = key.split(":")
+      if (tabId && controlId && list.length < getDefaultControlItems(tabId, controlId).length) return true
+    }
+    const byTab = config.customActionButtonsByTab ?? {}
+    const flatFromByTab = typeof byTab === "object" && !Array.isArray(byTab) ? Object.values(byTab).flat() : []
+    const customButtons = [...(Array.isArray(config.customActionButtons) ? config.customActionButtons : []), ...flatFromByTab]
+    for (const btn of customButtons) {
+      if (btn && Array.isArray(btn.items) && btn.items.some((item) => item?.visibleToUser === false)) return true
+    }
+    const leads = config.leadsSettingsItems
+    if (Array.isArray(leads) && leads.some((item) => item?.visibleToUser === false)) return true
+    // Option values: fewer dropdown/column options than default (option was removed)
+    const ov = config.optionValues ?? {}
+    const leadCols = ov.leads_table_columns
+    if (Array.isArray(leadCols) && leadCols.length < LEADS_TABLE_COLUMN_IDS.length) return true
+    for (const [controlId, defaultArr] of Object.entries(DEFAULT_OPTIONS)) {
+      if (!Array.isArray(defaultArr)) continue
+      const current = ov[controlId]
+      if (Array.isArray(current) && current.length < defaultArr.length) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+const REMOVE_BTN_STYLE: CSSProperties = {
+  padding: "4px 8px",
+  fontSize: 11,
+  border: "none",
+  borderRadius: 4,
+  background: "#000",
+  color: "#b91c1c",
+  cursor: "pointer",
+}
+const REMOVE_BTN_STYLE_SMALL: CSSProperties = { ...REMOVE_BTN_STYLE, fontSize: 10 }
+
 function setVisible(config: PortalConfig, section: "tabs" | "settings" | "dropdowns", key: string, value: boolean): PortalConfig {
   const next = { ...config }
   if (!next[section]) next[section] = {}
@@ -61,7 +118,8 @@ function setVisible(config: PortalConfig, section: "tabs" | "settings" | "dropdo
 /** All tab ids (default + custom) for current config */
 function getAllTabIds(config: PortalConfig): { id: string; label: string }[] {
   const defaultTabs = USER_PORTAL_TAB_IDS.map((id) => ({ id, label: TAB_ID_LABELS[id] ?? id }))
-  const custom = (config.customTabs ?? []).map((t) => ({ id: t.id, label: t.label }))
+  const customList = Array.isArray(config.customTabs) ? config.customTabs : []
+  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
   return [...defaultTabs, ...custom]
 }
 
@@ -75,20 +133,22 @@ function getVisibleTabs(config: PortalConfig): Array<{ tab_id: string; label: st
 
 function getAllSettingIds(config: PortalConfig): { id: string; label: string }[] {
   const default_ = PORTAL_SETTING_KEYS.map((id) => ({ id, label: PORTAL_SETTING_LABELS[id] ?? id }))
-  const custom = (config.customSettings ?? []).map((t) => ({ id: t.id, label: t.label }))
+  const customList = Array.isArray(config.customSettings) ? config.customSettings : []
+  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
   return [...default_, ...custom]
 }
 
 function getAllDropdownIds(config: PortalConfig): { id: string; label: string }[] {
   const default_ = PORTAL_DROPDOWN_KEYS.map((id) => ({ id, label: PORTAL_DROPDOWN_LABELS[id] ?? id }))
-  const custom = (config.customDropdowns ?? []).map((t) => ({ id: t.id, label: t.label }))
+  const customList = Array.isArray(config.customDropdowns) ? config.customDropdowns : []
+  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
   return [...default_, ...custom]
 }
 
-type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null, config?: PortalConfig) => React.ReactNode
+type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null, config?: PortalConfig) => ReactNode
 
 /** What each tab shows in the real app; mock can be static or a function for clickable controls */
-const TAB_PREVIEW: Record<string, { title: string; description: string; mock: React.ReactNode | MockFn }> = {
+const TAB_PREVIEW: Record<string, { title: string; description: string; mock: ReactNode | MockFn }> = {
   dashboard: {
     title: "Dashboard",
     description: "Welcome message and company intro. First thing the user sees after login.",
@@ -124,7 +184,8 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
           {label}
         </button>
       )
-      const colIds = (config.optionValues?.leads_table_columns?.length ? config.optionValues.leads_table_columns : [...LEADS_TABLE_COLUMN_IDS]) as string[]
+      const raw = config.optionValues?.leads_table_columns
+      const colIds = Array.isArray(raw) ? raw : [...LEADS_TABLE_COLUMN_IDS]
       return (
         <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden", background: "white" }}>
           <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}` }}>
@@ -277,6 +338,7 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
                 <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
               )
             })}
+            <button type="button" onClick={() => onSelect("add_conversation")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_conversation" ? theme.primary : theme.border}`, background: selectedId === "add_conversation" ? theme.primary : theme.background, color: selectedId === "add_conversation" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add conversation</button>
             <button type="button" onClick={() => onSelect("conversation_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "conversation_settings" ? theme.primary : theme.border}`, background: selectedId === "conversation_settings" ? theme.primary : theme.background, color: selectedId === "conversation_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Conversation settings</button>
           </div>
           <div style={{ padding: 12, fontSize: 12, color: theme.text, opacity: 0.8 }}>Thread list · Reply</div>
@@ -301,6 +363,8 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
                 <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
               )
             })}
+            <button type="button" onClick={() => onSelect("add_customer_to_quotes")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_customer_to_quotes" ? theme.primary : theme.border}`, background: selectedId === "add_customer_to_quotes" ? theme.primary : theme.background, color: selectedId === "add_customer_to_quotes" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add Customer to quotes</button>
+            <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
             <button type="button" onClick={() => onSelect("quote_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "quote_settings" ? theme.primary : theme.border}`, background: selectedId === "quote_settings" ? theme.primary : theme.background, color: selectedId === "quote_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Quote settings</button>
             <button type="button" onClick={() => onSelect("status")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "status" ? theme.primary : theme.border}`, background: selectedId === "status" ? theme.primary : theme.background, color: selectedId === "status" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Status</button>
           </div>
@@ -325,7 +389,10 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
                 <button key={b.id} type="button" onClick={() => onSelect(cid)} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === cid ? theme.primary : theme.border}`, background: selectedId === cid ? theme.primary : theme.background, color: selectedId === cid ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>{b.label}</button>
               )
             })}
-            <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Working hours</button>
+            <button type="button" onClick={() => onSelect("add_item_to_calendar")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_item_to_calendar" ? theme.primary : theme.border}`, background: selectedId === "add_item_to_calendar" ? theme.primary : theme.background, color: selectedId === "add_item_to_calendar" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add item to calendar</button>
+            <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
+            <button type="button" onClick={() => onSelect("job_types")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_types" ? theme.primary : theme.border}`, background: selectedId === "job_types" ? theme.primary : theme.background, color: selectedId === "job_types" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job Types</button>
+            <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Settings</button>
             <button type="button" onClick={() => onSelect("job_type")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_type" ? theme.primary : theme.border}`, background: selectedId === "job_type" ? theme.primary : theme.background, color: selectedId === "job_type" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job type</button>
           </div>
           <div style={{ padding: 8, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11, color: theme.text }}>
@@ -395,16 +462,23 @@ function getPreviewForTab(
   config: PortalConfig,
   onSelectControl?: (controlId: string) => void,
   selectedControlId?: string | null
-): { title: string; description: string; mock: React.ReactNode } {
+): { title: string; description: string; mock: ReactNode } {
   const builtIn = TAB_PREVIEW[tabId]
   if (builtIn) {
-    const mock: React.ReactNode =
-      typeof builtIn.mock === "function"
-        ? builtIn.mock(onSelectControl ?? (() => {}), selectedControlId ?? null, config)
-        : builtIn.mock
+    let mock: ReactNode
+    try {
+      mock =
+        typeof builtIn.mock === "function"
+          ? builtIn.mock(onSelectControl ?? (() => {}), selectedControlId ?? null, config ?? {})
+          : builtIn.mock
+    } catch (e) {
+      console.error("Admin preview mock error:", e)
+      mock = <div style={{ padding: 12, fontSize: 12, color: "#b91c1c" }}>Preview could not be rendered. Check console.</div>
+    }
     return { title: builtIn.title, description: builtIn.description, mock }
   }
-  const custom = (config.customTabs ?? []).find((t) => t.id === tabId)
+  const customList = Array.isArray(config.customTabs) ? config.customTabs : []
+  const custom = customList.find((t) => t.id === tabId)
   return {
     title: custom?.label ?? tabId,
     description: "Custom section added by admin. You can add real content for this tab later.",
@@ -448,6 +522,10 @@ export default function AdminApp() {
   const [selectedCustomButtonItemId, setSelectedCustomButtonItemId] = useState<string | null>(null)
   const [selectedControlItemId, setSelectedControlItemId] = useState<string | null>(null)
   const [newDropdownOptionValue, setNewDropdownOptionValue] = useState("")
+  const [userSearchQuery, setUserSearchQuery] = useState("")
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false)
+  /** Set when user clicks Remove on anything (including custom items they added); triggers confirm-before-save. */
+  const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -470,6 +548,13 @@ export default function AdminApp() {
     if (withEmail.length && !selectedId) setSelectedId(withEmail[0].id)
   }, [])
 
+  const filteredProfiles = profiles.filter((p) =>
+    profileOptionLabel(p).toLowerCase().includes(userSearchQuery.trim().toLowerCase())
+  )
+  const selectedProfile = selectedId === ALL_USERS_ID ? null : profiles.find((p) => p.id === selectedId)
+  const selectedDisplayLabel =
+    selectedId === ALL_USERS_ID ? "All users" : selectedProfile ? profileOptionLabel(selectedProfile) : ""
+
   useEffect(() => {
     if (!supabase) {
       setLoading(false)
@@ -482,12 +567,16 @@ export default function AdminApp() {
   useEffect(() => {
     if (!selectedId) {
       setConfig({})
+      setHasRemovedSomething(false)
       return
     }
+    if (selectedId === ALL_USERS_ID) return // keep current config when "All users" is selected
     const p = profiles.find((x) => x.id === selectedId)
-    setConfig(p?.portal_config ?? {})
+    const raw = p?.portal_config
+    // Normalize: DB may return null, or malformed JSON (e.g. string). Always set a plain object.
+    setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {})
+    setHasRemovedSomething(false)
   }, [selectedId, profiles])
-
 
   // When current preview tab is hidden, switch to first visible tab
   const visibleTabIds = getVisibleTabs(config).map((t) => t.tab_id)
@@ -495,13 +584,26 @@ export default function AdminApp() {
     if (visibleTabIds.length > 0 && !visibleTabIds.includes(previewPage)) setPreviewPage(visibleTabIds[0])
   }, [visibleTabIds.join(","), previewPage])
 
-  const selectedProfile = profiles.find((p) => p.id === selectedId)
-
   async function handleSave() {
     if (!supabase || !selectedId) return
+    if ((hasRemovals(config) || hasRemovedSomething) && !window.confirm("Are you sure you want to remove options?")) return
     setSaving(true)
     setError("")
     setMessage("")
+    if (selectedId === ALL_USERS_ID) {
+      let failed = 0
+      for (const p of profiles) {
+        const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", p.id)
+        if (err) failed++
+      }
+      setSaving(false)
+      setMessage(failed === 0 ? "Saved. Portal config applied to all users." : `Saved for ${profiles.length - failed} users. ${failed} failed.`)
+      if (failed === 0) {
+        setProfiles((prev) => prev.map((p) => ({ ...p, portal_config: config })))
+        setHasRemovedSomething(false)
+      }
+      return
+    }
     const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", selectedId)
     setSaving(false)
     if (err) {
@@ -510,9 +612,10 @@ export default function AdminApp() {
     }
     setMessage("Saved. That user's portal will reflect these visibility settings.")
     setProfiles((prev) => prev.map((p) => (p.id === selectedId ? { ...p, portal_config: config } : p)))
+    setHasRemovedSomething(false)
   }
 
-  async function handleCreateUser(e: React.FormEvent) {
+  async function handleCreateUser(e: FormEvent) {
     e.preventDefault()
     setError("")
     setMessage("")
@@ -587,6 +690,7 @@ export default function AdminApp() {
   }
 
   function removeCustom(section: "customTabs" | "customSettings" | "customDropdowns", id: string) {
+    setHasRemovedSomething(true)
     const key = section === "customTabs" ? "tabs" : section === "customSettings" ? "settings" : "dropdowns"
     const arr = ((config[section] ?? []) as PortalCustomItem[]).filter((x) => x.id !== id)
     const next: PortalConfig = { ...config, [section]: arr.length ? arr : undefined }
@@ -597,13 +701,17 @@ export default function AdminApp() {
   }
 
   function getOptionValues(controlId: string): string[] {
-    return config.optionValues?.[controlId] ?? DEFAULT_OPTIONS[controlId] ?? []
+    const raw = config.optionValues?.[controlId]
+    if (Array.isArray(raw)) return raw
+    const def = DEFAULT_OPTIONS[controlId]
+    return Array.isArray(def) ? def : []
   }
 
   function addOptionValue(controlId: string, value: string) {
     const trimmed = value.trim()
     if (!trimmed) return
-    const current = config.optionValues?.[controlId] ?? []
+    const raw = config.optionValues?.[controlId]
+    const current = Array.isArray(raw) ? raw : []
     if (current.includes(trimmed)) return
     setConfig({
       ...config,
@@ -612,6 +720,7 @@ export default function AdminApp() {
   }
 
   function removeOptionValue(controlId: string, index: number) {
+    setHasRemovedSomething(true)
     const current = getOptionValues(controlId)
     const next = current.filter((_, i) => i !== index)
     const optionValues = { ...config.optionValues, [controlId]: next }
@@ -637,6 +746,7 @@ export default function AdminApp() {
   }
 
   function removeCustomActionButton(id: string) {
+    setHasRemovedSomething(true)
     const arr = getCustomActionButtons().filter((x) => x.id !== id)
     if (previewPage === "leads") {
       setConfig({ ...config, customActionButtons: arr.length ? arr : undefined })
@@ -677,6 +787,20 @@ export default function AdminApp() {
     setControlItems(tabId, controlId, getControlItems(tabId, controlId).map((x) => (x.id === itemId ? { ...x, visibleToUser } : x)))
   }
 
+  function removeControlItem(tabId: string, controlId: string, itemId: string) {
+    setHasRemovedSomething(true)
+    setControlItems(tabId, controlId, getControlItems(tabId, controlId).filter((x) => x.id !== itemId))
+    if (selectedControlItemId === itemId) setSelectedControlItemId(null)
+  }
+
+  function removeCustomActionButtonItem(buttonId: string, itemId: string) {
+    setHasRemovedSomething(true)
+    const btn = getCustomActionButton(buttonId)
+    if (!btn) return
+    updateCustomActionButton(buttonId, { items: btn.items.filter((x) => x.id !== itemId) })
+    if (selectedCustomButtonItemId === itemId) setSelectedCustomButtonItemId(null)
+  }
+
   function addControlItemOption(tabId: string, controlId: string, itemId: string, option: string) {
     const items = getControlItems(tabId, controlId)
     const item = items.find((x) => x.id === itemId)
@@ -687,6 +811,7 @@ export default function AdminApp() {
   }
 
   function removeControlItemOption(tabId: string, controlId: string, itemId: string, index: number) {
+    setHasRemovedSomething(true)
     const item = getControlItems(tabId, controlId).find((x) => x.id === itemId)
     if (!item?.options) return
     updateControlItem(tabId, controlId, itemId, { options: item.options.filter((_, i) => i !== index) })
@@ -742,6 +867,7 @@ export default function AdminApp() {
   }
 
   function removeCustomActionButtonItemOption(buttonId: string, itemId: string, index: number) {
+    setHasRemovedSomething(true)
     const btn = getCustomActionButton(buttonId)
     const item = btn?.items.find((x) => x.id === itemId)
     if (!item?.options) return
@@ -758,7 +884,7 @@ export default function AdminApp() {
     setSelectedControlItemId(null)
   }, [selectedControlForPage])
 
-  const labelStyle: React.CSSProperties = {
+  const labelStyle: CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: 10,
@@ -780,11 +906,18 @@ export default function AdminApp() {
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
           Select a user to configure their portal. Toggle visibility; add custom items below.
         </p>
-        <label style={{ display: "block", marginBottom: 16 }}>
+        <div style={{ display: "block", marginBottom: 16, position: "relative" }}>
           <span style={{ fontSize: 11, opacity: 0.8, display: "block", marginBottom: 4 }}>User (profile)</span>
-          <select
-            value={selectedId ?? ""}
-            onChange={(e) => setSelectedId(e.target.value || null)}
+          <input
+            type="text"
+            value={userDropdownOpen ? userSearchQuery : selectedDisplayLabel}
+            onChange={(e) => {
+              setUserSearchQuery(e.target.value)
+              setUserDropdownOpen(true)
+            }}
+            onFocus={() => { setUserDropdownOpen(true); setUserSearchQuery("") }}
+            onBlur={() => setTimeout(() => setUserDropdownOpen(false), 200)}
+            placeholder="Search or select user..."
             style={{
               width: "100%",
               padding: "8px 10px",
@@ -793,16 +926,69 @@ export default function AdminApp() {
               background: "rgba(0,0,0,0.2)",
               color: "white",
               fontSize: 14,
+              boxSizing: "border-box",
             }}
-          >
-            {profiles.length === 0 && <option value="">— No profiles —</option>}
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {profileOptionLabel(p)}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+          {userDropdownOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                right: 0,
+                marginTop: 4,
+                maxHeight: 220,
+                overflow: "auto",
+                background: theme.charcoalSmoke,
+                border: "1px solid rgba(255,255,255,0.3)",
+                borderRadius: 6,
+                zIndex: 1000,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => { setSelectedId(ALL_USERS_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: selectedId === ALL_USERS_ID ? "rgba(249,115,22,0.3)" : "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                All users — apply settings to everyone
+              </button>
+              {filteredProfiles.length === 0 && (
+                <div style={{ padding: "10px 12px", color: "rgba(255,255,255,0.7)", fontSize: 13 }}>No matching users</div>
+              )}
+              {filteredProfiles.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => { setSelectedId(p.id); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "10px 12px",
+                    textAlign: "left",
+                    background: selectedId === p.id ? "rgba(249,115,22,0.3)" : "transparent",
+                    border: "none",
+                    color: "white",
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  {profileOptionLabel(p)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>Create user</h3>
@@ -936,7 +1122,7 @@ export default function AdminApp() {
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
               <h1 style={{ color: theme.text, margin: 0 }}>
-                Portal config for {selectedProfile ? profileOptionLabel(selectedProfile) : "User"}
+                Portal config for {selectedId === ALL_USERS_ID ? "All users" : selectedProfile ? profileOptionLabel(selectedProfile) : "User"}
               </h1>
               <button
                 type="button"
@@ -1013,49 +1199,49 @@ export default function AdminApp() {
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Sidebar tabs</h2>
                       {getAllTabIds(config).map(({ id, label }) => (
-                        <label key={id} style={labelStyle} onClick={() => toggle("tabs", id)}>
-                          <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
-                          <span style={{ color: theme.text }}>{label}</span>
-                          {(config.customTabs ?? []).some((t) => t.id === id) && (
-                            <button type="button" onClick={(e) => { e.preventDefault(); removeCustom("customTabs", id) }} style={{ marginLeft: "auto", fontSize: 11, padding: "2px 6px" }}>Remove</button>
-                          )}
-                        </label>
+                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                          <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("tabs", id)}>
+                            <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
+                            <span style={{ color: theme.text }}>{label}</span>
+                          </label>
+                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustom("customTabs", id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
+                        </div>
                       ))}
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New tab label" value={newTabLabel} onChange={(e) => setNewTabLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customTabs", newTabLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customTabs", newTabLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 13 }}>Add tab</button>
+                        <button type="button" onClick={() => addCustom("customTabs", newTabLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add tab</button>
                       </div>
                     </section>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Settings sections</h2>
                       {getAllSettingIds(config).map(({ id, label }) => (
-                        <label key={id} style={labelStyle} onClick={() => toggle("settings", id)}>
-                          <input type="checkbox" checked={getVisible(config, "settings", id)} onChange={() => toggle("settings", id)} />
-                          <span style={{ color: theme.text }}>{label}</span>
-                          {(config.customSettings ?? []).some((t) => t.id === id) && (
-                            <button type="button" onClick={(e) => { e.preventDefault(); removeCustom("customSettings", id) }} style={{ marginLeft: "auto", fontSize: 11, padding: "2px 6px" }}>Remove</button>
-                          )}
-                        </label>
+                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                          <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("settings", id)}>
+                            <input type="checkbox" checked={getVisible(config, "settings", id)} onChange={() => toggle("settings", id)} />
+                            <span style={{ color: theme.text }}>{label}</span>
+                          </label>
+                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customSettings ?? []).some((t) => t.id === id) ? removeCustom("customSettings", id) : setConfig(setVisible(config, "settings", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
+                        </div>
                       ))}
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New setting label" value={newSettingLabel} onChange={(e) => setNewSettingLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customSettings", newSettingLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customSettings", newSettingLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 13 }}>Add</button>
+                        <button type="button" onClick={() => addCustom("customSettings", newSettingLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
                       </div>
                     </section>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Dropdowns / options</h2>
                       {getAllDropdownIds(config).map(({ id, label }) => (
-                        <label key={id} style={labelStyle} onClick={() => toggle("dropdowns", id)}>
-                          <input type="checkbox" checked={getVisible(config, "dropdowns", id)} onChange={() => toggle("dropdowns", id)} />
-                          <span style={{ color: theme.text }}>{label}</span>
-                          {(config.customDropdowns ?? []).some((t) => t.id === id) && (
-                            <button type="button" onClick={(e) => { e.preventDefault(); removeCustom("customDropdowns", id) }} style={{ marginLeft: "auto", fontSize: 11, padding: "2px 6px" }}>Remove</button>
-                          )}
-                        </label>
+                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                          <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("dropdowns", id)}>
+                            <input type="checkbox" checked={getVisible(config, "dropdowns", id)} onChange={() => toggle("dropdowns", id)} />
+                            <span style={{ color: theme.text }}>{label}</span>
+                          </label>
+                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customDropdowns ?? []).some((t) => t.id === id) ? removeCustom("customDropdowns", id) : setConfig(setVisible(config, "dropdowns", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
+                        </div>
                       ))}
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New dropdown label" value={newDropdownLabel} onChange={(e) => setNewDropdownLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customDropdowns", newDropdownLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customDropdowns", newDropdownLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 13 }}>Add</button>
+                        <button type="button" onClick={() => addCustom("customDropdowns", newDropdownLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
                       </div>
                     </section>
                   </>
@@ -1123,7 +1309,7 @@ export default function AdminApp() {
                                 <li key={b.id} style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                   <span>{b.label}</span>
                                   <button type="button" onClick={() => setSelectedControl({ tab: previewPage, controlId: "custom_action_button:" + b.id })} style={{ fontSize: 11, padding: "2px 6px" }}>Edit</button>
-                                  <button type="button" onClick={() => removeCustomActionButton(b.id)} style={{ fontSize: 11, padding: "2px 6px", color: "#b91c1c" }}>Remove</button>
+                                  <button type="button" onClick={() => removeCustomActionButton(b.id)} style={REMOVE_BTN_STYLE}>Remove</button>
                                 </li>
                               ))}
                             </ul>
@@ -1192,6 +1378,7 @@ export default function AdminApp() {
                                           <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setCustomActionButtonItemVisible(buttonId, item.id, e.target.checked)} />
                                           <span>Visible to user</span>
                                         </label>
+                                        <button type="button" onClick={() => removeCustomActionButtonItem(buttonId, item.id)} style={REMOVE_BTN_STYLE}>Remove</button>
                                       </div>
                                       {isSelected && (
                                         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
@@ -1202,13 +1389,13 @@ export default function AdminApp() {
                                                 {(item.options ?? []).map((opt, i) => (
                                                   <li key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                                     <span>{opt}</span>
-                                                    <button type="button" onClick={() => removeCustomActionButtonItemOption(buttonId, item.id, i)} style={{ fontSize: 10, padding: "2px 4px", color: "#b91c1c" }}>Remove</button>
+                                                    <button type="button" onClick={() => removeCustomActionButtonItemOption(buttonId, item.id, i)} style={REMOVE_BTN_STYLE_SMALL}>Remove</button>
                                                   </li>
                                                 ))}
                                               </ul>
                                               <div style={{ display: "flex", gap: 6 }}>
                                                 <input type="text" placeholder="Add option" value={newDropdownOptionValue} onChange={(e) => setNewDropdownOptionValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomActionButtonItemOption(buttonId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); } }} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
-                                                <button type="button" onClick={() => { addCustomActionButtonItemOption(buttonId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                                                <button type="button" onClick={() => { addCustomActionButtonItemOption(buttonId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 12 }}>Add</button>
                                               </div>
                                             </div>
                                           )}
@@ -1256,7 +1443,7 @@ export default function AdminApp() {
                                               })()}
                                             </div>
                                           </div>
-                                          <button type="button" onClick={() => setSelectedCustomButtonItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer" }}>Done</button>
+                                          <button type="button" onClick={() => setSelectedCustomButtonItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                         </div>
                                       )}
                                     </li>
@@ -1272,7 +1459,7 @@ export default function AdminApp() {
                                   <option value="custom_field">Custom field (text/textarea)</option>
                                 </select>
                                 {newSettingItemType === "dropdown" && <input type="text" placeholder="Options (comma-separated)" value={newSettingItemOptions} onChange={(e) => setNewSettingItemOptions(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />}
-                                <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addCustomActionButtonItem(buttonId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                                <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addCustomActionButtonItem(buttonId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 12 }}>Add</button>
                               </div>
                             </>
                           )
@@ -1338,6 +1525,7 @@ export default function AdminApp() {
                                         <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setControlItemVisible(tabId, controlId, item.id, e.target.checked)} />
                                         <span>Visible to user</span>
                                       </label>
+                                      <button type="button" onClick={() => removeControlItem(tabId, controlId, item.id)} style={REMOVE_BTN_STYLE}>Remove</button>
                                     </div>
                                     {isSelected && (
                                       <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
@@ -1348,13 +1536,13 @@ export default function AdminApp() {
                                               {(item.options ?? []).map((opt, i) => (
                                                 <li key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                                   <span>{opt}</span>
-                                                  <button type="button" onClick={() => removeControlItemOption(tabId, controlId, item.id, i)} style={{ fontSize: 10, padding: "2px 4px", color: "#b91c1c" }}>Remove</button>
+                                                  <button type="button" onClick={() => removeControlItemOption(tabId, controlId, item.id, i)} style={REMOVE_BTN_STYLE_SMALL}>Remove</button>
                                                 </li>
                                               ))}
                                             </ul>
                                             <div style={{ display: "flex", gap: 6 }}>
                                               <input type="text" placeholder="Add option" value={newDropdownOptionValue} onChange={(e) => setNewDropdownOptionValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addControlItemOption(tabId, controlId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); } }} style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
-                                              <button type="button" onClick={() => { addControlItemOption(tabId, controlId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                                              <button type="button" onClick={() => { addControlItemOption(tabId, controlId, item.id, newDropdownOptionValue); setNewDropdownOptionValue(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 12 }}>Add</button>
                                             </div>
                                           </div>
                                         )}
@@ -1402,7 +1590,7 @@ export default function AdminApp() {
                                             })()}
                                           </div>
                                         </div>
-                                        <button type="button" onClick={() => setSelectedControlItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer" }}>Done</button>
+                                        <button type="button" onClick={() => setSelectedControlItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                       </div>
                                     )}
                                   </li>
@@ -1418,7 +1606,7 @@ export default function AdminApp() {
                                 <option value="custom_field">Custom field (text/textarea)</option>
                               </select>
                               {newSettingItemType === "dropdown" && <input type="text" placeholder="Options (comma-separated)" value={newSettingItemOptions} onChange={(e) => setNewSettingItemOptions(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />}
-                              <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addControlItem(tabId, controlId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>Add</button>
+                              <button type="button" onClick={() => { const id = (newSettingItemLabel.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "") || "item-" + Date.now()); addControlItem(tabId, controlId, { id, type: newSettingItemType, label: newSettingItemLabel.trim() || "Item", options: newSettingItemType === "dropdown" && newSettingItemOptions ? newSettingItemOptions.split(",").map((o) => o.trim()).filter(Boolean) : undefined }); setNewSettingItemLabel(""); setNewSettingItemOptions(""); }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 12 }}>Add</button>
                             </div>
                           </>
                           )
@@ -1430,7 +1618,7 @@ export default function AdminApp() {
                               {getOptionValues("leads_table_columns").map((colId, i) => (
                                 <li key={colId} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
                                   <span>{LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}</span>
-                                  <button type="button" onClick={() => removeOptionValue("leads_table_columns", i)} style={{ fontSize: 11, padding: "2px 6px", color: "#b91c1c" }}>Remove</button>
+                                  <button type="button" onClick={() => removeOptionValue("leads_table_columns", i)} style={REMOVE_BTN_STYLE}>Remove</button>
                                 </li>
                               ))}
                             </ul>

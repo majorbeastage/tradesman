@@ -138,6 +138,44 @@ export type PortalConfig = {
   customActionButtonsByTab?: Record<string, CustomActionButton[]>
 }
 
+/** Get settings/control items for the user portal: from portal_config, filtered by visibleToUser. Use for any tab:control (e.g. leads:settings, conversations:conversation_settings). */
+export function getControlItemsForUser(
+  portalConfig: PortalConfig | null,
+  tabId: string,
+  controlId: string
+): PortalSettingItem[] {
+  const key = `${tabId}:${controlId}`
+  const raw =
+    key === "leads:settings"
+      ? (portalConfig?.controlItems?.[key] ?? portalConfig?.leadsSettingsItems ?? DEFAULT_LEADS_SETTINGS_ITEMS)
+      : (portalConfig?.controlItems?.[key] ?? getDefaultControlItems(tabId, controlId))
+  return (Array.isArray(raw) ? raw : []).filter((item) => item.visibleToUser !== false)
+}
+
+/** Get Leads Settings items for the user portal (convenience). */
+export function getLeadsSettingsItemsForUser(portalConfig: PortalConfig | null): PortalSettingItem[] {
+  return getControlItemsForUser(portalConfig, "leads", "settings")
+}
+
+/** Get custom action buttons for a tab (user portal). For leads uses customActionButtons; else customActionButtonsByTab. Returns buttons with items filtered by visibleToUser. */
+export function getCustomActionButtonsForUser(
+  portalConfig: PortalConfig | null,
+  tabId: string
+): CustomActionButton[] {
+  let raw: CustomActionButton[] = []
+  if (tabId === "leads") {
+    raw = portalConfig?.customActionButtons ?? []
+    const legacy = (portalConfig as { customHeaderButtons?: PortalCustomItem[] })?.customHeaderButtons
+    if (raw.length === 0 && legacy?.length) raw = legacy.map((b) => ({ id: b.id, label: b.label, items: [] }))
+  } else {
+    raw = portalConfig?.customActionButtonsByTab?.[tabId] ?? []
+  }
+  return raw.map((btn) => ({
+    ...btn,
+    items: (btn.items ?? []).filter((item) => item.visibleToUser !== false),
+  }))
+}
+
 /** Default items shown in Leads Settings modal (admin can add/remove/edit) */
 export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'default_lead_status', type: 'dropdown', label: 'Default lead status', options: ['New', 'Contacted', 'Qualified', 'Lost'] },
@@ -195,18 +233,24 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
   conversations: [
     { id: 'page_title', label: 'Page title', type: 'page_title' },
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
+    { id: 'add_conversation', label: 'Add conversation', type: 'button' },
     { id: 'conversation_settings', label: 'Conversation settings', type: 'button' },
   ],
   quotes: [
     { id: 'page_title', label: 'Page title', type: 'page_title' },
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
+    { id: 'add_customer_to_quotes', label: 'Add Customer to quotes', type: 'button' },
+    { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'quote_settings', label: 'Quote settings', type: 'button' },
     { id: 'status', label: 'Status', type: 'dropdown' },
   ],
   calendar: [
     { id: 'page_title', label: 'Page title', type: 'page_title' },
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
-    { id: 'working_hours', label: 'Working hours', type: 'button' },
+    { id: 'add_item_to_calendar', label: 'Add item to calendar', type: 'button' },
+    { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
+    { id: 'job_types', label: 'Job Types', type: 'button' },
+    { id: 'working_hours', label: 'Settings (working hours)', type: 'button' },
     { id: 'job_type', label: 'Job type', type: 'dropdown' },
   ],
   customers: [],
@@ -265,9 +309,9 @@ export const PORTAL_DROPDOWN_LABELS: Record<string, string> = {
 /** Control ids that use the full items editor (checkboxes, dropdowns, custom fields, dependency, visible to user). */
 export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
   leads: ['settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
-  conversations: ['conversation_settings'],
-  quotes: ['quote_settings', 'status'],
-  calendar: ['working_hours', 'job_type'],
+  conversations: ['add_conversation', 'conversation_settings'],
+  quotes: ['add_customer_to_quotes', 'auto_response_options', 'quote_settings', 'status'],
+  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'job_type'],
   settings: ['custom_fields'],
   dashboard: [],
   customers: [],
@@ -275,10 +319,43 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
   'tech-support': [],
 }
 
+/** Default items for Quote settings (user portal) */
+export const DEFAULT_QUOTE_SETTINGS_ITEMS: PortalSettingItem[] = [
+  { id: 'quote_default_status', type: 'dropdown', label: 'Default quote status for new quotes', options: ['Draft', 'Sent', 'Viewed', 'Accepted', 'Declined'] },
+]
+
+/** Default items for Quotes Auto Response Options (matches user portal built-in options) */
+export const DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
+  { id: 'ar_on_quote_created', type: 'checkbox', label: 'When a quote is created — send an auto response to the customer', defaultChecked: false },
+  { id: 'ar_on_quote_sent', type: 'checkbox', label: 'When a quote is sent — send an auto response', defaultChecked: false },
+  { id: 'ar_on_quote_viewed', type: 'checkbox', label: 'When a quote is viewed (by customer) — send an auto response', defaultChecked: false },
+  { id: 'ar_delay_minutes', type: 'custom_field', label: 'Delay before sending (minutes)', customFieldSubtype: 'text' },
+]
+
+/** Default items for Calendar Auto Response Options */
+export const DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
+  { id: 'ar_remind_before_mins', type: 'custom_field', label: 'Remind before event (minutes)', customFieldSubtype: 'text' },
+]
+
+/** Default items for Calendar Settings (working hours / general settings) */
+export const DEFAULT_CALENDAR_WORKING_HOURS_ITEMS: PortalSettingItem[] = [
+  { id: 'no_duplicate_times', type: 'checkbox', label: 'Do not allow duplicate times', defaultChecked: false },
+]
+
+/** Default items for Conversation settings */
+export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
+  { id: 'show_internal_conversations', type: 'checkbox', label: 'Show Internal Conversations', defaultChecked: true },
+]
+
 /** Default items for a control when none saved. Key: `${tabId}:${controlId}`. */
 export function getDefaultControlItems(tabId: string, controlId: string): PortalSettingItem[] {
   const key = `${tabId}:${controlId}`
   if (key === 'leads:settings') return [...DEFAULT_LEADS_SETTINGS_ITEMS]
+  if (key === 'quotes:quote_settings') return [...DEFAULT_QUOTE_SETTINGS_ITEMS]
+  if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
+  if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
+  if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]
+  if (key === 'conversations:conversation_settings') return [...DEFAULT_CONVERSATION_SETTINGS_ITEMS]
   const opts = DEFAULT_OPTIONS[controlId]
   if (opts?.length) {
     return [{ id: controlId + '_options', type: 'dropdown', label: PAGE_CONTROLS[tabId]?.find((c) => c.id === controlId)?.label ?? controlId, options: [...opts] }]
