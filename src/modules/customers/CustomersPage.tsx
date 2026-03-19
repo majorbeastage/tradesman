@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { useAuth } from "../../contexts/AuthContext"
+import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 
@@ -11,7 +11,7 @@ type CustomerRow = {
 }
 
 export default function CustomersPage() {
-  const { userId } = useAuth()
+  const userId = useScopedUserId()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)

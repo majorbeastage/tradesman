@@ -1,6 +1,6 @@
 # Admin portal setup (one-time)
 
-Do these steps once. **No Edge Function is required** to create users from the Admin portal.
+Do these steps once. The Admin portal **tries the `admin-users` Edge Function first** when you create a user (so Auth + `profiles` stay in sync even with “Confirm email” on). If the function is not deployed, it falls back to client `signUp`, which may **omit the profile row** until the email is confirmed. Deploy with: `supabase functions deploy admin-users` (set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for the function in the Dashboard).
 
 ---
 
@@ -13,6 +13,9 @@ In **Supabase Dashboard → SQL Editor**, run each script as a **New query**:
 
 2. **`supabase-admin-portal-config.sql`**  
    Adds **`portal_config`** (JSONB) to `profiles`. The admin portal uses this for per-user visibility (tabs, settings, dropdowns). Default `{}` = all visible.
+
+3. **`supabase-auth-rls.sql`** then **`supabase-office-manager-rls.sql`**  
+   Required if you use the **Office manager** portal: delegated access to assigned users’ data. See **OFFICE-MANAGER.md**.
 
 Optional: **`supabase-admin-portal-builder.sql`** (clients, portal_tabs, custom_fields). Not required for the new admin portal. "—"
 ---

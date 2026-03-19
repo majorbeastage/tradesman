@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react"
-import type { CSSProperties, FormEvent, ReactNode } from "react"
+import type { CSSProperties, ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useView } from "../../contexts/ViewContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
+import AdminUsersSection from "./AdminUsersSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   USER_PORTAL_TAB_IDS,
@@ -498,14 +499,6 @@ export default function AdminApp() {
   const [error, setError] = useState("")
   const [previewPage, setPreviewPage] = useState("dashboard")
 
-  // Create user
-  const [createEmail, setCreateEmail] = useState("")
-  const [createPassword, setCreatePassword] = useState("")
-  const [createFirstName, setCreateFirstName] = useState("")
-  const [createLastName, setCreateLastName] = useState("")
-  const [createRole, setCreateRole] = useState<"user" | "office_manager" | "admin">("user")
-  const [creating, setCreating] = useState(false)
-
   // Preview: which control is selected (tab + controlId) for showing options on the right
   const [selectedControl, setSelectedControl] = useState<{ tab: string; controlId: string } | null>(null)
   // When control is custom_action_button, which specific button (by id) is selected for editing its items
@@ -526,6 +519,7 @@ export default function AdminApp() {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false)
   /** Set when user clicks Remove on anything (including custom items they added); triggers confirm-before-save. */
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
+  const [adminPanel, setAdminPanel] = useState<"portal" | "users">("portal")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -613,57 +607,6 @@ export default function AdminApp() {
     setMessage("Saved. That user's portal will reflect these visibility settings.")
     setProfiles((prev) => prev.map((p) => (p.id === selectedId ? { ...p, portal_config: config } : p)))
     setHasRemovedSomething(false)
-  }
-
-  async function handleCreateUser(e: FormEvent) {
-    e.preventDefault()
-    setError("")
-    setMessage("")
-    const email = createEmail.trim()
-    if (!email || !createPassword) {
-      setError("Email and password required.")
-      return
-    }
-    if (createPassword.length < 6) {
-      setError("Password at least 6 characters.")
-      return
-    }
-    if (!supabase) {
-      setError("Supabase not configured.")
-      return
-    }
-    setCreating(true)
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password: createPassword,
-      options: { data: {} },
-    })
-    if (signUpError) {
-      setError(signUpError.message)
-      setCreating(false)
-      return
-    }
-    const newUserId = authData.user?.id
-    if (!newUserId) {
-      setError("User created but could not get id.")
-      setCreating(false)
-      return
-    }
-    const displayName = [createFirstName.trim(), createLastName.trim()].filter(Boolean).join(" ").trim() || null
-    await supabase
-      .from("profiles")
-      .upsert(
-        { id: newUserId, role: createRole, display_name: displayName, updated_at: new Date().toISOString() },
-        { onConflict: "id" }
-      )
-    setMessage(`User ${displayName || email} created with role ${createRole}.`)
-    setCreateEmail("")
-    setCreatePassword("")
-    setCreateFirstName("")
-    setCreateLastName("")
-    setCreateRole("user")
-    loadProfiles()
-    setCreating(false)
   }
 
   const toggle = (section: "tabs" | "settings" | "dropdowns", key: string) => {
@@ -903,9 +846,48 @@ export default function AdminApp() {
       {/* Admin sidebar */}
       <aside style={{ width: 260, background: theme.charcoalSmoke, padding: 20, color: "white", flexShrink: 0 }}>
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>Admin</h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("portal")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "portal" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "portal" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Portal builder
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("users")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "users" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "users" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Users & office managers
+          </button>
+        </div>
+        {adminPanel === "portal" && (
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
           Select a user to configure their portal. Toggle visibility; add custom items below.
         </p>
+        )}
+        {adminPanel === "portal" && (
         <div style={{ display: "block", marginBottom: 16, position: "relative" }}>
           <span style={{ fontSize: 11, opacity: 0.8, display: "block", marginBottom: 4 }}>User (profile)</span>
           <input
@@ -989,115 +971,7 @@ export default function AdminApp() {
             </div>
           )}
         </div>
-
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
-          <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>Create user</h3>
-          <form onSubmit={handleCreateUser}>
-            <input
-              type="text"
-              placeholder="First name"
-              value={createFirstName}
-              onChange={(e) => setCreateFirstName(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                marginBottom: 6,
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.3)",
-                background: "rgba(0,0,0,0.2)",
-                color: "white",
-                fontSize: 12,
-                boxSizing: "border-box",
-              }}
-            />
-            <input
-              type="text"
-              placeholder="Last name"
-              value={createLastName}
-              onChange={(e) => setCreateLastName(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                marginBottom: 6,
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.3)",
-                background: "rgba(0,0,0,0.2)",
-                color: "white",
-                fontSize: 12,
-                boxSizing: "border-box",
-              }}
-            />
-            <input
-              type="email"
-              placeholder="Email"
-              value={createEmail}
-              onChange={(e) => setCreateEmail(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                marginBottom: 6,
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.3)",
-                background: "rgba(0,0,0,0.2)",
-                color: "white",
-                fontSize: 12,
-                boxSizing: "border-box",
-              }}
-            />
-            <input
-              type="password"
-              placeholder="Password (6+)"
-              value={createPassword}
-              onChange={(e) => setCreatePassword(e.target.value)}
-              minLength={6}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                marginBottom: 6,
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.3)",
-                background: "rgba(0,0,0,0.2)",
-                color: "white",
-                fontSize: 12,
-                boxSizing: "border-box",
-              }}
-            />
-            <select
-              value={createRole}
-              onChange={(e) => setCreateRole(e.target.value as "user" | "office_manager" | "admin")}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                marginBottom: 8,
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.3)",
-                background: "rgba(0,0,0,0.2)",
-                color: "white",
-                fontSize: 12,
-              }}
-            >
-              <option value="user">User</option>
-              <option value="office_manager">Office Manager</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button
-              type="submit"
-              disabled={creating}
-              style={{
-                width: "100%",
-                padding: "8px",
-                background: "rgba(255,255,255,0.2)",
-                color: "white",
-                border: "1px solid rgba(255,255,255,0.3)",
-                borderRadius: 6,
-                cursor: creating ? "wait" : "pointer",
-                fontSize: 12,
-              }}
-            >
-              {creating ? "Creating…" : "Create user"}
-            </button>
-          </form>
-        </div>
+        )}
 
         <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
           <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{user?.email}</p>
@@ -1112,7 +986,15 @@ export default function AdminApp() {
       </aside>
 
       <main style={{ flex: 1, padding: 24, background: theme.background, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
-        {loading ? (
+        {adminPanel === "users" ? (
+          <div>
+            <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Users & office managers</h1>
+            <p style={{ color: theme.text, opacity: 0.8, marginBottom: 20, fontSize: 14 }}>
+              Assign each <strong>user</strong> to an <strong>office manager</strong> (or admin) so they appear in the office manager portal. This is not in the Supabase dashboard—it lives here in the app.
+            </p>
+            <AdminUsersSection />
+          </div>
+        ) : loading ? (
           <p style={{ color: theme.text }}>Loading profiles…</p>
         ) : error && !selectedId ? (
           <p style={{ color: "#b91c1c" }}>{error}</p>

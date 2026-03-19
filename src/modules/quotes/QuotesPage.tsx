@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "../../lib/supabase"
+import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
+import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -23,7 +25,10 @@ type QuoteRow = {
 
 type QuotesPageProps = { setPage?: (page: string) => void }
 export default function QuotesPage({ setPage }: QuotesPageProps) {
-  const { userId, portalConfig } = useAuth()
+  const { userId: authUserId } = useAuth()
+  const scopeCtx = useOfficeManagerScopeOptional()
+  const userId = useScopedUserId()
+  const portalConfig = usePortalConfigForPage()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
@@ -63,6 +68,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [calNotes, setCalNotes] = useState("")
   const [jobTypes, setJobTypes] = useState<{ id: string; name: string; duration_minutes: number }[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
+  const [autoAssignEnabled, setAutoAssignEnabled] = useState(true)
+  const [assignToScopedUser, setAssignToScopedUser] = useState(true)
+  const [calendarTargetUserId, setCalendarTargetUserId] = useState("")
+
+  const selectableUsers = useMemo(() => {
+    if (scopeCtx?.clients?.length) return scopeCtx.clients
+    return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
+  }, [scopeCtx?.clients, userId])
 
   const quoteSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "quote_settings"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
@@ -136,6 +149,30 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [arDelayMinutes, setArDelayMinutes] = useState(() => {
     try { return localStorage.getItem("quotes_arDelayMinutes") ?? "0" } catch { return "0" }
   })
+
+  useEffect(() => {
+    if (!calendarTargetUserId || !supabase) return
+    void supabase
+      .from("user_calendar_preferences")
+      .select("auto_assign_enabled")
+      .eq("owner_user_id", calendarTargetUserId)
+      .maybeSingle()
+      .then(({ data }) => {
+        const enabled = ((data as { auto_assign_enabled?: boolean | null } | null)?.auto_assign_enabled) !== false
+        setAutoAssignEnabled(enabled)
+        setAssignToScopedUser(enabled)
+      })
+  }, [calendarTargetUserId])
+
+  useEffect(() => {
+    if (!showAddToCalendar || !supabase || !calendarTargetUserId) return
+    void supabase
+      .from("job_types")
+      .select("id, name, duration_minutes")
+      .eq("user_id", calendarTargetUserId)
+      .order("name")
+      .then(({ data }) => setJobTypes(data || []))
+  }, [showAddToCalendar, calendarTargetUserId])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -687,10 +724,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   setCalDuration(60)
                   setCalJobTypeId("")
                   setCalNotes("")
+                  setCalendarTargetUserId(userId)
                   setShowAddToCalendar(true)
-                    if (supabase) {
-                      supabase.from("job_types").select("id, name, duration_minutes").eq("user_id", userId).order("name").then(({ data }) => setJobTypes(data || []))
-                    }
                   }}
                   style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
                 >
@@ -724,6 +759,20 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
               <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add quote to calendar</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
+                  <select
+                    value={calendarTargetUserId}
+                    onChange={(e) => setCalendarTargetUserId(e.target.value)}
+                    style={{ ...theme.formInput }}
+                  >
+                    {selectableUsers.map((u) => (
+                      <option key={u.userId} value={u.userId}>
+                        {u.label}{u.email ? ` (${u.email})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ ...theme.formInput }} />
                 <div style={{ display: "flex", gap: "8px" }}>
                   <input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} style={{ ...theme.formInput, flex: 1 }} />
@@ -735,7 +784,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </div>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
-                  <select value={calJobTypeId} onChange={(e) => setCalJobTypeId(e.target.value)} style={{ ...theme.formInput }}>
+                  <select
+                    value={calJobTypeId}
+                    onChange={(e) => {
+                      const id = e.target.value
+                      setCalJobTypeId(id)
+                      const jt = jobTypes.find((j) => j.id === id)
+                      if (jt) setCalDuration(Math.max(15, jt.duration_minutes))
+                    }}
+                    style={{ ...theme.formInput }}
+                  >
                     <option value="">— None —</option>
                     {jobTypes.map((jt) => (
                       <option key={jt.id} value={jt.id}>{jt.name} ({jt.duration_minutes} min)</option>
@@ -746,6 +804,20 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   <label style={{ fontSize: "12px", color: theme.text }}>Notes</label>
                   <input placeholder="Optional notes" value={calNotes} onChange={(e) => setCalNotes(e.target.value)} style={{ ...theme.formInput }} />
                 </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", color: theme.text, fontSize: "13px" }}>
+                  <input
+                    type="checkbox"
+                    checked={assignToScopedUser}
+                    onChange={(e) => setAssignToScopedUser(e.target.checked)}
+                  />
+                  Assign to selected user calendar automatically
+                  <span style={{ opacity: 0.65 }}>(default from Customize user: {autoAssignEnabled ? "on" : "off"})</span>
+                </label>
+                {!assignToScopedUser && scopeCtx && calendarTargetUserId !== authUserId && (
+                  <p style={{ margin: 0, fontSize: "12px", color: theme.text, opacity: 0.8 }}>
+                    This event will be assigned to your office manager calendar instead of the selected user.
+                  </p>
+                )}
                 <button
                   disabled={addToCalendarLoading}
                   onClick={async () => {
@@ -755,10 +827,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       const { tot } = getItemDisplay(item)
                       return sum + (typeof tot === "number" && !Number.isNaN(tot) ? tot : 0)
                     }, 0)
-                    const start = new Date(`${calDate}T${calTime}`)
+                    const start = parseLocalDateTime(calDate, calTime)
+                    if (Number.isNaN(start.getTime())) {
+                      setAddToCalendarLoading(false)
+                      alert("Invalid date or time.")
+                      return
+                    }
                     const end = new Date(start.getTime() + calDuration * 60 * 1000)
+                    const selectedTarget = calendarTargetUserId || userId
+                    const targetUserId = assignToScopedUser ? selectedTarget : (authUserId || selectedTarget)
                     const { error } = await supabase.from("calendar_events").insert({
-                      user_id: userId,
+                      user_id: targetUserId,
                       title: calTitle.trim(),
                       start_at: start.toISOString(),
                       end_at: end.toISOString(),

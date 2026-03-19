@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react"
-import { useAuth } from "../../contexts/AuthContext"
+import { useScopedClientId } from "../../contexts/OfficeManagerScopeContext"
 import { fetchCustomFields } from "../../lib/portal-builder-api"
 import type { CustomField } from "../../types/portal-builder"
 import { theme } from "../../styles/theme"
 
 export default function SettingsPage() {
-  const { clientId } = useAuth()
+  const clientId = useScopedClientId()
   const [fields, setFields] = useState<CustomField[]>([])
   const [values, setValues] = useState<Record<string, string | boolean>>({})
   const [loading, setLoading] = useState(true)

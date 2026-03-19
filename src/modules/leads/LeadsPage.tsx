@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "../../lib/supabase"
-import { useAuth } from "../../contexts/AuthContext"
+import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
@@ -20,7 +20,8 @@ type LeadRow = {
 type LeadsPageProps = { setPage?: (page: string) => void }
 
 export default function LeadsPage({ setPage }: LeadsPageProps) {
-  const { userId, portalConfig } = useAuth()
+  const userId = useScopedUserId()
+  const portalConfig = usePortalConfigForPage()
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})

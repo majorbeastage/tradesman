@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "../../lib/supabase"
+import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
+import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
@@ -16,6 +18,7 @@ type JobType = {
 
 type CalendarEvent = {
   id: string
+  user_id: string
   title: string
   start_at: string
   end_at: string
@@ -27,6 +30,12 @@ type CalendarEvent = {
   removed_at?: string | null
   completed_at?: string | null
   job_types?: JobType | null
+}
+
+type UserCalendarPreference = {
+  owner_user_id: string
+  ribbon_color: string | null
+  auto_assign_enabled: boolean | null
 }
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -88,7 +97,10 @@ function getTimeOptions(incrementMinutes: 15 | 60): string[] {
 }
 
 export default function CalendarPage() {
-  const { userId, portalConfig } = useAuth()
+  const { userId: authUserId } = useAuth()
+  const scopeCtx = useOfficeManagerScopeOptional()
+  const userId = useScopedUserId()
+  const portalConfig = usePortalConfigForPage()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
   const [jobTypesLoadError, setJobTypesLoadError] = useState<string>("")
@@ -100,12 +112,30 @@ export default function CalendarPage() {
   const [showAddItem, setShowAddItem] = useState(false)
   const [showJobTypes, setShowJobTypes] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showCustomizeUser, setShowCustomizeUser] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
+  const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
+  const [prefRibbonColor, setPrefRibbonColor] = useState("#0ea5e9")
+  const [prefAutoAssignEnabled, setPrefAutoAssignEnabled] = useState(true)
+  const [prefSaving, setPrefSaving] = useState(false)
+  const [prefMessage, setPrefMessage] = useState("")
+  const [customizeTargetUserId, setCustomizeTargetUserId] = useState("")
+  const [addTargetUserId, setAddTargetUserId] = useState("")
+  const [addAssignToSelectedUser, setAddAssignToSelectedUser] = useState(true)
+  const [showAllOrgEvents, setShowAllOrgEvents] = useState(() => {
+    try { return localStorage.getItem("calendar_showAllOrgEvents") === "true" } catch { return false }
+  })
+  const [prefByUserId, setPrefByUserId] = useState<Record<string, UserCalendarPreference>>({})
+
+  const selectableUsers = useMemo(() => {
+    if (scopeCtx?.clients?.length) return scopeCtx.clients
+    return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
+  }, [scopeCtx?.clients, userId])
 
   // Add item form
   const [addTitle, setAddTitle] = useState("")
@@ -127,18 +157,27 @@ export default function CalendarPage() {
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
 
   const calendarSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "working_hours"), [portalConfig])
+  const calendarSettingsItemsWithOrg = useMemo(() => {
+    const orgToggle: PortalSettingItem = {
+      id: "__org_all_events",
+      label: "Show all scheduled items in my organization",
+      type: "checkbox",
+      defaultChecked: showAllOrgEvents,
+    }
+    return [...calendarSettingsItems, orgToggle]
+  }, [calendarSettingsItems, showAllOrgEvents])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "calendar"), [portalConfig])
 
   useEffect(() => {
-    if (!showSettings || calendarSettingsItems.length === 0) return
+    if (!showSettings || calendarSettingsItemsWithOrg.length === 0) return
     const next: Record<string, string> = {}
-    calendarSettingsItems.forEach((item) => {
+    calendarSettingsItemsWithOrg.forEach((item) => {
       if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
       else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
       else next[item.id] = ""
     })
     setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
-  }, [showSettings, calendarSettingsItems])
+  }, [showSettings, calendarSettingsItemsWithOrg])
 
   function isCalendarSettingItemVisible(item: PortalSettingItem): boolean {
     if (!item.dependency) return true
@@ -195,6 +234,8 @@ export default function CalendarPage() {
   async function loadEvents() {
     if (!userId || !supabase) return
     const client = supabase
+    const orgUserIds = Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean)))
+    const canViewOrgEvents = showAllOrgEvents && orgUserIds.length > 0
     setLoadError("")
     const start = new Date(currentDate)
     const end = new Date(currentDate)
@@ -215,16 +256,15 @@ export default function CalendarPage() {
     const baseQuery = () =>
       client
         .from("calendar_events")
-        .select("id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
-        .eq("user_id", userId)
+        .select("id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
         .is("removed_at", null)
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
-        .order("start_at")
-    const { data, error } = await baseQuery().is("completed_at", null)
+    const scopedQuery = () => (canViewOrgEvents ? baseQuery().in("user_id", orgUserIds) : baseQuery().eq("user_id", userId))
+    const { data, error } = await scopedQuery().order("start_at").is("completed_at", null)
     if (error && error.message?.includes("completed_at")) {
       setHasCompletedAtColumn(false)
-      const { data: data2, error: error2 } = await baseQuery()
+      const { data: data2, error: error2 } = await scopedQuery().order("start_at")
       if (error2) {
         setLoadError(error2.message)
         setEvents([])
@@ -244,6 +284,29 @@ export default function CalendarPage() {
   function getEventColor(ev: CalendarEvent): string {
     const jt = ev.job_types ?? jobTypes.find((j) => j.id === ev.job_type_id)
     return (jt as JobType)?.color_hex ?? theme.primary
+  }
+
+  function getEventRibbonColor(): string {
+    return userPref?.ribbon_color?.trim() || "#0ea5e9"
+  }
+
+  function getEventRibbonColorForEvent(ev: CalendarEvent): string {
+    return prefByUserId[ev.user_id]?.ribbon_color?.trim() || getEventRibbonColor()
+  }
+
+  async function loadUserPreference(ownerUserId: string): Promise<UserCalendarPreference | null> {
+    if (!ownerUserId || !supabase) return null
+    const { data, error } = await supabase
+      .from("user_calendar_preferences")
+      .select("owner_user_id, ribbon_color, auto_assign_enabled")
+      .eq("owner_user_id", ownerUserId)
+      .maybeSingle()
+    if (error) {
+      setPrefMessage(error.message)
+      return null
+    }
+    const row = (data as UserCalendarPreference | null) ?? null
+    return row
   }
 
   async function loadJobTypes() {
@@ -266,24 +329,74 @@ export default function CalendarPage() {
     if (!userId) return
     setLoading(true)
     void loadEvents().then(() => setLoading(false))
-  }, [userId, currentDate, view, jobTypes.length])
+  }, [userId, currentDate, view, jobTypes.length, showAllOrgEvents, scopeCtx?.clients])
 
   useEffect(() => {
     if (!userId) return
     loadJobTypes()
   }, [userId])
 
+  useEffect(() => {
+    if (!userId) return
+    void loadUserPreference(userId).then((row) => {
+      setUserPref(row)
+      setPrefRibbonColor(row?.ribbon_color?.trim() || "#0ea5e9")
+      setPrefAutoAssignEnabled(row?.auto_assign_enabled !== false)
+      setCustomizeTargetUserId(userId)
+      setAddTargetUserId(userId)
+    })
+  }, [userId])
+
+  useEffect(() => {
+    if (!showCustomizeUser || !customizeTargetUserId) return
+    setPrefMessage("")
+    void loadUserPreference(customizeTargetUserId).then((row) => {
+      setPrefRibbonColor(row?.ribbon_color?.trim() || "#0ea5e9")
+      setPrefAutoAssignEnabled(row?.auto_assign_enabled !== false)
+    })
+  }, [showCustomizeUser, customizeTargetUserId])
+
+  useEffect(() => {
+    if (!showAddItem || !addTargetUserId) return
+    void loadUserPreference(addTargetUserId).then((row) => {
+      setAddAssignToSelectedUser(row?.auto_assign_enabled !== false)
+    })
+  }, [showAddItem, addTargetUserId])
+
+  useEffect(() => {
+    const ids = Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean)))
+    if (!supabase || ids.length === 0) {
+      setPrefByUserId({})
+      return
+    }
+    void supabase
+      .from("user_calendar_preferences")
+      .select("owner_user_id, ribbon_color, auto_assign_enabled")
+      .in("owner_user_id", ids)
+      .then(({ data, error }) => {
+        if (error || !data) return
+        const next: Record<string, UserCalendarPreference> = {}
+        for (const row of data as UserCalendarPreference[]) next[row.owner_user_id] = row
+        setPrefByUserId(next)
+      })
+  }, [scopeCtx?.clients])
+
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
+    const selectedTarget = addTargetUserId || userId
     setAddError("")
-    const start = new Date(`${addStartDate}T${addStartTime}`)
+    const start = parseLocalDateTime(addStartDate, addStartTime)
+    if (Number.isNaN(start.getTime())) {
+      setAddError("Invalid start date or time.")
+      return
+    }
     const end = new Date(start.getTime() + addDuration * 60 * 1000)
 
     if (noDuplicateTimes) {
       const { data: existing } = await supabase
         .from("calendar_events")
         .select("id, start_at, end_at")
-        .eq("user_id", userId)
+        .eq("user_id", selectedTarget)
         .is("removed_at", null)
         .lt("start_at", end.toISOString())
         .gt("end_at", start.toISOString())
@@ -294,8 +407,9 @@ export default function CalendarPage() {
     }
 
     setAddSaving(true)
+    const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
     const { error } = await supabase.from("calendar_events").insert({
-      user_id: userId,
+      user_id: eventOwnerUserId,
       title: addTitle.trim(),
       start_at: start.toISOString(),
       end_at: end.toISOString(),
@@ -432,7 +546,7 @@ export default function CalendarPage() {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
         <button
-          onClick={() => { setShowAddItem(true); resetAddForm() }}
+          onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
           style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
         >
           Add item to calendar
@@ -454,6 +568,12 @@ export default function CalendarPage() {
           style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
         >
           Settings
+        </button>
+        <button
+          onClick={() => { setPrefMessage(""); setShowCustomizeUser(true) }}
+          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+        >
+          Customize user
         </button>
         {customActionButtons.map((btn) => (
           <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
@@ -559,6 +679,7 @@ export default function CalendarPage() {
                                 marginBottom: "2px",
                                 borderRadius: "4px",
                                 background: getEventColor(ev),
+                                boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                                 color: "#fff",
                                 cursor: "pointer",
                                 overflow: "hidden",
@@ -636,6 +757,7 @@ export default function CalendarPage() {
                               padding: "2px 4px",
                               borderRadius: "4px",
                               background: getEventColor(ev),
+                              boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                               color: "#fff",
                               cursor: "pointer",
                               fontSize: "11px",
@@ -710,6 +832,7 @@ export default function CalendarPage() {
                             padding: "4px 6px",
                             borderRadius: "4px",
                             background: getEventColor(ev),
+                            boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                             color: "#fff",
                             cursor: "pointer",
                             fontSize: "12px",
@@ -736,6 +859,16 @@ export default function CalendarPage() {
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add to calendar</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
+                <select value={addTargetUserId} onChange={(e) => setAddTargetUserId(e.target.value)} style={addInputStyle}>
+                  {selectableUsers.map((u) => (
+                    <option key={u.userId} value={u.userId}>
+                      {u.label}{u.email ? ` (${u.email})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={addInputStyle} />
               <div style={{ display: "flex", gap: "8px" }}>
                 <input type="date" value={addStartDate} onChange={(e) => setAddStartDate(e.target.value)} style={{ ...addInputStyle, flex: 1 }} />
@@ -816,6 +949,10 @@ export default function CalendarPage() {
                 />
               </div>
               <textarea placeholder="Notes" value={addNotes} onChange={(e) => setAddNotes(e.target.value)} rows={2} style={{ ...addInputStyle, resize: "vertical" }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
+                <input type="checkbox" checked={addAssignToSelectedUser} onChange={(e) => setAddAssignToSelectedUser(e.target.checked)} />
+                Assign to selected user calendar automatically
+              </label>
               {addError && <p style={{ color: "#b91c1c", fontSize: "14px", margin: 0 }}>{addError}</p>}
               <button onClick={saveEvent} disabled={addSaving} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                 {addSaving ? "Saving..." : "Add to calendar"}
@@ -887,12 +1024,94 @@ export default function CalendarPage() {
       {showSettings && (
         <PortalSettingsModal
           title="Calendar Settings"
-          items={calendarSettingsItems}
+          items={calendarSettingsItemsWithOrg}
           formValues={settingsFormValues}
-          setFormValue={(id, value) => setSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
+          setFormValue={(id, value) => {
+            setSettingsFormValues((prev) => ({ ...prev, [id]: value }))
+            if (id === "__org_all_events") {
+              const next = value === "checked"
+              setShowAllOrgEvents(next)
+              try { localStorage.setItem("calendar_showAllOrgEvents", String(next)) } catch { /* ignore */ }
+            }
+          }}
           isItemVisible={isCalendarSettingItemVisible}
           onClose={() => setShowSettings(false)}
         />
+      )}
+      {showCustomizeUser && (
+        <>
+          <div onClick={() => setShowCustomizeUser(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
+          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "440px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+            <h3 style={{ margin: "0 0 12px", color: theme.text }}>Customize user calendar</h3>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, opacity: 0.85 }}>
+              {scopeCtx?.clients.find((c) => c.userId === customizeTargetUserId)?.isSelf ? "You are customizing your own calendar." : "This applies to the selected user."}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: theme.text, fontSize: 14 }}>
+                Select user
+                <select
+                  value={customizeTargetUserId}
+                  onChange={(e) => setCustomizeTargetUserId(e.target.value)}
+                  style={{ ...addInputStyle, maxWidth: "100%" }}
+                >
+                  {selectableUsers.map((u) => (
+                    <option key={u.userId} value={u.userId}>
+                      {u.label}{u.email ? ` (${u.email})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontSize: 14 }}>
+                Ribbon color
+                <input type="color" value={prefRibbonColor} onChange={(e) => setPrefRibbonColor(e.target.value)} />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={prefAutoAssignEnabled}
+                  onChange={(e) => setPrefAutoAssignEnabled(e.target.checked)}
+                />
+                Auto-assign new calendar items to selected user
+              </label>
+              <button
+                type="button"
+                disabled={prefSaving || !customizeTargetUserId || !supabase}
+                onClick={async () => {
+                  if (!customizeTargetUserId || !supabase) return
+                  setPrefSaving(true)
+                  setPrefMessage("")
+                  const payload = {
+                    owner_user_id: customizeTargetUserId,
+                    ribbon_color: prefRibbonColor,
+                    auto_assign_enabled: prefAutoAssignEnabled,
+                    updated_at: new Date().toISOString(),
+                  }
+                  const { error } = await supabase.from("user_calendar_preferences").upsert(payload, { onConflict: "owner_user_id" })
+                  setPrefSaving(false)
+                  if (error) {
+                    setPrefMessage(error.message)
+                    return
+                  }
+                  if (customizeTargetUserId === userId) {
+                    setUserPref({
+                      owner_user_id: userId,
+                      ribbon_color: prefRibbonColor,
+                      auto_assign_enabled: prefAutoAssignEnabled,
+                    })
+                  }
+                  setPrefMessage("Saved.")
+                }}
+                style={{ padding: "9px 14px", background: theme.primary, color: "white", border: "none", borderRadius: 6, cursor: prefSaving ? "wait" : "pointer", fontWeight: 600 }}
+              >
+                {prefSaving ? "Saving..." : "Save customization"}
+              </button>
+              {prefMessage && <p style={{ margin: 0, fontSize: 12, color: prefMessage === "Saved." ? "#059669" : "#b91c1c" }}>{prefMessage}</p>}
+              <button onClick={() => setShowCustomizeUser(false)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {openCustomButtonId && (() => {

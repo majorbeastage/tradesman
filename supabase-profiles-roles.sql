@@ -10,11 +10,16 @@
 -- User profiles (role per auth user)
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT,
   role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'office_manager', 'admin')),
   display_name TEXT,
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
+
+-- Backward-compatible: add email if profiles already exists from older setup
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS email TEXT;
 
 -- Which users an office manager can manage (office manager's "clients")
 CREATE TABLE IF NOT EXISTS public.office_manager_clients (
@@ -85,9 +90,11 @@ CREATE POLICY "Admins full access office_manager_clients"
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, role)
-  VALUES (NEW.id, 'user')
-  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.profiles (id, email, role)
+  VALUES (NEW.id, NEW.email, 'user')
+  ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        updated_at = now();
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

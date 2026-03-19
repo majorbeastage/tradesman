@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "../../lib/supabase"
-import { useAuth } from "../../contexts/AuthContext"
+import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
@@ -22,7 +22,8 @@ type ConversationRow = {
 type ConversationsPageProps = { setPage?: (page: string) => void }
 
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
-  const { userId, portalConfig } = useAuth()
+  const userId = useScopedUserId()
+  const portalConfig = usePortalConfigForPage()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)

@@ -82,3 +82,33 @@ You should land in the **Admin** area. That’s your first admin account. You ca
 | 5    | Your app     | Use **Admin Login** and sign in with that email/password. |
 
 If anything doesn’t match (e.g. no “User UID” or “profiles” table), say which step you’re on and what you see and we can fix it.
+
+---
+
+## Where users show up in Supabase (two different places)
+
+The app uses **two** stores:
+
+| What | Where in Supabase | Used for |
+|------|-------------------|----------|
+| **Login (email/password)** | **Authentication** → **Users** | Signing in |
+| **Role + admin portal list** | **Table Editor** → **`profiles`** | Admin “User (profile)” dropdown, roles (`user` / `office_manager` / `admin`) |
+
+When you **create a user from the Admin portal**, the app:
+
+1. Calls **Sign up** → creates a row under **Authentication → Users**.
+2. **Upserts** a row in **`profiles`** with that user’s id and the role you picked.
+
+If you can log in but the user **does not** appear in the admin **User (profile)** list, the **`profiles` row** was probably not created or updated. Check:
+
+- **Table Editor** → **profiles** — is there a row whose `id` matches the user’s UUID from **Authentication → Users**?
+- If the app shows a **red error** after creating a user, read it (often RLS or missing column).
+- If **email confirmation** is on, sign-up may not return a user id until the email is confirmed — then profile creation in the app can be skipped; either confirm the email or turn off “Confirm email” under **Authentication → Providers → Email** for local dev.
+
+Optional SQL to fix a missing profile (replace the UUID with the one from Authentication → Users):
+
+```sql
+INSERT INTO public.profiles (id, role, display_name)
+VALUES ('PASTE-USER-UUID-HERE', 'user', NULL)
+ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, display_name = COALESCE(EXCLUDED.display_name, profiles.display_name);
+```

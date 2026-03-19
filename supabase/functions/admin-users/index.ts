@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
       })
     }
     const ids = users.users.map((u) => u.id)
-    const { data: profiles } = await adminClient.from("profiles").select("id, role, display_name").in("id", ids)
+    const { data: profiles } = await adminClient.from("profiles").select("id, email, role, display_name").in("id", ids)
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]))
     const list = users.users.map((u) => ({
       id: u.id,
@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
   }
 
   if (req.method === "POST") {
-    let body: { email?: string; password?: string; role?: string }
+    let body: { email?: string; password?: string; role?: string; display_name?: string | null }
     try {
       body = await req.json()
     } catch {
@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
-    const { email, password, role } = body
+    const { email, password, role, display_name } = body
     if (!email || typeof email !== "string" || !password || typeof password !== "string") {
       return new Response(JSON.stringify({ error: "email and password required" }), {
         status: 400,
@@ -103,8 +103,17 @@ Deno.serve(async (req) => {
       })
     }
 
+    const displayName =
+      typeof display_name === "string" && display_name.trim() ? display_name.trim() : null
+    const trimmedEmail = email.trim()
     await adminClient.from("profiles").upsert(
-      { id: newUser.user.id, role: roleVal, updated_at: new Date().toISOString() },
+      {
+        id: newUser.user.id,
+        email: trimmedEmail,
+        role: roleVal,
+        display_name: displayName,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: "id" }
     )
 
