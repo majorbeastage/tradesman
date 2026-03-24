@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { createUserViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
@@ -261,6 +262,14 @@ export default function AdminUsersSection() {
     const trimmedEmail = email.trim()
     const displayName = `${first} ${last}`.trim()
     let userCreatedId: string | null = null
+    const priorSession =
+      session?.access_token && session?.refresh_token && session.user?.id
+        ? {
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            userId: session.user.id,
+          }
+        : null
 
     try {
       if (!supabase) {
@@ -296,6 +305,12 @@ export default function AdminUsersSection() {
         if (signUpError) {
           setError(signUpError.message)
           return
+        }
+        if (priorSession?.userId && authData.user?.id && priorSession.userId !== authData.user.id) {
+          await supabase.auth.setSession({
+            access_token: priorSession.access_token,
+            refresh_token: priorSession.refresh_token,
+          })
         }
         newUserId = authData.user?.id ?? null
         if (!newUserId) {
@@ -422,14 +437,19 @@ export default function AdminUsersSection() {
 
   return (
     <div>
+      <AdminSettingBlock id="admin:users:add_user_heading">
       <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 16 }}>Add user</h2>
       <p style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
         All profiles are created here. Choose role: User, Office Manager, or Admin.
       </p>
+      </AdminSettingBlock>
+      <AdminSettingBlock id="admin:users:supabase_status">
       <p style={{ fontSize: 12, marginBottom: 16, color: supabase ? "#059669" : "#b91c1c" }}>
         Supabase: {supabase ? "configured" : "not configured — add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env and restart dev server"}
       </p>
+      </AdminSettingBlock>
       <form onSubmit={handleCreate} style={{ marginBottom: 32 }}>
+        <AdminSettingBlock id="admin:users:field:first_name">
         <label style={{ display: "block", fontWeight: 600, fontSize: 14, color: theme.text }}>
           First name
           <input
@@ -441,6 +461,8 @@ export default function AdminUsersSection() {
             required
           />
         </label>
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:field:last_name">
         <label style={{ display: "block", fontWeight: 600, fontSize: 14, color: theme.text }}>
           Last name
           <input
@@ -452,6 +474,8 @@ export default function AdminUsersSection() {
             required
           />
         </label>
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:field:email">
         <label style={{ display: "block", fontWeight: 600, fontSize: 14, color: theme.text }}>
           Email
           <input
@@ -463,6 +487,8 @@ export default function AdminUsersSection() {
             required
           />
         </label>
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:field:password">
         <label style={{ display: "block", fontWeight: 600, fontSize: 14, color: theme.text }}>
           Password
           <input
@@ -475,6 +501,8 @@ export default function AdminUsersSection() {
             required
           />
         </label>
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:field:role">
         <label style={{ display: "block", fontWeight: 600, fontSize: 14, color: theme.text }}>
           Role
           <select
@@ -487,8 +515,12 @@ export default function AdminUsersSection() {
             <option value="admin">Admin</option>
           </select>
         </label>
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:create_feedback">
         {error && <p style={{ color: "#b91c1c", fontSize: 14, marginBottom: 8 }}>{error}</p>}
         {message && <p style={{ color: "#059669", fontSize: 14, marginBottom: 8 }}>{message}</p>}
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:users:create_submit">
         <button
           type="submit"
           disabled={submitting}
@@ -504,12 +536,16 @@ export default function AdminUsersSection() {
         >
           {submitting ? "Creating…" : "Create user"}
         </button>
+        </AdminSettingBlock>
       </form>
 
+      <AdminSettingBlock id="admin:users:list_heading">
       <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 8 }}>Users</h2>
       <p style={{ color: theme.text, opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
         Search by name, email, role, or id — same idea as the portal builder profile picker.
       </p>
+      </AdminSettingBlock>
+      <AdminSettingBlock id="admin:users:search">
       <label style={{ display: "block", fontWeight: 600, fontSize: 13, color: theme.text, marginBottom: 12, maxWidth: 480 }}>
         Search users
         <input
@@ -521,24 +557,34 @@ export default function AdminUsersSection() {
           autoComplete="off"
         />
       </label>
+      </AdminSettingBlock>
       {loadError && (
+        <AdminSettingBlock id="admin:users:load_error">
         <p style={{ color: "#b45309", fontSize: 13, marginBottom: 8 }}>
           {loadError}
           <button type="button" onClick={() => loadUsers()} style={{ marginLeft: 8, padding: "2px 8px", fontSize: 12 }}>Retry</button>
         </p>
+        </AdminSettingBlock>
       )}
       {loading ? (
+        <AdminSettingBlock id="admin:users:loading">
         <p style={{ color: theme.text }}>Loading…</p>
+        </AdminSettingBlock>
       ) : users.length === 0 && !loadError ? (
+        <AdminSettingBlock id="admin:users:empty_state">
         <p style={{ color: theme.text, opacity: 0.8 }}>No users yet. Create one above.</p>
+        </AdminSettingBlock>
       ) : (
         <>
           {users.length > 0 && (
+            <AdminSettingBlock id="admin:users:table_count">
             <p style={{ fontSize: 12, color: theme.text, opacity: 0.75, marginBottom: 8 }}>
               Showing {filteredUsers.length} of {users.length}
               {userTableSearch.trim() ? ` matching “${userTableSearch.trim()}”` : ""}
             </p>
+            </AdminSettingBlock>
           )}
+          <AdminSettingBlock id="admin:users:user_table">
           <div style={{ width: "100%", overflowX: "auto" }}>
         <table style={{ width: "100%", minWidth: 980, borderCollapse: "collapse", background: "white", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
           <thead>
@@ -643,11 +689,14 @@ export default function AdminUsersSection() {
           </tbody>
         </table>
           </div>
+          </AdminSettingBlock>
         </>
       )}
+      <AdminSettingBlock id="admin:users:setup_help">
       <p style={{ marginTop: 24, fontSize: 12, color: theme.text, opacity: 0.7 }}>
         Setup: run <code>supabase-profiles-roles.sql</code>, <code>supabase-auth-rls.sql</code>, <code>supabase-office-manager-rls.sql</code>, <code>supabase-user-calendar-preferences.sql</code>, and <code>supabase-admin-portal-builder.sql</code> in Supabase; set .env; see ADMIN-SETUP.md and OFFICE-MANAGER.md.
       </p>
+      </AdminSettingBlock>
     </div>
   )
 }

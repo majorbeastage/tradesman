@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useView } from "../../contexts/ViewContext"
+import { AdminVisibilityProvider } from "../../contexts/AdminVisibilityContext"
+import { AdminSettingBlock, AdminVisibilityFooter } from "../../components/admin/AdminSettingChrome"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
@@ -488,6 +490,14 @@ function getPreviewForTab(
 }
 
 export default function AdminApp() {
+  return (
+    <AdminVisibilityProvider>
+      <AdminAppInner />
+    </AdminVisibilityProvider>
+  )
+}
+
+function AdminAppInner() {
   const { user, signOut } = useAuth()
   const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
@@ -846,6 +856,7 @@ export default function AdminApp() {
       {/* Admin sidebar */}
       <aside style={{ width: 260, background: theme.charcoalSmoke, padding: 20, color: "white", flexShrink: 0 }}>
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>Admin</h2>
+        <AdminSettingBlock id="admin:sidebar:nav" variant="dark">
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button
             type="button"
@@ -882,12 +893,16 @@ export default function AdminApp() {
             Users & office managers
           </button>
         </div>
+        </AdminSettingBlock>
         {adminPanel === "portal" && (
+        <AdminSettingBlock id="admin:sidebar:portal_intro" variant="dark">
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
           Select a user to configure their portal. Toggle visibility; add custom items below.
         </p>
+        </AdminSettingBlock>
         )}
         {adminPanel === "portal" && (
+        <AdminSettingBlock id="admin:sidebar:user_selector" variant="dark">
         <div style={{ display: "block", marginBottom: 16, position: "relative" }}>
           <span style={{ fontSize: 11, opacity: 0.8, display: "block", marginBottom: 4 }}>User (profile)</span>
           <input
@@ -971,8 +986,10 @@ export default function AdminApp() {
             </div>
           )}
         </div>
+        </AdminSettingBlock>
         )}
 
+        <AdminSettingBlock id="admin:sidebar:account" variant="dark">
         <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
           <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{user?.email}</p>
           <button
@@ -983,25 +1000,35 @@ export default function AdminApp() {
             Log out
           </button>
         </div>
+        </AdminSettingBlock>
       </aside>
 
       <main style={{ flex: 1, padding: 24, background: theme.background, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
         {adminPanel === "users" ? (
           <div>
+            <AdminSettingBlock id="admin:users:page_intro">
             <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Users & office managers</h1>
             <p style={{ color: theme.text, opacity: 0.8, marginBottom: 20, fontSize: 14 }}>
               Assign each <strong>user</strong> to an <strong>office manager</strong> (or admin) so they appear in the office manager portal. This is not in the Supabase dashboard—it lives here in the app.
             </p>
+            </AdminSettingBlock>
             <AdminUsersSection />
           </div>
         ) : loading ? (
+          <AdminSettingBlock id="admin:portal:loading_profiles">
           <p style={{ color: theme.text }}>Loading profiles…</p>
+          </AdminSettingBlock>
         ) : error && !selectedId ? (
+          <AdminSettingBlock id="admin:portal:load_error">
           <p style={{ color: "#b91c1c" }}>{error}</p>
+          </AdminSettingBlock>
         ) : !selectedId ? (
+          <AdminSettingBlock id="admin:portal:no_user_selected">
           <p style={{ color: theme.text, opacity: 0.8 }}>Create a user above or run supabase-profiles-roles.sql and add a user, then select one.</p>
+          </AdminSettingBlock>
         ) : (
           <>
+            <AdminSettingBlock id="admin:portal:header">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
               <h1 style={{ color: theme.text, margin: 0 }}>
                 Portal config for {selectedId === ALL_USERS_ID ? "All users" : selectedProfile ? profileOptionLabel(selectedProfile) : "User"}
@@ -1025,9 +1052,11 @@ export default function AdminApp() {
             </div>
             {message && <p style={{ color: "#059669", margin: 0 }}>{message}</p>}
             {error && <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>}
+            </AdminSettingBlock>
 
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
               {/* Preview: looks like the real user portal */}
+              <AdminSettingBlock id="admin:portal:preview_panel">
               <section
                 style={{
                   flex: "1 1 420px",
@@ -1073,6 +1102,7 @@ export default function AdminApp() {
                   </div>
                 </div>
               </section>
+              </AdminSettingBlock>
 
               {/* Right side: global toggles when Dashboard (or no page controls), else page controls + options */}
               <div style={{ flex: "1 1 320px", minWidth: 280 }}>
@@ -1081,54 +1111,67 @@ export default function AdminApp() {
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Sidebar tabs</h2>
                       {getAllTabIds(config).map(({ id, label }) => (
-                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                        <AdminSettingBlock key={id} id={`admin:portal:tab_row:${id}`}>
+                        <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
                           <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("tabs", id)}>
                             <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
                             <span style={{ color: theme.text }}>{label}</span>
                           </label>
                           <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustom("customTabs", id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
+                        </AdminSettingBlock>
                       ))}
+                      <AdminSettingBlock id="admin:portal:add_custom_tab">
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New tab label" value={newTabLabel} onChange={(e) => setNewTabLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customTabs", newTabLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
                         <button type="button" onClick={() => addCustom("customTabs", newTabLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add tab</button>
                       </div>
+                      </AdminSettingBlock>
                     </section>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Settings sections</h2>
                       {getAllSettingIds(config).map(({ id, label }) => (
-                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                        <AdminSettingBlock key={id} id={`admin:portal:setting_row:${id}`}>
+                        <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
                           <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("settings", id)}>
                             <input type="checkbox" checked={getVisible(config, "settings", id)} onChange={() => toggle("settings", id)} />
                             <span style={{ color: theme.text }}>{label}</span>
                           </label>
                           <button type="button" onClick={(e) => { e.preventDefault(); (config.customSettings ?? []).some((t) => t.id === id) ? removeCustom("customSettings", id) : setConfig(setVisible(config, "settings", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
+                        </AdminSettingBlock>
                       ))}
+                      <AdminSettingBlock id="admin:portal:add_custom_setting">
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New setting label" value={newSettingLabel} onChange={(e) => setNewSettingLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customSettings", newSettingLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
                         <button type="button" onClick={() => addCustom("customSettings", newSettingLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
                       </div>
+                      </AdminSettingBlock>
                     </section>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Dropdowns / options</h2>
                       {getAllDropdownIds(config).map(({ id, label }) => (
-                        <div key={id} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                        <AdminSettingBlock key={id} id={`admin:portal:dropdown_row:${id}`}>
+                        <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
                           <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("dropdowns", id)}>
                             <input type="checkbox" checked={getVisible(config, "dropdowns", id)} onChange={() => toggle("dropdowns", id)} />
                             <span style={{ color: theme.text }}>{label}</span>
                           </label>
                           <button type="button" onClick={(e) => { e.preventDefault(); (config.customDropdowns ?? []).some((t) => t.id === id) ? removeCustom("customDropdowns", id) : setConfig(setVisible(config, "dropdowns", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
+                        </AdminSettingBlock>
                       ))}
+                      <AdminSettingBlock id="admin:portal:add_custom_dropdown">
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <input type="text" placeholder="New dropdown label" value={newDropdownLabel} onChange={(e) => setNewDropdownLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customDropdowns", newDropdownLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
                         <button type="button" onClick={() => addCustom("customDropdowns", newDropdownLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
                       </div>
+                      </AdminSettingBlock>
                     </section>
                   </>
                 ) : (
                   <>
+                    <AdminSettingBlock id={`admin:portal:page_controls_section:${previewPage}`}>
                     <section style={{ marginBottom: 16 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>
                         Controls on {TAB_ID_LABELS[previewPage] ?? previewPage}
@@ -1176,7 +1219,9 @@ export default function AdminApp() {
                         })}
                       </div>
                     </section>
+                    </AdminSettingBlock>
                     {selectedControlForPage && (
+                      <AdminSettingBlock id={`admin:portal:control_editor:${previewPage}:${selectedControlForPage.replace(/:/g, "_")}`}>
                       <section style={{ marginBottom: 24, padding: 12, background: "rgba(0,0,0,0.03)", borderRadius: 8, border: `1px solid ${theme.border}` }}>
                         <h3 style={{ color: theme.text, fontSize: 14, margin: "0 0 8px" }}>
                           {selectedControlForPage.startsWith("custom_action_button:")
@@ -1512,6 +1557,7 @@ export default function AdminApp() {
                           </>
                         )}
                       </section>
+                      </AdminSettingBlock>
                     )}
                   </>
                 )}
@@ -1519,6 +1565,7 @@ export default function AdminApp() {
             </div>
           </>
         )}
+        <AdminVisibilityFooter />
       </main>
     </div>
   )

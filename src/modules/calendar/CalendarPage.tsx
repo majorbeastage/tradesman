@@ -5,7 +5,7 @@ import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId 
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
-import { getControlItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
+import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type JobType = {
@@ -18,7 +18,7 @@ type JobType = {
 
 type CalendarEvent = {
   id: string
-  user_id: string
+  user_id?: string
   title: string
   start_at: string
   end_at: string
@@ -86,6 +86,16 @@ function isToday(d: Date): boolean {
   return isSameDay(d, new Date())
 }
 
+function buildCalendarReceiptBody(ev: CalendarEvent): string {
+  const lines = [
+    `Job: ${ev.title}`,
+    `When: ${new Date(ev.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – ${new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+  ]
+  if (ev.quote_total != null && ev.quote_total > 0) lines.push(`Total: $${Number(ev.quote_total).toFixed(2)}`)
+  if (ev.notes?.trim()) lines.push(`Notes: ${ev.notes.trim()}`)
+  return lines.join("\n")
+}
+
 function getTimeOptions(incrementMinutes: 15 | 60): string[] {
   const options: string[] = []
   for (let h = 0; h < 24; h++) {
@@ -97,7 +107,7 @@ function getTimeOptions(incrementMinutes: 15 | 60): string[] {
 }
 
 export default function CalendarPage() {
-  const { userId: authUserId } = useAuth()
+  const { userId: authUserId, user: authUser } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
   const portalConfig = usePortalConfigForPage()
@@ -167,6 +177,11 @@ export default function CalendarPage() {
     return [...calendarSettingsItems, orgToggle]
   }, [calendarSettingsItems, showAllOrgEvents])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "calendar"), [portalConfig])
+  const showCalAddItem = getOmPageActionVisible(portalConfig, "calendar", "add_item")
+  const showCalAutoResponse = getOmPageActionVisible(portalConfig, "calendar", "auto_response")
+  const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
+  const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
+  const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
 
   useEffect(() => {
     if (!showSettings || calendarSettingsItemsWithOrg.length === 0) return
@@ -230,6 +245,13 @@ export default function CalendarPage() {
     try { return localStorage.getItem("calendar_workingEnd") ?? "17:00" } catch { return "17:00" }
   })
   const [addError, setAddError] = useState("")
+  const [completeFlowEvent, setCompleteFlowEvent] = useState<CalendarEvent | null>(null)
+  const [receiptEmailCustomer, setReceiptEmailCustomer] = useState(false)
+  const [receiptSmsCustomer, setReceiptSmsCustomer] = useState(false)
+  const [receiptEmailSelf, setReceiptEmailSelf] = useState(false)
+  const [completeBusy, setCompleteBusy] = useState(false)
+  const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
+  const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
 
   async function loadEvents() {
     if (!userId || !supabase) return
@@ -281,6 +303,63 @@ export default function CalendarPage() {
     setEvents((data || []) as CalendarEvent[])
   }
 
+  useEffect(() => {
+    const ev = completeFlowEvent
+    if (!ev?.customer_id || !supabase) {
+      setCompleteCustomerEmail(null)
+      setCompleteCustomerPhone(null)
+      return
+    }
+    const owner = ev.user_id ?? userId
+    void supabase
+      .from("customer_identifiers")
+      .select("type, value")
+      .eq("customer_id", ev.customer_id)
+      .eq("user_id", owner)
+      .then(({ data }) => {
+        const rows = (data ?? []) as { type: string; value: string }[]
+        setCompleteCustomerEmail(rows.find((r) => r.type === "email")?.value ?? null)
+        setCompleteCustomerPhone(rows.find((r) => r.type === "phone")?.value ?? null)
+      })
+  }, [completeFlowEvent?.id, completeFlowEvent?.customer_id, completeFlowEvent?.user_id, userId])
+
+  async function confirmCompleteCalendarEvent() {
+    if (!supabase || !completeFlowEvent?.id) return
+    setCompleteBusy(true)
+    const { error } = await supabase
+      .from("calendar_events")
+      .update({ completed_at: new Date().toISOString() })
+      .eq("id", completeFlowEvent.id)
+    setCompleteBusy(false)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    const body = buildCalendarReceiptBody(completeFlowEvent)
+    const subject = encodeURIComponent(`Receipt: ${completeFlowEvent.title}`)
+    const bodyEnc = encodeURIComponent(body)
+    const openMail = (email: string) => {
+      window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${bodyEnc}`, "_blank", "noopener,noreferrer")
+    }
+    if (receiptEmailCustomer) {
+      if (completeCustomerEmail) openMail(completeCustomerEmail)
+      else alert("No customer email on file. Add an email identifier for this customer to send a receipt by email.")
+    }
+    if (receiptSmsCustomer) {
+      const digits = (completeCustomerPhone ?? "").replace(/\D/g, "")
+      if (digits) window.open(`sms:${digits}?&body=${bodyEnc}`, "_blank", "noopener,noreferrer")
+      else alert("No customer phone on file. Add a phone identifier for this customer to send a receipt by SMS.")
+    }
+    if (receiptEmailSelf) {
+      const selfEmail = authUser?.email
+      if (selfEmail) openMail(selfEmail)
+      else alert("Your account has no email address for “send receipt to myself”.")
+    }
+    setCompleteFlowEvent(null)
+    setSelectedEvent(null)
+    loadEvents()
+  }
+
   function getEventColor(ev: CalendarEvent): string {
     const jt = ev.job_types ?? jobTypes.find((j) => j.id === ev.job_type_id)
     return (jt as JobType)?.color_hex ?? theme.primary
@@ -291,7 +370,9 @@ export default function CalendarPage() {
   }
 
   function getEventRibbonColorForEvent(ev: CalendarEvent): string {
-    return prefByUserId[ev.user_id]?.ribbon_color?.trim() || getEventRibbonColor()
+    const uid = ev.user_id
+    if (uid && prefByUserId[uid]?.ribbon_color?.trim()) return prefByUserId[uid].ribbon_color!.trim()
+    return getEventRibbonColor()
   }
 
   async function loadUserPreference(ownerUserId: string): Promise<UserCalendarPreference | null> {
@@ -359,9 +440,13 @@ export default function CalendarPage() {
   useEffect(() => {
     if (!showAddItem || !addTargetUserId) return
     void loadUserPreference(addTargetUserId).then((row) => {
-      setAddAssignToSelectedUser(row?.auto_assign_enabled !== false)
+      if (authUserId && addTargetUserId !== authUserId) {
+        setAddAssignToSelectedUser(true)
+      } else {
+        setAddAssignToSelectedUser(row?.auto_assign_enabled !== false)
+      }
     })
-  }, [showAddItem, addTargetUserId])
+  }, [showAddItem, addTargetUserId, authUserId])
 
   useEffect(() => {
     const ids = Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean)))
@@ -516,7 +601,8 @@ export default function CalendarPage() {
     dayEnd.setHours(23, 59, 59, 999)
     return events.filter((e) => {
       const start = new Date(e.start_at)
-      return start >= dayStart && start <= dayEnd
+      const end = new Date(e.end_at)
+      return start <= dayEnd && end >= dayStart
     })
   }
 
@@ -545,36 +631,46 @@ export default function CalendarPage() {
       </h1>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
-        <button
-          onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
-          style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
-        >
-          Add item to calendar
-        </button>
-        <button
-          onClick={() => setShowAutoResponse(true)}
-          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-        >
-          Auto Response Options
-        </button>
-        <button
-          onClick={() => setShowJobTypes(true)}
-          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-        >
-          Job Types
-        </button>
-        <button
-          onClick={() => setShowSettings(true)}
-          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-        >
-          Settings
-        </button>
-        <button
-          onClick={() => { setPrefMessage(""); setShowCustomizeUser(true) }}
-          style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-        >
-          Customize user
-        </button>
+        {showCalAddItem && (
+          <button
+            onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
+            style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
+          >
+            Add item to calendar
+          </button>
+        )}
+        {showCalAutoResponse && (
+          <button
+            onClick={() => setShowAutoResponse(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            Auto Response Options
+          </button>
+        )}
+        {showCalJobTypes && (
+          <button
+            onClick={() => setShowJobTypes(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            Job Types
+          </button>
+        )}
+        {showCalSettings && (
+          <button
+            onClick={() => setShowSettings(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            Settings
+          </button>
+        )}
+        {showCalCustomizeUser && (
+          <button
+            onClick={() => { setPrefMessage(""); setShowCustomizeUser(true) }}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            Customize user
+          </button>
+        )}
         {customActionButtons.map((btn) => (
           <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
         ))}
@@ -728,10 +824,15 @@ export default function CalendarPage() {
                   dayStart.setHours(dayViewStartHour, 0, 0, 0)
                   const dayEnd = new Date(dayStart)
                   dayEnd.setHours(dayViewEndHour, 0, 0, 0)
+                  const calDayStart = new Date(dayStart)
+                  calDayStart.setHours(0, 0, 0, 0)
+                  const calDayEnd = new Date(dayStart)
+                  calDayEnd.setHours(23, 59, 59, 999)
                   const dayEvents = events.filter((e) => {
-                    const start = new Date(e.start_at)
-                    const end = new Date(e.end_at)
-                    return isSameDay(start, dayStart) && start < dayEnd && end > dayStart
+                    const s = new Date(e.start_at)
+                    const en = new Date(e.end_at)
+                    if (!(s <= calDayEnd && en >= calDayStart)) return false
+                    return s < dayEnd && en > dayStart
                   })
                   return (
                     <div key={dayIdx} style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", borderLeft: `1px solid ${theme.border}` }}>
@@ -804,11 +905,16 @@ export default function CalendarPage() {
                   dayStart.setHours(dayViewStartHour, 0, 0, 0)
                   const dayEnd = new Date(currentDate)
                   dayEnd.setHours(dayViewEndHour, 0, 0, 0)
+                  const cal0 = new Date(currentDate)
+                  cal0.setHours(0, 0, 0, 0)
+                  const cal1 = new Date(currentDate)
+                  cal1.setHours(23, 59, 59, 999)
                   return events
                     .filter((e) => {
-                      const start = new Date(e.start_at)
-                      const end = new Date(e.end_at)
-                      return isSameDay(start, currentDate) && start < dayEnd && end > dayStart
+                      const s = new Date(e.start_at)
+                      const en = new Date(e.end_at)
+                      if (!(s <= cal1 && en >= cal0)) return false
+                      return s < dayEnd && en > dayStart
                     })
                     .map((ev) => {
                       const start = new Date(ev.start_at)
@@ -1189,6 +1295,77 @@ export default function CalendarPage() {
       )}
 
       {/* Selected event popover */}
+      {completeFlowEvent && (
+        <>
+          <div
+            onClick={() => !completeBusy && setCompleteFlowEvent(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 10000 }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "90%",
+              maxWidth: "400px",
+              background: "white",
+              borderRadius: "8px",
+              padding: "20px",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 10001,
+            }}
+          >
+            <h3 style={{ margin: "0 0 8px", color: theme.text }}>Complete job</h3>
+            <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#6b7280" }}>
+              Mark <strong>{completeFlowEvent.title}</strong> complete. Optionally open your email or SMS app with a receipt message (you send it from your device).
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "14px", color: theme.text }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                <input type="checkbox" checked={receiptEmailCustomer} onChange={(e) => setReceiptEmailCustomer(e.target.checked)} />
+                Send receipt to customer email
+                {completeCustomerEmail ? (
+                  <span style={{ fontSize: "12px", color: "#6b7280" }}>({completeCustomerEmail})</span>
+                ) : (
+                  <span style={{ fontSize: "12px", color: "#b45309" }}>— none on file</span>
+                )}
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                <input type="checkbox" checked={receiptSmsCustomer} onChange={(e) => setReceiptSmsCustomer(e.target.checked)} />
+                Send receipt to customer SMS
+                {completeCustomerPhone ? (
+                  <span style={{ fontSize: "12px", color: "#6b7280" }}>({completeCustomerPhone})</span>
+                ) : (
+                  <span style={{ fontSize: "12px", color: "#b45309" }}>— none on file</span>
+                )}
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                <input type="checkbox" checked={receiptEmailSelf} onChange={(e) => setReceiptEmailSelf(e.target.checked)} />
+                Send receipt to myself (email)
+              </label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={completeBusy}
+                onClick={() => setCompleteFlowEvent(null)}
+                style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: completeBusy ? "wait" : "pointer", color: theme.text }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={completeBusy}
+                onClick={() => void confirmCompleteCalendarEvent()}
+                style={{ padding: "8px 14px", borderRadius: "6px", background: theme.primary, color: "white", border: "none", cursor: completeBusy ? "wait" : "pointer", fontSize: "14px" }}
+              >
+                {completeBusy ? "Saving…" : "Confirm complete"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {selectedEvent && (
         <>
           <div onClick={() => setSelectedEvent(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 9998 }} />
@@ -1208,11 +1385,13 @@ export default function CalendarPage() {
               <div style={{ display: "flex", gap: "8px" }}>
                 {hasCompletedAtColumn && (
                   <button
-                    onClick={async () => {
-                      if (!supabase || !selectedEvent.id) return
-                      const { error: err } = await supabase.from("calendar_events").update({ completed_at: new Date().toISOString() }).eq("id", selectedEvent.id)
-                      if (err) { alert(err.message); return }
-                      setSelectedEvent(null); loadEvents()
+                    type="button"
+                    onClick={() => {
+                      setReceiptEmailCustomer(false)
+                      setReceiptSmsCustomer(false)
+                      setReceiptEmailSelf(false)
+                      setCompleteFlowEvent(selectedEvent)
+                      setSelectedEvent(null)
                     }}
                     style={{ padding: "8px 14px", borderRadius: "6px", background: theme.primary, color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
                   >

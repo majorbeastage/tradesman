@@ -6,7 +6,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
-import { getControlItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
+import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -79,6 +79,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   const quoteSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "quote_settings"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
+  const showQuotesAddCustomer = getOmPageActionVisible(portalConfig, "quotes", "add_customer")
+  const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
+  const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
 
   useEffect(() => {
     if (!showSettings || quoteSettingsItems.length === 0) return
@@ -439,24 +442,30 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
           <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              onClick={() => { setShowAddCustomer(true); loadCustomerList() }}
-              style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
-            >
-              Add Customer to quotes
-            </button>
-            <button
-              onClick={() => setShowAutoResponseOptions(true)}
-              style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-            >
-              Auto Response Options
-            </button>
-            <button
-              onClick={() => setShowSettings(true)}
-              style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-            >
-              Settings
-            </button>
+            {showQuotesAddCustomer && (
+              <button
+                onClick={() => { setShowAddCustomer(true); loadCustomerList() }}
+                style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
+              >
+                Add Customer to quotes
+              </button>
+            )}
+            {showQuotesAutoResponse && (
+              <button
+                onClick={() => setShowAutoResponseOptions(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                Auto Response Options
+              </button>
+            )}
+            {showQuotesSettings && (
+              <button
+                onClick={() => setShowSettings(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                Settings
+              </button>
+            )}
             {customActionButtons.map((btn) => (
               <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
             ))}

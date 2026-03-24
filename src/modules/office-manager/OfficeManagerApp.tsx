@@ -18,6 +18,20 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "../../types/portal-builder"
 
+const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
+  { id: "add_item", label: "Add item to calendar" },
+  { id: "auto_response", label: "Auto Response Options" },
+  { id: "job_types", label: "Job Types" },
+  { id: "settings", label: "Settings" },
+  { id: "customize_user", label: "Customize user" },
+]
+
+const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
+  { id: "add_customer", label: "Add Customer to quotes" },
+  { id: "auto_response", label: "Auto Response Options" },
+  { id: "settings", label: "Settings" },
+]
+
 function ManagedUserTabEditor() {
   const ctx = useOfficeManagerScopeOptional()
   const uid = ctx?.selectedUserId
@@ -69,7 +83,7 @@ function ManagedUserTabEditor() {
   if (!ctx || !uid || selected?.isSelf) return null
 
   return (
-    <div style={{ marginLeft: 8 }}>
+    <div style={{ marginLeft: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start" }}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -127,6 +141,149 @@ function ManagedUserTabEditor() {
             }}
           >
             {saving ? "Saving…" : "Save tab visibility"}
+          </button>
+          {msg && <p style={{ marginTop: 8, fontSize: 12, color: msg.startsWith("Saved") ? "#059669" : "#b91c1c" }}>{msg}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ManagedUserOmToolbarEditor() {
+  const ctx = useOfficeManagerScopeOptional()
+  const uid = ctx?.selectedUserId
+  const selected = ctx?.clients.find((c) => c.userId === uid)
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [calendarVisible, setCalendarVisible] = useState<Record<string, boolean>>({})
+  const [quotesVisible, setQuotesVisible] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    const om = ctx?.scopedPortalConfig?.om_page_actions
+    const cal: Record<string, boolean> = {}
+    for (const { id } of OM_CALENDAR_TOOLBAR_ACTIONS) cal[id] = om?.calendar?.[id] !== false
+    const qu: Record<string, boolean> = {}
+    for (const { id } of OM_QUOTES_TOOLBAR_ACTIONS) qu[id] = om?.quotes?.[id] !== false
+    setCalendarVisible(cal)
+    setQuotesVisible(qu)
+  }, [ctx?.scopedPortalConfig, uid])
+
+  const save = useCallback(async () => {
+    if (!uid || !supabase || !ctx) return
+    setSaving(true)
+    setMsg("")
+    const { data, error: fetchErr } = await supabase.from("profiles").select("portal_config").eq("id", uid).single()
+    if (fetchErr) {
+      setMsg(fetchErr.message)
+      setSaving(false)
+      return
+    }
+    const prev =
+      data?.portal_config && typeof data.portal_config === "object" && !Array.isArray(data.portal_config)
+        ? (data.portal_config as PortalConfig)
+        : {}
+    const calendar: Record<string, boolean> = {}
+    for (const { id } of OM_CALENDAR_TOOLBAR_ACTIONS) calendar[id] = calendarVisible[id] !== false
+    const quotes: Record<string, boolean> = {}
+    for (const { id } of OM_QUOTES_TOOLBAR_ACTIONS) quotes[id] = quotesVisible[id] !== false
+    const portal_config: PortalConfig = {
+      ...prev,
+      om_page_actions: {
+        ...(prev.om_page_actions ?? {}),
+        calendar,
+        quotes,
+      },
+    }
+    const { error } = await supabase
+      .from("profiles")
+      .update({ portal_config, updated_at: new Date().toISOString() })
+      .eq("id", uid)
+    setSaving(false)
+    if (error) {
+      setMsg(error.message)
+      return
+    }
+    setMsg("Saved toolbar visibility for Calendar and Quotes (when you manage this user).")
+    await ctx.refreshScopedPortalConfig()
+  }, [ctx, calendarVisible, quotesVisible, uid])
+
+  if (!ctx || !uid || selected?.isSelf) return null
+
+  return (
+    <div style={{ marginLeft: 8 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          padding: "6px 12px",
+          borderRadius: 6,
+          border: `1px solid ${theme.border}`,
+          background: "white",
+          cursor: "pointer",
+          color: theme.text,
+          fontSize: 13,
+        }}
+      >
+        {open ? "Hide" : "OM toolbar (Calendar / Quotes)"}
+      </button>
+      {open && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 12,
+            border: `1px solid ${theme.border}`,
+            borderRadius: 8,
+            background: "#fafafa",
+            maxWidth: 440,
+          }}
+        >
+          <p style={{ margin: "0 0 8px", fontSize: 12, color: theme.text, opacity: 0.85 }}>
+            When you work as this user in the office manager portal, unchecked items are hidden on <strong>Calendar</strong> and{" "}
+            <strong>Quotes</strong> (standard toolbar buttons only).
+          </p>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: theme.text }}>Calendar</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {OM_CALENDAR_TOOLBAR_ACTIONS.map(({ id, label }) => (
+              <label key={id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                <input
+                  type="checkbox"
+                  checked={calendarVisible[id] !== false}
+                  onChange={(e) => setCalendarVisible((prev) => ({ ...prev, [id]: e.target.checked }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: theme.text }}>Quotes</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {OM_QUOTES_TOOLBAR_ACTIONS.map(({ id, label }) => (
+              <label key={`q-${id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                <input
+                  type="checkbox"
+                  checked={quotesVisible[id] !== false}
+                  onChange={(e) => setQuotesVisible((prev) => ({ ...prev, [id]: e.target.checked }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            style={{
+              marginTop: 4,
+              padding: "8px 14px",
+              background: theme.primary,
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: saving ? "wait" : "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {saving ? "Saving…" : "Save toolbar visibility"}
           </button>
           {msg && <p style={{ marginTop: 8, fontSize: 12, color: msg.startsWith("Saved") ? "#059669" : "#b91c1c" }}>{msg}</p>}
         </div>
@@ -230,6 +387,7 @@ function ManagedUserBar() {
         </p>
       )}
       <ManagedUserTabEditor />
+      <ManagedUserOmToolbarEditor />
     </div>
   )
 }

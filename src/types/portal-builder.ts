@@ -136,6 +136,25 @@ export type PortalConfig = {
   controlItems?: Record<string, PortalSettingItem[]>
   /** Custom action buttons per tab (each button has items). Leads uses customActionButtons for backward compat. */
   customActionButtonsByTab?: Record<string, CustomActionButton[]>
+  /**
+   * Office manager portal: hide toolbar buttons per page (false = hidden).
+   * Stored on the managed user's profile; applies when an office manager works with that user.
+   */
+  om_page_actions?: {
+    calendar?: Record<string, boolean>
+    quotes?: Record<string, boolean>
+  }
+}
+
+/** True if an office-manager toolbar action should show (default visible). */
+export function getOmPageActionVisible(
+  portalConfig: PortalConfig | null,
+  page: "calendar" | "quotes",
+  actionId: string
+): boolean {
+  const section = portalConfig?.om_page_actions?.[page]
+  if (!section || typeof section !== "object") return true
+  return section[actionId] !== false
 }
 
 /** Get settings/control items for the user portal: from portal_config, filtered by visibleToUser. Use for any tab:control (e.g. leads:settings, conversations:conversation_settings). */
