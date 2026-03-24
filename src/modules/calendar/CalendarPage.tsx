@@ -1,10 +1,11 @@
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
 import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
+import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
@@ -167,6 +168,9 @@ export default function CalendarPage() {
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
 
   const calendarSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "working_hours"), [portalConfig])
+  const addItemPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "add_item_to_calendar"), [portalConfig])
+  const calendarAutoResponseItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "auto_response_options"), [portalConfig])
+  const jobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
   const calendarSettingsItemsWithOrg = useMemo(() => {
     const orgToggle: PortalSettingItem = {
       id: "__org_all_events",
@@ -182,6 +186,16 @@ export default function CalendarPage() {
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
   const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
+
+  const [arReminderMins, setArReminderMins] = useState(() => {
+    try {
+      return localStorage.getItem("calendar_arReminderMins") ?? "15"
+    } catch {
+      return "15"
+    }
+  })
+  const arReminderMinsRef = useRef(arReminderMins)
+  arReminderMinsRef.current = arReminderMins
 
   useEffect(() => {
     if (!showSettings || calendarSettingsItemsWithOrg.length === 0) return
@@ -225,10 +239,98 @@ export default function CalendarPage() {
     return depValue === item.dependency.showWhenValue
   }
 
-  // Settings (localStorage)
-  const [arReminderMins, setArReminderMins] = useState(() => {
-    try { return localStorage.getItem("calendar_arReminderMins") ?? "15" } catch { return "15" }
-  })
+  function isPortalItemVisible(items: PortalSettingItem[], formValues: Record<string, string>, item: PortalSettingItem): boolean {
+    if (!item.dependency) return true
+    const depId = item.dependency.dependsOnItemId
+    const depItem = items.find((i) => i.id === depId)
+    let depValue = formValues[depId] ?? ""
+    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+    return depValue === item.dependency.showWhenValue
+  }
+
+  useEffect(() => {
+    if (!showAddItem) return
+    if (addItemPortalItems.length === 0) {
+      setAddItemPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of addItemPortalItems) {
+      try {
+        const s = localStorage.getItem(`cal_add_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setAddItemPortalValues(next)
+  }, [showAddItem, addItemPortalItems])
+
+  useEffect(() => {
+    if (!showJobTypes) return
+    if (jobTypesPortalItems.length === 0) {
+      setJobTypesPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of jobTypesPortalItems) {
+      try {
+        const s = localStorage.getItem(`cal_jt_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setJobTypesPortalValues(next)
+  }, [showJobTypes, jobTypesPortalItems])
+
+  useEffect(() => {
+    if (!showAutoResponse) return
+    if (calendarAutoResponseItems.length === 0) {
+      setAutoResponsePortalValues({})
+      return
+    }
+    const remind = arReminderMinsRef.current
+    const next: Record<string, string> = {}
+    for (const item of calendarAutoResponseItems) {
+      try {
+        if (item.id === "ar_remind_before_mins") {
+          next[item.id] = remind
+          continue
+        }
+        const s = localStorage.getItem(`cal_ar_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setAutoResponsePortalValues(next)
+  }, [showAutoResponse, calendarAutoResponseItems])
+
   const [timeIncrement, setTimeIncrement] = useState<15 | 60>(() => {
     try { const v = localStorage.getItem("calendar_timeIncrement"); return v === "60" ? 60 : 15 } catch { return 15 }
   })
@@ -252,6 +354,9 @@ export default function CalendarPage() {
   const [completeBusy, setCompleteBusy] = useState(false)
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
+  const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
+  const [autoResponsePortalValues, setAutoResponsePortalValues] = useState<Record<string, string>>({})
+  const [jobTypesPortalValues, setJobTypesPortalValues] = useState<Record<string, string>>({})
 
   async function loadEvents() {
     if (!userId || !supabase) return
@@ -1055,6 +1160,24 @@ export default function CalendarPage() {
                 />
               </div>
               <textarea placeholder="Notes" value={addNotes} onChange={(e) => setAddNotes(e.target.value)} rows={2} style={{ ...addInputStyle, resize: "vertical" }} />
+              {addItemPortalItems.length > 0 && (
+                <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+                  <PortalSettingItemsForm
+                    items={addItemPortalItems}
+                    formValues={addItemPortalValues}
+                    setFormValue={(id, v) => {
+                      setAddItemPortalValues((prev) => ({ ...prev, [id]: v }))
+                      try {
+                        localStorage.setItem(`cal_add_${id}`, v)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    isItemVisible={(item) => isPortalItemVisible(addItemPortalItems, addItemPortalValues, item)}
+                  />
+                </div>
+              )}
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
                 <input type="checkbox" checked={addAssignToSelectedUser} onChange={(e) => setAddAssignToSelectedUser(e.target.checked)} />
                 Assign to selected user calendar automatically
@@ -1075,6 +1198,24 @@ export default function CalendarPage() {
           <div onClick={() => setShowJobTypes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "480px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
+            {jobTypesPortalItems.length > 0 && (
+              <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                <PortalSettingItemsForm
+                  items={jobTypesPortalItems}
+                  formValues={jobTypesPortalValues}
+                  setFormValue={(id, v) => {
+                    setJobTypesPortalValues((prev) => ({ ...prev, [id]: v }))
+                    try {
+                      localStorage.setItem(`cal_jt_${id}`, v)
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  isItemVisible={(item) => isPortalItemVisible(jobTypesPortalItems, jobTypesPortalValues, item)}
+                />
+              </div>
+            )}
             {jobTypesLoadError && (
               <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
                 Could not load job types: {jobTypesLoadError}
@@ -1274,21 +1415,49 @@ export default function CalendarPage() {
           <div onClick={() => setShowAutoResponse(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "440px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Calendar Auto Response Options</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div>
-                <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Remind before event (minutes)</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={arReminderMins}
-                  onChange={(e) => {
-                    setArReminderMins(e.target.value)
-                    try { localStorage.setItem("calendar_arReminderMins", e.target.value) } catch { /* ignore */ }
-                  }}
-                  style={{ ...theme.formInput }}
-                />
+            {calendarAutoResponseItems.length === 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div>
+                  <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Remind before event (minutes)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={arReminderMins}
+                    onChange={(e) => {
+                      setArReminderMins(e.target.value)
+                      try {
+                        localStorage.setItem("calendar_arReminderMins", e.target.value)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    style={{ ...theme.formInput }}
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              <PortalSettingItemsForm
+                items={calendarAutoResponseItems}
+                formValues={autoResponsePortalValues}
+                setFormValue={(id, v) => {
+                  setAutoResponsePortalValues((prev) => ({ ...prev, [id]: v }))
+                  try {
+                    localStorage.setItem(`cal_ar_${id}`, v)
+                  } catch {
+                    /* ignore */
+                  }
+                  if (id === "ar_remind_before_mins") {
+                    setArReminderMins(v)
+                    try {
+                      localStorage.setItem("calendar_arReminderMins", v)
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }}
+                isItemVisible={(item) => isPortalItemVisible(calendarAutoResponseItems, autoResponsePortalValues, item)}
+              />
+            )}
             <button onClick={() => setShowAutoResponse(false)} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
           </div>
         </>

@@ -28,44 +28,74 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
   const [previousNotes, setPreviousNotes] = useState<PastNote[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [archiving, setArchiving] = useState(false)
+  const [savingPast, setSavingPast] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "error">("idle")
-  const [archiveStatus, setArchiveStatus] = useState<"idle" | "saved" | "error">("idle")
+  const [pastStatus, setPastStatus] = useState<"idle" | "saved" | "error">("idle")
+  const [lastError, setLastError] = useState<string | null>(null)
+  const [selectedPastIndex, setSelectedPastIndex] = useState<number | null>(null)
 
   useEffect(() => {
     if (!customerId || !supabase) return
+    const client = supabase
     setLoading(true)
     setSaveStatus("idle")
-    setArchiveStatus("idle")
-    supabase
+    setPastStatus("idle")
+    setLastError(null)
+    setSelectedPastIndex(null)
+
+    const applyRow = (data: { notes?: string | null; notes_past?: unknown }) => {
+      setCurrentNotes(data.notes ?? "")
+      const past = parseNotesPast(data.notes_past)
+      past.sort((a, b) => b.saved_at.localeCompare(a.saved_at))
+      setPreviousNotes(past)
+    }
+
+    client
       .from("customers")
       .select("notes, notes_past")
       .eq("id", customerId)
       .single()
       .then(({ data, error }) => {
-        setLoading(false)
-        if (error) {
-          console.error("Customer notes load error:", error)
-          setCurrentNotes("")
-          setPreviousNotes([])
+        if (!error && data) {
+          setLoading(false)
+          applyRow(data)
           return
         }
-        if (data) {
-          setCurrentNotes(data.notes ?? "")
-          const past = parseNotesPast(data.notes_past)
-          past.sort((a, b) => b.saved_at.localeCompare(a.saved_at))
-          setPreviousNotes(past)
+        if (error && (error.message?.includes("notes_past") || error.message?.includes("column"))) {
+          client
+            .from("customers")
+            .select("notes")
+            .eq("id", customerId)
+            .single()
+            .then(({ data: d2, error: e2 }) => {
+              setLoading(false)
+              if (e2 || !d2) {
+                console.error("Customer notes load error:", error, e2)
+                setLastError((e2 ?? error)?.message ?? "Could not load notes")
+                setCurrentNotes("")
+                setPreviousNotes([])
+                return
+              }
+              applyRow({ notes: d2.notes, notes_past: [] })
+            })
+          return
         }
+        setLoading(false)
+        console.error("Customer notes load error:", error)
+        setLastError(error?.message ?? "Could not load notes")
+        setCurrentNotes("")
+        setPreviousNotes([])
       })
   }, [customerId])
 
-  async function saveNotes() {
+  async function saveCurrentNotes() {
     if (!customerId || !supabase) return
     setSaving(true)
     setSaveStatus("idle")
+    setLastError(null)
     const { data, error } = await supabase
       .from("customers")
-      .update({ notes: currentNotes || null })
+      .update({ notes: currentNotes.trim() ? currentNotes : null })
       .eq("id", customerId)
       .select("notes")
       .single()
@@ -73,44 +103,70 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
     if (error) {
       console.error("Notes save error:", error)
       setSaveStatus("error")
+      setLastError(error.message)
       return
     }
     setSaveStatus("saved")
     if (data?.notes !== undefined) setCurrentNotes(data.notes ?? "")
-    setTimeout(() => setSaveStatus("idle"), 2000)
+    setTimeout(() => setSaveStatus("idle"), 2500)
   }
 
-  async function saveSnapshotToPastNotes() {
+  async function saveToPastNotes() {
     if (!customerId || !supabase) return
     const trimmed = currentNotes.trim()
     if (!trimmed) {
-      setArchiveStatus("error")
-      setTimeout(() => setArchiveStatus("idle"), 2500)
+      setPastStatus("error")
+      setLastError("Add some text before saving to past notes.")
+      setTimeout(() => setPastStatus("idle"), 3000)
       return
     }
-    setArchiving(true)
-    setArchiveStatus("idle")
+    setSavingPast(true)
+    setPastStatus("idle")
+    setLastError(null)
     const entry: PastNote = { text: trimmed, saved_at: new Date().toISOString() }
+
+    const { error: notesErr } = await supabase
+      .from("customers")
+      .update({ notes: trimmed })
+      .eq("id", customerId)
+    if (notesErr) {
+      console.error("notes update:", notesErr)
+      setSavingPast(false)
+      setPastStatus("error")
+      setLastError(notesErr.message)
+      return
+    }
+
     const { data: row, error: fetchErr } = await supabase.from("customers").select("notes_past").eq("id", customerId).single()
     if (fetchErr) {
-      console.error("notes_past fetch error:", fetchErr)
-      setArchiving(false)
-      setArchiveStatus("error")
+      console.error("notes_past fetch:", fetchErr)
+      setSavingPast(false)
+      setPastStatus("error")
+      setLastError(
+        fetchErr.message.includes("notes_past") || fetchErr.message.includes("column")
+          ? "Add column notes_past (run supabase-customers-notes-past.sql in Supabase)."
+          : fetchErr.message
+      )
       return
     }
     const prev = parseNotesPast(row?.notes_past)
     const next = [...prev, entry]
     const { error: updErr } = await supabase.from("customers").update({ notes_past: next }).eq("id", customerId)
-    setArchiving(false)
+    setSavingPast(false)
     if (updErr) {
-      console.error("notes_past update error:", updErr)
-      setArchiveStatus("error")
+      setPastStatus("error")
+      setLastError(updErr.message)
       return
     }
     const sorted = [...next].sort((a, b) => b.saved_at.localeCompare(a.saved_at))
     setPreviousNotes(sorted)
-    setArchiveStatus("saved")
-    setTimeout(() => setArchiveStatus("idle"), 2000)
+    setPastStatus("saved")
+    setTimeout(() => setPastStatus("idle"), 2500)
+  }
+
+  function loadPastIntoEditor(note: PastNote, index: number) {
+    setCurrentNotes(note.text)
+    setSelectedPastIndex(index)
   }
 
   if (customerId == null) return null
@@ -136,7 +192,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
         <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
           Notes {customerName ? `— ${customerName}` : ""}
         </h3>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
+        <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
       </div>
 
       {loading ? (
@@ -144,57 +200,71 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
       ) : (
         <>
           <p style={{ margin: "0 0 12px", fontSize: "12px", color: "#6b7280", lineHeight: 1.45 }}>
-            Notes are stored on the customer and are the same in Leads, Conversations, Quotes, and Customers until you change them. Use <strong>Save snapshot to past notes</strong> to append a dated copy to history (optional).
+            Notes are saved on this customer and stay with them across Leads, Conversations, Quotes, and Customers until you change or archive them.
           </p>
+          {lastError && (
+            <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#b91c1c" }}>{lastError}</p>
+          )}
           <div style={{ marginBottom: "20px" }}>
             <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "8px" }}>Current notes</label>
             <textarea
               value={currentNotes}
               onChange={(e) => setCurrentNotes(e.target.value)}
-              onBlur={saveNotes}
               placeholder="Add notes about this customer..."
               rows={6}
               style={{ width: "100%", padding: "10px", border: `1px solid ${theme.border}`, borderRadius: "6px", color: theme.text, resize: "vertical" }}
             />
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px", alignItems: "center" }}>
               <button
-                onClick={saveNotes}
+                type="button"
+                onClick={() => void saveCurrentNotes()}
                 disabled={saving}
                 style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "14px" }}
               >
-                {saving ? "Saving..." : "Save notes"}
+                {saving ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
-                onClick={() => void saveSnapshotToPastNotes()}
-                disabled={archiving}
+                onClick={() => void saveToPastNotes()}
+                disabled={savingPast}
                 style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", fontSize: "14px", color: theme.text }}
               >
-                {archiving ? "Saving…" : "Save snapshot to past notes"}
+                {savingPast ? "Saving…" : "Save to past notes"}
               </button>
               {saveStatus === "saved" && <span style={{ color: "#059669", fontSize: "14px" }}>Saved</span>}
-              {saveStatus === "error" && (
-                <span style={{ color: "#b91c1c", fontSize: "13px" }}>Could not save notes (check RLS).</span>
-              )}
-              {archiveStatus === "saved" && <span style={{ color: "#059669", fontSize: "14px" }}>Snapshot saved</span>}
-              {archiveStatus === "error" && (
-                <span style={{ color: "#b91c1c", fontSize: "13px" }}>
-                  Could not save past notes. Run <code style={{ fontSize: "11px" }}>supabase-customers-notes-past.sql</code> in Supabase if the column is missing.
-                </span>
-              )}
+              {pastStatus === "saved" && <span style={{ color: "#059669", fontSize: "14px" }}>Added to past notes</span>}
             </div>
           </div>
 
-          <div>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text, display: "block", marginBottom: "8px" }}>Past notes</label>
-            <div style={{ border: `1px solid ${theme.border}`, borderRadius: "6px", padding: "12px", minHeight: "120px", maxHeight: "240px", overflow: "auto", background: "#f9fafb" }}>
+            <div style={{ border: `1px solid ${theme.border}`, borderRadius: "6px", padding: "12px", flex: 1, overflow: "auto", background: "#f9fafb" }}>
               {previousNotes.length === 0 ? (
-                <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>No past notes yet.</p>
+                <p style={{ margin: 0, color: "#6b7280", fontSize: "14px" }}>No past notes yet. Use Save to past notes to store a dated copy.</p>
               ) : (
                 previousNotes.map((note, i) => (
-                  <div key={`${note.saved_at}-${i}`} style={{ marginBottom: "12px", fontSize: "13px", color: theme.text, borderBottom: i < previousNotes.length - 1 ? `1px solid ${theme.border}` : undefined, paddingBottom: 8 }}>
+                  <div
+                    key={`${note.saved_at}-${i}`}
+                    style={{
+                      marginBottom: "12px",
+                      fontSize: "13px",
+                      color: theme.text,
+                      borderBottom: i < previousNotes.length - 1 ? `1px solid ${theme.border}` : undefined,
+                      paddingBottom: 8,
+                      background: selectedPastIndex === i ? "rgba(249,115,22,0.08)" : undefined,
+                      borderRadius: 6,
+                      padding: selectedPastIndex === i ? 8 : 0,
+                    }}
+                  >
                     <div style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "4px" }}>{new Date(note.saved_at).toLocaleString()}</div>
-                    <div style={{ whiteSpace: "pre-wrap" }}>{note.text}</div>
+                    <div style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>{note.text}</div>
+                    <button
+                      type="button"
+                      onClick={() => loadPastIntoEditor(note, i)}
+                      style={{ padding: "4px 10px", fontSize: "12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+                    >
+                      Load into editor
+                    </button>
                   </div>
                 ))
               )}

@@ -15,12 +15,6 @@ type UserRow = {
   display_name: string | null
 }
 
-type CalendarPreference = {
-  owner_user_id: string
-  ribbon_color: string | null
-  auto_assign_enabled: boolean | null
-}
-
 /** `profiles.display_name` is stored as "First Last" from admin create; split for table columns. */
 function splitDisplayName(displayName: string | null | undefined): { first: string; last: string } {
   const t = displayName?.trim() ?? ""
@@ -55,8 +49,6 @@ export default function AdminUsersSection() {
   const [omByUserId, setOmByUserId] = useState<Record<string, string>>({})
   const [updatingOmUserId, setUpdatingOmUserId] = useState<string | null>(null)
   const [userTableSearch, setUserTableSearch] = useState("")
-  const [calendarPrefsByUserId, setCalendarPrefsByUserId] = useState<Record<string, CalendarPreference>>({})
-  const [savingCalendarPrefUserId, setSavingCalendarPrefUserId] = useState<string | null>(null)
 
   async function loadUsers() {
     if (!session?.access_token) {
@@ -158,24 +150,6 @@ export default function AdminUsersSection() {
       })
   }, [userIdsKey])
 
-  useEffect(() => {
-    if (!supabase || users.length === 0) {
-      setCalendarPrefsByUserId({})
-      return
-    }
-    const ids = users.map((u) => u.id)
-    void supabase
-      .from("user_calendar_preferences")
-      .select("owner_user_id, ribbon_color, auto_assign_enabled")
-      .in("owner_user_id", ids)
-      .then(({ data, error }) => {
-        if (error || !data) return
-        const next: Record<string, CalendarPreference> = {}
-        for (const row of data as CalendarPreference[]) next[row.owner_user_id] = row
-        setCalendarPrefsByUserId(next)
-      })
-  }, [userIdsKey])
-
   const officeManagerCandidates = users.filter((u) => u.role === "office_manager" || u.role === "admin")
 
   const filteredUsers = useMemo(() => {
@@ -211,33 +185,6 @@ export default function AdminUsersSection() {
       return next
     })
     setUpdatingOmUserId(null)
-  }
-
-  async function handleSetCalendarPref(ownerUserId: string, patch: { ribbon_color?: string; auto_assign_enabled?: boolean }) {
-    if (!supabase) return
-    setSavingCalendarPrefUserId(ownerUserId)
-    setError("")
-    const prev = calendarPrefsByUserId[ownerUserId]
-    const payload = {
-      owner_user_id: ownerUserId,
-      ribbon_color: patch.ribbon_color ?? prev?.ribbon_color ?? "#0ea5e9",
-      auto_assign_enabled: patch.auto_assign_enabled ?? prev?.auto_assign_enabled ?? true,
-      updated_at: new Date().toISOString(),
-    }
-    const { error: upsertErr } = await supabase.from("user_calendar_preferences").upsert(payload, { onConflict: "owner_user_id" })
-    setSavingCalendarPrefUserId(null)
-    if (upsertErr) {
-      setError(upsertErr.message)
-      return
-    }
-    setCalendarPrefsByUserId((prevMap) => ({
-      ...prevMap,
-      [ownerUserId]: {
-        owner_user_id: ownerUserId,
-        ribbon_color: payload.ribbon_color,
-        auto_assign_enabled: payload.auto_assign_enabled,
-      },
-    }))
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -594,7 +541,7 @@ export default function AdminUsersSection() {
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Email</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Role</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Office manager</th>
-              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Calendar customize</th>
+              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Customer</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Created</th>
             </tr>
           </thead>
@@ -658,27 +605,7 @@ export default function AdminUsersSection() {
                     <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.8 }}>Saving…</span>
                   )}
                 </td>
-                <td style={{ padding: "12px", color: theme.text }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <input
-                      type="color"
-                      value={calendarPrefsByUserId[u.id]?.ribbon_color ?? "#0ea5e9"}
-                      onChange={(e) => void handleSetCalendarPref(u.id, { ribbon_color: e.target.value })}
-                      disabled={savingCalendarPrefUserId === u.id}
-                      title="Ribbon color shown on calendar blocks"
-                    />
-                    <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
-                      <input
-                        type="checkbox"
-                        checked={calendarPrefsByUserId[u.id]?.auto_assign_enabled !== false}
-                        disabled={savingCalendarPrefUserId === u.id}
-                        onChange={(e) => void handleSetCalendarPref(u.id, { auto_assign_enabled: e.target.checked })}
-                      />
-                      Auto-assign
-                    </label>
-                    {savingCalendarPrefUserId === u.id && <span style={{ fontSize: 11, opacity: 0.8 }}>Saving…</span>}
-                  </div>
-                </td>
+                <td style={{ padding: "12px", color: theme.text, fontSize: 13 }}>—</td>
                 <td style={{ padding: "12px", color: theme.text, fontSize: 12 }}>
                   {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                 </td>

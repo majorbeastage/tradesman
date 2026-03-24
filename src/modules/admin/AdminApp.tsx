@@ -8,6 +8,8 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
 import AdminUsersSection from "./AdminUsersSection"
+import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
+import AdminPortalAssistant from "./AdminPortalAssistant"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   USER_PORTAL_TAB_IDS,
@@ -396,6 +398,7 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
             <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
             <button type="button" onClick={() => onSelect("job_types")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_types" ? theme.primary : theme.border}`, background: selectedId === "job_types" ? theme.primary : theme.background, color: selectedId === "job_types" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job Types</button>
             <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Settings</button>
+            <button type="button" onClick={() => onSelect("customize_user")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "customize_user" ? theme.primary : theme.border}`, background: selectedId === "customize_user" ? theme.primary : theme.background, color: selectedId === "customize_user" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Customize user</button>
             <button type="button" onClick={() => onSelect("job_type")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_type" ? theme.primary : theme.border}`, background: selectedId === "job_type" ? theme.primary : theme.background, color: selectedId === "job_type" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job type</button>
           </div>
           <div style={{ padding: 8, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11, color: theme.text }}>
@@ -726,6 +729,20 @@ function AdminAppInner() {
     setConfig(next)
   }
 
+  function applyControlItemsPatchFromAssistant(patch: Record<string, PortalSettingItem[]>) {
+    setConfig((prev) => {
+      const controlItems = { ...(prev.controlItems ?? {}) }
+      for (const [key, items] of Object.entries(patch)) {
+        controlItems[key] = items
+      }
+      const next: PortalConfig = { ...prev, controlItems }
+      if (patch["leads:settings"]) {
+        next.leadsSettingsItems = patch["leads:settings"]
+      }
+      return next
+    })
+  }
+
   function addControlItem(tabId: string, controlId: string, item: PortalSettingItem) {
     const current = getControlItems(tabId, controlId)
     if (current.some((x) => x.id === item.id)) return
@@ -1053,6 +1070,18 @@ function AdminAppInner() {
             {message && <p style={{ color: "#059669", margin: 0 }}>{message}</p>}
             {error && <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>}
             </AdminSettingBlock>
+
+            <AdminPortalAssistant
+              previewPage={previewPage}
+              selectedControl={selectedControl?.tab === previewPage ? selectedControl : null}
+              config={config}
+              onApplyControlItems={(tabId, controlId, items) => {
+                setControlItems(tabId, controlId, items)
+                setPreviewPage(tabId)
+                setSelectedControl({ tab: tabId, controlId })
+              }}
+              onApplyControlItemsPatch={applyControlItemsPatchFromAssistant}
+            />
 
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
               {/* Preview: looks like the real user portal */}
@@ -1406,8 +1435,26 @@ function AdminAppInner() {
                             />
                           </>
                         )}
+                        {previewPage === "calendar" && selectedControlForPage === "customize_user" && (
+                          <>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 10 }}>
+                              Stored in <code style={{ fontSize: 10 }}>user_calendar_preferences</code> (not in portal JSON). Add optional checkboxes here only if you later wire them in code; ribbon and auto-assign are edited below.
+                            </p>
+                            <CalendarUserPreferencesEditor
+                              profiles={profiles.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email ?? null }))}
+                              defaultUserId={selectedId === ALL_USERS_ID ? null : selectedId}
+                            />
+                          </>
+                        )}
                         {(() => {
-                          const isItemsControl = selectedControlForPage && selectedControlForPage !== "page_title" && selectedControlForPage !== "create_lead" && selectedControlForPage !== "table_columns" && selectedControlForPage !== "custom_header_button" && !selectedControlForPage.startsWith("custom_action_button:")
+                          const isItemsControl =
+                            selectedControlForPage &&
+                            selectedControlForPage !== "page_title" &&
+                            selectedControlForPage !== "create_lead" &&
+                            selectedControlForPage !== "table_columns" &&
+                            selectedControlForPage !== "custom_header_button" &&
+                            selectedControlForPage !== "customize_user" &&
+                            !selectedControlForPage.startsWith("custom_action_button:")
                           if (!isItemsControl) return null
                           const tabId = previewPage
                           const controlId = selectedControlForPage

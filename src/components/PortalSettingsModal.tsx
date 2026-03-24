@@ -1,5 +1,6 @@
 import { theme } from "../styles/theme"
 import type { PortalSettingItem } from "../types/portal-builder"
+import PortalSettingItemsForm from "./PortalSettingItemsForm"
 
 type Props = {
   title: string
@@ -43,49 +44,11 @@ export default function PortalSettingsModal({
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px", color: theme.text }}>
-          {items.length === 0 && (
+          {items.length === 0 ? (
             <p style={{ fontSize: "14px", color: theme.text, opacity: 0.8 }}>No settings configured. Your admin can add items in the portal config.</p>
+          ) : (
+            <PortalSettingItemsForm items={items} formValues={formValues} setFormValue={setFormValue} isItemVisible={isItemVisible} />
           )}
-          {items.map((item) => {
-            if (!isItemVisible(item)) return null
-            if (item.type === "checkbox") {
-              const checked = formValues[item.id] === "checked"
-              return (
-                <label key={item.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", cursor: "pointer" }}>
-                  <input type="checkbox" checked={checked} onChange={(e) => setFormValue(item.id, e.target.checked ? "checked" : "unchecked")} />
-                  <span>{item.label}</span>
-                </label>
-              )
-            }
-            if (item.type === "dropdown" && item.options?.length) {
-              const value = formValues[item.id] ?? item.options[0]
-              return (
-                <div key={item.id}>
-                  <label style={{ fontSize: "14px", fontWeight: 600, display: "block", marginBottom: "6px" }}>{item.label}</label>
-                  <select value={value} onChange={(e) => setFormValue(item.id, e.target.value)} style={{ ...theme.formInput }}>
-                    {item.options.map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                </div>
-              )
-            }
-            if (item.type === "custom_field") {
-              const value = formValues[item.id] ?? ""
-              const isTextarea = item.customFieldSubtype === "textarea"
-              return (
-                <div key={item.id}>
-                  <label style={{ fontSize: "14px", fontWeight: 600, display: "block", marginBottom: "6px" }}>{item.label}</label>
-                  {isTextarea ? (
-                    <textarea value={value} onChange={(e) => setFormValue(item.id, e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} />
-                  ) : (
-                    <input value={value} onChange={(e) => setFormValue(item.id, e.target.value)} style={{ ...theme.formInput }} />
-                  )}
-                </div>
-              )
-            }
-            return null
-          })}
         </div>
         <button onClick={onClose} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}>Done</button>
       </div>

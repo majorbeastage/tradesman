@@ -270,6 +270,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'job_types', label: 'Job Types', type: 'button' },
     { id: 'working_hours', label: 'Settings (working hours)', type: 'button' },
+    { id: 'customize_user', label: 'Customize user (ribbon / auto-assign)', type: 'button' },
     { id: 'job_type', label: 'Job type', type: 'dropdown' },
   ],
   customers: [],
@@ -330,7 +331,7 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
   leads: ['settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
   conversations: ['add_conversation', 'conversation_settings'],
   quotes: ['add_customer_to_quotes', 'auto_response_options', 'quote_settings', 'status'],
-  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'job_type'],
+  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'customize_user', 'job_type'],
   settings: ['custom_fields'],
   dashboard: [],
   customers: [],
@@ -374,6 +375,9 @@ export function getDefaultControlItems(tabId: string, controlId: string): Portal
   if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]
+  if (key === 'calendar:add_item_to_calendar') return []
+  if (key === 'calendar:job_types') return []
+  if (key === 'calendar:customize_user') return []
   if (key === 'conversations:conversation_settings') return [...DEFAULT_CONVERSATION_SETTINGS_ITEMS]
   const opts = DEFAULT_OPTIONS[controlId]
   if (opts?.length) {
