@@ -75,14 +75,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const token = authHeader.slice("Bearer ".length).trim()
-  const supabase = createClient(supabaseUrl, anonKey)
+  // RLS: profile reads must run as the signed-in user, not the anonymous client.
+  const supabase = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
   const { data: userData, error: userErr } = await supabase.auth.getUser(token)
   if (userErr || !userData.user) {
     return res.status(401).json({ error: "Invalid or expired session" })
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", userData.user.id).single()
-  if (profile?.role !== "admin") {
+  const { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userData.user.id)
+    .single()
+  if (profileErr || !profile) {
+    return res.status(403).json({
+      error: "Could not load your profile (check RLS allows users to read their own profiles row).",
+    })
+  }
+  if (profile.role !== "admin") {
     return res.status(403).json({ error: "Admin only" })
   }
 
