@@ -36,6 +36,19 @@ function anonKeyFromBody(k: unknown): string {
   return ""
 }
 
+/** Edge function names in the URL must use ASCII; dashboard typos sometimes use en/em dash. */
+function normalizeEdgeSlug(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-")
+    .replace(/[^a-z0-9_-]/g, "")
+}
+
+function isValidEdgeSlug(s: string): boolean {
+  return s.length >= 1 && s.length <= 128 && /^[a-z0-9_-]+$/.test(s)
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -98,7 +111,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(403).json({ error: "Admin only" })
   }
 
-  const upstreamUrl = `${supabaseUrl}/functions/v1/portal-assistant`
+  const slugRaw =
+    firstEnv("SUPABASE_PORTAL_ASSISTANT_SLUG") ||
+    (typeof body.edgeFunctionSlug === "string" ? body.edgeFunctionSlug : "") ||
+    "portal-assistant"
+  const functionSlug = normalizeEdgeSlug(slugRaw)
+  if (!isValidEdgeSlug(functionSlug)) {
+    return res.status(400).json({
+      error: `Invalid edge function slug after normalization: "${functionSlug}". Use letters, numbers, hyphen, underscore only.`,
+    })
+  }
+
+  const upstreamUrl = `${supabaseUrl}/functions/v1/${encodeURIComponent(functionSlug)}`
   const up = await fetch(upstreamUrl, {
     method: "POST",
     headers: {
@@ -110,6 +134,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   })
 
   const text = await up.text()
+
+  if (up.status === 404) {
+    res.status(404)
+    res.setHeader("Content-Type", "application/json; charset=utf-8")
+    let merged: Record<string, unknown> = {
+      attemptedUrl: upstreamUrl,
+      usedSlug: functionSlug,
+      hint:
+        "Supabase says this function path does not exist. In Dashboard → Edge Functions, open your function and copy the Invoke URL path after /functions/v1/ — it must match usedSlug exactly (ASCII hyphen only). If Test in the dashboard also returns 404, redeploy once more or redeploy via CLI: supabase functions deploy " +
+        functionSlug,
+    }
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>
+      if (parsed && typeof parsed === "object") merged = { ...parsed, ...merged }
+    } catch {
+      merged.rawBody = text.slice(0, 400)
+    }
+    res.send(JSON.stringify(merged))
+    return
+  }
+
   const ct = up.headers.get("content-type") || "application/json; charset=utf-8"
   res.status(up.status)
   res.setHeader("Content-Type", ct)

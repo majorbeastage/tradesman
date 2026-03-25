@@ -148,24 +148,42 @@ export default function AdminPortalAssistant({
             pageContext,
             supabaseUrl,
             supabaseAnonKey,
+            edgeFunctionSlug: import.meta.env.VITE_SUPABASE_PORTAL_ASSISTANT_SLUG?.trim() || undefined,
           }),
         })
         const raw = await r.text()
         try {
-          data = JSON.parse(raw) as { reply?: string; error?: string; detail?: string }
+          data = JSON.parse(raw) as {
+            reply?: string
+            error?: string
+            detail?: string
+            code?: string
+            attemptedUrl?: string
+            usedSlug?: string
+            hint?: string
+          }
         } catch {
           setInvokeError(`Assistant proxy error (HTTP ${r.status}): ${raw.slice(0, 400)}`)
           return
         }
         if (!r.ok) {
-          const ext = data as { code?: string; message?: string }
+          const ext = data as {
+            code?: string
+            message?: string
+            attemptedUrl?: string
+            usedSlug?: string
+            hint?: string
+            error?: string
+            detail?: string
+          }
           if (r.status === 404 && ext.code === "NOT_FOUND") {
-            const host = supabaseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")
-            setInvokeError(
-              `Supabase returned NOT_FOUND: there is no Edge Function named "portal-assistant" on the project at ${host}. ` +
-                `Open that same project in Supabase → Edge Functions and deploy one with the exact slug portal-assistant ` +
-                `(copy from repo: supabase/functions/portal-assistant/index.ts), or run: supabase functions deploy portal-assistant`
-            )
+            const parts = [
+              `Supabase NOT_FOUND for Edge Function slug "${ext.usedSlug ?? "portal-assistant"}".`,
+              ext.attemptedUrl ? `Request URL was: ${ext.attemptedUrl}` : "",
+              ext.hint ?? "",
+              "In the Supabase function screen, copy the Invoke URL and check the segment after /functions/v1/. If that test call also 404s, redeploy the function once more (dashboard or CLI).",
+            ].filter(Boolean)
+            setInvokeError(parts.join(" "))
             return
           }
           setInvokeError(
