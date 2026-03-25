@@ -57,6 +57,14 @@ async function formatFunctionsInvokeError(error: unknown): Promise<string> {
   return out
 }
 
+/** Production on Vercel/custom domain: use same-origin API proxy (no browser→Supabase CORS). Local dev uses direct invoke. */
+function usePortalAssistantProxy(): boolean {
+  if (!import.meta.env.PROD) return false
+  if (typeof window === "undefined") return false
+  const h = window.location.hostname
+  return h !== "localhost" && h !== "127.0.0.1"
+}
+
 export default function AdminPortalAssistant({
   previewPage,
   selectedControl,
@@ -112,14 +120,53 @@ export default function AdminPortalAssistant({
     setInput("")
     setLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke<{ reply?: string; error?: string; detail?: string }>(
-        "portal-assistant",
-        { body: { messages: nextMessages, pageContext } }
-      )
-      if (error) {
-        setInvokeError(await formatFunctionsInvokeError(error))
-        return
+      let data: { reply?: string; error?: string; detail?: string } | null = null
+
+      if (usePortalAssistantProxy()) {
+        const { data: sessionData } = await supabase.auth.getSession()
+        const accessToken = sessionData.session?.access_token
+        if (!accessToken) {
+          setInvokeError("Sign in again — session required for the portal assistant.")
+          return
+        }
+        const r = await fetch("/api/portal-assistant", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ messages: nextMessages, pageContext }),
+        })
+        const raw = await r.text()
+        try {
+          data = JSON.parse(raw) as { reply?: string; error?: string; detail?: string }
+        } catch {
+          setInvokeError(`Assistant proxy error (HTTP ${r.status}): ${raw.slice(0, 400)}`)
+          return
+        }
+        if (!r.ok) {
+          setInvokeError(
+            data.error
+              ? data.detail
+                ? `${data.error}: ${data.detail}`
+                : data.error
+              : `HTTP ${r.status}: ${raw.slice(0, 400)}`
+          )
+          return
+        }
+      } else {
+        const { data: invokeData, error } = await supabase.functions.invoke<{
+          reply?: string
+          error?: string
+          detail?: string
+        }>("portal-assistant", { body: { messages: nextMessages, pageContext } })
+        if (error) {
+          setInvokeError(await formatFunctionsInvokeError(error))
+          return
+        }
+        data = invokeData
       }
+
       if (data?.error) {
         setInvokeError(data.detail ? `${data.error}: ${data.detail}` : data.error)
         return
@@ -188,7 +235,8 @@ export default function AdminPortalAssistant({
           <p style={{ margin: "0 0 10px", fontSize: 12, color: theme.text, opacity: 0.85, lineHeight: 1.45 }}>
             Ask where to put checkboxes and dependent dropdowns, which <code>tabId:controlId</code> key to use, or why options
             do not appear in the live app. Deploy the <code>portal-assistant</code> Edge Function and set{" "}
-            <code>OPENAI_API_KEY</code> in Supabase secrets.
+            <code>OPENAI_API_KEY</code> in Supabase secrets. On Vercel, requests go through{" "}
+            <code>/api/portal-assistant</code> first so the browser avoids cross-origin CORS issues.
           </p>
           <details style={{ marginBottom: 12, fontSize: 12 }}>
             <summary style={{ cursor: "pointer", color: theme.text, opacity: 0.9 }}>Offline reference (same rules the model uses)</summary>
