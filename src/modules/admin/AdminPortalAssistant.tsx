@@ -129,13 +129,26 @@ export default function AdminPortalAssistant({
           setInvokeError("Sign in again — session required for the portal assistant.")
           return
         }
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ""
+        const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? ""
+        if (!supabaseUrl || !supabaseAnonKey) {
+          setInvokeError(
+            "Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in this build. Add them in Vercel → Environment Variables (Production) and redeploy."
+          )
+          return
+        }
         const r = await fetch("/api/portal-assistant", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ messages: nextMessages, pageContext }),
+          body: JSON.stringify({
+            messages: nextMessages,
+            pageContext,
+            supabaseUrl,
+            supabaseAnonKey,
+          }),
         })
         const raw = await r.text()
         try {

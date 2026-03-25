@@ -5,12 +5,34 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
 
-/** Vercel often inlines VITE_* only into the static bundle; serverless may not see them. Prefer SUPABASE_* for this route. */
+/** Prefer server env; Vite+Vercel often omits VITE_* from serverless process.env. */
 function firstEnv(...names: string[]): string {
   for (const n of names) {
     const v = process.env[n]
     if (v != null && String(v).trim() !== "") return String(v).trim()
   }
+  return ""
+}
+
+/** Same values as the client bundle (public anon key + project URL). */
+function supabaseUrlFromBody(u: unknown): string {
+  if (typeof u !== "string") return ""
+  const t = u.trim().replace(/\/+$/, "")
+  try {
+    const x = new URL(t)
+    if (x.protocol !== "https:") return ""
+    if (!x.hostname.endsWith("supabase.co")) return ""
+    return x.origin
+  } catch {
+    return ""
+  }
+}
+
+function anonKeyFromBody(k: unknown): string {
+  if (typeof k !== "string") return ""
+  const t = k.trim()
+  if (t.length < 32 || t.length > 8192) return ""
+  if (t.startsWith("eyJ") || t.startsWith("sb_publishable_")) return t
   return ""
 }
 
@@ -32,12 +54,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: "Missing authorization" })
   }
 
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  const body = req.body && typeof req.body === "object" ? req.body : {}
+  const messages = body.messages
+  const pageContext = body.pageContext
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: "messages required" })
+  }
+
+  const supabaseUrl =
+    firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "") ||
+    supabaseUrlFromBody(body.supabaseUrl)
+  const anonKey =
+    firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY") || anonKeyFromBody(body.supabaseAnonKey)
+
   if (!supabaseUrl || !anonKey) {
     return res.status(500).json({
       error:
-        "Serverless route needs Supabase URL and anon key in Vercel env. Add SUPABASE_URL + SUPABASE_ANON_KEY (same values as in Supabase → Settings → API), or VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY — enable for Production and redeploy.",
+        "Missing Supabase URL/anon key. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY on Vercel (Production) and redeploy the app so the client can send them to this route, or set SUPABASE_URL + SUPABASE_ANON_KEY for the serverless function.",
     })
   }
 
@@ -51,13 +84,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", userData.user.id).single()
   if (profile?.role !== "admin") {
     return res.status(403).json({ error: "Admin only" })
-  }
-
-  const body = req.body && typeof req.body === "object" ? req.body : {}
-  const messages = body.messages
-  const pageContext = body.pageContext
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: "messages required" })
   }
 
   const upstreamUrl = `${supabaseUrl}/functions/v1/portal-assistant`
