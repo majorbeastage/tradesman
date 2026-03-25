@@ -6,8 +6,14 @@ import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
+import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
+import {
+  resolveRecurrenceFromPortal,
+  computeOccurrenceStarts,
+  intervalsOverlap,
+} from "../../lib/calendarRecurrence"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -68,6 +74,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [calNotes, setCalNotes] = useState("")
   const [jobTypes, setJobTypes] = useState<{ id: string; name: string; duration_minutes: number }[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
+  const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
+  const [quoteJobTypesPortalValues, setQuoteJobTypesPortalValues] = useState<Record<string, string>>({})
   const [autoAssignEnabled, setAutoAssignEnabled] = useState(true)
   const [assignToScopedUser, setAssignToScopedUser] = useState(true)
   const [calendarTargetUserId, setCalendarTargetUserId] = useState("")
@@ -78,6 +86,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }, [scopeCtx?.clients, userId])
 
   const quoteSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "quote_settings"), [portalConfig])
+  const quoteCalendarItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "add_quote_to_calendar"), [portalConfig])
+  const calendarJobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
   const showQuotesAddCustomer = getOmPageActionVisible(portalConfig, "quotes", "add_customer")
   const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
@@ -93,6 +103,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     })
     setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
   }, [showSettings, quoteSettingsItems])
+
+  function isQuoteCalendarPortalItemVisible(item: PortalSettingItem): boolean {
+    if (!item.dependency) return true
+    const depId = item.dependency.dependsOnItemId
+    const depItem = quoteCalendarItems.find((i) => i.id === depId)
+    let depValue = quoteCalPortalValues[depId] ?? ""
+    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+    return depValue === item.dependency.showWhenValue
+  }
 
   function isQuoteSettingItemVisible(item: PortalSettingItem): boolean {
     if (!item.dependency) return true
@@ -176,6 +195,58 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       .order("name")
       .then(({ data }) => setJobTypes(data || []))
   }, [showAddToCalendar, calendarTargetUserId])
+
+  useEffect(() => {
+    if (!showAddToCalendar) return
+    if (quoteCalendarItems.length === 0) {
+      setQuoteCalPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of quoteCalendarItems) {
+      try {
+        const s = localStorage.getItem(`quotes_qcal_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setQuoteCalPortalValues(next)
+  }, [showAddToCalendar, quoteCalendarItems])
+
+  useEffect(() => {
+    if (!showAddToCalendar) return
+    if (calendarJobTypesPortalItems.length === 0) {
+      setQuoteJobTypesPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of calendarJobTypesPortalItems) {
+      try {
+        const s = localStorage.getItem(`cal_jt_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setQuoteJobTypesPortalValues(next)
+  }, [showAddToCalendar, calendarJobTypesPortalItems])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -768,6 +839,27 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
               <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add quote to calendar</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {quoteCalendarItems.length > 0 && (
+                  <div style={{ marginBottom: 4, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                    <PortalSettingItemsForm
+                      items={quoteCalendarItems}
+                      formValues={quoteCalPortalValues}
+                      setFormValue={(id, v) => {
+                        setQuoteCalPortalValues((prev) => ({ ...prev, [id]: v }))
+                        try {
+                          localStorage.setItem(`quotes_qcal_${id}`, v)
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      isItemVisible={(item) => isQuoteCalendarPortalItemVisible(item)}
+                    />
+                    <p style={{ fontSize: 11, color: theme.text, opacity: 0.75, margin: "8px 0 0" }}>
+                      If a job type is selected, recurrence from Calendar → Job Types (same checkboxes) is used when configured; otherwise these options apply.
+                    </p>
+                  </div>
+                )}
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
                   <select
@@ -842,20 +934,67 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       alert("Invalid date or time.")
                       return
                     }
-                    const end = new Date(start.getTime() + calDuration * 60 * 1000)
+                    const durationMs = calDuration * 60 * 1000
+                    const recurrenceFromJt =
+                      calJobTypeId && calendarJobTypesPortalItems.length > 0
+                        ? resolveRecurrenceFromPortal(calendarJobTypesPortalItems, quoteJobTypesPortalValues)
+                        : null
+                    const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
+                    const series = recurrenceFromJt ?? recurrenceFromQuote
+                    const starts = series ? computeOccurrenceStarts(start, series) : [start]
+                    const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
+
+                    let noDup = false
+                    try {
+                      noDup = localStorage.getItem("calendar_noDuplicateTimes") === "true"
+                    } catch {
+                      noDup = false
+                    }
                     const selectedTarget = calendarTargetUserId || userId
+                    if (noDup && newRanges.length > 0) {
+                      const windowStart = newRanges[0].s
+                      const windowEnd = newRanges[newRanges.length - 1].e
+                      const { data: existing } = await supabase
+                        .from("calendar_events")
+                        .select("start_at, end_at")
+                        .eq("user_id", selectedTarget)
+                        .is("removed_at", null)
+                        .lt("start_at", windowEnd.toISOString())
+                        .gt("end_at", windowStart.toISOString())
+                      const exRows = (existing ?? []) as { start_at: string; end_at: string }[]
+                      for (const nr of newRanges) {
+                        for (const ex of exRows) {
+                          if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
+                            setAddToCalendarLoading(false)
+                            alert("One or more recurring times overlap an existing calendar event.")
+                            return
+                          }
+                        }
+                      }
+                      for (let i = 0; i < newRanges.length; i++) {
+                        for (let j = i + 1; j < newRanges.length; j++) {
+                          if (intervalsOverlap(newRanges[i].s, newRanges[i].e, newRanges[j].s, newRanges[j].e)) {
+                            setAddToCalendarLoading(false)
+                            alert("Recurring instances overlap each other. Adjust duration or frequency.")
+                            return
+                          }
+                        }
+                      }
+                    }
+
                     const targetUserId = assignToScopedUser ? selectedTarget : (authUserId || selectedTarget)
-                    const { error } = await supabase.from("calendar_events").insert({
+                    const rows = newRanges.map(({ s, e }) => ({
                       user_id: targetUserId,
                       title: calTitle.trim(),
-                      start_at: start.toISOString(),
-                      end_at: end.toISOString(),
+                      start_at: s.toISOString(),
+                      end_at: e.toISOString(),
                       job_type_id: calJobTypeId || null,
                       quote_id: selectedQuote.id,
                       customer_id: selectedQuote.customer_id,
                       notes: calNotes.trim() || null,
-                      quote_total: quoteTotal > 0 ? quoteTotal : null
-                    })
+                      quote_total: quoteTotal > 0 ? quoteTotal : null,
+                    }))
+                    const { error } = await supabase.from("calendar_events").insert(rows)
                     if (error) { setAddToCalendarLoading(false); alert(error.message); return }
                     const { error: updateErr } = await supabase.from("quotes").update({ scheduled_at: new Date().toISOString() }).eq("id", selectedQuote.id)
                     setAddToCalendarLoading(false)

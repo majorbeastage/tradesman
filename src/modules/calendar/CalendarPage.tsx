@@ -7,6 +7,11 @@ import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
+import {
+  resolveRecurrenceFromPortal,
+  computeOccurrenceStarts,
+  intervalsOverlap,
+} from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type JobType = {
@@ -580,34 +585,60 @@ export default function CalendarPage() {
       setAddError("Invalid start date or time.")
       return
     }
-    const end = new Date(start.getTime() + addDuration * 60 * 1000)
+    const durationMs = addDuration * 60 * 1000
+    const recurrenceFromJobTypes =
+      addJobTypeId && jobTypesPortalItems.length > 0
+        ? resolveRecurrenceFromPortal(jobTypesPortalItems, jobTypesPortalValues)
+        : null
+    const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
+    const series = recurrenceFromJobTypes ?? recurrenceFromAddItem
+    const starts = series ? computeOccurrenceStarts(start, series) : [start]
+    const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
-    if (noDuplicateTimes) {
+    if (noDuplicateTimes && newRanges.length > 0) {
+      const windowStart = newRanges[0].s
+      const windowEnd = newRanges[newRanges.length - 1].e
       const { data: existing } = await supabase
         .from("calendar_events")
         .select("id, start_at, end_at")
         .eq("user_id", selectedTarget)
         .is("removed_at", null)
-        .lt("start_at", end.toISOString())
-        .gt("end_at", start.toISOString())
-      if (existing && existing.length > 0) {
-        setAddError("This time overlaps an existing event. Choose a different time or turn off \"Do not allow duplicate times\" in Settings.")
-        return
+        .lt("start_at", windowEnd.toISOString())
+        .gt("end_at", windowStart.toISOString())
+      const exRows = (existing ?? []) as { start_at: string; end_at: string }[]
+      for (const nr of newRanges) {
+        for (const ex of exRows) {
+          if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
+            setAddError(
+              "One or more recurring times overlap an existing event. Change the start time, recurrence, or turn off \"Do not allow duplicate times\" in Settings."
+            )
+            return
+          }
+        }
+      }
+      for (let i = 0; i < newRanges.length; i++) {
+        for (let j = i + 1; j < newRanges.length; j++) {
+          if (intervalsOverlap(newRanges[i].s, newRanges[i].e, newRanges[j].s, newRanges[j].e)) {
+            setAddError("Recurring instances overlap each other. Try a longer duration, different frequency, or fewer occurrences.")
+            return
+          }
+        }
       }
     }
 
     setAddSaving(true)
     const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
-    const { error } = await supabase.from("calendar_events").insert({
+    const rows = newRanges.map(({ s, e }) => ({
       user_id: eventOwnerUserId,
       title: addTitle.trim(),
-      start_at: start.toISOString(),
-      end_at: end.toISOString(),
+      start_at: s.toISOString(),
+      end_at: e.toISOString(),
       job_type_id: addJobTypeId || null,
       quote_id: addQuoteId || null,
       customer_id: addCustomerId || null,
-      notes: addNotes.trim() || null
-    })
+      notes: addNotes.trim() || null,
+    }))
+    const { error } = await supabase.from("calendar_events").insert(rows)
     setAddSaving(false)
     if (error) {
       setAddError(error.message)

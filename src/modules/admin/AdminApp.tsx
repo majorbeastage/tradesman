@@ -369,6 +369,7 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
               )
             })}
             <button type="button" onClick={() => onSelect("add_customer_to_quotes")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_customer_to_quotes" ? theme.primary : theme.border}`, background: selectedId === "add_customer_to_quotes" ? theme.primary : theme.background, color: selectedId === "add_customer_to_quotes" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add Customer to quotes</button>
+            <button type="button" onClick={() => onSelect("add_quote_to_calendar")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_quote_to_calendar" ? theme.primary : theme.border}`, background: selectedId === "add_quote_to_calendar" ? theme.primary : theme.background, color: selectedId === "add_quote_to_calendar" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add quote to calendar</button>
             <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
             <button type="button" onClick={() => onSelect("quote_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "quote_settings" ? theme.primary : theme.border}`, background: selectedId === "quote_settings" ? theme.primary : theme.background, color: selectedId === "quote_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Quote settings</button>
             <button type="button" onClick={() => onSelect("status")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "status" ? theme.primary : theme.border}`, background: selectedId === "status" ? theme.primary : theme.background, color: selectedId === "status" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Status</button>
@@ -504,7 +505,7 @@ function AdminAppInner() {
   const { user, signOut } = useAuth()
   const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(ALL_USERS_ID)
   const [config, setConfig] = useState<PortalConfig>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -552,7 +553,6 @@ function AdminAppInner() {
     const emailById = new Map((listData ?? []).map((r: { id: string; email?: string }) => [r.id, r.email ?? null]))
     const withEmail = rows.map((p) => ({ ...p, email: emailById.get(p.id) ?? null }))
     setProfiles(withEmail)
-    if (withEmail.length && !selectedId) setSelectedId(withEmail[0].id)
   }, [])
 
   const filteredProfiles = profiles.filter((p) =>
@@ -577,7 +577,17 @@ function AdminAppInner() {
       setHasRemovedSomething(false)
       return
     }
-    if (selectedId === ALL_USERS_ID) return // keep current config when "All users" is selected
+    if (selectedId === ALL_USERS_ID) {
+      // Default "All users" starts with empty config; seed from first profile so the builder isn't blank.
+      setConfig((prev) => {
+        if (prev && Object.keys(prev).length > 0) return prev
+        const p0 = profiles[0]
+        const raw = p0?.portal_config
+        return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {}
+      })
+      setHasRemovedSomething(false)
+      return
+    }
     const p = profiles.find((x) => x.id === selectedId)
     const raw = p?.portal_config
     // Normalize: DB may return null, or malformed JSON (e.g. string). Always set a plain object.
