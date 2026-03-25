@@ -5,6 +5,15 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
 
+/** Vercel often inlines VITE_* only into the static bundle; serverless may not see them. Prefer SUPABASE_* for this route. */
+function firstEnv(...names: string[]): string {
+  for (const n of names) {
+    const v = process.env[n]
+    if (v != null && String(v).trim() !== "") return String(v).trim()
+  }
+  return ""
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -23,11 +32,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: "Missing authorization" })
   }
 
-  const supabaseUrl = (process.env.VITE_SUPABASE_URL ?? "").trim().replace(/\/+$/, "")
-  const anonKey = (process.env.VITE_SUPABASE_ANON_KEY ?? "").trim()
+  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
+  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
   if (!supabaseUrl || !anonKey) {
     return res.status(500).json({
-      error: "Server missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY (set in Vercel env).",
+      error:
+        "Serverless route needs Supabase URL and anon key in Vercel env. Add SUPABASE_URL + SUPABASE_ANON_KEY (same values as in Supabase → Settings → API), or VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY — enable for Production and redeploy.",
     })
   }
 
