@@ -158,6 +158,16 @@ export default function AdminPortalAssistant({
           return
         }
         if (!r.ok) {
+          const ext = data as { code?: string; message?: string }
+          if (r.status === 404 && ext.code === "NOT_FOUND") {
+            const host = supabaseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")
+            setInvokeError(
+              `Supabase returned NOT_FOUND: there is no Edge Function named "portal-assistant" on the project at ${host}. ` +
+                `Open that same project in Supabase → Edge Functions and deploy one with the exact slug portal-assistant ` +
+                `(copy from repo: supabase/functions/portal-assistant/index.ts), or run: supabase functions deploy portal-assistant`
+            )
+            return
+          }
           setInvokeError(
             data.error
               ? data.detail
