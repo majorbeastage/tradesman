@@ -26,18 +26,34 @@ async function formatFunctionsInvokeError(error: unknown): Promise<string> {
   if (error == null) return "Unknown error"
   if (typeof error === "string") return error
   if (typeof error !== "object") return String(error)
-  const e = error as { message?: string; name?: string; context?: Response }
+  const e = error as { message?: string; name?: string; context?: unknown }
   let out = e.message ?? "Function invoke failed"
-  const res = e.context
-  if (res && typeof res.status === "number") {
-    out += ` (HTTP ${res.status})`
+
+  // FunctionsHttpError: context is a Response (non-2xx from function or gateway)
+  const res = e.context as Response | undefined
+  if (res && typeof res === "object" && typeof (res as Response).status === "number" && typeof (res as Response).clone === "function") {
+    const response = res as Response
+    out += ` (HTTP ${response.status})`
     try {
-      const text = (await res.clone().text()).trim()
+      const text = (await response.clone().text()).trim()
       if (text) out += ` — ${text.length > 500 ? `${text.slice(0, 500)}…` : text}`
     } catch {
       /* ignore */
     }
+    return out
   }
+
+  // FunctionsFetchError: context is the underlying fetch rejection (often TypeError: Failed to fetch)
+  if (e.name === "FunctionsFetchError" && e.context != null) {
+    const c = e.context as { message?: string; cause?: unknown }
+    if (typeof c.message === "string" && c.message) {
+      out += ` — ${c.message}`
+    }
+    out +=
+      " Often this is a browser CORS mask: the gateway rejected the request (e.g. JWT) before your function ran. " +
+      "Redeploy portal-assistant with verify_jwt disabled (see supabase/config.toml in the repo) or turn off “Verify JWT” for this function in the Supabase dashboard, then redeploy."
+  }
+
   return out
 }
 

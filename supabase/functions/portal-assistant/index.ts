@@ -1,12 +1,17 @@
 // Supabase Edge Function: AI helper for Portal builder (admin only).
 // Secrets: OPENAI_API_KEY (required). Optional: OPENAI_MODEL (default gpt-4o-mini)
-// Deploy: supabase functions deploy portal-assistant
+//
+// Deploy (CLI, from repo root): supabase functions deploy portal-assistant
+//   Uses ../config.toml: verify_jwt = false so the browser is not blocked by gateway
+//   JWT + missing CORS (shows as "Failed to send a request to the Edge Function").
+// Dashboard deploy: turn OFF "Verify JWT" / enforce JWT for this function if you see that error.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
 const SYSTEM = `You are an expert assistant for a low-code "portal builder" inside a trades contractor SaaS admin UI.
