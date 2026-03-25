@@ -21,6 +21,26 @@ type Props = {
 
 const STORAGE_KEY = "tradesman_admin_portal_assistant_open"
 
+/** Surface status/body from supabase-js FunctionsHttpError (generic message is often unhelpful). */
+async function formatFunctionsInvokeError(error: unknown): Promise<string> {
+  if (error == null) return "Unknown error"
+  if (typeof error === "string") return error
+  if (typeof error !== "object") return String(error)
+  const e = error as { message?: string; name?: string; context?: Response }
+  let out = e.message ?? "Function invoke failed"
+  const res = e.context
+  if (res && typeof res.status === "number") {
+    out += ` (HTTP ${res.status})`
+    try {
+      const text = (await res.clone().text()).trim()
+      if (text) out += ` — ${text.length > 500 ? `${text.slice(0, 500)}…` : text}`
+    } catch {
+      /* ignore */
+    }
+  }
+  return out
+}
+
 export default function AdminPortalAssistant({
   previewPage,
   selectedControl,
@@ -81,7 +101,7 @@ export default function AdminPortalAssistant({
         { body: { messages: nextMessages, pageContext } }
       )
       if (error) {
-        setInvokeError(error.message ?? "Function invoke failed")
+        setInvokeError(await formatFunctionsInvokeError(error))
         return
       }
       if (data?.error) {
