@@ -2,9 +2,12 @@
 // Secrets: OPENAI_API_KEY (required). Optional: OPENAI_MODEL (default gpt-4o-mini)
 //
 // Deploy (CLI, from repo root): supabase functions deploy portal-assistant
-//   Uses ../config.toml: verify_jwt = false so the browser is not blocked by gateway
-//   JWT + missing CORS (shows as "Failed to send a request to the Edge Function").
-// Dashboard deploy: turn OFF "Verify JWT" / enforce JWT for this function if you see that error.
+// If your Supabase slug is different (e.g. clever-api), deploy with that name and set on Vercel:
+//   VITE_SUPABASE_PORTAL_ASSISTANT_SLUG=clever-api
+//   (optional server) SUPABASE_PORTAL_ASSISTANT_SLUG=clever-api
+//
+// Uses ../config.toml: verify_jwt = false (avoids browser "Failed to send" when gateway JWT fails without CORS).
+// Dashboard: turn OFF "Verify JWT" for this function if you see that error.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
