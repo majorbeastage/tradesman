@@ -533,6 +533,8 @@ function AdminAppInner() {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false)
   /** Set when user clicks Remove on anything (including custom items they added); triggers confirm-before-save. */
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
+  /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
+  const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<"portal" | "users">("portal")
 
   const loadProfiles = useCallback(async () => {
@@ -1296,10 +1298,13 @@ function AdminAppInner() {
                           const buttonId = selectedControlForPage.replace("custom_action_button:", "")
                           const btn = getCustomActionButton(buttonId)
                           if (!btn) return null
-                          const otherItemsInButton = (itemId: string) => btn.items.filter((x) => x.id !== itemId)
+                          const allBtnItems = btn.items
+                          const itemsForButtonBuilder = showPortalItemsHiddenFromAdmin ? allBtnItems : allBtnItems.filter((x) => !x.hideFromAdmin)
+                          const hiddenInButtonCount = allBtnItems.filter((x) => x.hideFromAdmin).length
+                          const otherItemsInButton = (itemId: string) => allBtnItems.filter((x) => x.id !== itemId)
                           return (
                             <>
-                              <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label and items. Edit type, dropdown options (click Options), and dependency for checkboxes.</p>
+                              <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label and items. Edit type, dropdown options (click Options), dependency, visible to user, and hide from admin.</p>
                               <input
                                 type="text"
                                 value={btn.label}
@@ -1308,8 +1313,14 @@ function AdminAppInner() {
                                 style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13, marginBottom: 12 }}
                               />
                               <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 6 }}>Items inside this button</p>
+                              {hiddenInButtonCount > 0 && (
+                                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
+                                  <input type="checkbox" checked={showPortalItemsHiddenFromAdmin} onChange={(e) => setShowPortalItemsHiddenFromAdmin(e.target.checked)} />
+                                  <span>Show {hiddenInButtonCount} item{hiddenInButtonCount === 1 ? "" : "s"} hidden from admin</span>
+                                </label>
+                              )}
                               <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
-                                {btn.items.map((item) => {
+                                {itemsForButtonBuilder.map((item) => {
                                   const isSelected = selectedCustomButtonItemId === item.id
                                   const otherItems = otherItemsInButton(item.id)
                                   return (
@@ -1344,6 +1355,10 @@ function AdminAppInner() {
                                           <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setCustomActionButtonItemVisible(buttonId, item.id, e.target.checked)} />
                                           <span>Visible to user</span>
                                         </label>
+                                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                                          <input type="checkbox" checked={item.hideFromAdmin === true} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { hideFromAdmin: e.target.checked ? true : undefined })} />
+                                          <span>Hide from admin</span>
+                                        </label>
                                         <button type="button" onClick={() => removeCustomActionButtonItem(buttonId, item.id)} style={REMOVE_BTN_STYLE}>Remove</button>
                                       </div>
                                       {isSelected && (
@@ -1370,7 +1385,7 @@ function AdminAppInner() {
                                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                               <select
                                                 value={item.dependency?.dependsOnItemId ?? ""}
-                                                onChange={(e) => { const id = e.target.value; if (!id) { updateCustomActionButtonItem(buttonId, item.id, { dependency: undefined }); return }; const dep = otherItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateCustomActionButtonItem(buttonId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
+                                                onChange={(e) => { const id = e.target.value; if (!id) { updateCustomActionButtonItem(buttonId, item.id, { dependency: undefined }); return }; const dep = allBtnItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateCustomActionButtonItem(buttonId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
                                                 style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
                                               >
                                                 <option value="">— None —</option>
@@ -1379,7 +1394,7 @@ function AdminAppInner() {
                                                 ))}
                                               </select>
                                               {item.dependency?.dependsOnItemId && (() => {
-                                                const depItem = otherItems.find((x) => x.id === item.dependency!.dependsOnItemId)
+                                                const depItem = allBtnItems.find((x) => x.id === item.dependency!.dependsOnItemId)
                                                 if (depItem?.type === "checkbox") {
                                                   return (
                                                     <select value={item.dependency.showWhenValue} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
@@ -1468,13 +1483,21 @@ function AdminAppInner() {
                           if (!isItemsControl) return null
                           const tabId = previewPage
                           const controlId = selectedControlForPage
-                          const items = getControlItems(tabId, controlId)
-                          const otherItemsFor = (itemId: string) => items.filter((x) => x.id !== itemId)
+                          const allItems = getControlItems(tabId, controlId)
+                          const itemsForBuilderList = showPortalItemsHiddenFromAdmin ? allItems : allItems.filter((x) => !x.hideFromAdmin)
+                          const hiddenPortalItemCount = allItems.filter((x) => x.hideFromAdmin).length
+                          const otherItemsFor = (itemId: string) => allItems.filter((x) => x.id !== itemId)
                           return (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Edit each item: change type, dropdown options (Options), dependency (Dependency), and visible to user. Same options on every tab.</p>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Edit each item: change type, dropdown options (Options), dependency (Dependency), visible to user, and hide from admin builder. Same options on every tab.</p>
+                            {hiddenPortalItemCount > 0 && (
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
+                                <input type="checkbox" checked={showPortalItemsHiddenFromAdmin} onChange={(e) => setShowPortalItemsHiddenFromAdmin(e.target.checked)} />
+                                <span>Show {hiddenPortalItemCount} item{hiddenPortalItemCount === 1 ? "" : "s"} hidden from admin ({showPortalItemsHiddenFromAdmin ? "visible" : "concealed"})</span>
+                              </label>
+                            )}
                             <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
-                              {items.map((item) => {
+                              {itemsForBuilderList.map((item) => {
                                 const isSelected = selectedControlItemId === item.id
                                 const otherItems = otherItemsFor(item.id)
                                 return (
@@ -1509,6 +1532,10 @@ function AdminAppInner() {
                                         <input type="checkbox" checked={item.visibleToUser !== false} onChange={(e) => setControlItemVisible(tabId, controlId, item.id, e.target.checked)} />
                                         <span>Visible to user</span>
                                       </label>
+                                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                                        <input type="checkbox" checked={item.hideFromAdmin === true} onChange={(e) => updateControlItem(tabId, controlId, item.id, { hideFromAdmin: e.target.checked ? true : undefined })} />
+                                        <span>Hide from admin</span>
+                                      </label>
                                       <button type="button" onClick={() => removeControlItem(tabId, controlId, item.id)} style={REMOVE_BTN_STYLE}>Remove</button>
                                     </div>
                                     {isSelected && (
@@ -1535,7 +1562,7 @@ function AdminAppInner() {
                                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                             <select
                                               value={item.dependency?.dependsOnItemId ?? ""}
-                                              onChange={(e) => { const id = e.target.value; if (!id) { updateControlItem(tabId, controlId, item.id, { dependency: undefined }); return }; const dep = items.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateControlItem(tabId, controlId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
+                                              onChange={(e) => { const id = e.target.value; if (!id) { updateControlItem(tabId, controlId, item.id, { dependency: undefined }); return }; const dep = allItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateControlItem(tabId, controlId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
                                               style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
                                             >
                                               <option value="">— None —</option>
@@ -1544,7 +1571,7 @@ function AdminAppInner() {
                                               ))}
                                             </select>
                                             {item.dependency?.dependsOnItemId && (() => {
-                                              const depItem = items.find((x) => x.id === item.dependency!.dependsOnItemId)
+                                              const depItem = allItems.find((x) => x.id === item.dependency!.dependsOnItemId)
                                               if (depItem?.type === "checkbox") {
                                                 return (
                                                   <select value={item.dependency.showWhenValue} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
@@ -20,6 +20,48 @@ type ConversationRow = {
 }
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
+
+function ConvoCollapsible({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.border}`,
+        borderRadius: 8,
+        marginBottom: 10,
+        overflow: "hidden",
+        background: "#fff",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "12px 14px",
+          background: "#f9fafb",
+          border: "none",
+          cursor: "pointer",
+          textAlign: "left",
+          fontWeight: 600,
+          fontSize: 14,
+          color: theme.text,
+        }}
+      >
+        <span>{title}</span>
+        <span style={{ fontSize: 18, lineHeight: 1, color: "#6b7280" }} aria-hidden>
+          {open ? "−" : "+"}
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: 14, borderTop: `1px solid ${theme.border}` }}>{children}</div>
+      )}
+    </div>
+  )
+}
 
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const userId = useScopedUserId()
@@ -282,6 +324,16 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     setMessages(msgs || [])
   }
 
+  async function activateConversationRow(convoId: string) {
+    if (selectedConversationId === convoId && selectedConversation) {
+      setSelectedConversation(null)
+      setSelectedConversationId(null)
+      setMessages([])
+      return
+    }
+    await openConversation(convoId)
+  }
+
   const filteredConversations = conversations.filter((convo: any) => {
     const name = (convo.customers?.display_name || "").toLowerCase()
     const phone = convo.customers?.customer_identifiers
@@ -477,58 +529,296 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           </div>
         </div>
 
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-              <th
-                onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }}
-                style={{ padding: "8px", cursor: "pointer" }}
-              >
-                Name
-              </th>
-              <th style={{ padding: "8px" }}>Phone</th>
-              <th style={{ padding: "8px" }}>Channel</th>
-              <th style={{ padding: "8px" }}>Status</th>
-              <th
-                onClick={() => { setSortField("created_at"); setSortAsc(!sortAsc) }}
-                style={{ padding: "8px", cursor: "pointer" }}
-              >
-                Last Update
-              </th>
-              <th style={{ padding: "8px" }}>Last message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedConversations.map((convo) => {
-              const phone = convo.customers?.customer_identifiers
-                ?.find((i: any) => i.type === "phone")?.value || ""
-              const lastMsg = (convo.messages as MessageRow[] | undefined)?.length
-                ? [...(convo.messages as MessageRow[])].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0]
-                : null
-              const lastMsgText = lastMsg?.content?.trim() ? (lastMsg.content!.length > 50 ? lastMsg.content!.slice(0, 50) + "…" : lastMsg.content) : "—"
-              return (
-                <tr
-                  key={convo.id}
-                  onClick={() => openConversation(convo.id)}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0,
+            alignItems: "stretch",
+            width: "100%",
+          }}
+        >
+          <div
+            style={{
+              flex: selectedConversation ? "1 1 320px" : "1 1 100%",
+              minWidth: 260,
+              maxWidth: selectedConversation ? "min(520px, 100%)" : "none",
+            }}
+          >
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+                  <th
+                    onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }}
+                    style={{ padding: "8px", cursor: "pointer" }}
+                  >
+                    Name
+                  </th>
+                  <th style={{ padding: "8px" }}>Phone</th>
+                  <th style={{ padding: "8px" }}>Channel</th>
+                  <th style={{ padding: "8px" }}>Status</th>
+                  <th
+                    onClick={() => { setSortField("created_at"); setSortAsc(!sortAsc) }}
+                    style={{ padding: "8px", cursor: "pointer" }}
+                  >
+                    Last Update
+                  </th>
+                  <th style={{ padding: "8px" }}>Last message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedConversations.map((convo) => {
+                  const phone = convo.customers?.customer_identifiers
+                    ?.find((i: any) => i.type === "phone")?.value || ""
+                  const lastMsg = (convo.messages as MessageRow[] | undefined)?.length
+                    ? [...(convo.messages as MessageRow[])].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0]
+                    : null
+                  const lastMsgText = lastMsg?.content?.trim() ? (lastMsg.content!.length > 50 ? lastMsg.content!.slice(0, 50) + "…" : lastMsg.content) : "—"
+                  const isOpen = selectedConversationId === convo.id
+                  return (
+                    <tr
+                      key={convo.id}
+                      onClick={() => void activateConversationRow(convo.id)}
+                      style={{
+                        cursor: "pointer",
+                        borderBottom: "1px solid #eee",
+                        background: isOpen ? "#e0f2fe" : "transparent",
+                      }}
+                    >
+                      <td style={{ padding: "8px", fontWeight: isOpen ? 600 : 400 }}>{convo.customers?.display_name ?? "—"}</td>
+                      <td style={{ padding: "8px" }}>{phone || "—"}</td>
+                      <td style={{ padding: "8px" }}>{convo.channel ?? "—"}</td>
+                      <td style={{ padding: "8px" }}>{convo.status ?? "—"}</td>
+                      <td style={{ padding: "8px" }}>
+                        {convo.created_at ? new Date(convo.created_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td style={{ padding: "8px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg?.content ?? undefined}>{lastMsgText}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <p style={{ fontSize: 12, color: "#6b7280", marginTop: 8, marginBottom: 0 }}>
+              Tip: click a row to open the detail panel; click the same row again to collapse it.
+            </p>
+          </div>
+
+          {selectedConversation && (
+            <div
+              style={{
+                flex: "1 1 360px",
+                minWidth: 280,
+                borderLeft: `1px solid ${theme.border}`,
+                paddingLeft: 20,
+                paddingBottom: 24,
+                background: "#fafafa",
+                borderRadius: "0 8px 8px 0",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>
+                    {selectedConversation.customers?.display_name ?? "Conversation"}
+                  </h3>
+                  <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+                    History is grouped below. Click the same list row to close this panel.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close conversation detail"
+                  onClick={() => {
+                    setSelectedConversation(null)
+                    setSelectedConversationId(null)
+                    setMessages([])
+                  }}
                   style={{
+                    flexShrink: 0,
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
                     cursor: "pointer",
-                    borderBottom: "1px solid #eee",
-                    background: selectedConversationId === convo.id ? "#f3f4f6" : "transparent"
+                    fontSize: 18,
+                    lineHeight: 1,
+                    color: theme.text,
                   }}
                 >
-                  <td style={{ padding: "8px" }}>{convo.customers?.display_name ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>{phone || "—"}</td>
-                  <td style={{ padding: "8px" }}>{convo.channel ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>{convo.status ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>
-                    {convo.created_at ? new Date(convo.created_at).toLocaleDateString() : "—"}
-                  </td>
-                  <td style={{ padding: "8px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg?.content ?? undefined}>{lastMsgText}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                <p style={{ margin: 0 }}>
+                  <strong>Customer:</strong>{" "}
+                  {selectedConversation.customers?.display_name ?? "—"}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setNotesCustomerId(selectedConversation.customer_id ?? null)
+                      setNotesCustomerName(selectedConversation.customers?.display_name ?? "")
+                    }}
+                    style={{
+                      marginLeft: "8px",
+                      padding: "4px 10px",
+                      fontSize: "12px",
+                      background: theme.primary,
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Notes
+                  </button>
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Phone:</strong>{" "}
+                  {selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Channel:</strong> {selectedConversation.channel ?? "—"}
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Status:</strong> {selectedConversation.status ?? "—"}
+                </p>
+              </div>
+
+              <ConvoCollapsible title="Text messages" defaultOpen>
+                <div
+                  style={{
+                    border: `1px solid ${theme.border}`,
+                    padding: 12,
+                    borderRadius: 8,
+                    background: "#fff",
+                    maxHeight: 320,
+                    overflow: "auto",
+                  }}
+                >
+                  {messages.length === 0 ? (
+                    <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No messages in this thread yet.</p>
+                  ) : (
+                    messages.map((msg) => (
+                      <div key={msg.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                          {msg.sender === "customer" ? "Customer" : "You"}
+                          {msg.created_at ? (
+                            <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                              {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{msg.content}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </ConvoCollapsible>
+
+              <ConvoCollapsible title="Voicemails">
+                <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                  No voicemails are attached to this conversation yet. When call recordings are linked here, they will appear in this section.
+                </p>
+              </ConvoCollapsible>
+
+              <ConvoCollapsible title="Emails">
+                <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                  No email thread is linked yet. Future versions can list prior messages in a compact, expandable list.
+                </p>
+              </ConvoCollapsible>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!supabase || !selectedConversation?.customer_id) return
+                  const { error } = await supabase.from("quotes").insert({
+                    user_id: userId,
+                    customer_id: selectedConversation.customer_id,
+                    status: "draft",
+                  })
+                  if (error) {
+                    console.error(error)
+                    alert(
+                      error.message +
+                        (error.message.includes("row-level security") || error.message.includes("policy")
+                          ? " Run supabase-quotes-table.sql in Supabase."
+                          : "")
+                    )
+                    return
+                  }
+                  const idToRemove = selectedConversation.id
+                  setSelectedConversation(null)
+                  setSelectedConversationId(null)
+                  setMessages([])
+                  setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
+                  const { error: updateErr } = await supabase
+                    .from("conversations")
+                    .update({ removed_at: new Date().toISOString() })
+                    .eq("id", idToRemove)
+                    .eq("user_id", userId)
+                  if (updateErr)
+                    alert(
+                      "Conversation left the list but could not save to database: " +
+                        updateErr.message +
+                        "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end)."
+                    )
+                  if (setPage) setPage("quotes")
+                }}
+                style={{
+                  marginTop: 8,
+                  padding: "10px 16px",
+                  background: theme.primary,
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Send to Quotes
+              </button>
+
+              <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!supabase || !selectedConversation?.id) return
+                    if (!confirm("Remove this conversation? It can be recalled from Customers later.")) return
+                    const idToRemove = selectedConversation.id
+                    setSelectedConversation(null)
+                    setSelectedConversationId(null)
+                    setMessages([])
+                    setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
+                    const { error: updateErr } = await supabase
+                      .from("conversations")
+                      .update({ removed_at: new Date().toISOString() })
+                      .eq("id", idToRemove)
+                      .eq("user_id", userId)
+                    if (updateErr)
+                      alert(
+                        "Conversation left the list but could not save to database: " +
+                          updateErr.message +
+                          "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end)."
+                      )
+                  }}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    background: "#b91c1c",
+                    color: "white",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {showInternalConversations && (
           <div style={{ marginTop: "32px" }}>
@@ -608,135 +898,6 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               </div>
             </div>
           </>
-        )}
-
-        {selectedConversation && (
-          <div
-            style={{
-              marginTop: "20px",
-              padding: "20px",
-              border: "1px solid #ddd",
-              borderRadius: "6px"
-            }}
-          >
-            <button
-              onClick={() => {
-                setSelectedConversation(null)
-                setSelectedConversationId(null)
-                setMessages([])
-              }}
-              style={{ marginBottom: "16px" }}
-            >
-              ← Back to Conversations
-            </button>
-
-            <h3>Conversation Details</h3>
-
-            <p>
-              <strong>Customer:</strong>{" "}
-              {selectedConversation.customers?.display_name ?? "—"}
-              {" "}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setNotesCustomerId(selectedConversation.customer_id ?? null)
-                  setNotesCustomerName(selectedConversation.customers?.display_name ?? "")
-                }}
-                style={{ marginLeft: "8px", padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-              >
-                Notes
-              </button>
-            </p>
-
-            <p>
-              <strong>Phone:</strong>{" "}
-              {selectedConversation.customers?.customer_identifiers
-                ?.find((i: any) => i.type === "phone")?.value ?? "—"}
-            </p>
-
-            <p>
-              <strong>Channel:</strong> {selectedConversation.channel ?? "—"}
-            </p>
-
-            <p>
-              <strong>Status:</strong> {selectedConversation.status ?? "—"}
-            </p>
-
-            <h3 style={{ marginTop: "24px" }}>Messages</h3>
-
-            <div style={{
-              border: "1px solid #ddd",
-              padding: "12px",
-              borderRadius: "6px"
-            }}>
-              {messages.map((msg) => (
-                <div key={msg.id} style={{ marginBottom: "10px" }}>
-                  <strong>
-                    {msg.sender === "customer" ? "Customer" : "Contractor"}
-                  </strong>
-                  <p style={{ margin: 0 }}>{msg.content}</p>
-                </div>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={async () => {
-                if (!supabase || !selectedConversation?.customer_id) return
-                const { error } = await supabase.from("quotes").insert({
-                  user_id: userId,
-                  customer_id: selectedConversation.customer_id,
-                  status: "draft"
-                })
-                if (error) {
-                  console.error(error)
-                  alert(error.message + (error.message.includes("row-level security") || error.message.includes("policy") ? " Run supabase-quotes-table.sql in Supabase." : ""))
-                  return
-                }
-                const idToRemove = selectedConversation.id
-                setSelectedConversation(null)
-                setSelectedConversationId(null)
-                setMessages([])
-                setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
-                const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", userId)
-                if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
-                if (setPage) setPage("quotes")
-              }}
-              style={{
-                marginTop: "16px",
-                padding: "10px 16px",
-                background: theme.primary,
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-                fontWeight: 600
-              }}
-            >
-              Send to Quotes
-            </button>
-
-            <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!supabase || !selectedConversation?.id) return
-                  if (!confirm("Remove this conversation? It can be recalled from Customers later.")) return
-                  const idToRemove = selectedConversation.id
-                  setSelectedConversation(null)
-                  setSelectedConversationId(null)
-                  setMessages([])
-                  setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
-                  const { error: updateErr } = await supabase.from("conversations").update({ removed_at: new Date().toISOString() }).eq("id", idToRemove).eq("user_id", userId)
-                  if (updateErr) alert("Conversation left the list but could not save to database: " + updateErr.message + "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end).")
-                }}
-                style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
-              >
-                Remove
-              </button>
-            </div>
-          </div>
         )}
 
         {showAddConversation && (

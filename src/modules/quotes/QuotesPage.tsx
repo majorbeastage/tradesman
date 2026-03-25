@@ -11,6 +11,7 @@ import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionV
 import type { PortalSettingItem } from "../../types/portal-builder"
 import {
   resolveRecurrenceFromPortal,
+  applyRecurrenceEndLimitsFromPortal,
   computeOccurrenceStarts,
   intervalsOverlap,
 } from "../../lib/calendarRecurrence"
@@ -940,7 +941,18 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         ? resolveRecurrenceFromPortal(calendarJobTypesPortalItems, quoteJobTypesPortalValues)
                         : null
                     const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
-                    const series = recurrenceFromJt ?? recurrenceFromQuote
+                    let series = recurrenceFromJt ?? recurrenceFromQuote
+                    if (series) {
+                      const endItems =
+                        calJobTypeId && calendarJobTypesPortalItems.length > 0
+                          ? calendarJobTypesPortalItems
+                          : quoteCalendarItems
+                      const endVals =
+                        calJobTypeId && calendarJobTypesPortalItems.length > 0
+                          ? quoteJobTypesPortalValues
+                          : quoteCalPortalValues
+                      series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
+                    }
                     const starts = series ? computeOccurrenceStarts(start, series) : [start]
                     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
@@ -983,6 +995,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     }
 
                     const targetUserId = assignToScopedUser ? selectedTarget : (authUserId || selectedTarget)
+                    const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
                     const rows = newRanges.map(({ s, e }) => ({
                       user_id: targetUserId,
                       title: calTitle.trim(),
@@ -993,6 +1006,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       customer_id: selectedQuote.customer_id,
                       notes: calNotes.trim() || null,
                       quote_total: quoteTotal > 0 ? quoteTotal : null,
+                      ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
                     }))
                     const { error } = await supabase.from("calendar_events").insert(rows)
                     if (error) { setAddToCalendarLoading(false); alert(error.message); return }

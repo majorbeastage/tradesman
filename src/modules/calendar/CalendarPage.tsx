@@ -9,6 +9,7 @@ import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
 import {
   resolveRecurrenceFromPortal,
+  applyRecurrenceEndLimitsFromPortal,
   computeOccurrenceStarts,
   intervalsOverlap,
 } from "../../lib/calendarRecurrence"
@@ -35,7 +36,9 @@ type CalendarEvent = {
   quote_total?: number | null
   removed_at?: string | null
   completed_at?: string | null
+  recurrence_series_id?: string | null
   job_types?: JobType | null
+  customers?: { display_name: string | null } | null
 }
 
 type UserCalendarPreference = {
@@ -112,6 +115,26 @@ function getTimeOptions(incrementMinutes: 15 | 60): string[] {
   return options
 }
 
+function formatEventDurationMinutes(startIso: string, endIso: string): string {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
+  const m = Math.max(0, Math.round(ms / 60000))
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  return r ? `${h} h ${r} min` : `${h} h`
+}
+
+/** PostgREST may return `customers` as one object or a single-element array. */
+function normalizeCalendarEventRow(raw: unknown): CalendarEvent {
+  const e = raw as CalendarEvent & { customers?: CalendarEvent["customers"] | { display_name: string | null }[] }
+  let customers: CalendarEvent["customers"] = e.customers ?? null
+  if (Array.isArray(e.customers)) {
+    const c0 = e.customers[0]
+    customers = c0 ? { display_name: c0.display_name ?? null } : null
+  }
+  return { ...e, customers }
+}
+
 export default function CalendarPage() {
   const { userId: authUserId, user: authUser } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
@@ -186,6 +209,10 @@ export default function CalendarPage() {
     return [...calendarSettingsItems, orgToggle]
   }, [calendarSettingsItems, showAllOrgEvents])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "calendar"), [portalConfig])
+  const selectedSeriesSiblingCount = useMemo(() => {
+    if (!selectedEvent?.recurrence_series_id) return 0
+    return events.filter((e) => e.recurrence_series_id === selectedEvent.recurrence_series_id).length
+  }, [events, selectedEvent?.recurrence_series_id])
   const showCalAddItem = getOmPageActionVisible(portalConfig, "calendar", "add_item")
   const showCalAutoResponse = getOmPageActionVisible(portalConfig, "calendar", "auto_response")
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
@@ -357,6 +384,7 @@ export default function CalendarPage() {
   const [receiptSmsCustomer, setReceiptSmsCustomer] = useState(false)
   const [receiptEmailSelf, setReceiptEmailSelf] = useState(false)
   const [completeBusy, setCompleteBusy] = useState(false)
+  const [calendarEventActionBusy, setCalendarEventActionBusy] = useState(false)
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
   const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
@@ -388,7 +416,9 @@ export default function CalendarPage() {
     const baseQuery = () =>
       client
         .from("calendar_events")
-        .select("id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total")
+        .select(
+          "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name )"
+        )
         .is("removed_at", null)
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
@@ -402,7 +432,7 @@ export default function CalendarPage() {
         setEvents([])
         return
       }
-      setEvents((data2 || []) as CalendarEvent[])
+      setEvents((data2 || []).map(normalizeCalendarEventRow))
       return
     }
     if (error) {
@@ -410,7 +440,7 @@ export default function CalendarPage() {
       setEvents([])
       return
     }
-    setEvents((data || []) as CalendarEvent[])
+    setEvents((data || []).map(normalizeCalendarEventRow))
   }
 
   useEffect(() => {
@@ -591,7 +621,12 @@ export default function CalendarPage() {
         ? resolveRecurrenceFromPortal(jobTypesPortalItems, jobTypesPortalValues)
         : null
     const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
-    const series = recurrenceFromJobTypes ?? recurrenceFromAddItem
+    let series = recurrenceFromJobTypes ?? recurrenceFromAddItem
+    if (series) {
+      const endItems = addJobTypeId && jobTypesPortalItems.length > 0 ? jobTypesPortalItems : addItemPortalItems
+      const endVals = addJobTypeId && jobTypesPortalItems.length > 0 ? jobTypesPortalValues : addItemPortalValues
+      series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
+    }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
@@ -628,6 +663,7 @@ export default function CalendarPage() {
 
     setAddSaving(true)
     const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
+    const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
     const rows = newRanges.map(({ s, e }) => ({
       user_id: eventOwnerUserId,
       title: addTitle.trim(),
@@ -637,6 +673,7 @@ export default function CalendarPage() {
       quote_id: addQuoteId || null,
       customer_id: addCustomerId || null,
       notes: addNotes.trim() || null,
+      ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
     }))
     const { error } = await supabase.from("calendar_events").insert(rows)
     setAddSaving(false)
@@ -1568,24 +1605,97 @@ export default function CalendarPage() {
 
       {selectedEvent && (
         <>
-          <div onClick={() => setSelectedEvent(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "360px", background: "white", borderRadius: "8px", padding: "20px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+          <div
+            onClick={() => {
+              if (!calendarEventActionBusy) setSelectedEvent(null)
+            }}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 9998 }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "90%",
+              maxWidth: "440px",
+              maxHeight: "90vh",
+              overflow: "auto",
+              background: "white",
+              borderRadius: "8px",
+              padding: "20px",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 9999,
+            }}
+          >
             <h3 style={{ margin: "0 0 12px", color: theme.text }}>{selectedEvent.title}</h3>
-            <p style={{ margin: "0 0 8px", fontSize: "14px", color: theme.text }}>
-              {new Date(selectedEvent.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – {new Date(selectedEvent.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-            </p>
+            <div style={{ fontSize: "13px", color: "#4b5563", display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+              <p style={{ margin: 0, color: theme.text, fontSize: "14px" }}>
+                <strong>When:</strong>{" "}
+                {new Date(selectedEvent.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} –{" "}
+                {new Date(selectedEvent.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+              </p>
+              <p style={{ margin: 0 }}>
+                <strong>Duration:</strong> {formatEventDurationMinutes(selectedEvent.start_at, selectedEvent.end_at)}
+              </p>
+              {(() => {
+                const jt = selectedEvent.job_types ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
+                if (!jt?.name) return null
+                return (
+                  <p style={{ margin: 0 }}>
+                    <strong>Job type:</strong> {jt.name}
+                  </p>
+                )
+              })()}
+              {selectedEvent.customers?.display_name && (
+                <p style={{ margin: 0 }}>
+                  <strong>Customer:</strong> {selectedEvent.customers.display_name}
+                </p>
+              )}
+              {selectedEvent.quote_id && (
+                <p style={{ margin: 0 }}>
+                  <strong>Quote:</strong> linked
+                </p>
+              )}
+              {selectedEvent.user_id && selectedEvent.user_id !== userId && (
+                <p style={{ margin: 0 }}>
+                  <strong>Calendar owner:</strong>{" "}
+                  {selectableUsers.find((u) => u.userId === selectedEvent.user_id)?.label ?? selectedEvent.user_id.slice(0, 8)}
+                </p>
+              )}
+              {selectedSeriesSiblingCount > 1 && (
+                <p style={{ margin: 0, color: "#2563eb" }}>
+                  <strong>Recurrence:</strong> {selectedSeriesSiblingCount} scheduled dates in this series
+                </p>
+              )}
+            </div>
             {selectedEvent.quote_total != null && selectedEvent.quote_total > 0 && (
               <p style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>
                 Total: ${Number(selectedEvent.quote_total).toFixed(2)}
               </p>
             )}
-            {selectedEvent.notes && <p style={{ margin: 0, fontSize: "14px", color: "#6b7280" }}>{selectedEvent.notes}</p>}
+            {selectedEvent.notes && (
+              <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#6b7280", whiteSpace: "pre-wrap" }}>
+                <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
+              </p>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", gap: "8px", flexWrap: "wrap" }}>
-              <button onClick={() => setSelectedEvent(null)} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Close</button>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                disabled={calendarEventActionBusy}
+                onClick={() => setSelectedEvent(null)}
+                style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: calendarEventActionBusy ? "wait" : "pointer", color: theme.text }}
+              >
+                Close
+              </button>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
                 {hasCompletedAtColumn && (
                   <button
                     type="button"
+                    disabled={calendarEventActionBusy}
                     onClick={() => {
                       setReceiptEmailCustomer(false)
                       setReceiptSmsCustomer(false)
@@ -1593,22 +1703,88 @@ export default function CalendarPage() {
                       setCompleteFlowEvent(selectedEvent)
                       setSelectedEvent(null)
                     }}
-                    style={{ padding: "8px 14px", borderRadius: "6px", background: theme.primary, color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
+                    style={{ padding: "8px 14px", borderRadius: "6px", background: theme.primary, color: "white", border: "none", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "14px" }}
                   >
                     Complete
                   </button>
                 )}
-                <button
-                  onClick={async () => {
-                    if (!supabase || !selectedEvent.id) return
-                    const { error: err } = await supabase.from("calendar_events").update({ removed_at: new Date().toISOString() }).eq("id", selectedEvent.id)
-                    if (err) alert(err.message)
-                    else { setSelectedEvent(null); loadEvents() }
-                  }}
-                  style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
-                >
-                  Remove
-                </button>
+                {selectedSeriesSiblingCount > 1 && selectedEvent.recurrence_series_id ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={calendarEventActionBusy}
+                      onClick={async () => {
+                        if (!supabase || !selectedEvent.id) return
+                        setCalendarEventActionBusy(true)
+                        const { error: err } = await supabase
+                          .from("calendar_events")
+                          .update({ removed_at: new Date().toISOString() })
+                          .eq("id", selectedEvent.id)
+                        setCalendarEventActionBusy(false)
+                        if (err) alert(err.message)
+                        else {
+                          setSelectedEvent(null)
+                          loadEvents()
+                        }
+                      }}
+                      style={{ padding: "8px 14px", borderRadius: "6px", background: "#fecaca", color: "#7f1d1d", border: "1px solid #f87171", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "13px" }}
+                    >
+                      Remove this date
+                    </button>
+                    <button
+                      type="button"
+                      disabled={calendarEventActionBusy}
+                      onClick={async () => {
+                        if (!supabase || !selectedEvent.recurrence_series_id) return
+                        const owner = selectedEvent.user_id ?? userId
+                        if (
+                          !window.confirm(
+                            `Remove all ${selectedSeriesSiblingCount} dates in this recurring series? This cannot be undone.`
+                          )
+                        )
+                          return
+                        setCalendarEventActionBusy(true)
+                        const { error: err } = await supabase
+                          .from("calendar_events")
+                          .update({ removed_at: new Date().toISOString() })
+                          .eq("recurrence_series_id", selectedEvent.recurrence_series_id)
+                          .eq("user_id", owner)
+                          .is("removed_at", null)
+                        setCalendarEventActionBusy(false)
+                        if (err) alert(err.message)
+                        else {
+                          setSelectedEvent(null)
+                          loadEvents()
+                        }
+                      }}
+                      style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "13px" }}
+                    >
+                      Remove entire series
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={calendarEventActionBusy}
+                    onClick={async () => {
+                      if (!supabase || !selectedEvent.id) return
+                      setCalendarEventActionBusy(true)
+                      const { error: err } = await supabase
+                        .from("calendar_events")
+                        .update({ removed_at: new Date().toISOString() })
+                        .eq("id", selectedEvent.id)
+                      setCalendarEventActionBusy(false)
+                      if (err) alert(err.message)
+                      else {
+                        setSelectedEvent(null)
+                        loadEvents()
+                      }
+                    }}
+                    style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "14px" }}
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             </div>
           </div>

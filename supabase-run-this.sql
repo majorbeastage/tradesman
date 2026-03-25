@@ -18,6 +18,7 @@ ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS converted_at TIMESTAMPTZ;
 ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS quote_total NUMERIC;
 ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
 ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS recurrence_series_id UUID;
 
 -- 5) RLS: Allow SELECT, INSERT, UPDATE, DELETE for your dev user (so new leads show in Leads tab, etc.).
 --    Replace the UUID with your app's DEV_USER_ID if different (see tradesman/src/core/dev.ts).

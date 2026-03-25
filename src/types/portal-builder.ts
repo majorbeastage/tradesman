@@ -102,6 +102,8 @@ export type PortalSettingItem = {
   customFieldSubtype?: 'text' | 'textarea' | 'dropdown'
   /** If false, hidden from user (admin can turn back on). Default true. */
   visibleToUser?: boolean
+  /** If true, hidden from the portal builder item list unless "Show items hidden from admin" is on. End users still see the item if visibleToUser. */
+  hideFromAdmin?: boolean
   /** Optional: show this item only when another item matches (e.g. checkbox visible when dropdown = X). */
   dependency?: PortalSettingDependency
 }

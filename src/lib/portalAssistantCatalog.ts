@@ -40,6 +40,7 @@ export function buildPortalAssistantCatalogText(): string {
   lines.push("- `defaultChecked`: optional boolean for checkbox")
   lines.push("- `customFieldSubtype`: `text` | `textarea` | `dropdown` when type is custom_field")
   lines.push("- `visibleToUser`: default true; false hides from end users")
+  lines.push("- `hideFromAdmin`: optional; true hides the item from the admin portal builder list unless “Show items hidden from admin” is checked (end users still follow visibleToUser)")
   lines.push("- `dependency`: optional `{ dependsOnItemId, showWhenValue }` — showWhenValue is `checked`/`unchecked` for checkbox parent, or exact dropdown option string for dropdown parent")
   lines.push("")
   lines.push("### Suggested reply format when proposing config")
