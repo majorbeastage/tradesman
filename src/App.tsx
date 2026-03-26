@@ -94,13 +94,39 @@ function MainApp() {
 
       {page === "dashboard" && (
         <>
-          <h1>Dashboard</h1>
-          <div style={{ maxWidth: "720px", marginTop: "24px", padding: "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "8px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
-            <p style={{ margin: "0 0 1em" }}>
-              Thank you for visiting our company. We are committed to assisting contractors and small businesses in their day to day operations. Whether it be by reaching new clients, or managing existing clients and scheduling. We are here to help in any way we can.
+          <h1 style={{ marginBottom: 10 }}>Dashboard</h1>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gap: 14,
+              marginTop: 10,
+              marginBottom: 14,
+            }}
+          >
+            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Pipeline</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Leads → Quotes → Calendar</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Track every customer from first contact to booked job.</p>
+            </div>
+            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Communication</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Messages + Notes</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Keep customer history centralized and easy to review.</p>
+            </div>
+            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Scheduling</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Smart Recurrence</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Plan one-time and recurring jobs with less manual work.</p>
+            </div>
+          </div>
+          <div style={{ maxWidth: "920px", marginTop: "8px", padding: "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "10px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#fff" }}>Welcome to Tradesman</h2>
+            <p style={{ margin: "0 0 10px" }}>
+              We help contractors and small businesses manage leads, conversations, quotes, and scheduling in one clean workspace.
             </p>
-            <p style={{ margin: "0 0 1em" }}>
-              Our primary purpose is to utilize as many modern tools as possible, to save you time and help you earn more revenue in the process. Please take a look around and do not hesitate to reach out to us. Thank you.
+            <p style={{ margin: 0 }}>
+              Use the sidebar to jump to the next step in your workflow. The layout is optimized for desktop and mobile web so your team can stay productive anywhere.
             </p>
           </div>
         </>

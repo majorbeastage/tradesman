@@ -699,6 +699,19 @@ function AdminAppInner() {
     setConfig({ ...config, controlLabels: { ...config.controlLabels, [controlId]: label } })
   }
 
+  function setPageActionVisible(tabId: string, actionId: string, visible: boolean) {
+    setConfig((prev) => ({
+      ...prev,
+      pageActions: {
+        ...(prev.pageActions ?? {}),
+        [tabId]: {
+          ...(prev.pageActions?.[tabId] ?? {}),
+          [actionId]: visible,
+        },
+      },
+    }))
+  }
+
   function addCustomActionButton(label: string) {
     const trimmed = label.trim()
     if (!trimmed) return
@@ -860,6 +873,10 @@ function AdminAppInner() {
   const showGlobalToggles = previewPage === "dashboard" || pageControls.length === 0
   const selectedControlForPage =
     selectedControl?.tab === previewPage ? selectedControl.controlId : null
+  const selectedControlMeta =
+    selectedControlForPage && !selectedControlForPage.startsWith("custom_action_button:")
+      ? pageControls.find((c) => c.id === selectedControlForPage)
+      : null
 
   useEffect(() => {
     setSelectedCustomButtonItemId(null)
@@ -1448,16 +1465,24 @@ function AdminAppInner() {
                         {selectedControlForPage === "page_title" && (
                           <p style={{ fontSize: 11, color: theme.text, opacity: 0.8 }}>Page title. Custom buttons are next to Settings.</p>
                         )}
-                        {selectedControlForPage === "create_lead" && (
+                        {selectedControlMeta?.type === "button" && selectedControlForPage && (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label the user sees.</p>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label and visibility for this standard action button.</p>
                             <input
                               type="text"
-                              value={config.controlLabels?.[selectedControlForPage] ?? "+ Create Lead"}
+                              value={config.controlLabels?.[selectedControlForPage] ?? selectedControlMeta.label}
                               onChange={(e) => setControlLabel(selectedControlForPage, e.target.value)}
-                              placeholder="+ Create Lead"
+                              placeholder={selectedControlMeta.label}
                               style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13, marginBottom: 8 }}
                             />
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={config.pageActions?.[previewPage]?.[selectedControlForPage] !== false}
+                                onChange={(e) => setPageActionVisible(previewPage, selectedControlForPage, e.target.checked)}
+                              />
+                              <span>Visible to user</span>
+                            </label>
                           </>
                         )}
                         {previewPage === "calendar" && selectedControlForPage === "customize_user" && (
@@ -1475,7 +1500,6 @@ function AdminAppInner() {
                           const isItemsControl =
                             selectedControlForPage &&
                             selectedControlForPage !== "page_title" &&
-                            selectedControlForPage !== "create_lead" &&
                             selectedControlForPage !== "table_columns" &&
                             selectedControlForPage !== "custom_header_button" &&
                             selectedControlForPage !== "customize_user" &&

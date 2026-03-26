@@ -7,7 +7,7 @@ import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
-import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
+import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import {
   resolveRecurrenceFromPortal,
@@ -90,7 +90,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const quoteCalendarItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "add_quote_to_calendar"), [portalConfig])
   const calendarJobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
-  const showQuotesAddCustomer = getOmPageActionVisible(portalConfig, "quotes", "add_customer")
+  const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
   const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
 

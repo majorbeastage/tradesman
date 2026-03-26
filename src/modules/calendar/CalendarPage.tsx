@@ -6,7 +6,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
-import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible } from "../../types/portal-builder"
+import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible, getPageActionVisible } from "../../types/portal-builder"
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -157,6 +157,7 @@ export default function CalendarPage() {
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
+  const [removeRecurrenceScope, setRemoveRecurrenceScope] = useState<"instance" | "series">("instance")
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
   const [prefRibbonColor, setPrefRibbonColor] = useState("#0ea5e9")
@@ -170,6 +171,11 @@ export default function CalendarPage() {
     try { return localStorage.getItem("calendar_showAllOrgEvents") === "true" } catch { return false }
   })
   const [prefByUserId, setPrefByUserId] = useState<Record<string, UserCalendarPreference>>({})
+
+  // Reset removal scope every time user opens a different event.
+  useEffect(() => {
+    setRemoveRecurrenceScope("instance")
+  }, [selectedEvent?.id])
 
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
@@ -213,7 +219,7 @@ export default function CalendarPage() {
     if (!selectedEvent?.recurrence_series_id) return 0
     return events.filter((e) => e.recurrence_series_id === selectedEvent.recurrence_series_id).length
   }, [events, selectedEvent?.recurrence_series_id])
-  const showCalAddItem = getOmPageActionVisible(portalConfig, "calendar", "add_item")
+  const showCalAddItem = getPageActionVisible(portalConfig, "calendar", "add_item_to_calendar") && getOmPageActionVisible(portalConfig, "calendar", "add_item")
   const showCalAutoResponse = getOmPageActionVisible(portalConfig, "calendar", "auto_response")
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
@@ -1666,9 +1672,10 @@ export default function CalendarPage() {
                   {selectableUsers.find((u) => u.userId === selectedEvent.user_id)?.label ?? selectedEvent.user_id.slice(0, 8)}
                 </p>
               )}
-              {selectedSeriesSiblingCount > 1 && (
+              {selectedEvent.recurrence_series_id && (
                 <p style={{ margin: 0, color: "#2563eb" }}>
-                  <strong>Recurrence:</strong> {selectedSeriesSiblingCount} scheduled dates in this series
+                  <strong>Recurrence:</strong>{" "}
+                  {selectedSeriesSiblingCount > 1 ? `${selectedSeriesSiblingCount} scheduled dates in this series` : "Recurring series"}
                 </p>
               )}
             </div>
@@ -1681,6 +1688,31 @@ export default function CalendarPage() {
               <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#6b7280", whiteSpace: "pre-wrap" }}>
                 <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
               </p>
+            )}
+            {selectedEvent.recurrence_series_id && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ margin: "0 0 8px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Remove options</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: theme.text }}>
+                    <input
+                      type="radio"
+                      name="removeRecurrenceScope"
+                      checked={removeRecurrenceScope === "instance"}
+                      onChange={() => setRemoveRecurrenceScope("instance")}
+                    />
+                    Remove this date
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: theme.text }}>
+                    <input
+                      type="radio"
+                      name="removeRecurrenceScope"
+                      checked={removeRecurrenceScope === "series"}
+                      onChange={() => setRemoveRecurrenceScope("series")}
+                    />
+                    Remove entire recurrence
+                  </label>
+                </div>
+              </div>
             )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", gap: "8px", flexWrap: "wrap" }}>
               <button
@@ -1708,83 +1740,56 @@ export default function CalendarPage() {
                     Complete
                   </button>
                 )}
-                {selectedSeriesSiblingCount > 1 && selectedEvent.recurrence_series_id ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={calendarEventActionBusy}
-                      onClick={async () => {
-                        if (!supabase || !selectedEvent.id) return
-                        setCalendarEventActionBusy(true)
-                        const { error: err } = await supabase
-                          .from("calendar_events")
-                          .update({ removed_at: new Date().toISOString() })
-                          .eq("id", selectedEvent.id)
-                        setCalendarEventActionBusy(false)
-                        if (err) alert(err.message)
-                        else {
-                          setSelectedEvent(null)
-                          loadEvents()
-                        }
-                      }}
-                      style={{ padding: "8px 14px", borderRadius: "6px", background: "#fecaca", color: "#7f1d1d", border: "1px solid #f87171", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "13px" }}
-                    >
-                      Remove this date
-                    </button>
-                    <button
-                      type="button"
-                      disabled={calendarEventActionBusy}
-                      onClick={async () => {
-                        if (!supabase || !selectedEvent.recurrence_series_id) return
-                        const owner = selectedEvent.user_id ?? userId
-                        if (
-                          !window.confirm(
-                            `Remove all ${selectedSeriesSiblingCount} dates in this recurring series? This cannot be undone.`
-                          )
-                        )
-                          return
-                        setCalendarEventActionBusy(true)
-                        const { error: err } = await supabase
-                          .from("calendar_events")
-                          .update({ removed_at: new Date().toISOString() })
-                          .eq("recurrence_series_id", selectedEvent.recurrence_series_id)
-                          .eq("user_id", owner)
-                          .is("removed_at", null)
-                        setCalendarEventActionBusy(false)
-                        if (err) alert(err.message)
-                        else {
-                          setSelectedEvent(null)
-                          loadEvents()
-                        }
-                      }}
-                      style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "13px" }}
-                    >
-                      Remove entire series
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={calendarEventActionBusy}
-                    onClick={async () => {
-                      if (!supabase || !selectedEvent.id) return
+                <button
+                  type="button"
+                  disabled={calendarEventActionBusy}
+                  onClick={async () => {
+                    if (!supabase || !selectedEvent.id) return
+                    const scopeId = selectedEvent.recurrence_series_id
+                    if (removeRecurrenceScope === "series" && scopeId) {
+                      const owner = selectedEvent.user_id ?? userId
+                      if (!window.confirm("Remove entire recurrence for all dates in this series? This cannot be undone.")) return
                       setCalendarEventActionBusy(true)
                       const { error: err } = await supabase
                         .from("calendar_events")
                         .update({ removed_at: new Date().toISOString() })
-                        .eq("id", selectedEvent.id)
+                        .eq("recurrence_series_id", scopeId)
+                        .eq("user_id", owner)
+                        .is("removed_at", null)
                       setCalendarEventActionBusy(false)
                       if (err) alert(err.message)
                       else {
                         setSelectedEvent(null)
                         loadEvents()
                       }
-                    }}
-                    style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: calendarEventActionBusy ? "wait" : "pointer", fontSize: "14px" }}
-                  >
-                    Remove
-                  </button>
-                )}
+                      return
+                    }
+
+                    // Default: remove only this row (single instance)
+                    setCalendarEventActionBusy(true)
+                    const { error: err } = await supabase
+                      .from("calendar_events")
+                      .update({ removed_at: new Date().toISOString() })
+                      .eq("id", selectedEvent.id)
+                    setCalendarEventActionBusy(false)
+                    if (err) alert(err.message)
+                    else {
+                      setSelectedEvent(null)
+                      loadEvents()
+                    }
+                  }}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    background: "#b91c1c",
+                    color: "white",
+                    border: "none",
+                    cursor: calendarEventActionBusy ? "wait" : "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  {selectedEvent.recurrence_series_id ? (removeRecurrenceScope === "series" ? "Remove entire recurrence" : "Remove this date") : "Remove"}
+                </button>
               </div>
             </div>
           </div>

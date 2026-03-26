@@ -4,7 +4,7 @@ import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeMa
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
-import { getControlItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
+import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -90,6 +90,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addConvoLoading, setAddConvoLoading] = useState(false)
   const conversationSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "conversation_settings"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "conversations"), [portalConfig])
+  const showAddConversationAction = getPageActionVisible(portalConfig, "conversations", "add_conversation")
 
   useEffect(() => {
     if (!showSettings || conversationSettingsItems.length === 0) return
@@ -373,19 +374,21 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           marginBottom: "16px"
         }}>
           <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              onClick={() => { setShowAddConversation(true); loadCustomerList() }}
-              style={{
-                background: theme.primary,
-                color: "white",
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer"
-              }}
-            >
-              Add Conversation
-            </button>
+            {showAddConversationAction && (
+              <button
+                onClick={() => { setShowAddConversation(true); loadCustomerList() }}
+                style={{
+                  background: theme.primary,
+                  color: "white",
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: "none",
+                  cursor: "pointer"
+                }}
+              >
+                Add Conversation
+              </button>
+            )}
             <button
               onClick={() => setShowSettings(true)}
               style={{

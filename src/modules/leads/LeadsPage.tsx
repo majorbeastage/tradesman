@@ -3,7 +3,7 @@ import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
-import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser } from "../../types/portal-builder"
+import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
@@ -41,6 +41,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   const leadsSettingsItems = useMemo(() => getLeadsSettingsItemsForUser(portalConfig), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "leads"), [portalConfig])
+  const showCreateLead = getPageActionVisible(portalConfig, "leads", "create_lead")
 
   useEffect(() => {
     if (!showSettings || leadsSettingsItems.length === 0) return
@@ -400,19 +401,21 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
         <div style={{ display: "flex", gap: "10px" }}>
 
-          <button
-            onClick={() => setShowForm(true)}
-            style={{
-              background: "#F97316",
-              color: "white",
-              padding: "8px 14px",
-              borderRadius: "6px",
-              border: "none",
-              cursor: "pointer"
-            }}
-          >
-            + Create Lead
-          </button>
+          {showCreateLead && (
+            <button
+              onClick={() => setShowForm(true)}
+              style={{
+                background: "#F97316",
+                color: "white",
+                padding: "8px 14px",
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer"
+              }}
+            >
+              + Create Lead
+            </button>
+          )}
 
           <button
             onClick={() => setShowSettings(true)}

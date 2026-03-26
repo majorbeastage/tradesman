@@ -138,6 +138,8 @@ export type PortalConfig = {
   controlItems?: Record<string, PortalSettingItem[]>
   /** Custom action buttons per tab (each button has items). Leads uses customActionButtons for backward compat. */
   customActionButtonsByTab?: Record<string, CustomActionButton[]>
+  /** Per-tab standard action visibility (false = hidden). */
+  pageActions?: Record<string, Record<string, boolean>>
   /**
    * Office manager portal: hide toolbar buttons per page (false = hidden).
    * Stored on the managed user's profile; applies when an office manager works with that user.
@@ -146,6 +148,17 @@ export type PortalConfig = {
     calendar?: Record<string, boolean>
     quotes?: Record<string, boolean>
   }
+}
+
+/** True if a standard page action should show (default visible). */
+export function getPageActionVisible(
+  portalConfig: PortalConfig | null,
+  tabId: string,
+  actionId: string
+): boolean {
+  const section = portalConfig?.pageActions?.[tabId]
+  if (!section || typeof section !== "object") return true
+  return section[actionId] !== false
 }
 
 /** True if an office-manager toolbar action should show (default visible). */
@@ -331,7 +344,7 @@ export const PORTAL_DROPDOWN_LABELS: Record<string, string> = {
 
 /** Control ids that use the full items editor (checkboxes, dropdowns, custom fields, dependency, visible to user). */
 export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
-  leads: ['settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
+  leads: ['create_lead', 'settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
   conversations: ['add_conversation', 'conversation_settings'],
   quotes: ['add_customer_to_quotes', 'add_quote_to_calendar', 'auto_response_options', 'quote_settings', 'status'],
   calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'customize_user', 'job_type'],
@@ -373,6 +386,7 @@ export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
 /** Default items for a control when none saved. Key: `${tabId}:${controlId}`. */
 export function getDefaultControlItems(tabId: string, controlId: string): PortalSettingItem[] {
   const key = `${tabId}:${controlId}`
+  if (key === 'leads:create_lead') return []
   if (key === 'leads:settings') return [...DEFAULT_LEADS_SETTINGS_ITEMS]
   if (key === 'quotes:quote_settings') return [...DEFAULT_QUOTE_SETTINGS_ITEMS]
   if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
