@@ -172,6 +172,32 @@ export function getOmPageActionVisible(
   return section[actionId] !== false
 }
 
+/** If admin saved an empty list for these keys, merge app defaults (recurrence UI) instead of showing nothing. */
+const CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY = new Set([
+  "calendar:add_item_to_calendar",
+  "calendar:job_types",
+  "quotes:add_quote_to_calendar",
+])
+
+function mergeMissingRecurrencePortalItems(
+  stored: PortalSettingItem[],
+  defaults: PortalSettingItem[]
+): PortalSettingItem[] {
+  const seen = new Set(stored.map((i) => i.id))
+  const out = [...stored]
+  for (const d of defaults) {
+    if (!seen.has(d.id)) out.push(d)
+  }
+  return out
+}
+
+/** Strip portal items that belong on the event card, not the Add to calendar form. */
+export function isRemoveRecurrencePortalItem(item: PortalSettingItem): boolean {
+  const t = `${item.id} ${item.label}`.toLowerCase()
+  if (/\bremove\b/.test(t) && /recurr/.test(t)) return true
+  return false
+}
+
 /** Get settings/control items for the user portal: from portal_config, filtered by visibleToUser. Use for any tab:control (e.g. leads:settings, conversations:conversation_settings). */
 export function getControlItemsForUser(
   portalConfig: PortalConfig | null,
@@ -179,10 +205,25 @@ export function getControlItemsForUser(
   controlId: string
 ): PortalSettingItem[] {
   const key = `${tabId}:${controlId}`
-  const raw =
-    key === "leads:settings"
-      ? (portalConfig?.controlItems?.[key] ?? portalConfig?.leadsSettingsItems ?? DEFAULT_LEADS_SETTINGS_ITEMS)
-      : (portalConfig?.controlItems?.[key] ?? getDefaultControlItems(tabId, controlId))
+  const defaults = getDefaultControlItems(tabId, controlId)
+  let raw: PortalSettingItem[]
+  if (key === "leads:settings") {
+    raw = (portalConfig?.controlItems?.[key] ?? portalConfig?.leadsSettingsItems ?? DEFAULT_LEADS_SETTINGS_ITEMS) as PortalSettingItem[]
+  } else {
+    const stored = portalConfig?.controlItems?.[key]
+    if (stored !== undefined) {
+      const arr = Array.isArray(stored) ? stored : []
+      if (arr.length === 0 && CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY.has(key)) {
+        raw = [...defaults]
+      } else if (arr.length > 0 && CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY.has(key)) {
+        raw = mergeMissingRecurrencePortalItems(arr, defaults)
+      } else {
+        raw = arr
+      }
+    } else {
+      raw = [...defaults]
+    }
+  }
   return (Array.isArray(raw) ? raw : []).filter((item) => item.visibleToUser !== false)
 }
 

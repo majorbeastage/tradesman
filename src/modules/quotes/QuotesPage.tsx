@@ -357,8 +357,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }, [userId])
 
   async function loadCustomerList() {
-    if (!supabase) return
-    const { data } = await supabase.from("customers").select("id, display_name").order("display_name")
+    if (!supabase || !userId) return
+    const { data } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
     setCustomerList(data || [])
   }
 
@@ -375,25 +375,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         }
         const { data: newCustomer, error: custErr } = await supabase
           .from("customers")
-          .insert({ display_name: addNewName.trim() || null, notes: null })
+          .insert({ user_id: userId, display_name: addNewName.trim() || null, notes: null })
           .select("id")
           .single()
         if (custErr) throw custErr
         customerId = newCustomer.id
         if (addNewPhone.trim()) {
           await supabase.from("customer_identifiers").insert({
+            user_id: userId,
             customer_id: customerId,
             type: "phone",
             value: addNewPhone.trim(),
-            is_primary: true
+            is_primary: true,
+            verified: false,
           })
         }
         if (addNewEmail.trim()) {
           await supabase.from("customer_identifiers").insert({
+            user_id: userId,
             customer_id: customerId,
             type: "email",
             value: addNewEmail.trim(),
-            is_primary: false
+            is_primary: false,
+            verified: false,
           })
         }
       } else {

@@ -244,8 +244,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   }, [userId])
 
   async function loadCustomerList() {
-    if (!supabase) return
-    const { data } = await supabase.from("customers").select("id, display_name").order("display_name")
+    if (!supabase || !userId) return
+    const { data } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
     setCustomerList(data || [])
   }
 
@@ -296,8 +296,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         .insert({
           user_id: userId,
           customer_id: customerId,
-          channel: "manual",
-          status: "active"
+          channel: "sms",
+          status: "open",
         })
       if (convoErr) throw convoErr
       setShowAddConversation(false)
