@@ -3,7 +3,8 @@ import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
-import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
+import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
+import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser, getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
@@ -41,7 +42,35 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   const leadsSettingsItems = useMemo(() => getLeadsSettingsItemsForUser(portalConfig), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "leads"), [portalConfig])
+  const createLeadPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "leads", "create_lead"), [portalConfig])
+  const [createLeadPortalValues, setCreateLeadPortalValues] = useState<Record<string, string>>({})
   const showCreateLead = getPageActionVisible(portalConfig, "leads", "create_lead")
+
+  useEffect(() => {
+    if (!showForm) return
+    if (createLeadPortalItems.length === 0) {
+      setCreateLeadPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of createLeadPortalItems) {
+      try {
+        const s = localStorage.getItem(`leads_create_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setCreateLeadPortalValues(next)
+  }, [showForm, createLeadPortalItems])
 
   useEffect(() => {
     if (!showSettings || leadsSettingsItems.length === 0) return
@@ -491,6 +520,24 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               <input placeholder="e.g. Roof Leak" value={leadTitle} onChange={(e) => setLeadTitle(e.target.value)} style={{ ...theme.formInput }} />
               <textarea placeholder="Lead description (optional)" value={leadDescription} onChange={(e) => setLeadDescription(e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} />
               <textarea placeholder='Initial message (optional)' value={initialMessage} onChange={(e) => setInitialMessage(e.target.value)} rows={3} style={{ ...theme.formInput, resize: "vertical" }} />
+              {createLeadPortalItems.length > 0 && (
+                <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+                  <PortalSettingItemsForm
+                    items={createLeadPortalItems}
+                    formValues={createLeadPortalValues}
+                    setFormValue={(id, v) => {
+                      setCreateLeadPortalValues((prev) => ({ ...prev, [id]: v }))
+                      try {
+                        localStorage.setItem(`leads_create_${id}`, v)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    isItemVisible={(item) => isSettingItemVisible(item, createLeadPortalItems, createLeadPortalValues)}
+                  />
+                </div>
+              )}
               <button onClick={createLeadFlow} disabled={loading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                 {loading ? "Creating..." : "Create Lead"}
               </button>

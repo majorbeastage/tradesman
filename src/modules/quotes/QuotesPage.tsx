@@ -91,6 +91,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const calendarJobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
   const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
+  const quoteAddCustomerPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "add_customer_to_quotes"), [portalConfig])
+  const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
   const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
 
@@ -248,6 +250,32 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
     setQuoteJobTypesPortalValues(next)
   }, [showAddToCalendar, calendarJobTypesPortalItems])
+
+  useEffect(() => {
+    if (!showAddCustomer) return
+    if (quoteAddCustomerPortalItems.length === 0) {
+      setQuoteAddCustomerPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of quoteAddCustomerPortalItems) {
+      try {
+        const s = localStorage.getItem(`quotes_addcust_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setQuoteAddCustomerPortalValues(next)
+  }, [showAddCustomer, quoteAddCustomerPortalItems])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -1065,6 +1093,24 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     <input placeholder="Phone" value={addNewPhone} onChange={(e) => setAddNewPhone(e.target.value)} style={{ ...theme.formInput }} />
                     <input placeholder="Email" value={addNewEmail} onChange={(e) => setAddNewEmail(e.target.value)} style={{ ...theme.formInput }} />
                   </>
+                )}
+                {quoteAddCustomerPortalItems.length > 0 && (
+                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+                    <PortalSettingItemsForm
+                      items={quoteAddCustomerPortalItems}
+                      formValues={quoteAddCustomerPortalValues}
+                      setFormValue={(id, v) => {
+                        setQuoteAddCustomerPortalValues((prev) => ({ ...prev, [id]: v }))
+                        try {
+                          localStorage.setItem(`quotes_addcust_${id}`, v)
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      isItemVisible={(item) => isCustomButtonItemVisible(item, quoteAddCustomerPortalItems, quoteAddCustomerPortalValues)}
+                    />
+                  </div>
                 )}
                 <button onClick={addCustomerToQuotesFlow} disabled={addLoading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                   {addLoading ? "Adding..." : "Add to Quotes"}

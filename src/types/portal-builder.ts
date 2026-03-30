@@ -378,6 +378,77 @@ export const DEFAULT_CALENDAR_WORKING_HOURS_ITEMS: PortalSettingItem[] = [
   { id: 'no_duplicate_times', type: 'checkbox', label: 'Do not allow duplicate times', defaultChecked: false },
 ]
 
+/** Default recurrence frequency options (8 items) */
+export const DEFAULT_RECURRENCE_FREQUENCY_OPTIONS: string[] = [
+  "Daily",
+  "Weekly",
+  "Every 2 Weeks",
+  "Monthly",
+  "Every 2 Months",
+  "Every 3 Months",
+  "Quarterly",
+  "Yearly",
+]
+
+/** Default recurrence duration/mode options */
+export const DEFAULT_RECURRENCE_END_MODE_OPTIONS: string[] = [
+  "Indefinite (no end)",
+  "By number of occurrences",
+  "Until a specific date",
+  "For a time span",
+]
+
+/** Default items for Calendar + Quote "recurring event" controls */
+export const DEFAULT_RECURRENCE_PORTAL_ITEMS: PortalSettingItem[] = [
+  {
+    id: "make_event_recurring",
+    type: "checkbox",
+    label: "Make event recurring",
+    defaultChecked: false,
+  },
+  {
+    id: "recurring_event_frequency",
+    type: "dropdown",
+    label: "Recurring event frequency",
+    options: [...DEFAULT_RECURRENCE_FREQUENCY_OPTIONS],
+    dependency: { dependsOnItemId: "make_event_recurring", showWhenValue: "checked" },
+  },
+  {
+    id: "recurrence_end_mode",
+    type: "dropdown",
+    label: "Recurrence duration",
+    options: [...DEFAULT_RECURRENCE_END_MODE_OPTIONS],
+  },
+  {
+    id: "recurrence_occurrence_count",
+    type: "custom_field",
+    label: "Number of instances",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "recurrence_end_mode", showWhenValue: "By number of occurrences" },
+  },
+  {
+    id: "recurrence_until_date",
+    type: "custom_field",
+    label: "Until date (YYYY-MM-DD)",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "recurrence_end_mode", showWhenValue: "Until a specific date" },
+  },
+  {
+    id: "recurrence_period_amount",
+    type: "custom_field",
+    label: "Length of time (amount)",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "recurrence_end_mode", showWhenValue: "For a time span" },
+  },
+  {
+    id: "recurrence_period_unit",
+    type: "dropdown",
+    label: "Length of time (unit)",
+    options: ["Weeks", "Months", "Years"],
+    dependency: { dependsOnItemId: "recurrence_end_mode", showWhenValue: "For a time span" },
+  },
+]
+
 /** Default items for Conversation settings */
 export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'show_internal_conversations', type: 'checkbox', label: 'Show Internal Conversations', defaultChecked: true },
@@ -392,10 +463,10 @@ export function getDefaultControlItems(tabId: string, controlId: string): Portal
   if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]
-  if (key === 'calendar:add_item_to_calendar') return []
-  if (key === 'calendar:job_types') return []
+  if (key === 'calendar:add_item_to_calendar') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
+  if (key === 'calendar:job_types') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'calendar:customize_user') return []
-  if (key === 'quotes:add_quote_to_calendar') return []
+  if (key === 'quotes:add_quote_to_calendar') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'conversations:conversation_settings') return [...DEFAULT_CONVERSATION_SETTINGS_ITEMS]
   const opts = DEFAULT_OPTIONS[controlId]
   if (opts?.length) {

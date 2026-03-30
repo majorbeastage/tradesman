@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
+import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
@@ -89,8 +90,36 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addConvoUseNew, setAddConvoUseNew] = useState(false)
   const [addConvoLoading, setAddConvoLoading] = useState(false)
   const conversationSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "conversation_settings"), [portalConfig])
+  const addConversationPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "add_conversation"), [portalConfig])
+  const [addConversationPortalValues, setAddConversationPortalValues] = useState<Record<string, string>>({})
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "conversations"), [portalConfig])
   const showAddConversationAction = getPageActionVisible(portalConfig, "conversations", "add_conversation")
+
+  useEffect(() => {
+    if (!showAddConversation) return
+    if (addConversationPortalItems.length === 0) {
+      setAddConversationPortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of addConversationPortalItems) {
+      try {
+        const s = localStorage.getItem(`convo_add_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setAddConversationPortalValues(next)
+  }, [showAddConversation, addConversationPortalItems])
 
   useEffect(() => {
     if (!showSettings || conversationSettingsItems.length === 0) return
@@ -939,6 +968,24 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     <input placeholder="Phone" value={addConvoNewPhone} onChange={(e) => setAddConvoNewPhone(e.target.value)} style={{ ...theme.formInput }} />
                     <input placeholder="Email" value={addConvoNewEmail} onChange={(e) => setAddConvoNewEmail(e.target.value)} style={{ ...theme.formInput }} />
                   </>
+                )}
+                {addConversationPortalItems.length > 0 && (
+                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+                    <PortalSettingItemsForm
+                      items={addConversationPortalItems}
+                      formValues={addConversationPortalValues}
+                      setFormValue={(id, v) => {
+                        setAddConversationPortalValues((prev) => ({ ...prev, [id]: v }))
+                        try {
+                          localStorage.setItem(`convo_add_${id}`, v)
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      isItemVisible={(item) => isCustomButtonItemVisible(item, addConversationPortalItems, addConversationPortalValues)}
+                    />
+                  </div>
                 )}
                 <button onClick={createConversationFlow} disabled={addConvoLoading} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
                   {addConvoLoading ? "Creating..." : "Create Conversation"}
