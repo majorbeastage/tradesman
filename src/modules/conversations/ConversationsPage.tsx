@@ -91,6 +91,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addConvoNewEmail, setAddConvoNewEmail] = useState("")
   const [addConvoUseNew, setAddConvoUseNew] = useState(false)
   const [addConvoLoading, setAddConvoLoading] = useState(false)
+  const [replyBody, setReplyBody] = useState("")
+  const [replySending, setReplySending] = useState(false)
   const conversationSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "conversation_settings"), [portalConfig])
   const addConversationPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "add_conversation"), [portalConfig])
   const [addConversationPortalValues, setAddConversationPortalValues] = useState<Record<string, string>>({})
@@ -364,6 +366,44 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       return
     }
     await openConversation(convoId)
+  }
+
+  async function sendReply() {
+    if (!supabase || !selectedConversation?.id) return
+    const trimmed = replyBody.trim()
+    const to = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ?? ""
+    if (!trimmed) {
+      alert("Enter a message to send.")
+      return
+    }
+    if (!to) {
+      alert("This conversation does not have a customer phone number.")
+      return
+    }
+    setReplySending(true)
+    try {
+      const response = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, body: trimmed }),
+      })
+      const raw = await response.text()
+      if (!response.ok) {
+        throw new Error(raw || `Failed with HTTP ${response.status}`)
+      }
+      const { error } = await supabase.from("messages").insert({
+        conversation_id: selectedConversation.id,
+        sender: "user",
+        content: trimmed,
+      })
+      if (error) throw error
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), sender: "user", content: trimmed, created_at: new Date().toISOString() }])
+      setReplyBody("")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setReplySending(false)
+    }
   }
 
   const filteredConversations = conversations.filter((convo: any) => {
@@ -756,6 +796,36 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       </div>
                     ))
                   )}
+                </div>
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <textarea
+                    value={replyBody}
+                    onChange={(e) => setReplyBody(e.target.value)}
+                    rows={3}
+                    placeholder="Reply to this text conversation..."
+                    style={{ ...theme.formInput, resize: "vertical" }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>
+                      Sends through your configured SMS provider from the same business number when supported.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void sendReply()}
+                      disabled={replySending}
+                      style={{
+                        padding: "10px 16px",
+                        background: theme.primary,
+                        color: "white",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: replySending ? "wait" : "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {replySending ? "Sending..." : "Send reply"}
+                    </button>
+                  </div>
                 </div>
               </ConvoCollapsible>
 
