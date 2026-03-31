@@ -7,6 +7,7 @@ import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -67,6 +68,7 @@ function ConvoCollapsible({ title, defaultOpen, children }: { title: string; def
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const userId = useScopedUserId()
   const portalConfig = usePortalConfigForPage()
+  const isMobile = useIsMobile()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
@@ -392,17 +394,19 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   })
 
   return (
-    <div style={{ display: "flex", position: "relative" }}>
-      <div>
+    <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
+      <div style={{ width: "100%", minWidth: 0 }}>
 
         <h1>Conversations</h1>
 
         <div style={{
           display: "flex",
           justifyContent: "space-between",
-          marginBottom: "16px"
+          marginBottom: "16px",
+          flexWrap: "wrap",
+          gap: "10px"
         }}>
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {showAddConversationAction && (
               <button
                 onClick={() => { setShowAddConversation(true); loadCustomerList() }}
@@ -518,30 +522,32 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           padding: "12px",
           background: theme.charcoalSmoke,
           borderRadius: "8px",
-          border: `1px solid ${theme.border}`
+          border: `1px solid ${theme.border}`,
+          width: "100%",
+          boxSizing: "border-box"
         }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <input
                 type="text"
                 placeholder="By name..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
               />
               <input
                 type="text"
                 placeholder="By phone..."
                 value={filterPhone}
                 onChange={(e) => setFilterPhone(e.target.value)}
-                style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
               />
             </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <select
                 value={sortField}
                 onChange={(e) => setSortField(e.target.value)}
@@ -564,7 +570,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         <div
           style={{
             display: "flex",
-            flexWrap: "wrap",
+            flexWrap: isMobile ? "wrap" : "nowrap",
             gap: 0,
             alignItems: "stretch",
             width: "100%",
@@ -572,12 +578,13 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         >
           <div
             style={{
-              flex: selectedConversation ? "1 1 320px" : "1 1 100%",
-              minWidth: 260,
+              flex: selectedConversation && !isMobile ? "1 1 320px" : "1 1 100%",
+              minWidth: isMobile ? 0 : 260,
               maxWidth: selectedConversation ? "min(520px, 100%)" : "none",
             }}
           >
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <div style={{ width: "100%", overflowX: "auto" }}>
+            <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
                   <th
@@ -630,6 +637,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 })}
               </tbody>
             </table>
+            </div>
             <p style={{ fontSize: 12, color: "#6b7280", marginTop: 8, marginBottom: 0 }}>
               Tip: click a row to open the detail panel; click the same row again to collapse it.
             </p>
@@ -639,12 +647,14 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
             <div
               style={{
                 flex: "1 1 360px",
-                minWidth: 280,
-                borderLeft: `1px solid ${theme.border}`,
-                paddingLeft: 20,
+                minWidth: isMobile ? 0 : 280,
+                borderLeft: isMobile ? "none" : `1px solid ${theme.border}`,
+                borderTop: isMobile ? `1px solid ${theme.border}` : "none",
+                paddingLeft: isMobile ? 0 : 20,
+                paddingTop: isMobile ? 16 : 0,
                 paddingBottom: 24,
                 background: "#fafafa",
-                borderRadius: "0 8px 8px 0",
+                borderRadius: isMobile ? 8 : "0 8px 8px 0",
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>

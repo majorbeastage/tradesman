@@ -20,6 +20,7 @@ import {
   intervalsOverlap,
 } from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type JobType = {
   id: string
@@ -160,6 +161,7 @@ function normalizeCalendarEventRow(raw: unknown): CalendarEvent {
 
 export default function CalendarPage() {
   const { userId: authUserId, user: authUser } = useAuth()
+  const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
   const portalConfig = usePortalConfigForPage()
@@ -832,7 +834,7 @@ export default function CalendarPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
-      <h1 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <h1 style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         Calendar
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
@@ -884,7 +886,7 @@ export default function CalendarPage() {
       </div>
 
       {/* Calendar area: view switcher + expand + job types */}
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", padding: "16px", background: "white" }}>
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", padding: isMobile ? "12px" : "16px", background: "white" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center", marginBottom: "12px" }}>
           <select
             value={view}
@@ -925,14 +927,14 @@ export default function CalendarPage() {
           >
             →
           </button>
-          <span style={{ fontWeight: 600, color: theme.text, marginLeft: "8px" }}>
+          <span style={{ fontWeight: 600, color: theme.text, marginLeft: isMobile ? "0" : "8px", flex: isMobile ? "1 1 100%" : undefined }}>
             {view === "month" && `${MONTH_NAMES[currentDate.getMonth()]} ${currentDate.getFullYear()}`}
             {view === "week" && `Week of ${weekStart.toLocaleDateString()}`}
             {view === "day" && currentDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
           </span>
           <button
             onClick={() => setExpanded(!expanded)}
-            style={{ marginLeft: "auto", padding: "6px 12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}
+            style={{ marginLeft: isMobile ? 0 : "auto", padding: "6px 12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}
           >
             {expanded ? "Collapse" : "Expand"}
           </button>
@@ -945,7 +947,8 @@ export default function CalendarPage() {
           {loading ? (
             <p style={{ color: theme.text }}>Loading...</p>
           ) : view === "month" ? (
-            <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", minWidth: isMobile ? "720px" : "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               <thead>
                 <tr>
                   {WEEKDAY_NAMES.map((name) => (
@@ -1002,9 +1005,10 @@ export default function CalendarPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : view === "week" ? (
-            <div style={{ display: "flex", flexDirection: "column", border: `1px solid ${theme.border}` }}>
-              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", borderBottom: `1px solid ${theme.border}` }}>
+            <div style={{ display: "flex", flexDirection: "column", border: `1px solid ${theme.border}`, overflowX: "auto" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", borderBottom: `1px solid ${theme.border}`, minWidth: isMobile ? "840px" : undefined }}>
                 <div style={{ background: "#f9fafb", padding: "8px" }} />
                 {Array.from({ length: 7 }, (_, i) => {
                   const d = new Date(weekStart)
@@ -1017,7 +1021,7 @@ export default function CalendarPage() {
                   )
                 })}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", overflow: "hidden", minWidth: isMobile ? "840px" : undefined }}>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {dayViewHours.map((hour) => (
                     <div key={hour} style={{ height: HOUR_HEIGHT, padding: "2px 4px", fontSize: "11px", color: theme.text, background: "#f9fafb", borderBottom: `1px solid ${theme.border}` }}>
@@ -1084,7 +1088,7 @@ export default function CalendarPage() {
               </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: "0", border: `1px solid ${theme.border}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: "0", border: `1px solid ${theme.border}`, overflowX: "auto" }}>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {dayViewHours.map((hour) => (
                   <div key={hour} style={{ padding: "4px 8px", fontSize: "12px", fontWeight: 500, background: "#f9fafb", borderBottom: `1px solid ${theme.border}`, height: HOUR_HEIGHT, boxSizing: "border-box", color: theme.text }}>

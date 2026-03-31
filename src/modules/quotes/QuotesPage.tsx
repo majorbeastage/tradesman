@@ -9,6 +9,7 @@ import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
+import { useIsMobile } from "../../hooks/useIsMobile"
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -32,6 +33,7 @@ type QuoteRow = {
 
 type QuotesPageProps = { setPage?: (page: string) => void }
 export default function QuotesPage({ setPage }: QuotesPageProps) {
+  const isMobile = useIsMobile()
   const { userId: authUserId } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
@@ -540,12 +542,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }
 
   return (
-    <div style={{ display: "flex", position: "relative" }}>
-      <div>
+    <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
+      <div style={{ width: "100%", minWidth: 0 }}>
         <h1>Quotes</h1>
 
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
-          <div style={{ display: "flex", gap: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {showQuotesAddCustomer && (
               <button
                 onClick={() => { setShowAddCustomer(true); loadCustomerList() }}
@@ -650,30 +652,32 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           padding: "12px",
           background: theme.charcoalSmoke,
           borderRadius: "8px",
-          border: `1px solid ${theme.border}`
+          border: `1px solid ${theme.border}`,
+          width: "100%",
+          boxSizing: "border-box"
         }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <input
                 type="text"
                 placeholder="By name..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
               />
               <input
                 type="text"
                 placeholder="By phone..."
                 value={filterPhone}
                 onChange={(e) => setFilterPhone(e.target.value)}
-                style={{ padding: "6px 10px", width: "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
               />
             </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <select
                 value={sortField}
                 onChange={(e) => setSortField(e.target.value)}
@@ -694,7 +698,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           </div>
         </div>
 
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ width: "100%", overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
               <th onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Name</th>
@@ -734,9 +739,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             })}
           </tbody>
         </table>
+        </div>
 
         {selectedQuote && (
-          <div style={{ marginTop: "20px", padding: "20px", border: "1px solid #ddd", borderRadius: "6px" }}>
+          <div style={{ marginTop: "20px", padding: isMobile ? "16px" : "20px", border: "1px solid #ddd", borderRadius: "6px", overflowX: "auto" }}>
             <button
               onClick={() => { setSelectedQuote(null); setSelectedQuoteId(null) }}
               style={{ marginBottom: "16px" }}
@@ -764,7 +770,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             <p><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
 
             <h3 style={{ marginTop: "24px" }}>Quote items</h3>
-            <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "8px", border: "1px solid #ddd" }}>
+            <table style={{ width: "100%", minWidth: isMobile ? "540px" : "100%", borderCollapse: "collapse", marginTop: "8px", border: "1px solid #ddd" }}>
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd", background: "#f9fafb" }}>
                   <th style={{ padding: "8px" }}>Description</th>

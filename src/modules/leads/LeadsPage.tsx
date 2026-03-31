@@ -6,6 +6,7 @@ import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser, getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -23,6 +24,7 @@ type LeadsPageProps = { setPage?: (page: string) => void }
 export default function LeadsPage({ setPage }: LeadsPageProps) {
   const userId = useScopedUserId()
   const portalConfig = usePortalConfigForPage()
+  const isMobile = useIsMobile()
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
@@ -417,18 +419,20 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   })
 
   return (
-    <div style={{ display: "flex", position: "relative" }}>
-      <div>
+    <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
+      <div style={{ width: "100%", minWidth: 0 }}>
 
         <h1>Leads</h1>
 
       <div style={{
         display: "flex",
         justifyContent: "space-between",
-        marginBottom: "16px"
+        marginBottom: "16px",
+        flexWrap: "wrap",
+        gap: "10px"
       }}>
 
-        <div style={{ display: "flex", gap: "10px" }}>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
 
           {showCreateLead && (
             <button
@@ -738,30 +742,32 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         padding: "12px",
         background: theme.charcoalSmoke,
         borderRadius: "8px",
-        border: `1px solid ${theme.border}`
+        border: `1px solid ${theme.border}`,
+        width: "100%",
+        boxSizing: "border-box"
       }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <input
               type="text"
               placeholder="By name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ ...theme.formInput, padding: "6px 10px", width: "160px" }}
+              style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "160px" }}
             />
             <input
               type="text"
               placeholder="By phone..."
               value={filterPhone}
               onChange={(e) => setFilterPhone(e.target.value)}
-              style={{ ...theme.formInput, padding: "6px 10px", width: "160px" }}
+              style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "160px" }}
             />
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <select
               value={sortField}
               onChange={(e) => setSortField(e.target.value)}
@@ -782,8 +788,10 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         </div>
       </div>
 
+      <div style={{ width: "100%", overflowX: "auto" }}>
       <table style={{
         width: "100%",
+        minWidth: isMobile ? "640px" : "100%",
         borderCollapse: "collapse"
       }}>
 
@@ -853,6 +861,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         </tbody>
 
       </table>
+      </div>
 
       {selectedLead && (
 

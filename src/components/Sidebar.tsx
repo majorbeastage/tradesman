@@ -9,6 +9,9 @@ type SidebarProps = {
   onLogout?: () => void
   /** When set, sidebar items are driven by portal config (admin-customizable). */
   portalTabs?: Array<{ tab_id: string; label: string | null }>
+  isMobile?: boolean
+  isOpen?: boolean
+  onClose?: () => void
 }
 
 const DEFAULT_TABS = [
@@ -16,7 +19,7 @@ const DEFAULT_TABS = [
   "customers", "web-support", "tech-support", "settings",
 ]
 
-export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }: SidebarProps) {
+export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
   const tabs = portalTabs && portalTabs.length > 0
     ? portalTabs
@@ -28,17 +31,18 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch"/></filter><rect width="200" height="200" filter="url(#n)" opacity="0.07"/></svg>'
     )
 
-  return (
+  const sidebarBody = (
     <div
       style={{
-        width: "240px",
+        width: isMobile ? "min(86vw, 320px)" : "240px",
         background: theme.charcoalSmoke,
         backgroundImage: grainUrl,
         color: theme.primary,
         padding: "20px",
         display: "flex",
         flexDirection: "column",
-        height: "100vh"
+        height: "100%",
+        boxSizing: "border-box"
       }}
     >
       <style>{`
@@ -77,7 +81,7 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }
 
       <div style={{ marginTop: "30px", flex: 1 }}>
         {tabs.map((t) => (
-          <p key={t.tab_id} onClick={() => setPage(t.tab_id)} style={itemStyle}>
+          <p key={t.tab_id} onClick={() => { setPage(t.tab_id); onClose?.() }} style={itemStyle}>
             {t.label ?? TAB_ID_LABELS[t.tab_id] ?? t.tab_id}
           </p>
         ))}
@@ -86,7 +90,7 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }
       {onLogout && (
         <button
           type="button"
-          onClick={onLogout}
+          onClick={() => { onLogout?.(); onClose?.() }}
           style={{
             marginTop: "auto",
             marginBottom: 8,
@@ -106,7 +110,7 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }
       {onOpenAccount && (
         <button
           type="button"
-          onClick={onOpenAccount}
+          onClick={() => { onOpenAccount?.(); onClose?.() }}
           style={{
             marginTop: "auto",
             marginBottom: "24px",
@@ -122,5 +126,29 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs }
         </button>
       )}
     </div>
+  )
+
+  if (!isMobile) return sidebarBody
+  if (!isOpen) return null
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9998 }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          bottom: 0,
+          zIndex: 9999,
+          boxShadow: "0 18px 36px rgba(0,0,0,0.25)",
+        }}
+      >
+        {sidebarBody}
+      </div>
+    </>
   )
 }

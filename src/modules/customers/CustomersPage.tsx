@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type CustomerRow = {
   id: string
@@ -12,6 +13,7 @@ type CustomerRow = {
 
 export default function CustomersPage() {
   const userId = useScopedUserId()
+  const isMobile = useIsMobile()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
@@ -156,28 +158,28 @@ export default function CustomersPage() {
             </button>
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Filter</label>
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <input
               type="text"
               placeholder="By name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ padding: "6px 10px", width: "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
             />
             <input
               type="text"
               placeholder="By phone..."
               value={filterPhone}
               onChange={(e) => setFilterPhone(e.target.value)}
-              style={{ padding: "6px 10px", width: "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
             />
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Sort by</label>
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <select
               value={sortField}
               onChange={(e) => setSortField(e.target.value)}
@@ -197,7 +199,8 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "16px", border: "1px solid #ddd", borderRadius: "6px" }}>
+      <div style={{ width: "100%", overflowX: "auto" }}>
+      <table style={{ width: "100%", minWidth: isMobile ? "420px" : "100%", borderCollapse: "collapse", marginTop: "16px", border: "1px solid #ddd", borderRadius: "6px" }}>
         <thead>
           <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd", background: "#f9fafb" }}>
             <th onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Name</th>
@@ -232,9 +235,10 @@ export default function CustomersPage() {
           )}
         </tbody>
       </table>
+      </div>
 
       {selectedCustomer && (
-        <div style={{ marginTop: "20px", padding: "20px", border: "1px solid #ddd", borderRadius: "6px" }}>
+        <div style={{ marginTop: "20px", padding: isMobile ? "16px" : "20px", border: "1px solid #ddd", borderRadius: "6px" }}>
           <button
             onClick={() => setSelectedCustomer(null)}
             style={{ marginBottom: "16px" }}

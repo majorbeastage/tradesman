@@ -18,6 +18,7 @@ import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
+import { useIsMobile } from "./hooks/useIsMobile"
 import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
 
@@ -41,6 +42,7 @@ function MainApp() {
   const [connectionError, setConnectionError] = useState<string>("")
   const { clientId, portalConfig } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
+  const isMobile = useIsMobile()
   // Prefer per-user portal_config from admin (default + custom tabs, filtered by visibility)
   const portalTabs = buildPortalTabsFromConfig(portalConfig) ?? portalTabsFromApi
 
@@ -67,7 +69,7 @@ function MainApp() {
   }, [])
 
   return (
-    <AppLayout setPage={setPage} portalTabs={portalTabs}>
+    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={TAB_ID_LABELS[page] ?? page}>
       {connectionStatus !== "ok" && (
         <div style={{
           position: "fixed",
@@ -98,7 +100,7 @@ function MainApp() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(240px, 1fr))",
               gap: 14,
               marginTop: 10,
               marginBottom: 14,
@@ -120,7 +122,7 @@ function MainApp() {
               <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Plan one-time and recurring jobs with less manual work.</p>
             </div>
           </div>
-          <div style={{ maxWidth: "920px", marginTop: "8px", padding: "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "10px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
+          <div style={{ maxWidth: "920px", marginTop: "8px", padding: isMobile ? "18px" : "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "10px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
             <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#fff" }}>Welcome to Tradesman</h2>
             <p style={{ margin: "0 0 10px" }}>
               We help contractors and small businesses manage leads, conversations, quotes, and scheduling in one clean workspace.
