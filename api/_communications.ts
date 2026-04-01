@@ -66,6 +66,7 @@ export async function lookupChannelByPublicAddress(
 ): Promise<CommunicationChannel | null> {
   if (!publicAddress) return null
   const normalized = normalizePhone(publicAddress) || publicAddress.trim()
+  console.log("[lookupChannelByPublicAddress] incoming", { publicAddress, normalized })
   const { data, error } = await supabase
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
@@ -74,6 +75,14 @@ export async function lookupChannelByPublicAddress(
     .limit(1)
     .maybeSingle()
   if (error) throw error
+  console.log("[lookupChannelByPublicAddress] result", {
+    found: !!data,
+    id: (data as CommunicationChannel | null)?.id ?? null,
+    public_address: (data as CommunicationChannel | null)?.public_address ?? null,
+    forward_to_phone: (data as CommunicationChannel | null)?.forward_to_phone ?? null,
+    voice_enabled: (data as CommunicationChannel | null)?.voice_enabled ?? null,
+    active: (data as CommunicationChannel | null)?.active ?? null,
+  })
   return (data as CommunicationChannel | null) ?? null
 }
 
