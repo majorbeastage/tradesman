@@ -385,7 +385,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       const response = await fetch("/api/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, body: trimmed }),
+        body: JSON.stringify({ to, body: trimmed, userId, conversationId: selectedConversation.id }),
       })
       const raw = await response.text()
       if (!response.ok) {

@@ -10,6 +10,7 @@ import Sidebar from "../../components/Sidebar"
 import AdminUsersSection from "./AdminUsersSection"
 import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
 import AdminPortalAssistant from "./AdminPortalAssistant"
+import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   USER_PORTAL_TAB_IDS,
@@ -535,7 +536,7 @@ function AdminAppInner() {
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
-  const [adminPanel, setAdminPanel] = useState<"portal" | "users">("portal")
+  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications">("portal")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -938,16 +939,33 @@ function AdminAppInner() {
           >
             Users & office managers
           </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("communications")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "communications" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "communications" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Communications
+          </button>
         </div>
         </AdminSettingBlock>
-        {adminPanel === "portal" && (
+        {(adminPanel === "portal" || adminPanel === "communications") && (
         <AdminSettingBlock id="admin:sidebar:portal_intro" variant="dark">
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
-          Select a user to configure their portal. Toggle visibility; add custom items below.
+          Select a user to configure their portal or communications routing.
         </p>
         </AdminSettingBlock>
         )}
-        {adminPanel === "portal" && (
+        {(adminPanel === "portal" || adminPanel === "communications") && (
         <AdminSettingBlock id="admin:sidebar:user_selector" variant="dark">
         <div style={{ display: "block", marginBottom: 16, position: "relative" }}>
           <span style={{ fontSize: 11, opacity: 0.8, display: "block", marginBottom: 4 }}>User (profile)</span>
@@ -1060,6 +1078,12 @@ function AdminAppInner() {
             </AdminSettingBlock>
             <AdminUsersSection />
           </div>
+        ) : adminPanel === "communications" ? (
+          <AdminCommunicationsSection
+            selectedUserId={selectedId}
+            selectedUserLabel={selectedDisplayLabel}
+            allUsersId={ALL_USERS_ID}
+          />
         ) : loading ? (
           <AdminSettingBlock id="admin:portal:loading_profiles">
           <p style={{ color: theme.text }}>Loading profiles…</p>

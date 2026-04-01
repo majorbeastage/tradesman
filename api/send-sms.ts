@@ -1,8 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { createServiceSupabase, getPrimarySmsChannelForUser, logCommunicationEvent, normalizePhone } from "./_communications"
 
 type SmsPayload = {
   to?: string
   body?: string
+  userId?: string
+  conversationId?: string
 }
 
 function firstEnv(...names: string[]): string {
@@ -11,16 +14,6 @@ function firstEnv(...names: string[]): string {
     if (value != null && String(value).trim() !== "") return String(value).trim()
   }
   return ""
-}
-
-function normalizePhone(value: unknown): string {
-  if (typeof value !== "string") return ""
-  const trimmed = value.trim()
-  if (!trimmed) return ""
-  const keepPlus = trimmed.startsWith("+")
-  const digits = trimmed.replace(/\D/g, "")
-  if (!digits) return ""
-  return `${keepPlus ? "+" : ""}${digits}`
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -34,12 +27,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const payload = (req.body && typeof req.body === "object" ? req.body : {}) as SmsPayload
   const to = normalizePhone(payload.to)
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
+  const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
+  const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
 
   if (!to || !body) return res.status(400).json({ error: "to and body are required" })
 
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
-  const fromNumber = normalizePhone(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
+  const supabase = createServiceSupabase()
+  const dbChannel = userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
+  const fromNumber = normalizePhone(dbChannel?.public_address || firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const outboundWebhookUrl = firstEnv("SMS_OUTBOUND_WEBHOOK_URL")
 
   if (accountSid && authToken && fromNumber) {
@@ -55,6 +52,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     const text = await twilioRes.text()
     if (!twilioRes.ok) return res.status(twilioRes.status).send(text)
+    if (userId) {
+      await logCommunicationEvent(supabase, {
+        user_id: userId,
+        conversation_id: conversationId || null,
+        channel_id: dbChannel?.id ?? null,
+        event_type: "sms",
+        direction: "outbound",
+        body,
+        unread: false,
+        metadata: { to, from: fromNumber, provider: "twilio" },
+      })
+    }
     return res.status(200).json({ ok: true, provider: "twilio", to, from: fromNumber, detail: text })
   }
 
