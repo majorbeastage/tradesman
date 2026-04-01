@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
@@ -41,6 +41,22 @@ type Props = {
   allUsersId: string
 }
 
+type HelpDeskOption = {
+  id: string
+  digit: string
+  label: string
+  enabled: boolean
+}
+
+type HelpDeskSettings = {
+  title: string
+  greeting_mode: "ai_text" | "recorded"
+  greeting_text: string
+  greeting_recording_url: string
+  menu_enabled: boolean
+  options: HelpDeskOption[]
+}
+
 function normalizePhone(value: string | null | undefined): string | null {
   if (!value) return null
   const trimmed = value.trim()
@@ -54,6 +70,33 @@ function normalizePhone(value: string | null | undefined): string | null {
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? ""
   return trimmed ? trimmed : null
+}
+
+function createHelpDeskOption(): HelpDeskOption {
+  return {
+    id: crypto.randomUUID(),
+    digit: "",
+    label: "",
+    enabled: true,
+  }
+}
+
+function defaultHelpDeskSettings(): HelpDeskSettings {
+  return {
+    title: "Tradesman Help Desk",
+    greeting_mode: "ai_text",
+    greeting_text: "Thank you for calling Tradesman. Please listen carefully to the following options.",
+    greeting_recording_url: "",
+    menu_enabled: false,
+    options: [
+      { id: crypto.randomUUID(), digit: "1", label: "Customer care", enabled: true },
+      { id: crypto.randomUUID(), digit: "2", label: "Technical support", enabled: true },
+    ],
+  }
+}
+
+function normalizeDigit(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 1)
 }
 
 function emptyChannel(userId: string): ChannelRow {
@@ -96,9 +139,12 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
   const [rows, setRows] = useState<ChannelRow[]>([])
   const [accessLogs, setAccessLogs] = useState<AccessLogRow[]>([])
   const [allRows, setAllRows] = useState<Array<ChannelRow & { profile_name?: string | null; profile_email?: string | null }>>([])
+  const [helpDeskSettings, setHelpDeskSettings] = useState<HelpDeskSettings>(defaultHelpDeskSettings())
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [savingAccess, setSavingAccess] = useState(false)
+  const [savingHelpDesk, setSavingHelpDesk] = useState(false)
+  const [uploadingHelpDeskGreeting, setUploadingHelpDeskGreeting] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
 
@@ -132,6 +178,39 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
             profile_email: byId.get(row.user_id)?.email ?? null,
           }))
         )
+
+        const { data: settingData, error: settingErr } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", "tradesman_help_desk")
+          .limit(1)
+          .maybeSingle()
+        if (settingErr) {
+          setError(settingErr.message)
+        } else {
+          const raw = (settingData as { value?: Record<string, unknown> } | null)?.value ?? {}
+          const optionInput = Array.isArray(raw.options) ? raw.options : []
+          setHelpDeskSettings({
+            title: typeof raw.title === "string" && raw.title.trim() ? raw.title : "Tradesman Help Desk",
+            greeting_mode: raw.greeting_mode === "recorded" ? "recorded" : "ai_text",
+            greeting_text:
+              typeof raw.greeting_text === "string" && raw.greeting_text.trim()
+                ? raw.greeting_text
+                : "Thank you for calling Tradesman. Please listen carefully to the following options.",
+            greeting_recording_url:
+              typeof raw.greeting_recording_url === "string" ? raw.greeting_recording_url : "",
+            menu_enabled: raw.menu_enabled === true,
+            options: optionInput.map((option) => {
+              const row = option && typeof option === "object" ? (option as Record<string, unknown>) : {}
+              return {
+                id: typeof row.id === "string" && row.id ? row.id : crypto.randomUUID(),
+                digit: typeof row.digit === "string" ? normalizeDigit(row.digit) : "",
+                label: typeof row.label === "string" ? row.label : "",
+                enabled: row.enabled !== false,
+              }
+            }),
+          })
+        }
       } finally {
         setLoading(false)
       }
@@ -391,6 +470,98 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
     URL.revokeObjectURL(url)
   }
 
+  function updateHelpDeskOption(id: string, patch: Partial<HelpDeskOption>) {
+    setHelpDeskSettings((prev) => ({
+      ...prev,
+      options: prev.options.map((option) => (option.id === id ? { ...option, ...patch } : option)),
+    }))
+  }
+
+  async function saveHelpDeskSettings() {
+    if (!supabase || selectedUserId !== allUsersId) return
+    setSavingHelpDesk(true)
+    setMessage("")
+    setError("")
+    try {
+      const digits = new Set<string>()
+      const normalizedOptions = helpDeskSettings.options
+        .map((option) => ({
+          id: option.id,
+          digit: normalizeDigit(option.digit),
+          label: option.label.trim(),
+          enabled: option.enabled,
+        }))
+        .filter((option) => option.digit || option.label)
+
+      for (const option of normalizedOptions) {
+        if (!option.digit || !option.label) throw new Error("Each help desk option needs both a keypad digit and a label.")
+        if (digits.has(option.digit)) throw new Error("Each help desk option must use a unique keypad digit.")
+        digits.add(option.digit)
+      }
+
+      const payload = {
+        title: helpDeskSettings.title.trim() || "Tradesman Help Desk",
+        greeting_mode: helpDeskSettings.greeting_mode,
+        greeting_text:
+          helpDeskSettings.greeting_text.trim() ||
+          "Thank you for calling Tradesman. Please listen carefully to the following options.",
+        greeting_recording_url: helpDeskSettings.greeting_recording_url.trim(),
+        menu_enabled: helpDeskSettings.menu_enabled,
+        options: normalizedOptions,
+      }
+
+      const { error: err } = await supabase.from("platform_settings").upsert(
+        {
+          key: "tradesman_help_desk",
+          value: payload,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" }
+      )
+      if (err) throw err
+      setHelpDeskSettings((prev) => ({
+        ...prev,
+        title: payload.title,
+        greeting_text: payload.greeting_text,
+        greeting_recording_url: payload.greeting_recording_url,
+        options: normalizedOptions.map((option) => ({ ...option })),
+      }))
+      setMessage("Tradesman help desk settings saved.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingHelpDesk(false)
+    }
+  }
+
+  async function uploadHelpDeskGreeting(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!supabase || !file) return
+    setUploadingHelpDeskGreeting(true)
+    setMessage("")
+    setError("")
+    try {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "mp3"
+      const filePath = `global/help-desk-greeting-${Date.now()}.${extension}`
+      const { error: uploadErr } = await supabase.storage
+        .from("voicemail-greetings")
+        .upload(filePath, file, { upsert: true, contentType: file.type || "audio/mpeg" })
+      if (uploadErr) throw uploadErr
+      const { data } = supabase.storage.from("voicemail-greetings").getPublicUrl(filePath)
+      setHelpDeskSettings((prev) => ({
+        ...prev,
+        greeting_mode: "recorded",
+        greeting_recording_url: data.publicUrl,
+      }))
+      setMessage("Help desk greeting uploaded. Save settings to make it live.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploadingHelpDeskGreeting(false)
+    }
+  }
+
   if (selectedUserId === allUsersId) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -417,6 +588,105 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
               {allRows.filter((row) => row.active && row.forward_to_phone).length} active forwarded number(s) ready to export.
             </p>
           )}
+          {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
+        </AdminSettingBlock>
+        <AdminSettingBlock id="admin:communications:help_desk">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <h2 style={{ color: theme.text, margin: "0 0 6px", fontSize: 18 }}>Tradesman Help Desk Options</h2>
+              <p style={{ color: theme.text, opacity: 0.8, margin: 0 }}>
+                Manage the shared Tradesman support number greeting now and stage future phone-menu options in one admin-only place.
+              </p>
+            </div>
+            <button type="button" onClick={() => void saveHelpDeskSettings()} disabled={savingHelpDesk} style={{ padding: "10px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "white", fontWeight: 600, cursor: savingHelpDesk ? "wait" : "pointer" }}>
+              {savingHelpDesk ? "Saving..." : "Save help desk"}
+            </button>
+          </div>
+          <div style={{ display: "grid", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Section title</span>
+                <input value={helpDeskSettings.title} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, title: e.target.value }))} style={theme.formInput} placeholder="Tradesman Help Desk" />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Greeting mode</span>
+                <select value={helpDeskSettings.greeting_mode} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, greeting_mode: e.target.value as HelpDeskSettings["greeting_mode"] }))} style={theme.formInput}>
+                  <option value="ai_text">AI text to voice</option>
+                  <option value="recorded">Recorded greeting</option>
+                </select>
+              </label>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, fontWeight: 600 }}>
+              <input type="checkbox" checked={helpDeskSettings.menu_enabled} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, menu_enabled: e.target.checked }))} />
+              Enable keypad menu options after the greeting
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Greeting script</span>
+              <textarea value={helpDeskSettings.greeting_text} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, greeting_text: e.target.value }))} style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }} placeholder="Thank you for calling Tradesman..." />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Recorded greeting URL</span>
+              <input value={helpDeskSettings.greeting_recording_url} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, greeting_recording_url: e.target.value }))} style={theme.formInput} placeholder="https://..." />
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingHelpDeskGreeting ? "wait" : "pointer" }}>
+                {uploadingHelpDeskGreeting ? "Uploading..." : "Upload greeting audio"}
+                <input type="file" accept="audio/*" onChange={(e) => void uploadHelpDeskGreeting(e)} disabled={uploadingHelpDeskGreeting} style={{ display: "none" }} />
+              </label>
+            </div>
+            {!!helpDeskSettings.greeting_recording_url && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Greeting preview</span>
+                <audio controls src={helpDeskSettings.greeting_recording_url} />
+              </div>
+            )}
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <h3 style={{ color: theme.text, margin: 0, fontSize: 16 }}>Future Menu Options</h3>
+                  <p style={{ color: theme.text, opacity: 0.8, margin: "6px 0 0" }}>
+                    Stage the keypad choices you want this Tradesman number to offer later.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskOption()] }))} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
+                  Add option
+                </button>
+              </div>
+              {helpDeskSettings.options.length === 0 ? (
+                <p style={{ margin: 0, color: theme.text, opacity: 0.8 }}>No menu options yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {helpDeskSettings.options.map((option) => (
+                    <div key={option.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "120px minmax(220px, 1fr) auto", gap: 12, alignItems: "end" }}>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Digit</span>
+                          <input value={option.digit} onChange={(e) => updateHelpDeskOption(option.id, { digit: normalizeDigit(e.target.value) })} style={theme.formInput} placeholder="1" maxLength={1} />
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Label</span>
+                          <input value={option.label} onChange={(e) => updateHelpDeskOption(option.id, { label: e.target.value })} style={theme.formInput} placeholder="Customer care" />
+                        </label>
+                        <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: prev.options.filter((row) => row.id !== option.id) }))} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "white", color: "#b91c1c", cursor: "pointer", height: 40 }}>
+                          Remove
+                        </button>
+                      </div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, marginTop: 12 }}>
+                        <input type="checkbox" checked={option.enabled} onChange={(e) => updateHelpDeskOption(option.id, { enabled: e.target.checked })} />
+                        Option enabled
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
+              <div style={{ fontWeight: 700, color: theme.text }}>Recommended use</div>
+              <div>Point your future shared Tradesman support number to a dedicated help-desk webhook once you are ready to activate the menu logic.</div>
+              <div>This section stores the global greeting and option list now, so the voice flow can be plugged into it next without redesigning the admin UI.</div>
+            </div>
+          </div>
+          {message && <p style={{ color: "#059669", marginBottom: 0 }}>{message}</p>}
           {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
         </AdminSettingBlock>
       </div>

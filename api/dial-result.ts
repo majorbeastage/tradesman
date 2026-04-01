@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createLeadForInboundCall, createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
+import { buildVoicemailTwiml, createLeadForInboundCall, createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, getUserRoutingProfile, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -25,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const dialCallSid = pickFirstString(req.body?.DialCallSid, req.query?.DialCallSid)
 
   if (dialCallStatus === "no-answer" || dialCallStatus === "busy" || dialCallStatus === "failed") {
-    let recordAction = "/api/voicemail-result"
+    let recordAction = "/api/voicemail-complete"
     if (channelId || to || from) {
       const params = new URLSearchParams()
       if (channelId) params.set("channelId", channelId)
@@ -37,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       const supabase = createServiceSupabase()
       const channel = channelId ? await lookupChannelById(supabase, channelId) : null
+      const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
       if (channel?.user_id) {
         const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
         const conversationId = customer ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone") : null
@@ -56,18 +57,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           metadata: { from, to, dial_call_status: dialCallStatus, provider: channel.provider },
         })
       }
+      return sendTwiml(res, buildVoicemailTwiml({ recordAction, routingProfile }))
     } catch {
       // Twilio still needs a TwiML response even if logging fails.
     }
-
-    const twiml =
-      `<?xml version="1.0" encoding="UTF-8"?>` +
-      `<Response>` +
-      `<Say>Sorry we missed your call. Please leave a message after the tone.</Say>` +
-      `<Record action="${recordAction}" method="POST" transcribe="true" />` +
-      `</Response>`
-
-    return sendTwiml(res, twiml)
+    return sendTwiml(res, buildVoicemailTwiml({ recordAction, routingProfile: null }))
   }
 
   return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)

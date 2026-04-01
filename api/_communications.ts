@@ -63,6 +63,10 @@ export type UserRoutingProfile = {
   call_forwarding_outside_business_hours: boolean
   timezone: string
   business_hours: Record<RoutingDayKey, RoutingWindow>
+  voicemail_greeting_mode: "ai_text" | "recorded"
+  voicemail_greeting_text: string
+  voicemail_greeting_recording_url: string
+  voicemail_greeting_pin: string
 }
 
 export function createServiceSupabase(): SupabaseClient {
@@ -115,7 +119,7 @@ export async function getUserRoutingProfile(
   if (!userId) return null
   const { data, error } = await supabase
     .from("profiles")
-    .select("call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours")
+    .select("call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url")
     .eq("id", userId)
     .limit(1)
     .maybeSingle()
@@ -127,6 +131,14 @@ export async function getUserRoutingProfile(
       (data as { call_forwarding_outside_business_hours?: boolean }).call_forwarding_outside_business_hours === true,
     timezone: (data as { timezone?: string }).timezone || "America/New_York",
     business_hours: parseRoutingHours((data as { business_hours?: unknown }).business_hours),
+    voicemail_greeting_mode:
+      (data as { voicemail_greeting_mode?: "ai_text" | "recorded" }).voicemail_greeting_mode === "recorded" ? "recorded" : "ai_text",
+    voicemail_greeting_text:
+      (data as { voicemail_greeting_text?: string }).voicemail_greeting_text?.trim() ||
+      "Sorry we missed your call. Please leave a message after the tone.",
+    voicemail_greeting_recording_url:
+      (data as { voicemail_greeting_recording_url?: string }).voicemail_greeting_recording_url?.trim() || "",
+    voicemail_greeting_pin: (data as { voicemail_greeting_pin?: string }).voicemail_greeting_pin?.trim() || "",
   }
 }
 
@@ -164,6 +176,38 @@ export function isWithinBusinessHours(profile: UserRoutingProfile | null, now = 
   } catch {
     return profile.call_forwarding_enabled
   }
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+}
+
+export function buildVoicemailTwiml(params: {
+  recordAction: string
+  routingProfile: UserRoutingProfile | null
+}): string {
+  const greetingText =
+    params.routingProfile?.voicemail_greeting_text?.trim() ||
+    "Sorry we missed your call. Please leave a message after the tone."
+  const recordedUrl = params.routingProfile?.voicemail_greeting_recording_url?.trim() || ""
+  const useRecordedGreeting =
+    params.routingProfile?.voicemail_greeting_mode === "recorded" && !!recordedUrl
+  const greetingNode = useRecordedGreeting
+    ? `<Play>${xmlEscape(recordedUrl)}</Play>`
+    : `<Say>${xmlEscape(greetingText)}</Say>`
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    greetingNode +
+    `<Record action="${xmlEscape(params.recordAction)}" method="POST" transcribe="true" />` +
+    `</Response>`
+  )
 }
 
 export async function lookupChannelByPublicAddress(

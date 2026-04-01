@@ -18,6 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const recordingUrl = pickFirstString(req.body?.RecordingUrl, req.query?.RecordingUrl)
   const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
   const transcriptionText = pickFirstString(req.body?.TranscriptionText, req.query?.TranscriptionText)
+  const completedAt = new Date().toISOString()
 
   try {
     const supabase = createServiceSupabase()
@@ -48,7 +49,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         summary_text: summaryText,
         previous_customer: customer.previousCustomer,
         unread: true,
-        metadata: { from, to, provider: channel.provider, voicemail_mode: channel.voicemail_mode },
+        metadata: {
+          from,
+          to,
+          provider: channel.provider,
+          voicemail_mode: channel.voicemail_mode,
+          voicemail_completed_at: completedAt,
+          caller_number: from,
+          recording_url: recordingUrl || null,
+        },
       })
     }
   } catch {

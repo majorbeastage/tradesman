@@ -15,6 +15,7 @@ import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
+import SmsConsentPage from "./modules/public/SmsConsentPage"
 import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
@@ -159,8 +160,13 @@ function App() {
   const [view, setView] = useState<View>("home")
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
+  const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
+
+  if (pathname === "/sms-consent") {
+    return <SmsConsentPage />
+  }
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")

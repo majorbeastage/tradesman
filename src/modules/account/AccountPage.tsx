@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
@@ -26,6 +26,10 @@ type ProfileForm = {
   call_forwarding_enabled: boolean
   call_forwarding_outside_business_hours: boolean
   business_hours: BusinessHours
+  voicemail_greeting_mode: "ai_text" | "recorded"
+  voicemail_greeting_text: string
+  voicemail_greeting_recording_url: string
+  voicemail_greeting_pin: string
 }
 
 const TIMEZONE_OPTIONS = [
@@ -47,6 +51,8 @@ const DAY_LABELS: Array<{ key: DayKey; label: string }> = [
   { key: "sat", label: "Saturday" },
   { key: "sun", label: "Sunday" },
 ]
+
+const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
 function defaultBusinessHours(): BusinessHours {
   return {
@@ -108,13 +114,28 @@ function parseBusinessHours(value: unknown): BusinessHours {
   return base
 }
 
+function normalizePin(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 6)
+}
+
+function createGreetingPin(): string {
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
 export default function AccountPage() {
   const { user, refetchProfile } = useAuth()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [uploadingGreeting, setUploadingGreeting] = useState(false)
+  const [recordingGreeting, setRecordingGreeting] = useState(false)
+  const [recordingSupported, setRecordingSupported] = useState(false)
+  const [recordingPreviewUrl, setRecordingPreviewUrl] = useState("")
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
   const [form, setForm] = useState<ProfileForm>({
     display_name: "",
     website_url: "",
@@ -128,9 +149,24 @@ export default function AccountPage() {
     call_forwarding_enabled: true,
     call_forwarding_outside_business_hours: false,
     business_hours: defaultBusinessHours(),
+    voicemail_greeting_mode: "ai_text",
+    voicemail_greeting_text: "Sorry we missed your call. Please leave a message after the tone.",
+    voicemail_greeting_recording_url: "",
+    voicemail_greeting_pin: createGreetingPin(),
   })
 
   const email = useMemo(() => user?.email ?? "", [user?.email])
+
+  useEffect(() => {
+    setRecordingSupported(typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (recordingPreviewUrl) URL.revokeObjectURL(recordingPreviewUrl)
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+    }
+  }, [recordingPreviewUrl])
 
   useEffect(() => {
     if (!supabase || !user?.id) return
@@ -140,7 +176,7 @@ export default function AccountPage() {
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours")
+          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin")
           .eq("id", user.id)
           .single()
         if (error) throw error
@@ -157,6 +193,10 @@ export default function AccountPage() {
           call_forwarding_enabled: data?.call_forwarding_enabled !== false,
           call_forwarding_outside_business_hours: data?.call_forwarding_outside_business_hours === true,
           business_hours: parseBusinessHours(data?.business_hours),
+          voicemail_greeting_mode: data?.voicemail_greeting_mode === "recorded" ? "recorded" : "ai_text",
+          voicemail_greeting_text: data?.voicemail_greeting_text ?? "Sorry we missed your call. Please leave a message after the tone.",
+          voicemail_greeting_recording_url: data?.voicemail_greeting_recording_url ?? "",
+          voicemail_greeting_pin: normalizePin(data?.voicemail_greeting_pin ?? "") || createGreetingPin(),
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -187,6 +227,10 @@ export default function AccountPage() {
         business_hours: form.business_hours,
         call_forwarding_enabled: form.call_forwarding_enabled,
         call_forwarding_outside_business_hours: form.call_forwarding_outside_business_hours,
+        voicemail_greeting_mode: form.voicemail_greeting_mode,
+        voicemail_greeting_text: form.voicemail_greeting_text.trim() || "Sorry we missed your call. Please leave a message after the tone.",
+        voicemail_greeting_recording_url: form.voicemail_greeting_recording_url.trim() || null,
+        voicemail_greeting_pin: normalizePin(form.voicemail_greeting_pin) || createGreetingPin(),
         updated_at: new Date().toISOString(),
       }
       const { error } = await supabase.from("profiles").update(payload).eq("id", user.id)
@@ -219,6 +263,91 @@ export default function AccountPage() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setResetting(false)
+    }
+  }
+
+  function getGreetingFilePath(extension: string): string {
+    return `${user?.id ?? "unknown"}/greeting-${Date.now()}.${extension}`
+  }
+
+  async function uploadGreetingFile(file: Blob, extension: string, contentType: string) {
+    if (!supabase || !user?.id) return
+    setUploadingGreeting(true)
+    setMessage("")
+    setError("")
+    try {
+      const filePath = getGreetingFilePath(extension)
+      const { error: uploadError } = await supabase.storage
+        .from(VOICEMAIL_GREETING_BUCKET)
+        .upload(filePath, file, { upsert: true, contentType })
+      if (uploadError) throw uploadError
+      const { data } = supabase.storage.from(VOICEMAIL_GREETING_BUCKET).getPublicUrl(filePath)
+      const publicUrl = data.publicUrl
+      setForm((prev) => ({
+        ...prev,
+        voicemail_greeting_mode: "recorded",
+        voicemail_greeting_recording_url: publicUrl,
+      }))
+      setRecordingPreviewUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous)
+        return URL.createObjectURL(file)
+      })
+      setMessage("Greeting uploaded. Save account to make it live.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploadingGreeting(false)
+    }
+  }
+
+  async function handleGreetingFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    const extension = file.name.split(".").pop()?.toLowerCase() || "mp3"
+    await uploadGreetingFile(file, extension, file.type || "audio/mpeg")
+  }
+
+  async function handleStartRecording() {
+    if (!recordingSupported) {
+      setError("This browser does not support microphone recording.")
+      return
+    }
+    setMessage("")
+    setError("")
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
+      const recorder = new MediaRecorder(stream, { mimeType })
+      recordedChunksRef.current = []
+      mediaStreamRef.current = stream
+      mediaRecorderRef.current = recorder
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordedChunksRef.current.push(event.data)
+      }
+      recorder.onstop = async () => {
+        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+        mediaStreamRef.current = null
+        mediaRecorderRef.current = null
+        setRecordingGreeting(false)
+        if (!blob.size) return
+        await uploadGreetingFile(blob, "webm", blob.type || "audio/webm")
+      }
+      recorder.start()
+      setRecordingGreeting(true)
+    } catch (err) {
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current = null
+      mediaRecorderRef.current = null
+      setRecordingGreeting(false)
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  function handleStopRecording() {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop()
     }
   }
 
@@ -370,6 +499,113 @@ export default function AccountPage() {
                 />
                 Keep forwarding on outside business hours
               </label>
+              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>
+                If forwarding is off, unanswered calls go straight into your Tradesman voicemail instead of the forwarded phone's voicemail.
+              </p>
+            </div>
+
+            <div style={{ display: "grid", gap: 12, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
+              <div>
+                <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>Voicemail Greeting</h2>
+                <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
+                  Choose an AI text-to-voice greeting or use a hosted recording URL for a custom recorded greeting.
+                </p>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
+                  <input
+                    type="radio"
+                    name="voicemail_greeting_mode"
+                    checked={form.voicemail_greeting_mode === "ai_text"}
+                    onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "ai_text" }))}
+                  />
+                  AI text to voice
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
+                  <input
+                    type="radio"
+                    name="voicemail_greeting_mode"
+                    checked={form.voicemail_greeting_mode === "recorded"}
+                    onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "recorded" }))}
+                  />
+                  Recorded greeting
+                </label>
+              </div>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting script</span>
+                <textarea
+                  value={form.voicemail_greeting_text}
+                  onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_text: e.target.value }))}
+                  style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }}
+                  placeholder="Thanks for calling. We missed you. Please leave your name, number, and a short message after the tone."
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Recorded greeting URL</span>
+                <input
+                  value={form.voicemail_greeting_recording_url}
+                  onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_recording_url: e.target.value }))}
+                  style={theme.formInput}
+                  placeholder="https://..."
+                />
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 220px) auto", gap: 10, alignItems: "end" }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call-in greeting PIN</span>
+                  <input
+                    value={form.voicemail_greeting_pin}
+                    onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_pin: normalizePin(e.target.value) }))}
+                    style={theme.formInput}
+                    placeholder="6-digit PIN"
+                    maxLength={6}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, voicemail_greeting_pin: createGreetingPin() }))}
+                  style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", height: 42 }}
+                >
+                  Generate new PIN
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}>
+                  {uploadingGreeting ? "Uploading..." : "Upload greeting audio"}
+                  <input type="file" accept="audio/*" onChange={(e) => void handleGreetingFileChange(e)} disabled={uploadingGreeting} style={{ display: "none" }} />
+                </label>
+                {recordingSupported && (
+                  <button
+                    type="button"
+                    onClick={() => (recordingGreeting ? handleStopRecording() : void handleStartRecording())}
+                    disabled={uploadingGreeting}
+                    style={{ padding: "10px 16px", background: recordingGreeting ? "#7f1d1d" : "#fff", color: recordingGreeting ? "#fff" : theme.text, border: `1px solid ${recordingGreeting ? "#7f1d1d" : theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}
+                  >
+                    {recordingGreeting ? "Stop recording" : "Record greeting"}
+                  </button>
+                )}
+              </div>
+              {(recordingPreviewUrl || form.voicemail_greeting_recording_url) && (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting preview</span>
+                  <audio controls src={recordingPreviewUrl || form.voicemail_greeting_recording_url} />
+                </div>
+              )}
+              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
+                If recorded greeting is selected, Twilio will play that audio file. If no recording URL is present, Tradesman will fall back to the greeting script automatically.
+              </p>
+              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
+                Recorded greetings are uploaded to the Supabase Storage bucket `voicemail-greetings`.
+              </p>
+              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
+                For best Twilio playback compatibility, uploaded greeting files should be `mp3` or `wav`.
+              </p>
+              <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
+                <div style={{ fontWeight: 700, color: theme.text }}>Call in and record</div>
+                <div>Point a Twilio number to `POST /api/voicemail-greeting`.</div>
+                <div>When the customer calls that number, they enter their 6-digit PIN and record a new greeting by phone.</div>
+                <div>If they call from a number other than the primary phone saved on this account, they must also enter that account phone number to verify ownership.</div>
+                <div>The saved phone greeting becomes the active Tradesman voicemail greeting automatically.</div>
+              </div>
             </div>
 
             {message && <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p>}

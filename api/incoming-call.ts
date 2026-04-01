@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
+  buildVoicemailTwiml,
   createLeadForInboundCall,
   createServiceSupabase,
   getOrCreateConversation,
@@ -58,17 +59,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metadata: { from, to, provider: channel.provider },
     })
   }
-  if (!forwardTo) {
-    return sendTwiml(
-      res,
-      `<?xml version="1.0" encoding="UTF-8"?><Response><Say>We are unable to forward your call right now.</Say><Hangup/></Response>`
-    )
-  }
-
   const query = new URLSearchParams()
   if (channel?.id) query.set("channelId", channel.id)
   if (to) query.set("to", to)
   if (from) query.set("from", from)
+  const voicemailActionUrl = `/api/voicemail-complete${query.size ? `?${query.toString()}` : ""}`
+  if (!forwardTo) {
+    return sendTwiml(res, buildVoicemailTwiml({ recordAction: voicemailActionUrl, routingProfile }))
+  }
+
   const dialActionUrl = `/api/dial-result${query.size ? `?${query.toString()}` : ""}`
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
