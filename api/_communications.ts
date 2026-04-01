@@ -55,6 +55,12 @@ export function createServiceSupabase(): SupabaseClient {
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY on Vercel.")
   }
+  try {
+    const u = new URL(supabaseUrl)
+    console.log("[createServiceSupabase] using host", { host: u.host })
+  } catch {
+    console.log("[createServiceSupabase] using raw url", { supabaseUrl })
+  }
   return createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
@@ -67,6 +73,27 @@ export async function lookupChannelByPublicAddress(
   if (!publicAddress) return null
   const normalized = normalizePhone(publicAddress) || publicAddress.trim()
   console.log("[lookupChannelByPublicAddress] incoming", { publicAddress, normalized })
+  const { data: visibleRows, error: visibleRowsErr } = await supabase
+    .from("client_communication_channels")
+    .select("id, public_address, forward_to_phone, voice_enabled, active")
+    .order("created_at", { ascending: true })
+    .limit(20)
+  if (visibleRowsErr) {
+    console.log("[lookupChannelByPublicAddress] visible rows error", { message: visibleRowsErr.message })
+  } else {
+    console.log("[lookupChannelByPublicAddress] visible rows", {
+      count: Array.isArray(visibleRows) ? visibleRows.length : 0,
+      rows: Array.isArray(visibleRows)
+        ? visibleRows.map((r) => ({
+            id: (r as { id?: string }).id ?? null,
+            public_address: (r as { public_address?: string }).public_address ?? null,
+            forward_to_phone: (r as { forward_to_phone?: string | null }).forward_to_phone ?? null,
+            voice_enabled: (r as { voice_enabled?: boolean }).voice_enabled ?? null,
+            active: (r as { active?: boolean }).active ?? null,
+          }))
+        : [],
+    })
+  }
   const { data, error } = await supabase
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
