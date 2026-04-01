@@ -9,7 +9,7 @@ import {
   lookupChannelByPublicAddress,
   normalizePhone,
   pickFirstString,
-} from "./_communications"
+} from "./_communications.js"
 
 type JsonRecord = Record<string, unknown>
 

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, getPrimarySmsChannelForUser, logCommunicationEvent, normalizePhone } from "./_communications"
+import { createServiceSupabase, getPrimarySmsChannelForUser, logCommunicationEvent, normalizePhone } from "./_communications.js"
 
 type SmsPayload = {
   to?: string

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, logCommunicationEvent, lookupChannelByPublicAddress, normalizePhone, pickFirstString } from "./_communications"
+import { createServiceSupabase, logCommunicationEvent, lookupChannelByPublicAddress, normalizePhone, pickFirstString } from "./_communications.js"
 
 function xmlEscape(value: string): string {
   return value
