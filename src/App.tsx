@@ -9,6 +9,7 @@ import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
 import SettingsPage from "./modules/settings/SettingsPage"
+import AccountPage from "./modules/account/AccountPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -142,7 +143,8 @@ function MainApp() {
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
       {page === "settings" && <SettingsPage />}
-      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "web-support", "tech-support", "settings"].includes(page) && (
+      {page === "account" && <AccountPage />}
+      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "account", "web-support", "tech-support", "settings"].includes(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
           <p style={{ color: "var(--text, #6b7280)" }}>This section is configured by your admin. Content can be added here later.</p>

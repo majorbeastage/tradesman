@@ -954,14 +954,14 @@ function AdminAppInner() {
               textAlign: "left",
             }}
           >
-            Communications
+            Routing & Access
           </button>
         </div>
         </AdminSettingBlock>
         {(adminPanel === "portal" || adminPanel === "communications") && (
         <AdminSettingBlock id="admin:sidebar:portal_intro" variant="dark">
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
-          Select a user to configure their portal or communications routing.
+          Select a user to configure their portal or routing/access settings.
         </p>
         </AdminSettingBlock>
         )}
@@ -1154,9 +1154,9 @@ function AdminAppInner() {
                 <div style={{ fontSize: 11, padding: "6px 12px", background: theme.charcoalSmoke, color: "rgba(255,255,255,0.8)" }}>
                   Preview — what this user sees
                 </div>
-                <div style={{ display: "flex", height: 380 }}>
+                <div style={{ display: "flex", height: 620, minHeight: 620 }}>
                   <div style={{ flexShrink: 0, height: "100%" }}>
-                    <div style={{ height: "100%", overflow: "hidden" }}>
+                    <div style={{ height: "100%", overflow: "auto" }}>
                       <Sidebar
                         setPage={setPreviewPage}
                         portalTabs={visibleTabs.length > 0 ? visibleTabs : undefined}

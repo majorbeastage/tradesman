@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
+import { createLeadForInboundCall, createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -40,10 +40,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (channel?.user_id) {
         const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
         const conversationId = customer ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone") : null
+        const leadId = customer ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
         await logCommunicationEvent(supabase, {
           user_id: channel.user_id,
           customer_id: customer?.customerId ?? null,
           conversation_id: conversationId,
+          lead_id: leadId,
           channel_id: channel.id,
           event_type: "call",
           direction: "inbound",

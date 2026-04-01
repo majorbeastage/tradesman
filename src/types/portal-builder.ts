@@ -52,6 +52,7 @@ export const USER_PORTAL_TAB_IDS = [
   'quotes',
   'calendar',
   'customers',
+  'account',
   'web-support',
   'tech-support',
   'settings',
@@ -64,6 +65,7 @@ export const OFFICE_PORTAL_TAB_IDS = [
   'quotes',
   'calendar',
   'customers',
+  'account',
   'web-support',
   'tech-support',
 ] as const
@@ -75,6 +77,7 @@ export const TAB_ID_LABELS: Record<string, string> = {
   quotes: 'Quotes',
   calendar: 'Calendar',
   customers: 'Customers',
+  account: 'Account',
   'web-support': 'Web Support',
   'tech-support': 'Tech Support',
   settings: 'Settings',

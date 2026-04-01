@@ -17,6 +17,7 @@ export type CommunicationChannel = {
   email_enabled?: boolean
   voicemail_enabled: boolean
   voicemail_mode: "summary" | "full_transcript"
+  metadata?: Record<string, unknown> | null
   active: boolean
 }
 
@@ -49,21 +50,120 @@ export function asObject(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {}
 }
 
+type RoutingDayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat"
+
+type RoutingWindow = {
+  enabled: boolean
+  open: string
+  close: string
+}
+
+export type UserRoutingProfile = {
+  call_forwarding_enabled: boolean
+  call_forwarding_outside_business_hours: boolean
+  timezone: string
+  business_hours: Record<RoutingDayKey, RoutingWindow>
+}
+
 export function createServiceSupabase(): SupabaseClient {
   const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
   const serviceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY")
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY on Vercel.")
   }
-  try {
-    const u = new URL(supabaseUrl)
-    console.log("[createServiceSupabase] using host", { host: u.host })
-  } catch {
-    console.log("[createServiceSupabase] using raw url", { supabaseUrl })
-  }
   return createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+}
+
+function defaultRoutingHours(): Record<RoutingDayKey, RoutingWindow> {
+  return {
+    sun: { enabled: false, open: "09:00", close: "17:00" },
+    mon: { enabled: true, open: "09:00", close: "17:00" },
+    tue: { enabled: true, open: "09:00", close: "17:00" },
+    wed: { enabled: true, open: "09:00", close: "17:00" },
+    thu: { enabled: true, open: "09:00", close: "17:00" },
+    fri: { enabled: true, open: "09:00", close: "17:00" },
+    sat: { enabled: false, open: "09:00", close: "17:00" },
+  }
+}
+
+function parseRoutingHours(value: unknown): Record<RoutingDayKey, RoutingWindow> {
+  const out = defaultRoutingHours()
+  const raw = asObject(value)
+  for (const key of Object.keys(out) as RoutingDayKey[]) {
+    const day = asObject(raw[key])
+    out[key] = {
+      enabled: day.enabled !== false,
+      open: typeof day.open === "string" && day.open ? day.open : out[key].open,
+      close: typeof day.close === "string" && day.close ? day.close : out[key].close,
+    }
+  }
+  return out
+}
+
+function minutesFromHHMM(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return 0
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+export async function getUserRoutingProfile(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<UserRoutingProfile | null> {
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours")
+    .eq("id", userId)
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  return {
+    call_forwarding_enabled: (data as { call_forwarding_enabled?: boolean }).call_forwarding_enabled !== false,
+    call_forwarding_outside_business_hours:
+      (data as { call_forwarding_outside_business_hours?: boolean }).call_forwarding_outside_business_hours === true,
+    timezone: (data as { timezone?: string }).timezone || "America/New_York",
+    business_hours: parseRoutingHours((data as { business_hours?: unknown }).business_hours),
+  }
+}
+
+export function isWithinBusinessHours(profile: UserRoutingProfile | null, now = new Date()): boolean {
+  if (!profile) return true
+  if (!profile.call_forwarding_enabled) return false
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: profile.timezone || "America/New_York",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(now)
+    const weekdayRaw = parts.find((p) => p.type === "weekday")?.value?.toLowerCase() ?? "mon"
+    const hour = parts.find((p) => p.type === "hour")?.value ?? "00"
+    const minute = parts.find((p) => p.type === "minute")?.value ?? "00"
+    const keyMap: Record<string, RoutingDayKey> = {
+      sun: "sun",
+      mon: "mon",
+      tue: "tue",
+      wed: "wed",
+      thu: "thu",
+      fri: "fri",
+      sat: "sat",
+    }
+    const dayKey = keyMap[weekdayRaw.slice(0, 3)] ?? "mon"
+    const day = profile.business_hours[dayKey]
+    if (!day?.enabled) return profile.call_forwarding_outside_business_hours
+    const currentMinutes = Number(hour) * 60 + Number(minute)
+    const open = minutesFromHHMM(day.open)
+    const close = minutesFromHHMM(day.close)
+    const withinHours = close <= open ? currentMinutes >= open || currentMinutes <= close : currentMinutes >= open && currentMinutes <= close
+    return withinHours || profile.call_forwarding_outside_business_hours
+  } catch {
+    return profile.call_forwarding_enabled
+  }
 }
 
 export async function lookupChannelByPublicAddress(
@@ -72,28 +172,6 @@ export async function lookupChannelByPublicAddress(
 ): Promise<CommunicationChannel | null> {
   if (!publicAddress) return null
   const normalized = normalizePhone(publicAddress) || publicAddress.trim()
-  console.log("[lookupChannelByPublicAddress] incoming", { publicAddress, normalized })
-  const { data: visibleRows, error: visibleRowsErr } = await supabase
-    .from("client_communication_channels")
-    .select("id, public_address, forward_to_phone, voice_enabled, active")
-    .order("created_at", { ascending: true })
-    .limit(20)
-  if (visibleRowsErr) {
-    console.log("[lookupChannelByPublicAddress] visible rows error", { message: visibleRowsErr.message })
-  } else {
-    console.log("[lookupChannelByPublicAddress] visible rows", {
-      count: Array.isArray(visibleRows) ? visibleRows.length : 0,
-      rows: Array.isArray(visibleRows)
-        ? visibleRows.map((r) => ({
-            id: (r as { id?: string }).id ?? null,
-            public_address: (r as { public_address?: string }).public_address ?? null,
-            forward_to_phone: (r as { forward_to_phone?: string | null }).forward_to_phone ?? null,
-            voice_enabled: (r as { voice_enabled?: boolean }).voice_enabled ?? null,
-            active: (r as { active?: boolean }).active ?? null,
-          }))
-        : [],
-    })
-  }
   const { data, error } = await supabase
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
@@ -102,14 +180,6 @@ export async function lookupChannelByPublicAddress(
     .limit(1)
     .maybeSingle()
   if (error) throw error
-  console.log("[lookupChannelByPublicAddress] result", {
-    found: !!data,
-    id: (data as CommunicationChannel | null)?.id ?? null,
-    public_address: (data as CommunicationChannel | null)?.public_address ?? null,
-    forward_to_phone: (data as CommunicationChannel | null)?.forward_to_phone ?? null,
-    voice_enabled: (data as CommunicationChannel | null)?.voice_enabled ?? null,
-    active: (data as CommunicationChannel | null)?.active ?? null,
-  })
   return (data as CommunicationChannel | null) ?? null
 }
 
@@ -146,6 +216,24 @@ export async function getPrimarySmsChannelForUser(
   return (data as CommunicationChannel | null) ?? null
 }
 
+export async function getPrimaryEmailChannelForUser(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<CommunicationChannel | null> {
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from("client_communication_channels")
+    .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active, metadata")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .eq("email_enabled", true)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return (data as CommunicationChannel | null) ?? null
+}
+
 export async function logCommunicationEvent(
   supabase: SupabaseClient,
   payload: {
@@ -157,6 +245,7 @@ export async function logCommunicationEvent(
     event_type: "sms" | "call" | "voicemail" | "email"
     direction: "inbound" | "outbound"
     external_id?: string | null
+    subject?: string | null
     body?: string | null
     recording_url?: string | null
     transcript_text?: string | null
@@ -215,11 +304,52 @@ export async function getOrCreateCustomerByPhone(
   return { customerId, previousCustomer: false }
 }
 
+export async function getOrCreateCustomerByEmail(
+  supabase: SupabaseClient,
+  userId: string,
+  email: string
+): Promise<{ customerId: string; previousCustomer: boolean }> {
+  const normalizedEmail = String(email || "").trim().toLowerCase()
+  if (!normalizedEmail) throw new Error("Email is required")
+  const { data: existingIdentifier, error: identifierErr } = await supabase
+    .from("customer_identifiers")
+    .select("customer_id")
+    .eq("user_id", userId)
+    .eq("type", "email")
+    .eq("value", normalizedEmail)
+    .limit(1)
+    .maybeSingle()
+  if (identifierErr) throw identifierErr
+  if (existingIdentifier?.customer_id) {
+    return { customerId: String(existingIdentifier.customer_id), previousCustomer: true }
+  }
+
+  const { data: customer, error: customerErr } = await supabase
+    .from("customers")
+    .insert({ user_id: userId, display_name: normalizedEmail, notes: null })
+    .select("id")
+    .single()
+  if (customerErr) throw customerErr
+
+  const customerId = String(customer.id)
+  const { error: insertIdentifierErr } = await supabase.from("customer_identifiers").insert({
+    user_id: userId,
+    customer_id: customerId,
+    type: "email",
+    value: normalizedEmail,
+    is_primary: true,
+    verified: false,
+  })
+  if (insertIdentifierErr) throw insertIdentifierErr
+
+  return { customerId, previousCustomer: false }
+}
+
 export async function getOrCreateConversation(
   supabase: SupabaseClient,
   userId: string,
   customerId: string,
-  channel: "sms" | "phone"
+  channel: "sms" | "phone" | "email"
 ): Promise<string> {
   const { data: existingConversation, error: conversationLookupErr } = await supabase
     .from("conversations")
@@ -243,4 +373,49 @@ export async function getOrCreateConversation(
     .single()
   if (conversationErr) throw conversationErr
   return String(conversation.id)
+}
+
+export async function findOpenLeadForCustomer(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string
+): Promise<string | null> {
+  if (!userId || !customerId) return null
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+    .is("removed_at", null)
+    .is("converted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error && !String(error.message || "").includes("converted_at")) throw error
+  return data?.id ? String(data.id) : null
+}
+
+export async function createLeadForInboundCall(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  phone: string
+): Promise<string> {
+  const normalizedPhone = normalizePhone(phone)
+  const existingLeadId = await findOpenLeadForCustomer(supabase, userId, customerId)
+  if (existingLeadId) return existingLeadId
+
+  const title = normalizedPhone ? `Inbound call from ${normalizedPhone}` : "Inbound call"
+  const { data, error } = await supabase
+    .from("leads")
+    .insert({
+      user_id: userId,
+      customer_id: customerId,
+      title,
+      description: "Auto-created from inbound phone call.",
+    })
+    .select("id")
+    .single()
+  if (error) throw error
+  return String(data.id)
 }

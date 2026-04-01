@@ -12,6 +12,22 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
 type MessageRow = { content: string | null; created_at: string | null }
+type EmailEventRow = {
+  id: string
+  subject: string | null
+  body: string | null
+  direction: string | null
+  created_at: string | null
+  metadata?: { to?: string; from?: string } | null
+}
+type DetailIdentifier = { id: string; type: "phone" | "email"; value: string }
+type ConversationDetailForm = {
+  customerName: string
+  channel: string
+  status: string
+  identifiers: DetailIdentifier[]
+  portalValues: Record<string, string>
+}
 type ConversationRow = {
   id: string
   channel: string | null
@@ -93,6 +109,21 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addConvoLoading, setAddConvoLoading] = useState(false)
   const [replyBody, setReplyBody] = useState("")
   const [replySending, setReplySending] = useState(false)
+  const [replySubject, setReplySubject] = useState("")
+  const [emailReplyBody, setEmailReplyBody] = useState("")
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailEvents, setEmailEvents] = useState<EmailEventRow[]>([])
+  const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
+  const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
+  const [detailEditMode, setDetailEditMode] = useState(false)
+  const [detailSaving, setDetailSaving] = useState(false)
+  const [detailForm, setDetailForm] = useState<ConversationDetailForm>({
+    customerName: "",
+    channel: "sms",
+    status: "open",
+    identifiers: [],
+    portalValues: {},
+  })
   const conversationSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "conversation_settings"), [portalConfig])
   const addConversationPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "add_conversation"), [portalConfig])
   const [addConversationPortalValues, setAddConversationPortalValues] = useState<Record<string, string>>({})
@@ -141,6 +172,43 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const depId = item.dependency.dependsOnItemId
     const depItem = conversationSettingsItems.find((i) => i.id === depId)
     let depValue = settingsFormValues[depId] ?? ""
+    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+    return depValue === item.dependency.showWhenValue
+  }
+
+  function buildDetailFormFromConversation(convo: any): ConversationDetailForm {
+    const identifiers = Array.isArray(convo?.customers?.customer_identifiers)
+      ? convo.customers.customer_identifiers
+          .filter((i: any) => i && (i.type === "phone" || i.type === "email"))
+          .map((i: any) => ({
+            id: crypto.randomUUID(),
+            type: i.type as "phone" | "email",
+            value: String(i.value ?? ""),
+          }))
+      : []
+    const metadata = convo?.metadata && typeof convo.metadata === "object" ? convo.metadata : {}
+    const savedPortalValues = metadata.portalValues && typeof metadata.portalValues === "object" ? metadata.portalValues as Record<string, string> : {}
+    const portalValues: Record<string, string> = {}
+    conversationSettingsItems.forEach((item) => {
+      if (item.id === "show_internal_conversations") return
+      if (item.type === "checkbox") portalValues[item.id] = savedPortalValues[item.id] ?? (item.defaultChecked ? "checked" : "unchecked")
+      else if (item.type === "dropdown" && item.options?.length) portalValues[item.id] = savedPortalValues[item.id] ?? item.options[0]
+      else portalValues[item.id] = savedPortalValues[item.id] ?? ""
+    })
+    return {
+      customerName: convo?.customers?.display_name ?? "",
+      channel: convo?.channel ?? "sms",
+      status: convo?.status ?? "open",
+      identifiers,
+      portalValues,
+    }
+  }
+
+  function isDetailPortalItemVisible(item: PortalSettingItem): boolean {
+    if (!item.dependency) return true
+    const depId = item.dependency.dependsOnItemId
+    const depItem = conversationSettingsItems.find((i) => i.id === depId)
+    let depValue = detailForm.portalValues[depId] ?? ""
     if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
     return depValue === item.dependency.showWhenValue
   }
@@ -249,7 +317,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
   async function loadCustomerList() {
     if (!supabase || !userId) return
-    const { data } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
+    const { data } = await supabase
+      .from("customers")
+      .select("id, display_name, customer_identifiers(type, value)")
+      .eq("user_id", userId)
+      .order("display_name")
     setCustomerList(data || [])
   }
 
@@ -259,8 +331,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     try {
       let customerId: string
       if (addConvoUseNew) {
-        if (!addConvoNewName?.trim() && !addConvoNewPhone?.trim()) {
-          alert("Enter at least a name or phone for the new customer.")
+        if (!addConvoNewName?.trim() && !addConvoNewPhone?.trim() && !addConvoNewEmail?.trim()) {
+          alert("Enter at least a name, phone, or email for the new customer.")
           setAddConvoLoading(false)
           return
         }
@@ -300,7 +372,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         .insert({
           user_id: userId,
           customer_id: customerId,
-          channel: "sms",
+          channel: addConvoChannel,
           status: "open",
         })
       if (convoErr) throw convoErr
@@ -310,6 +382,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       setAddConvoNewPhone("")
       setAddConvoNewEmail("")
       setAddConvoUseNew(false)
+      setAddConvoChannel("sms")
       await loadConversations()
     } catch (err: any) {
       console.error(err)
@@ -323,24 +396,50 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     setSelectedConversationId(convoId)
     if (!supabase) return
 
-    const { data, error } = await supabase
-      .from("conversations")
-      .select(`
-        id,
-        channel,
-        status,
-        created_at,
-        customer_id,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
+    const selectWithMetadata = `
+      id,
+      channel,
+      status,
+      created_at,
+      customer_id,
+      metadata,
+      customers (
+        display_name,
+        customer_identifiers (
+          type,
+          value
         )
-      `)
+      )
+    `
+    const selectWithoutMetadata = `
+      id,
+      channel,
+      status,
+      created_at,
+      customer_id,
+      customers (
+        display_name,
+        customer_identifiers (
+          type,
+          value
+        )
+      )
+    `
+    let { data, error } = await supabase
+      .from("conversations")
+      .select(selectWithMetadata)
       .eq("id", convoId)
       .single()
+
+    if (error && String(error.message || "").includes("metadata")) {
+      const fallback = await supabase
+        .from("conversations")
+        .select(selectWithoutMetadata)
+        .eq("id", convoId)
+        .single()
+      data = fallback.data ? { ...fallback.data, metadata: {} } : null
+      error = fallback.error
+    }
 
     if (error) {
       console.error(error)
@@ -348,6 +447,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
 
     setSelectedConversation(data)
+    setDetailForm(buildDetailFormFromConversation(data))
+    setDetailEditMode(false)
 
     const { data: msgs } = await supabase
       .from("messages")
@@ -356,6 +457,77 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       .order("created_at", { ascending: true })
 
     setMessages(msgs || [])
+    const { data: emailData } = await supabase
+      .from("communication_events")
+      .select("id, subject, body, direction, created_at, metadata")
+      .eq("conversation_id", convoId)
+      .eq("event_type", "email")
+      .order("created_at", { ascending: true })
+
+    setEmailEvents((emailData as EmailEventRow[] | null) ?? [])
+    const latestOutbound = ((emailData as EmailEventRow[] | null) ?? [])
+      .filter((evt) => evt.direction === "outbound" && evt.subject)
+      .slice(-1)[0]
+    setReplySubject(latestOutbound?.subject ?? "")
+    setEmailReplyBody("")
+  }
+
+  async function saveConversationDetails() {
+    if (!supabase || !selectedConversation?.id || !selectedConversation?.customer_id) return
+    setDetailSaving(true)
+    try {
+      const cleanedIdentifiers = detailForm.identifiers
+        .map((item) => ({ ...item, value: item.value.trim() }))
+        .filter((item) => item.value)
+
+      const metadata =
+        selectedConversation?.metadata && typeof selectedConversation.metadata === "object"
+          ? { ...selectedConversation.metadata }
+          : {}
+      metadata.portalValues = detailForm.portalValues
+
+      const { error: convoErr } = await supabase
+        .from("conversations")
+        .update({
+          channel: detailForm.channel || null,
+          status: detailForm.status || null,
+          metadata,
+        })
+        .eq("id", selectedConversation.id)
+      if (convoErr) throw convoErr
+
+      const { error: customerErr } = await supabase
+        .from("customers")
+        .update({ display_name: detailForm.customerName.trim() || null })
+        .eq("id", selectedConversation.customer_id)
+      if (customerErr) throw customerErr
+
+      const { error: deleteErr } = await supabase
+        .from("customer_identifiers")
+        .delete()
+        .eq("customer_id", selectedConversation.customer_id)
+        .in("type", ["phone", "email"])
+      if (deleteErr) throw deleteErr
+
+      if (cleanedIdentifiers.length > 0) {
+        const payload = cleanedIdentifiers.map((item, index) => ({
+          customer_id: selectedConversation.customer_id,
+          type: item.type,
+          value: item.value,
+          is_primary: index === 0,
+        }))
+        const { error: insertErr } = await supabase.from("customer_identifiers").insert(payload)
+        if (insertErr) throw insertErr
+      }
+
+      await openConversation(selectedConversation.id)
+      await loadConversations()
+      setDetailEditMode(false)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDetailSaving(false)
+    }
   }
 
   async function activateConversationRow(convoId: string) {
@@ -406,13 +578,62 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
   }
 
+  async function sendEmailReply() {
+    if (!supabase || !selectedConversation?.id) return
+    const to = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.() ?? ""
+    const subject = replySubject.trim()
+    const body = emailReplyBody.trim()
+    if (!to) {
+      alert("This conversation does not have a customer email address.")
+      return
+    }
+    if (!subject || !body) {
+      alert("Enter a subject and email body.")
+      return
+    }
+    setEmailSending(true)
+    try {
+      const response = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          subject,
+          body,
+          userId,
+          conversationId: selectedConversation.id,
+          customerId: selectedConversation.customer_id,
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(raw || `Failed with HTTP ${response.status}`)
+      const event: EmailEventRow = {
+        id: crypto.randomUUID(),
+        subject,
+        body,
+        direction: "outbound",
+        created_at: new Date().toISOString(),
+        metadata: { to },
+      }
+      setEmailEvents((prev) => [...prev, event])
+      setEmailReplyBody("")
+      await loadConversations()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setEmailSending(false)
+    }
+  }
+
   const filteredConversations = conversations.filter((convo: any) => {
     const name = (convo.customers?.display_name || "").toLowerCase()
     const phone = convo.customers?.customer_identifiers
       ?.find((i: any) => i.type === "phone")?.value || ""
+    const email = convo.customers?.customer_identifiers
+      ?.find((i: any) => i.type === "email")?.value || ""
     const searchLower = search.toLowerCase().trim()
     const phoneFilter = filterPhone.trim()
-    const matchesName = !searchLower || name.includes(searchLower)
+    const matchesName = !searchLower || name.includes(searchLower) || email.toLowerCase().includes(searchLower)
     const matchesPhone = !phoneFilter || phone.includes(phoneFilter)
     return matchesName && matchesPhone
   })
@@ -647,8 +868,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               </thead>
               <tbody>
                 {sortedConversations.map((convo) => {
-                  const phone = convo.customers?.customer_identifiers
-                    ?.find((i: any) => i.type === "phone")?.value || ""
+                  const phone = convo.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || ""
+                  const email = convo.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value || ""
                   const lastMsg = (convo.messages as MessageRow[] | undefined)?.length
                     ? [...(convo.messages as MessageRow[])].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0]
                     : null
@@ -665,7 +886,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       }}
                     >
                       <td style={{ padding: "8px", fontWeight: isOpen ? 600 : 400 }}>{convo.customers?.display_name ?? "—"}</td>
-                      <td style={{ padding: "8px" }}>{phone || "—"}</td>
+                      <td style={{ padding: "8px" }}>{convo.channel === "email" ? (email || "—") : (phone || "—")}</td>
                       <td style={{ padding: "8px" }}>{convo.channel ?? "—"}</td>
                       <td style={{ padding: "8px" }}>{convo.status ?? "—"}</td>
                       <td style={{ padding: "8px" }}>
@@ -732,40 +953,141 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               </div>
 
               <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-                <p style={{ margin: 0 }}>
-                  <strong>Customer:</strong>{" "}
-                  {selectedConversation.customers?.display_name ?? "—"}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setNotesCustomerId(selectedConversation.customer_id ?? null)
-                      setNotesCustomerName(selectedConversation.customers?.display_name ?? "")
-                    }}
-                    style={{
-                      marginLeft: "8px",
-                      padding: "4px 10px",
-                      fontSize: "12px",
-                      background: theme.primary,
-                      color: "white",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Notes
-                  </button>
-                </p>
-                <p style={{ margin: 0 }}>
-                  <strong>Phone:</strong>{" "}
-                  {selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
-                </p>
-                <p style={{ margin: 0 }}>
-                  <strong>Channel:</strong> {selectedConversation.channel ?? "—"}
-                </p>
-                <p style={{ margin: 0 }}>
-                  <strong>Status:</strong> {selectedConversation.status ?? "—"}
-                </p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 700, color: theme.text }}>Conversation details</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setNotesCustomerId(selectedConversation.customer_id ?? null)
+                        setNotesCustomerName(selectedConversation.customers?.display_name ?? "")
+                      }}
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        background: theme.primary,
+                        color: "white",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Notes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (detailEditMode) {
+                          setDetailForm(buildDetailFormFromConversation(selectedConversation))
+                          setDetailEditMode(false)
+                        } else {
+                          setDetailForm(buildDetailFormFromConversation(selectedConversation))
+                          setDetailEditMode(true)
+                        }
+                      }}
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        background: "#fff",
+                        color: theme.text,
+                        border: `1px solid ${theme.border}`,
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {detailEditMode ? "Cancel edit" : "Edit"}
+                    </button>
+                  </div>
+                </div>
+
+                {detailEditMode ? (
+                  <div style={{ display: "grid", gap: 12, padding: 12, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700 }}>Customer</span>
+                      <input value={detailForm.customerName} onChange={(e) => setDetailForm((prev) => ({ ...prev, customerName: e.target.value }))} style={theme.formInput} />
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>Channel</span>
+                        <select value={detailForm.channel} onChange={(e) => setDetailForm((prev) => ({ ...prev, channel: e.target.value }))} style={theme.formInput}>
+                          <option value="sms">sms</option>
+                          <option value="email">email</option>
+                          <option value="phone">phone</option>
+                        </select>
+                      </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>Status</span>
+                        <input value={detailForm.status} onChange={(e) => setDetailForm((prev) => ({ ...prev, status: e.target.value }))} style={theme.formInput} />
+                      </label>
+                    </div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>Contact methods</span>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "phone", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>Add phone</button>
+                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "email", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>Add email</button>
+                        </div>
+                      </div>
+                      {detailForm.identifiers.length === 0 ? (
+                        <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No phone or email values yet.</p>
+                      ) : (
+                        detailForm.identifiers.map((item) => (
+                          <div key={item.id} style={{ display: "grid", gridTemplateColumns: "140px 1fr auto", gap: 8, alignItems: "center" }}>
+                            <select value={item.type} onChange={(e) => setDetailForm((prev) => ({ ...prev, identifiers: prev.identifiers.map((x) => x.id === item.id ? { ...x, type: e.target.value as "phone" | "email" } : x) }))} style={theme.formInput}>
+                              <option value="phone">Phone</option>
+                              <option value="email">Email</option>
+                            </select>
+                            <input value={item.value} onChange={(e) => setDetailForm((prev) => ({ ...prev, identifiers: prev.identifiers.map((x) => x.id === item.id ? { ...x, value: e.target.value } : x) }))} style={theme.formInput} />
+                            <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: prev.identifiers.filter((x) => x.id !== item.id) }))} style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #fca5a5", background: "#fff", color: "#b91c1c", cursor: "pointer" }}>Remove</button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations").length > 0 && (
+                      <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
+                        <PortalSettingItemsForm
+                          title="Admin-configured detail fields"
+                          items={conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations")}
+                          formValues={detailForm.portalValues}
+                          setFormValue={(id, value) => setDetailForm((prev) => ({ ...prev, portalValues: { ...prev.portalValues, [id]: value } }))}
+                          isItemVisible={isDetailPortalItemVisible}
+                        />
+                      </div>
+                    )}
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                      <button type="button" onClick={() => { setDetailForm(buildDetailFormFromConversation(selectedConversation)); setDetailEditMode(false) }} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", color: theme.text, cursor: "pointer" }}>Cancel</button>
+                      <button type="button" onClick={() => void saveConversationDetails()} disabled={detailSaving} style={{ padding: "8px 12px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", cursor: detailSaving ? "wait" : "pointer", fontWeight: 600 }}>{detailSaving ? "Saving..." : "Save details"}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p style={{ margin: 0 }}>
+                      <strong>Customer:</strong> {selectedConversation.customers?.display_name ?? "—"}
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Phone(s):</strong> {selectedConversation.customers?.customer_identifiers?.filter((i: any) => i.type === "phone").map((i: any) => i.value).join(", ") || "—"}
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Email(s):</strong> {selectedConversation.customers?.customer_identifiers?.filter((i: any) => i.type === "email").map((i: any) => i.value).join(", ") || "—"}
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Channel:</strong> {selectedConversation.channel ?? "—"}
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Status:</strong> {selectedConversation.status ?? "—"}
+                    </p>
+                    {conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations").map((item) => {
+                      const saved = selectedConversation?.metadata?.portalValues?.[item.id]
+                      if (!saved || !isDetailPortalItemVisible(item)) return null
+                      return (
+                        <p key={item.id} style={{ margin: 0 }}>
+                          <strong>{item.label}:</strong> {saved}
+                        </p>
+                      )
+                    })}
+                  </>
+                )}
               </div>
 
               <ConvoCollapsible title="Text messages" defaultOpen>
@@ -836,9 +1158,71 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               </ConvoCollapsible>
 
               <ConvoCollapsible title="Emails">
-                <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                  No email thread is linked yet. Future versions can list prior messages in a compact, expandable list.
-                </p>
+                <div
+                  style={{
+                    border: `1px solid ${theme.border}`,
+                    padding: 12,
+                    borderRadius: 8,
+                    background: "#fff",
+                    maxHeight: 320,
+                    overflow: "auto",
+                  }}
+                >
+                  {emailEvents.length === 0 ? (
+                    <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No emails in this thread yet.</p>
+                  ) : (
+                    emailEvents.map((evt) => (
+                      <div key={evt.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                          {evt.direction === "inbound" ? "Customer email" : "You"}
+                          {evt.created_at ? (
+                            <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                              {new Date(evt.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 6 }}>{evt.subject || "(No subject)"}</div>
+                        <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <input
+                    value={replySubject}
+                    onChange={(e) => setReplySubject(e.target.value)}
+                    placeholder="Email subject"
+                    style={theme.formInput}
+                  />
+                  <textarea
+                    value={emailReplyBody}
+                    onChange={(e) => setEmailReplyBody(e.target.value)}
+                    rows={5}
+                    placeholder="Write an email reply..."
+                    style={{ ...theme.formInput, resize: "vertical" }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>
+                      Sends through your configured business email channel when available.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void sendEmailReply()}
+                      disabled={emailSending}
+                      style={{
+                        padding: "10px 16px",
+                        background: theme.primary,
+                        color: "white",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: emailSending ? "wait" : "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {emailSending ? "Sending..." : "Send email"}
+                    </button>
+                  </div>
+                </div>
               </ConvoCollapsible>
 
               <button
@@ -1021,22 +1405,41 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 <button onClick={() => setShowAddConversation(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 6, color: theme.text }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Conversation type</span>
+                  <select value={addConvoChannel} onChange={(e) => setAddConvoChannel(e.target.value as "sms" | "email")} style={theme.formInput}>
+                    <option value="sms">SMS / text</option>
+                    <option value="email">Email</option>
+                  </select>
+                </label>
                 <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: theme.text }}>
                   <input type="radio" checked={!addConvoUseNew} onChange={() => { setAddConvoUseNew(false); setAddConvoExistingId(customerList[0]?.id ?? ""); loadCustomerList() }} />
                   Select existing customer
                 </label>
                 {!addConvoUseNew && (
-                  <select
-                    value={addConvoExistingId}
-                    onFocus={loadCustomerList}
-                    onChange={(e) => setAddConvoExistingId(e.target.value)}
-                    style={{ ...theme.formInput }}
-                  >
-                    <option value="">— Select customer —</option>
-                    {customerList.map((c) => (
-                      <option key={c.id} value={c.id}>{c.display_name || "Unnamed"}</option>
-                    ))}
-                  </select>
+                  <>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: theme.text, fontSize: 13 }}>
+                      <input type="checkbox" checked={showArchivedCustomers} onChange={(e) => setShowArchivedCustomers(e.target.checked)} />
+                      Include archived customers
+                    </label>
+                    <select
+                      value={addConvoExistingId}
+                      onFocus={loadCustomerList}
+                      onChange={(e) => setAddConvoExistingId(e.target.value)}
+                      style={{ ...theme.formInput }}
+                    >
+                      <option value="">— Select customer —</option>
+                      {customerList.map((c: any) => {
+                        const email = c.customer_identifiers?.find((i: any) => i.type === "email")?.value
+                        const phone = c.customer_identifiers?.find((i: any) => i.type === "phone")?.value
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.display_name || "Unnamed"}{addConvoChannel === "email" && email ? ` • ${email}` : addConvoChannel === "sms" && phone ? ` • ${phone}` : ""}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </>
                 )}
                 <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: theme.text }}>
                   <input type="radio" checked={addConvoUseNew} onChange={() => setAddConvoUseNew(true)} />
@@ -1047,6 +1450,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     <input placeholder="Customer name" value={addConvoNewName} onChange={(e) => setAddConvoNewName(e.target.value)} style={{ ...theme.formInput }} />
                     <input placeholder="Phone" value={addConvoNewPhone} onChange={(e) => setAddConvoNewPhone(e.target.value)} style={{ ...theme.formInput }} />
                     <input placeholder="Email" value={addConvoNewEmail} onChange={(e) => setAddConvoNewEmail(e.target.value)} style={{ ...theme.formInput }} />
+                    {addConvoChannel === "email" && (
+                      <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                        Email conversations need a customer email address so replies can be sent from the app.
+                      </p>
+                    )}
                   </>
                 )}
                 {addConversationPortalItems.length > 0 && (

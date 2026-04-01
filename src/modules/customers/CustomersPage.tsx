@@ -248,6 +248,7 @@ export default function CustomersPage() {
           <h3 style={{ marginTop: 0 }}>Customer</h3>
           <p><strong>Name:</strong> {selectedCustomer.display_name || "—"}</p>
           <p><strong>Phone:</strong> {selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value ?? "—"}</p>
+          <p><strong>Email:</strong> {selectedCustomer.customer_identifiers?.find((i) => i.type === "email")?.value ?? "—"}</p>
           <button
             type="button"
             onClick={() => {

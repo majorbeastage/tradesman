@@ -5,7 +5,6 @@ import { TAB_ID_LABELS } from "../types/portal-builder"
 
 type SidebarProps = {
   setPage: (page: string) => void
-  onOpenAccount?: () => void
   onLogout?: () => void
   /** When set, sidebar items are driven by portal config (admin-customizable). */
   portalTabs?: Array<{ tab_id: string; label: string | null }>
@@ -19,11 +18,13 @@ const DEFAULT_TABS = [
   "customers", "web-support", "tech-support", "settings",
 ]
 
-export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
+export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
-  const tabs = portalTabs && portalTabs.length > 0
+  const allTabs = portalTabs && portalTabs.length > 0
     ? portalTabs
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
+  const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
+  const tabs = allTabs.filter((t) => t.tab_id !== "account")
 
   const grainUrl =
     "data:image/svg+xml," +
@@ -107,10 +108,10 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs, 
           Log out
         </button>
       )}
-      {onOpenAccount && (
+      {showAccount && (
         <button
           type="button"
-          onClick={() => { onOpenAccount?.(); onClose?.() }}
+          onClick={() => { setPage("account"); onClose?.() }}
           style={{
             marginTop: "auto",
             marginBottom: "24px",
@@ -120,7 +121,7 @@ export default function Sidebar({ setPage, onOpenAccount, onLogout, portalTabs, 
             cursor: "pointer",
             alignSelf: "flex-start"
           }}
-          title="Account & Profile"
+          title="Account"
         >
           <img src={accountIcon} alt="Account" style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
         </button>

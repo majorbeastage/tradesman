@@ -1,5 +1,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, logCommunicationEvent, lookupChannelByPublicAddress, normalizePhone, pickFirstString } from "./_communications.js"
+import {
+  createLeadForInboundCall,
+  createServiceSupabase,
+  getOrCreateConversation,
+  getOrCreateCustomerByPhone,
+  getUserRoutingProfile,
+  isWithinBusinessHours,
+  logCommunicationEvent,
+  lookupChannelByPublicAddress,
+  normalizePhone,
+  pickFirstString,
+} from "./_communications.js"
 
 function xmlEscape(value: string): string {
   return value
@@ -21,37 +32,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).send("Method not allowed")
   }
 
-  console.log("[incoming-call] raw", {
-    bodyTo: req.body?.To ?? null,
-    bodyFrom: req.body?.From ?? null,
-    queryTo: req.query?.To ?? null,
-    queryFrom: req.query?.From ?? null,
-  })
   const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
   const to = normalizePhone(pickFirstString(req.body?.To, req.query?.To))
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
   const supabase = createServiceSupabase()
   const channel = to ? await lookupChannelByPublicAddress(supabase, to) : null
-  const forwardTo = channel?.voice_enabled ? channel.forward_to_phone : null
-  console.log("[incoming-call] resolved", {
-    from,
-    to,
-    callSid,
-    channelFound: !!channel,
-    channelId: channel?.id ?? null,
-    channelPublicAddress: channel?.public_address ?? null,
-    voiceEnabled: channel?.voice_enabled ?? null,
-    active: channel?.active ?? null,
-    forwardTo,
-  })
+  const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
+  const forwardingAllowed = isWithinBusinessHours(routingProfile)
+  const forwardTo = channel?.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
   if (channel?.user_id) {
+    const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
+    const conversationId = customer ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone") : null
+    const leadId = customer ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
     await logCommunicationEvent(supabase, {
       user_id: channel.user_id,
+      customer_id: customer?.customerId ?? null,
+      conversation_id: conversationId,
+      lead_id: leadId,
       channel_id: channel.id,
       event_type: "call",
       direction: "inbound",
       external_id: callSid || null,
       unread: true,
+      previous_customer: customer?.previousCustomer ?? false,
       metadata: { from, to, provider: channel.provider },
     })
   }

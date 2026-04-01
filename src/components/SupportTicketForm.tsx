@@ -5,8 +5,8 @@ import { supabase } from "../lib/supabase"
 type TicketType = "web" | "tech"
 
 const supportEmails: Record<TicketType, string> = {
-  web: "justin@tradesman-us.com",
-  tech: "joe@tradesman-us.com",
+  web: "Admin@tradesman-us.com",
+  tech: "Admin@tradesman-us.com",
 }
 
 type Props = {

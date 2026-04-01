@@ -8,6 +8,7 @@ import CalendarPage from "../calendar/CalendarPage"
 import WebSupportPage from "../web-support/WebSupportPage"
 import TechSupportPage from "../tech-support/TechSupportPage"
 import SettingsPage from "../settings/SettingsPage"
+import AccountPage from "../account/AccountPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   OfficeManagerScopeProvider,
@@ -16,7 +17,7 @@ import {
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "../../types/portal-builder"
+import { OFFICE_PORTAL_TAB_IDS, USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "../../types/portal-builder"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -25,6 +26,17 @@ const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "settings", label: "Settings" },
   { id: "customize_user", label: "Customize user" },
 ]
+
+function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
+  if (!portalConfig) return undefined
+  const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
+  if (!hasTabs) return undefined
+  const defaultEntries = OFFICE_PORTAL_TAB_IDS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? null }))
+  const customEntries = (portalConfig.customTabs ?? []).map((t) => ({ tab_id: t.id, label: t.label }))
+  const all = [...defaultEntries, ...customEntries]
+  const visible = all.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  return visible.length > 0 ? visible : undefined
+}
 
 const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_customer", label: "Add Customer to quotes" },
@@ -398,9 +410,10 @@ function OfficeManagerAppContent() {
   const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
   const scope = useOfficeManagerScopeOptional()
   const hasClients = (scope?.clients.length ?? 0) > 0
+  const resolvedPortalTabs = buildPortalTabsFromConfig(scope?.scopedPortalConfig ?? null) ?? portalTabs
 
   return (
-    <AppLayout setPage={setPage} portalTabs={portalTabs}>
+    <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
       <ManagedUserBar />
 
       {page === "dashboard" && (
@@ -429,6 +442,7 @@ function OfficeManagerAppContent() {
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}
       {hasClients && page === "settings" && <SettingsPage />}
+      {page === "account" && <AccountPage />}
       {!hasClients && page !== "dashboard" && (
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>
       )}

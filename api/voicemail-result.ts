@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
+import { createLeadForInboundCall, createServiceSupabase, getOrCreateConversation, getOrCreateCustomerByPhone, logCommunicationEvent, lookupChannelById, normalizePhone, pickFirstString } from "./_communications.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -25,6 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (channel?.user_id && from) {
       const customer = await getOrCreateCustomerByPhone(supabase, channel.user_id, from)
       const conversationId = await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
+      const leadId = await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from)
       const summaryText =
         channel.voicemail_mode === "summary" && transcriptionText
           ? transcriptionText.length > 280
@@ -36,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         user_id: channel.user_id,
         customer_id: customer.customerId,
         conversation_id: conversationId,
+        lead_id: leadId,
         channel_id: channel.id,
         event_type: "voicemail",
         direction: "inbound",
