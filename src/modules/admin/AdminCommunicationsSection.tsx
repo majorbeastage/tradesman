@@ -61,16 +61,19 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
     }
     setLoading(true)
     setError("")
-    void supabase
-      .from("client_communication_channels")
-      .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
-      .eq("user_id", selectedUserId)
-      .order("created_at", { ascending: true })
-      .then(({ data, error: err }) => {
+    void (async () => {
+      try {
+        const { data, error: err } = await supabase
+          .from("client_communication_channels")
+          .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
+          .eq("user_id", selectedUserId)
+          .order("created_at", { ascending: true })
         if (err) setError(err.message)
         setRows(((data as ChannelRow[] | null) ?? []).map((r) => ({ ...r })))
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        setLoading(false)
+      }
+    })()
   }, [selectedUserId, allUsersId])
 
   function updateRow(id: string, patch: Partial<ChannelRow>) {
