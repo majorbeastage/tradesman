@@ -33,7 +33,13 @@ type ProfileForm = {
   voicemail_greeting_pin: string
   forward_dial_caller_id_mode: "caller_number" | "twilio_number"
   forward_whisper_on_answer: boolean
+  forward_whisper_announcement_template: string
+  forward_whisper_only_outside_business_hours: boolean
+  forward_whisper_require_keypress: boolean
 }
+
+const DEFAULT_WHISPER_TEMPLATE_HINT =
+  "Incoming Tradesman call from {caller_name}. Caller number {caller_phone_spoken}. Leave blank for the default announcement."
 
 const TIMEZONE_OPTIONS = [
   "America/New_York",
@@ -158,6 +164,9 @@ export default function AccountPage() {
     voicemail_greeting_pin: createGreetingPin(),
     forward_dial_caller_id_mode: "caller_number",
     forward_whisper_on_answer: false,
+    forward_whisper_announcement_template: "",
+    forward_whisper_only_outside_business_hours: false,
+    forward_whisper_require_keypress: false,
   })
 
   const email = useMemo(() => user?.email ?? "", [user?.email])
@@ -181,7 +190,7 @@ export default function AccountPage() {
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer")
+          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
           .eq("id", user.id)
           .single()
         if (error) throw error
@@ -204,6 +213,9 @@ export default function AccountPage() {
           voicemail_greeting_pin: normalizePin(data?.voicemail_greeting_pin ?? "") || createGreetingPin(),
           forward_dial_caller_id_mode: data?.forward_dial_caller_id_mode === "twilio_number" ? "twilio_number" : "caller_number",
           forward_whisper_on_answer: data?.forward_whisper_on_answer === true,
+          forward_whisper_announcement_template: typeof data?.forward_whisper_announcement_template === "string" ? data.forward_whisper_announcement_template : "",
+          forward_whisper_only_outside_business_hours: data?.forward_whisper_only_outside_business_hours === true,
+          forward_whisper_require_keypress: data?.forward_whisper_require_keypress === true,
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -240,6 +252,9 @@ export default function AccountPage() {
         voicemail_greeting_pin: normalizePin(form.voicemail_greeting_pin) || createGreetingPin(),
         forward_dial_caller_id_mode: form.forward_dial_caller_id_mode,
         forward_whisper_on_answer: form.forward_whisper_on_answer,
+        forward_whisper_announcement_template: form.forward_whisper_announcement_template.trim() || null,
+        forward_whisper_only_outside_business_hours: form.forward_whisper_only_outside_business_hours,
+        forward_whisper_require_keypress: form.forward_whisper_require_keypress,
         updated_at: new Date().toISOString(),
       }
       const { error } = await supabase.from("profiles").update(payload).eq("id", user.id)
@@ -536,16 +551,69 @@ export default function AccountPage() {
                     Show my Tradesman / Twilio business number as caller ID. A custom title such as &quot;Tradesman Systems&quot; on the screen is controlled by your carrier&apos;s CNAM for that number, not by this app.
                   </span>
                 </label>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
-                  <input
-                    type="checkbox"
-                    checked={form.forward_whisper_on_answer}
-                    onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_on_answer: e.target.checked }))}
-                  />
-                  <span>
-                    When I answer, play a short announcement with the caller&apos;s name from my saved customers (when matched) and their phone number. This is heard on the call; it does not replace the phone&apos;s caller ID name.
-                  </span>
-                </label>
+                <div style={{ display: "grid", gap: 12, marginTop: 4 }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.forward_whisper_on_answer}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          forward_whisper_on_answer: e.target.checked,
+                          ...(e.target.checked
+                            ? {}
+                            : {
+                                forward_whisper_only_outside_business_hours: false,
+                                forward_whisper_require_keypress: false,
+                              }),
+                        }))
+                      }
+                    />
+                    <span>
+                      Play a short announcement (whisper) on my phone when I answer a forwarded call. Uses the caller&apos;s name from saved customers when matched, plus their number. This is audio on the call leg; it does not change the caller ID shown on the phone.
+                    </span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
+                    <input
+                      type="checkbox"
+                      disabled={!form.forward_whisper_on_answer}
+                      checked={form.forward_whisper_only_outside_business_hours}
+                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
+                    />
+                    <span>
+                      Only play the whisper outside of business hours (same schedule as above). During open hours, the call connects without the whisper.
+                    </span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
+                    <input
+                      type="checkbox"
+                      disabled={!form.forward_whisper_on_answer}
+                      checked={form.forward_whisper_require_keypress}
+                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
+                    />
+                    <span>
+                      After the announcement, you must accept or decline: press 1 or say answer to connect; press 2 or say decline to end the forward (caller typically goes to Tradesman voicemail). If you do nothing for a few seconds, it is treated like decline.
+                    </span>
+                  </label>
+                  <label style={{ display: "grid", gap: 6, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Custom announcement (optional)</span>
+                    <textarea
+                      value={form.forward_whisper_announcement_template}
+                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_announcement_template: e.target.value }))}
+                      disabled={!form.forward_whisper_on_answer}
+                      style={{ ...theme.formInput, minHeight: 88, resize: "vertical" }}
+                      placeholder={DEFAULT_WHISPER_TEMPLATE_HINT}
+                    />
+                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                      Placeholders: <code style={{ fontSize: 11 }}>{"{caller_name}"}</code>, <code style={{ fontSize: 11 }}>{"{caller_phone}"}</code>,{" "}
+                      <code style={{ fontSize: 11 }}>{"{caller_phone_spoken}"}</code> (digits with pauses for text-to-speech). If the name is unknown,{" "}
+                      <code style={{ fontSize: 11 }}>{"{caller_name}"}</code> is read as &quot;Unknown caller&quot;.
+                    </span>
+                  </label>
+                  <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>
+                    Without this screening step, hanging up during or after the whisper can behave inconsistently by carrier. With screening, timeout or an unclear response defaults to voicemail like declining.
+                  </p>
+                </div>
               </div>
             </div>
 

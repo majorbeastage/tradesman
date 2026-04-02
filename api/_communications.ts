@@ -69,6 +69,9 @@ export type UserRoutingProfile = {
   voicemail_greeting_pin: string
   forward_dial_caller_id_mode: "caller_number" | "twilio_number"
   forward_whisper_on_answer: boolean
+  forward_whisper_announcement_template: string | null
+  forward_whisper_only_outside_business_hours: boolean
+  forward_whisper_require_keypress: boolean
 }
 
 export function createServiceSupabase(): SupabaseClient {
@@ -122,7 +125,7 @@ export async function getUserRoutingProfile(
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer"
+      "call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress"
     )
     .eq("id", userId)
     .limit(1)
@@ -146,6 +149,14 @@ export async function getUserRoutingProfile(
     forward_dial_caller_id_mode:
       (data as { forward_dial_caller_id_mode?: string }).forward_dial_caller_id_mode === "twilio_number" ? "twilio_number" : "caller_number",
     forward_whisper_on_answer: (data as { forward_whisper_on_answer?: boolean }).forward_whisper_on_answer === true,
+    forward_whisper_announcement_template: (() => {
+      const t = (data as { forward_whisper_announcement_template?: string | null }).forward_whisper_announcement_template
+      const s = typeof t === "string" ? t.trim() : ""
+      return s || null
+    })(),
+    forward_whisper_only_outside_business_hours:
+      (data as { forward_whisper_only_outside_business_hours?: boolean }).forward_whisper_only_outside_business_hours === true,
+    forward_whisper_require_keypress: (data as { forward_whisper_require_keypress?: boolean }).forward_whisper_require_keypress === true,
   }
 }
 

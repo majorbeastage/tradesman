@@ -41,6 +41,15 @@ COMMENT ON COLUMN public.profiles.forward_dial_caller_id_mode IS 'caller_number 
 COMMENT ON COLUMN public.profiles.forward_whisper_on_answer IS 'When true, callee hears a short announcement (name from CRM if known + caller number) before the call connects.';
 
 ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS forward_whisper_announcement_template TEXT,
+  ADD COLUMN IF NOT EXISTS forward_whisper_only_outside_business_hours BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS forward_whisper_require_keypress BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public.profiles.forward_whisper_announcement_template IS 'Optional Say text for forward whisper; placeholders {caller_name}, {caller_phone}, {caller_phone_spoken}.';
+COMMENT ON COLUMN public.profiles.forward_whisper_only_outside_business_hours IS 'When true with whisper on, announcement plays only when the call is outside configured business hours.';
+COMMENT ON COLUMN public.profiles.forward_whisper_require_keypress IS 'When true, callee must accept after the announcement (press 1 or say answer) or decline (press 2 or say decline); timeout or unclear input hangs up like decline.';
+
+ALTER TABLE public.profiles
   DROP CONSTRAINT IF EXISTS profiles_forward_dial_caller_id_mode_check;
 ALTER TABLE public.profiles
   ADD CONSTRAINT profiles_forward_dial_caller_id_mode_check

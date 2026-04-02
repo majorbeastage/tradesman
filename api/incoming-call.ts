@@ -84,6 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const origin = requestPublicOrigin(req)
   const whisperParams = new URLSearchParams()
+  if (channel?.user_id) whisperParams.set("userId", channel.user_id)
   if (from) whisperParams.set("from", from)
   if (channel?.user_id && from) {
     try {
@@ -94,9 +95,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   const whisperQuery = whisperParams.toString()
-  const whisperUrl = whisperQuery ? `${origin}/api/forward-whisper?${whisperQuery}` : `${origin}/api/forward-whisper`
+  const whisperUrl = `${origin}/api/forward-whisper${whisperQuery ? `?${whisperQuery}` : ""}`
 
-  const useWhisper = routingProfile?.forward_whisper_on_answer === true
+  const withinBusinessHours = isWithinBusinessHours(routingProfile)
+  const whisperEnabled = routingProfile?.forward_whisper_on_answer === true
+  const whisperOnlyOutsideHours = routingProfile?.forward_whisper_only_outside_business_hours === true
+  const useWhisper =
+    whisperEnabled && channel?.user_id && (!whisperOnlyOutsideHours || !withinBusinessHours)
   const dialInner = useWhisper
     ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
     : xmlEscape(forwardTo)
