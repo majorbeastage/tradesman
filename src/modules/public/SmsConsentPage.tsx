@@ -1,4 +1,6 @@
+import { LEGAL_LINKS } from "../../lib/legalLinks"
 import { theme } from "../../styles/theme"
+import { PublicLegalNav } from "./PublicLegalNav"
 
 const consentStatement =
   "By providing your mobile phone number and opting in, you agree to receive text messages from Tradesman regarding customer support, appointment coordination, job updates, account notifications, and service-related follow-up. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help."
@@ -114,6 +116,21 @@ export default function SmsConsentPage() {
           </p>
           <p style={{ margin: 0, color: "#4b5563" }}>
             For support related to messaging, customers can also reply `HELP` or contact Tradesman through the business support channels listed on the main site.
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 18 }}>
+          <PublicLegalNav />
+          <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
+            For general privacy practices see{" "}
+            <a href={LEGAL_LINKS.privacy} style={{ color: theme.primary, fontWeight: 600 }}>
+              Privacy Policy
+            </a>{" "}
+            and{" "}
+            <a href={LEGAL_LINKS.terms} style={{ color: theme.primary, fontWeight: 600 }}>
+              Terms &amp; Conditions
+            </a>
+            .
           </p>
         </div>
       </div>

@@ -4,9 +4,8 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "rewrites": [
-    {
-      "source": "/sms-consent",
-      "destination": "/"
-    }
+    { "source": "/privacy", "destination": "/" },
+    { "source": "/terms", "destination": "/" },
+    { "source": "/sms-consent", "destination": "/" }
   ]
 }
