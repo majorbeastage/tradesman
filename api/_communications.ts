@@ -67,6 +67,8 @@ export type UserRoutingProfile = {
   voicemail_greeting_text: string
   voicemail_greeting_recording_url: string
   voicemail_greeting_pin: string
+  forward_dial_caller_id_mode: "caller_number" | "twilio_number"
+  forward_whisper_on_answer: boolean
 }
 
 export function createServiceSupabase(): SupabaseClient {
@@ -119,7 +121,9 @@ export async function getUserRoutingProfile(
   if (!userId) return null
   const { data, error } = await supabase
     .from("profiles")
-    .select("call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url")
+    .select(
+      "call_forwarding_enabled, call_forwarding_outside_business_hours, timezone, business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer"
+    )
     .eq("id", userId)
     .limit(1)
     .maybeSingle()
@@ -139,7 +143,38 @@ export async function getUserRoutingProfile(
     voicemail_greeting_recording_url:
       (data as { voicemail_greeting_recording_url?: string }).voicemail_greeting_recording_url?.trim() || "",
     voicemail_greeting_pin: (data as { voicemail_greeting_pin?: string }).voicemail_greeting_pin?.trim() || "",
+    forward_dial_caller_id_mode:
+      (data as { forward_dial_caller_id_mode?: string }).forward_dial_caller_id_mode === "twilio_number" ? "twilio_number" : "caller_number",
+    forward_whisper_on_answer: (data as { forward_whisper_on_answer?: boolean }).forward_whisper_on_answer === true,
   }
+}
+
+/** Lookup saved customer display name for caller ID whisper; does not create rows. */
+export async function lookupCustomerDisplayNameByPhone(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string
+): Promise<string | null> {
+  const normalized = normalizePhone(phone)
+  if (!normalized) return null
+  const { data: ident, error } = await supabase
+    .from("customer_identifiers")
+    .select("customer_id")
+    .eq("user_id", userId)
+    .eq("type", "phone")
+    .eq("value", normalized)
+    .limit(1)
+    .maybeSingle()
+  if (error || !ident?.customer_id) return null
+  const { data: cust } = await supabase
+    .from("customers")
+    .select("display_name")
+    .eq("id", ident.customer_id)
+    .eq("user_id", userId)
+    .maybeSingle()
+  const name = typeof cust?.display_name === "string" ? cust.display_name.trim() : ""
+  if (!name || /^Unknown\s*\(/i.test(name)) return null
+  return name
 }
 
 export function isWithinBusinessHours(profile: UserRoutingProfile | null, now = new Date()): boolean {

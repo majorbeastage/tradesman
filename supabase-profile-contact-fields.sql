@@ -17,7 +17,9 @@ ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS voicemail_greeting_mode TEXT NOT NULL DEFAULT 'ai_text',
   ADD COLUMN IF NOT EXISTS voicemail_greeting_text TEXT,
   ADD COLUMN IF NOT EXISTS voicemail_greeting_recording_url TEXT,
-  ADD COLUMN IF NOT EXISTS voicemail_greeting_pin TEXT;
+  ADD COLUMN IF NOT EXISTS voicemail_greeting_pin TEXT,
+  ADD COLUMN IF NOT EXISTS forward_dial_caller_id_mode TEXT NOT NULL DEFAULT 'caller_number',
+  ADD COLUMN IF NOT EXISTS forward_whisper_on_answer BOOLEAN NOT NULL DEFAULT false;
 
 COMMENT ON COLUMN public.profiles.primary_phone IS 'Primary business phone for the user profile.';
 COMMENT ON COLUMN public.profiles.business_address IS 'Formatted business mailing/service address for the user profile.';
@@ -35,6 +37,14 @@ COMMENT ON COLUMN public.profiles.voicemail_greeting_mode IS 'Preferred voicemai
 COMMENT ON COLUMN public.profiles.voicemail_greeting_text IS 'Text spoken when the Tradesman voicemail answers.';
 COMMENT ON COLUMN public.profiles.voicemail_greeting_recording_url IS 'Hosted audio URL for a recorded voicemail greeting.';
 COMMENT ON COLUMN public.profiles.voicemail_greeting_pin IS 'PIN used when calling in to record a voicemail greeting.';
+COMMENT ON COLUMN public.profiles.forward_dial_caller_id_mode IS 'caller_number = show inbound caller on forwarded leg; twilio_number = show this Twilio DID as caller ID.';
+COMMENT ON COLUMN public.profiles.forward_whisper_on_answer IS 'When true, callee hears a short announcement (name from CRM if known + caller number) before the call connects.';
+
+ALTER TABLE public.profiles
+  DROP CONSTRAINT IF EXISTS profiles_forward_dial_caller_id_mode_check;
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_forward_dial_caller_id_mode_check
+  CHECK (forward_dial_caller_id_mode IN ('caller_number', 'twilio_number'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS profiles_voicemail_greeting_pin_unique
   ON public.profiles (voicemail_greeting_pin)

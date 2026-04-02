@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react"
+import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../constants/helpDesk"
 import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
@@ -19,7 +21,7 @@ const DEFAULT_TABS = [
 ]
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
-  const itemStyle: React.CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
+  const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
   const allTabs = portalTabs && portalTabs.length > 0
     ? portalTabs
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
@@ -88,12 +90,30 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
         ))}
       </div>
 
+      <div
+        style={{
+          marginTop: "auto",
+          paddingTop: 12,
+          borderTop: `1px solid rgba(249,115,22,0.25)`,
+          fontSize: 11,
+          lineHeight: 1.45,
+          color: "rgba(255,255,255,0.75)",
+        }}
+      >
+        <div style={{ fontWeight: 700, color: theme.primary, marginBottom: 6, fontSize: 11, letterSpacing: 0.3 }}>Tradesman Help Desk</div>
+        <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
+          {HELP_DESK_PHONE_DISPLAY}
+        </a>
+        <div style={{ marginTop: 8, fontWeight: 700, color: theme.primary, fontSize: 11 }}>Voicemail greeting (call-in)</div>
+        <div>Same number — use your Account PIN</div>
+      </div>
+
       {onLogout && (
         <button
           type="button"
           onClick={() => { onLogout?.(); onClose?.() }}
           style={{
-            marginTop: "auto",
+            marginTop: 12,
             marginBottom: 8,
             padding: "8px 0",
             border: "none",
@@ -113,7 +133,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           type="button"
           onClick={() => { setPage("account"); onClose?.() }}
           style={{
-            marginTop: "auto",
+            marginTop: 0,
             marginBottom: "24px",
             padding: "4px",
             border: "none",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
+import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
@@ -30,6 +31,8 @@ type ProfileForm = {
   voicemail_greeting_text: string
   voicemail_greeting_recording_url: string
   voicemail_greeting_pin: string
+  forward_dial_caller_id_mode: "caller_number" | "twilio_number"
+  forward_whisper_on_answer: boolean
 }
 
 const TIMEZONE_OPTIONS = [
@@ -153,6 +156,8 @@ export default function AccountPage() {
     voicemail_greeting_text: "Sorry we missed your call. Please leave a message after the tone.",
     voicemail_greeting_recording_url: "",
     voicemail_greeting_pin: createGreetingPin(),
+    forward_dial_caller_id_mode: "caller_number",
+    forward_whisper_on_answer: false,
   })
 
   const email = useMemo(() => user?.email ?? "", [user?.email])
@@ -176,7 +181,7 @@ export default function AccountPage() {
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin")
+          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer")
           .eq("id", user.id)
           .single()
         if (error) throw error
@@ -197,6 +202,8 @@ export default function AccountPage() {
           voicemail_greeting_text: data?.voicemail_greeting_text ?? "Sorry we missed your call. Please leave a message after the tone.",
           voicemail_greeting_recording_url: data?.voicemail_greeting_recording_url ?? "",
           voicemail_greeting_pin: normalizePin(data?.voicemail_greeting_pin ?? "") || createGreetingPin(),
+          forward_dial_caller_id_mode: data?.forward_dial_caller_id_mode === "twilio_number" ? "twilio_number" : "caller_number",
+          forward_whisper_on_answer: data?.forward_whisper_on_answer === true,
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -231,6 +238,8 @@ export default function AccountPage() {
         voicemail_greeting_text: form.voicemail_greeting_text.trim() || "Sorry we missed your call. Please leave a message after the tone.",
         voicemail_greeting_recording_url: form.voicemail_greeting_recording_url.trim() || null,
         voicemail_greeting_pin: normalizePin(form.voicemail_greeting_pin) || createGreetingPin(),
+        forward_dial_caller_id_mode: form.forward_dial_caller_id_mode,
+        forward_whisper_on_answer: form.forward_whisper_on_answer,
         updated_at: new Date().toISOString(),
       }
       const { error } = await supabase.from("profiles").update(payload).eq("id", user.id)
@@ -494,14 +503,50 @@ export default function AccountPage() {
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600, marginTop: 12 }}>
                 <input
                   type="checkbox"
-                  checked={form.call_forwarding_outside_business_hours}
-                  onChange={(e) => setForm((prev) => ({ ...prev, call_forwarding_outside_business_hours: e.target.checked }))}
+                  checked={!form.call_forwarding_outside_business_hours}
+                  onChange={(e) => setForm((prev) => ({ ...prev, call_forwarding_outside_business_hours: !e.target.checked }))}
                 />
-                Keep forwarding on outside business hours
+                Turn forwarding off outside of business hours
               </label>
               <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>
-                If forwarding is off, unanswered calls go straight into your Tradesman voicemail instead of the forwarded phone's voicemail.
+                When checked, calls only forward during the business hours you set above. When unchecked, calls may still forward on closed days or outside those hours. If forwarding is off entirely, unanswered calls use Tradesman voicemail.
               </p>
+
+              <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Forwarded call — caller ID on your phone</span>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="forward_dial_caller_id_mode"
+                    checked={form.forward_dial_caller_id_mode === "caller_number"}
+                    onChange={() => setForm((prev) => ({ ...prev, forward_dial_caller_id_mode: "caller_number" }))}
+                  />
+                  <span>
+                    Show the caller&apos;s number (default). Your phone displays who is calling when Twilio and your carrier allow it.
+                  </span>
+                </label>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="forward_dial_caller_id_mode"
+                    checked={form.forward_dial_caller_id_mode === "twilio_number"}
+                    onChange={() => setForm((prev) => ({ ...prev, forward_dial_caller_id_mode: "twilio_number" }))}
+                  />
+                  <span>
+                    Show my Tradesman / Twilio business number as caller ID. A custom title such as &quot;Tradesman Systems&quot; on the screen is controlled by your carrier&apos;s CNAM for that number, not by this app.
+                  </span>
+                </label>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.forward_whisper_on_answer}
+                    onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_on_answer: e.target.checked }))}
+                  />
+                  <span>
+                    When I answer, play a short announcement with the caller&apos;s name from my saved customers (when matched) and their phone number. This is heard on the call; it does not replace the phone&apos;s caller ID name.
+                  </span>
+                </label>
+              </div>
             </div>
 
             <div style={{ display: "grid", gap: 12, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
@@ -621,6 +666,19 @@ export default function AccountPage() {
             </div>
           </div>
         )}
+      </div>
+
+      <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
+        <h2 style={{ margin: "0 0 10px", fontSize: 18, color: theme.text }}>Tradesman Help Desk &amp; voicemail greeting line</h2>
+        <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+          <strong style={{ color: theme.text }}>Help Desk:</strong>{" "}
+          <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+            {HELP_DESK_PHONE_DISPLAY}
+          </a>
+        </p>
+        <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+          <strong style={{ color: theme.text }}>Voicemail greeting (call-in):</strong> same number — call from your primary phone (or verify with your account number), enter your 6-digit PIN from this page, and record your greeting.
+        </p>
       </div>
     </div>
   )

@@ -9,6 +9,7 @@ import {
   isWithinBusinessHours,
   logCommunicationEvent,
   lookupChannelByPublicAddress,
+  lookupCustomerDisplayNameByPhone,
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
@@ -25,6 +26,13 @@ function xmlEscape(value: string): string {
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
   return res.status(200).send(body)
+}
+
+function requestPublicOrigin(req: VercelRequest): string {
+  const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
+  const host = pickFirstString(req.headers.host)
+  if (!host) return "https://tradesman.vercel.app"
+  return `${proto}://${host}`
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -69,11 +77,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const dialActionUrl = `/api/dial-result${query.size ? `?${query.toString()}` : ""}`
+  const twilioDid = to || normalizePhone(channel?.public_address ?? "") || ""
+  const inboundFrom = from && !/^anonymous$/i.test(from) ? from : twilioDid
+  const callerIdForDial =
+    routingProfile?.forward_dial_caller_id_mode === "twilio_number" && twilioDid ? twilioDid : inboundFrom || twilioDid
+
+  const origin = requestPublicOrigin(req)
+  const whisperParams = new URLSearchParams()
+  if (from) whisperParams.set("from", from)
+  if (channel?.user_id && from) {
+    try {
+      const whisperName = await lookupCustomerDisplayNameByPhone(supabase, channel.user_id, from)
+      if (whisperName) whisperParams.set("name", whisperName)
+    } catch {
+      // Whisper still works without CRM name
+    }
+  }
+  const whisperQuery = whisperParams.toString()
+  const whisperUrl = whisperQuery ? `${origin}/api/forward-whisper?${whisperQuery}` : `${origin}/api/forward-whisper`
+
+  const useWhisper = routingProfile?.forward_whisper_on_answer === true
+  const dialInner = useWhisper
+    ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
+    : xmlEscape(forwardTo)
+
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
-    `<Dial timeout="20" action="${xmlEscape(dialActionUrl)}" method="POST">` +
-    `${xmlEscape(forwardTo)}` +
+    `<Dial timeout="20" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
+    dialInner +
     `</Dial>` +
     `</Response>`
 
