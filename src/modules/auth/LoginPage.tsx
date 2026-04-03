@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import type { UserRole } from "../../contexts/AuthContext"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 
 type LoginType = "user" | "office_manager" | "admin"
@@ -91,7 +92,8 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
   const isAdminLogin = initialLoginType === "admin"
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: theme.background }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: theme.background }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <form onSubmit={handleSubmit} style={formStyle}>
         <button
           type="button"
@@ -199,6 +201,8 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           </p>
         )}
       </form>
+      </div>
+      <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 20 }} />
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { LEGAL_LINKS } from "../../lib/legalLinks"
 import { theme } from "../../styles/theme"
 import { PublicLegalNav } from "./PublicLegalNav"
@@ -133,6 +134,7 @@ export default function SmsConsentPage() {
             .
           </p>
         </div>
+        <CopyrightVersionFooter variant="default" align="center" style={{ borderTop: "none", paddingTop: 8 }} />
       </div>
     </div>
   )

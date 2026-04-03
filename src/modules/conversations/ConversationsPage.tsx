@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, type ReactNode } from "react"
+import { useEffect, useState, useMemo, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
@@ -39,7 +39,54 @@ type ConversationRow = {
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
 
-function ConvoCollapsible({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+/** Supabase PostgrestError and other objects stringify to [object Object] in alerts */
+function formatAppError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>
+    const msg = typeof o.message === "string" ? o.message : ""
+    const details = typeof o.details === "string" ? o.details : ""
+    const hint = typeof o.hint === "string" ? o.hint : ""
+    const code = typeof o.code === "string" ? o.code : ""
+    const parts = [msg, details, hint, code && `(${code})`].filter(Boolean)
+    if (parts.length) return parts.join(" — ")
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
+function getChannelReadAtIso(metadata: unknown, channel: string): string | undefined {
+  if (!metadata || typeof metadata !== "object") return undefined
+  const m = metadata as Record<string, unknown>
+  const cr = m.convoReadAt
+  if (!cr || typeof cr !== "object" || Array.isArray(cr)) return undefined
+  const v = (cr as Record<string, string>)[channel]
+  return typeof v === "string" ? v : undefined
+}
+
+function isAfterReadAt(eventIso: string | null | undefined, readAtIso: string | undefined): boolean {
+  if (!eventIso) return false
+  if (!readAtIso) return true
+  return new Date(eventIso).getTime() > new Date(readAtIso).getTime()
+}
+
+function ConvoCollapsible({
+  title,
+  defaultOpen,
+  showUnreadDot,
+  onOpen,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  showUnreadDot?: boolean
+  /** Called when the user expands this section (not on initial mount). */
+  onOpen?: () => void
+  children: ReactNode
+}) {
   const [open, setOpen] = useState(defaultOpen ?? false)
   return (
     <div
@@ -53,7 +100,13 @@ function ConvoCollapsible({ title, defaultOpen, children }: { title: string; def
     >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v
+            if (next && onOpen) onOpen()
+            return next
+          })
+        }}
         style={{
           width: "100%",
           display: "flex",
@@ -66,10 +119,25 @@ function ConvoCollapsible({ title, defaultOpen, children }: { title: string; def
           textAlign: "left",
           fontWeight: 600,
           fontSize: 14,
-          color: theme.text,
+          color: "#111827",
         }}
       >
-        <span>{title}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {title}
+          {showUnreadDot ? (
+            <span
+              title="Unread"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#ea580c",
+                flexShrink: 0,
+                boxShadow: "0 0 0 2px rgba(234,88,12,0.25)",
+              }}
+            />
+          ) : null}
+        </span>
         <span style={{ fontSize: 18, lineHeight: 1, color: "#6b7280" }} aria-hidden>
           {open ? "−" : "+"}
         </span>
@@ -315,6 +383,35 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     loadConversations()
   }, [userId])
 
+  /** Default-open SMS + email sections are visible when the row opens — mark read in one update to avoid parallel metadata races. */
+  useEffect(() => {
+    if (!supabase || !selectedConversation?.id) return
+    let cancelled = false
+    const convoId = selectedConversation.id
+    const prev =
+      selectedConversation.metadata && typeof selectedConversation.metadata === "object"
+        ? { ...(selectedConversation.metadata as Record<string, unknown>) }
+        : {}
+    const prevRead =
+      prev.convoReadAt && typeof prev.convoReadAt === "object" && !Array.isArray(prev.convoReadAt)
+        ? { ...(prev.convoReadAt as Record<string, string>) }
+        : {}
+    const now = new Date().toISOString()
+    const convoReadAt = { ...prevRead, sms: now, email: now }
+    const metadata = { ...prev, convoReadAt }
+    void (async () => {
+      const { error } = await supabase.from("conversations").update({ metadata }).eq("id", convoId)
+      if (cancelled || error) {
+        if (error) console.error(error)
+        return
+      }
+      setSelectedConversation((c: any) => (c && c.id === convoId ? { ...c, metadata } : c))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedConversation?.id])
+
   async function loadCustomerList() {
     if (!supabase || !userId) return
     const { data } = await supabase
@@ -338,25 +435,29 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         }
         const { data: newCustomer, error: custErr } = await supabase
           .from("customers")
-          .insert({ display_name: addConvoNewName.trim() || null, notes: null })
+          .insert({ user_id: userId, display_name: addConvoNewName.trim() || null, notes: null })
           .select("id")
           .single()
         if (custErr) throw custErr
         customerId = newCustomer.id
         if (addConvoNewPhone.trim()) {
           await supabase.from("customer_identifiers").insert({
+            user_id: userId,
             customer_id: customerId,
             type: "phone",
             value: addConvoNewPhone.trim(),
-            is_primary: true
+            is_primary: true,
+            verified: false,
           })
         }
         if (addConvoNewEmail.trim()) {
           await supabase.from("customer_identifiers").insert({
+            user_id: userId,
             customer_id: customerId,
             type: "email",
             value: addConvoNewEmail.trim(),
-            is_primary: false
+            is_primary: false,
+            verified: false,
           })
         }
       } else {
@@ -472,19 +573,41 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     setEmailReplyBody("")
   }
 
+  async function markChannelRead(channel: "sms" | "email" | "voicemail") {
+    if (!supabase || !selectedConversation?.id) return
+    const prev =
+      selectedConversation.metadata && typeof selectedConversation.metadata === "object"
+        ? { ...(selectedConversation.metadata as Record<string, unknown>) }
+        : {}
+    const prevRead = prev.convoReadAt && typeof prev.convoReadAt === "object" && !Array.isArray(prev.convoReadAt) ? { ...(prev.convoReadAt as Record<string, string>) } : {}
+    const convoReadAt = { ...prevRead, [channel]: new Date().toISOString() }
+    const metadata = { ...prev, convoReadAt }
+    const { error } = await supabase.from("conversations").update({ metadata }).eq("id", selectedConversation.id)
+    if (error) console.error(error)
+    else setSelectedConversation((c: any) => (c && c.id === selectedConversation.id ? { ...c, metadata } : c))
+  }
+
   async function saveConversationDetails() {
-    if (!supabase || !selectedConversation?.id || !selectedConversation?.customer_id) return
+    if (!supabase || !selectedConversation?.id) return
+    if (!userId) {
+      alert("You must be signed in to save conversation details.")
+      return
+    }
+    if (!selectedConversation.customer_id) {
+      alert("This conversation is not linked to a customer record, so details cannot be saved. Try creating a new conversation from Add Conversation.")
+      return
+    }
     setDetailSaving(true)
     try {
       const cleanedIdentifiers = detailForm.identifiers
         .map((item) => ({ ...item, value: item.value.trim() }))
         .filter((item) => item.value)
 
-      const metadata =
+      const prevMeta =
         selectedConversation?.metadata && typeof selectedConversation.metadata === "object"
-          ? { ...selectedConversation.metadata }
+          ? { ...(selectedConversation.metadata as Record<string, unknown>) }
           : {}
-      metadata.portalValues = detailForm.portalValues
+      const metadata = { ...prevMeta, portalValues: detailForm.portalValues }
 
       const { error: convoErr } = await supabase
         .from("conversations")
@@ -511,10 +634,12 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
       if (cleanedIdentifiers.length > 0) {
         const payload = cleanedIdentifiers.map((item, index) => ({
+          user_id: userId,
           customer_id: selectedConversation.customer_id,
           type: item.type,
           value: item.value,
           is_primary: index === 0,
+          verified: false,
         }))
         const { error: insertErr } = await supabase.from("customer_identifiers").insert(payload)
         if (insertErr) throw insertErr
@@ -524,7 +649,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       await loadConversations()
       setDetailEditMode(false)
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      alert(formatAppError(err))
     } finally {
       setDetailSaving(false)
     }
@@ -653,6 +778,27 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     if (sortAsc) return aVal > bVal ? 1 : -1
     return aVal < bVal ? 1 : -1
   })
+
+  const unreadChannels = useMemo(() => {
+    if (!selectedConversation) {
+      return { sms: false, email: false, voicemail: false }
+    }
+    const smsRa = getChannelReadAtIso(selectedConversation.metadata, "sms")
+    const inboundSms = messages.filter((m: any) => m.sender === "customer" && m.created_at)
+    const smsSorted = [...inboundSms].sort((a: any, b: any) => (a.created_at || "").localeCompare(b.created_at || ""))
+    const lastSms = smsSorted.length ? smsSorted[smsSorted.length - 1]?.created_at : undefined
+    const smsUnread = isAfterReadAt(lastSms, smsRa)
+
+    const emailRa = getChannelReadAtIso(selectedConversation.metadata, "email")
+    const inboundEmails = emailEvents.filter((e) => e.direction === "inbound" && e.created_at)
+    const emailSorted = [...inboundEmails].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
+    const lastEmail = emailSorted.length ? emailSorted[emailSorted.length - 1]?.created_at : undefined
+    const emailUnread = isAfterReadAt(lastEmail, emailRa)
+
+    return { sms: smsUnread, email: emailUnread, voicemail: false }
+  }, [selectedConversation, messages, emailEvents])
+
+  const selectedRowText = "#0f172a"
 
   return (
     <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
@@ -828,24 +974,16 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: isMobile ? "wrap" : "nowrap",
-            gap: 0,
-            alignItems: "stretch",
-            width: "100%",
-          }}
-        >
-          <div
-            style={{
-              flex: selectedConversation && !isMobile ? "1 1 320px" : "1 1 100%",
-              minWidth: isMobile ? 0 : 260,
-              maxWidth: selectedConversation ? "min(520px, 100%)" : "none",
-            }}
-          >
-            <div style={{ width: "100%", overflowX: "auto" }}>
-            <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse" }}>
+        <div style={{ width: "100%", overflowX: "auto" }}>
+            <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+              <colgroup>
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "14%" }} />
+                <col />
+              </colgroup>
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
                   <th
@@ -874,50 +1012,48 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     ? [...(convo.messages as MessageRow[])].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0]
                     : null
                   const lastMsgText = lastMsg?.content?.trim() ? (lastMsg.content!.length > 50 ? lastMsg.content!.slice(0, 50) + "…" : lastMsg.content) : "—"
-                  const isOpen = selectedConversationId === convo.id
+                  const isRowSelected = selectedConversationId === convo.id
+                  const cellBase = { padding: "8px" as const, color: isRowSelected ? selectedRowText : undefined, fontWeight: isRowSelected ? 600 as const : 400 as const }
                   return (
+                    <Fragment key={convo.id}>
                     <tr
-                      key={convo.id}
                       onClick={() => void activateConversationRow(convo.id)}
                       style={{
                         cursor: "pointer",
                         borderBottom: "1px solid #eee",
-                        background: isOpen ? "#e0f2fe" : "transparent",
+                        background: isRowSelected ? "#bae6fd" : "transparent",
                       }}
                     >
-                      <td style={{ padding: "8px", fontWeight: isOpen ? 600 : 400 }}>{convo.customers?.display_name ?? "—"}</td>
-                      <td style={{ padding: "8px" }}>{convo.channel === "email" ? (email || "—") : (phone || "—")}</td>
-                      <td style={{ padding: "8px" }}>{convo.channel ?? "—"}</td>
-                      <td style={{ padding: "8px" }}>{convo.status ?? "—"}</td>
-                      <td style={{ padding: "8px" }}>
+                      <td style={cellBase}>{convo.customers?.display_name ?? "—"}</td>
+                      <td style={cellBase}>{convo.channel === "email" ? (email || "—") : (phone || "—")}</td>
+                      <td style={cellBase}>{convo.channel ?? "—"}</td>
+                      <td style={cellBase}>{convo.status ?? "—"}</td>
+                      <td style={cellBase}>
                         {convo.created_at ? new Date(convo.created_at).toLocaleDateString() : "—"}
                       </td>
-                      <td style={{ padding: "8px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg?.content ?? undefined}>{lastMsgText}</td>
+                      <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg?.content ?? undefined}>{lastMsgText}</td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            </div>
-            <p style={{ fontSize: 12, color: "#6b7280", marginTop: 8, marginBottom: 0 }}>
-              Tip: click a row to open the detail panel; click the same row again to collapse it.
-            </p>
-          </div>
-
-          {selectedConversation && (
-            <div
-              style={{
-                flex: "1 1 360px",
-                minWidth: isMobile ? 0 : 280,
-                borderLeft: isMobile ? "none" : `1px solid ${theme.border}`,
-                borderTop: isMobile ? `1px solid ${theme.border}` : "none",
-                paddingLeft: isMobile ? 0 : 20,
-                paddingTop: isMobile ? 16 : 0,
-                paddingBottom: 24,
-                background: "#fafafa",
-                borderRadius: isMobile ? 8 : "0 8px 8px 0",
-              }}
-            >
+                    {isRowSelected ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        style={{
+                          padding: 0,
+                          borderBottom: "1px solid #e5e7eb",
+                          background: "#f8fafc",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            padding: "16px 18px 20px",
+                            maxWidth: "min(960px, 100%)",
+                            boxSizing: "border-box",
+                          }}
+                        >
+              {selectedConversation?.id === convo.id ? (
+              <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>
@@ -1025,8 +1161,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 12, fontWeight: 700 }}>Contact methods</span>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "phone", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>Add phone</button>
-                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "email", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>Add email</button>
+                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "phone", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer", color: "#111827", fontWeight: 600 }}>Add phone</button>
+                          <button type="button" onClick={() => setDetailForm((prev) => ({ ...prev, identifiers: [...prev.identifiers, { id: crypto.randomUUID(), type: "email", value: "" }] }))} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer", color: "#111827", fontWeight: 600 }}>Add email</button>
                         </div>
                       </div>
                       {detailForm.identifiers.length === 0 ? (
@@ -1090,15 +1226,24 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 )}
               </div>
 
-              <ConvoCollapsible title="Text messages" defaultOpen>
+              <div style={{ display: "flex", flexDirection: "column", gap: 0, width: "100%", maxWidth: 720 }}>
+              <ConvoCollapsible
+                key={`${selectedConversation.id}-sms`}
+                title="Text messages"
+                defaultOpen
+                showUnreadDot={unreadChannels.sms}
+                onOpen={() => void markChannelRead("sms")}
+              >
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
                     padding: 12,
                     borderRadius: 8,
                     background: "#fff",
-                    maxHeight: 320,
+                    minHeight: 200,
+                    maxHeight: 280,
                     overflow: "auto",
+                    boxSizing: "border-box",
                   }}
                 >
                   {messages.length === 0 ? (
@@ -1119,53 +1264,81 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     ))
                   )}
                 </div>
-                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <textarea
-                    value={replyBody}
-                    onChange={(e) => setReplyBody(e.target.value)}
-                    rows={3}
-                    placeholder="Reply to this text conversation..."
-                    style={{ ...theme.formInput, resize: "vertical" }}
-                  />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>
-                      Sends through your configured SMS provider from the same business number when supported.
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void sendReply()}
-                      disabled={replySending}
-                      style={{
-                        padding: "10px 16px",
-                        background: theme.primary,
-                        color: "white",
-                        border: "none",
-                        borderRadius: "6px",
-                        cursor: replySending ? "wait" : "pointer",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {replySending ? "Sending..." : "Send reply"}
-                    </button>
+                <ConvoCollapsible title="Compose reply" defaultOpen={false}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <textarea
+                      value={replyBody}
+                      onChange={(e) => setReplyBody(e.target.value)}
+                      rows={3}
+                      placeholder="Reply to this text conversation..."
+                      style={{ ...theme.formInput, resize: "vertical" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "#6b7280" }}>
+                        Sends through your configured SMS provider from the same business number when supported.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void sendReply()}
+                        disabled={replySending}
+                        style={{
+                          padding: "10px 16px",
+                          background: theme.primary,
+                          color: "white",
+                          border: "none",
+                          borderRadius: "6px",
+                          cursor: replySending ? "wait" : "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {replySending ? "Sending..." : "Send reply"}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                </ConvoCollapsible>
               </ConvoCollapsible>
 
-              <ConvoCollapsible title="Voicemails">
-                <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                  No voicemails are attached to this conversation yet. When call recordings are linked here, they will appear in this section.
-                </p>
-              </ConvoCollapsible>
-
-              <ConvoCollapsible title="Emails">
+              <ConvoCollapsible
+                key={`${selectedConversation.id}-vm`}
+                title="Voicemails"
+                showUnreadDot={unreadChannels.voicemail}
+                onOpen={() => void markChannelRead("voicemail")}
+              >
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
                     padding: 12,
                     borderRadius: 8,
                     background: "#fff",
-                    maxHeight: 320,
+                    minHeight: 120,
+                    maxHeight: 200,
                     overflow: "auto",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                    No voicemails are attached to this conversation yet. When call recordings are linked here, they will appear in this section.
+                  </p>
+                </div>
+              </ConvoCollapsible>
+
+              <ConvoCollapsible
+                key={`${selectedConversation.id}-email`}
+                title="Emails"
+                defaultOpen
+                showUnreadDot={unreadChannels.email}
+                onOpen={() => void markChannelRead("email")}
+              >
+                <div
+                  style={{
+                    border: `1px solid ${theme.border}`,
+                    padding: 12,
+                    borderRadius: 8,
+                    background: "#fff",
+                    minHeight: 200,
+                    maxHeight: 280,
+                    overflow: "auto",
+                    boxSizing: "border-box",
                   }}
                 >
                   {emailEvents.length === 0 ? (
@@ -1187,43 +1360,46 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     ))
                   )}
                 </div>
-                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <input
-                    value={replySubject}
-                    onChange={(e) => setReplySubject(e.target.value)}
-                    placeholder="Email subject"
-                    style={theme.formInput}
-                  />
-                  <textarea
-                    value={emailReplyBody}
-                    onChange={(e) => setEmailReplyBody(e.target.value)}
-                    rows={5}
-                    placeholder="Write an email reply..."
-                    style={{ ...theme.formInput, resize: "vertical" }}
-                  />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12, color: "#6b7280" }}>
-                      Sends through your configured business email channel when available.
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void sendEmailReply()}
-                      disabled={emailSending}
-                      style={{
-                        padding: "10px 16px",
-                        background: theme.primary,
-                        color: "white",
-                        border: "none",
-                        borderRadius: "6px",
-                        cursor: emailSending ? "wait" : "pointer",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {emailSending ? "Sending..." : "Send email"}
-                    </button>
+                <ConvoCollapsible title="Compose email" defaultOpen={false}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <input
+                      value={replySubject}
+                      onChange={(e) => setReplySubject(e.target.value)}
+                      placeholder="Email subject"
+                      style={theme.formInput}
+                    />
+                    <textarea
+                      value={emailReplyBody}
+                      onChange={(e) => setEmailReplyBody(e.target.value)}
+                      rows={5}
+                      placeholder="Write an email reply..."
+                      style={{ ...theme.formInput, resize: "vertical" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "#6b7280" }}>
+                        Sends through your configured business email channel when available.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void sendEmailReply()}
+                        disabled={emailSending}
+                        style={{
+                          padding: "10px 16px",
+                          background: theme.primary,
+                          color: "white",
+                          border: "none",
+                          borderRadius: "6px",
+                          cursor: emailSending ? "wait" : "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {emailSending ? "Sending..." : "Send email"}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                </ConvoCollapsible>
               </ConvoCollapsible>
+              </div>
 
               <button
                 type="button"
@@ -1312,9 +1488,23 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   Remove
                 </button>
               </div>
+              </>
+              ) : (
+                <p style={{ margin: 0, padding: "20px 8px", color: "#64748b", fontSize: 14 }}>Loading conversation…</p>
+              )}
+                        </div>
+                      </td>
+                    </tr>
+                    ) : null}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
             </div>
-          )}
-        </div>
+            <p style={{ fontSize: 12, color: "#6b7280", marginTop: 8, marginBottom: 0 }}>
+              Tip: click a row to expand conversation details below that row; click the same row again to collapse.
+            </p>
 
         {showInternalConversations && (
           <div style={{ marginTop: "32px" }}>

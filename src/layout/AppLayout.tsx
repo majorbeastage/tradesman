@@ -1,5 +1,6 @@
 import { useState } from "react"
 import Sidebar from "../components/Sidebar"
+import { CopyrightVersionFooter } from "../components/CopyrightVersionFooter"
 import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
@@ -93,6 +94,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
           </div>
         )}
         <main style={{ flex: 1, padding: isMobile ? "12px" : "20px", minWidth: 0, background: theme.charcoalSmoke }}>{children}</main>
+        <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
       </div>
     </div>
   )

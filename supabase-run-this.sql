@@ -5,6 +5,8 @@
 
 -- 1) Conversations: so "Remove" and "Send to Quotes" persist (conversation leaves the list)
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+--    JSON for portal field values, read receipts (fixes PGRST204 if metadata was missing)
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- 2) Quotes: so draft quotes show in Quotes tab and scheduled/removed filtering works
 ALTER TABLE public.quotes ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;

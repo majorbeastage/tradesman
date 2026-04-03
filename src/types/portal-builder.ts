@@ -151,6 +151,10 @@ export type PortalConfig = {
     calendar?: Record<string, boolean>
     quotes?: Record<string, boolean>
   }
+  /**
+   * My T (Account) tab: hide whole blocks from the user. Missing key or true = visible; false = hidden.
+   */
+  accountSections?: Record<string, boolean>
 }
 
 /** True if a standard page action should show (default visible). */
@@ -173,6 +177,23 @@ export function getOmPageActionVisible(
   const section = portalConfig?.om_page_actions?.[page]
   if (!section || typeof section !== "object") return true
   return section[actionId] !== false
+}
+
+/** Ordered list for portal builder + Account page visibility */
+export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
+  { id: "profile", label: "Business profile (email, name, website, primary phone)" },
+  { id: "business_address", label: "Business address" },
+  { id: "business_hours", label: "Timezone & business hours" },
+  { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
+  { id: "voicemail", label: "Voicemail greeting (script, upload, PIN)" },
+  { id: "help_desk", label: "Help desk number & call-in recording instructions" },
+  { id: "password_reset", label: "Password reset button" },
+]
+
+export function getAccountSectionVisible(portalConfig: PortalConfig | null, sectionId: string): boolean {
+  const s = portalConfig?.accountSections
+  if (!s || typeof s !== "object" || s[sectionId] === undefined) return true
+  return s[sectionId] !== false
 }
 
 /** If admin saved an empty list for these keys, merge app defaults (recurrence UI) instead of showing nothing. */
@@ -341,6 +362,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
     { id: 'custom_fields', label: 'Custom fields', type: 'button' },
   ],
+  account: [],
 }
 
 /** Default options for dropdown controls (suggested / available to add) */

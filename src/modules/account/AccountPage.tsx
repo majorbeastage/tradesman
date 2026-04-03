@@ -3,6 +3,8 @@ import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/h
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
+import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
+import { getAccountSectionVisible } from "../../types/portal-builder"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -18,6 +20,7 @@ type ProfileForm = {
   display_name: string
   website_url: string
   primary_phone: string
+  best_contact_phone: string
   address_line_1: string
   address_line_2: string
   address_city: string
@@ -144,6 +147,9 @@ export function AccountProfilePanel({
   adminContext = false,
 }: AccountProfilePanelProps) {
   const { user, refetchProfile } = useAuth()
+  const portalConfig = usePortalConfigForPage()
+  const showAccountSection = (sectionId: string) =>
+    adminContext || getAccountSectionVisible(portalConfig, sectionId)
   const [profileEmailFromDb, setProfileEmailFromDb] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -161,6 +167,7 @@ export function AccountProfilePanel({
     display_name: "",
     website_url: "",
     primary_phone: "",
+    best_contact_phone: "",
     address_line_1: "",
     address_line_2: "",
     address_city: "",
@@ -201,7 +208,7 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
@@ -210,6 +217,7 @@ export function AccountProfilePanel({
           display_name: data?.display_name ?? "",
           website_url: data?.website_url ?? "",
           primary_phone: formatPhone(data?.primary_phone ?? ""),
+          best_contact_phone: formatPhone((data as { best_contact_phone?: string | null })?.best_contact_phone ?? ""),
           address_line_1: data?.address_line_1 ?? "",
           address_line_2: data?.address_line_2 ?? "",
           address_city: data?.address_city ?? "",
@@ -247,6 +255,7 @@ export function AccountProfilePanel({
         display_name: form.display_name.trim() || null,
         website_url,
         primary_phone: normalizePhone(form.primary_phone) || null,
+        best_contact_phone: form.best_contact_phone.trim() ? normalizePhone(form.best_contact_phone) || null : null,
         address_line_1: form.address_line_1.trim() || null,
         address_line_2: form.address_line_2.trim() || null,
         address_city: form.address_city.trim() || null,
@@ -284,6 +293,7 @@ export function AccountProfilePanel({
         ...prev,
         website_url: website_url ?? "",
         primary_phone: formatPhone(payload.primary_phone ?? ""),
+        best_contact_phone: formatPhone(payload.best_contact_phone ?? ""),
       }))
       setMessage(adminContext ? "User account updated." : "Account updated.")
     } catch (err) {
@@ -419,6 +429,7 @@ export function AccountProfilePanel({
           <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
+            {showAccountSection("profile") && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Login email</span>
@@ -436,8 +447,20 @@ export function AccountProfilePanel({
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Primary phone</span>
                 <input value={form.primary_phone} onChange={(e) => setForm((prev) => ({ ...prev, primary_phone: e.target.value }))} onBlur={() => setForm((prev) => ({ ...prev, primary_phone: formatPhone(prev.primary_phone) }))} style={theme.formInput} placeholder="(555) 123-4567" />
               </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Best contact phone (optional)</span>
+                <input
+                  value={form.best_contact_phone}
+                  onChange={(e) => setForm((prev) => ({ ...prev, best_contact_phone: e.target.value }))}
+                  onBlur={() => setForm((prev) => ({ ...prev, best_contact_phone: formatPhone(prev.best_contact_phone) }))}
+                  style={theme.formInput}
+                  placeholder="If different from primary"
+                />
+              </label>
             </div>
+            )}
 
+            {showAccountSection("business_address") && (
             <div style={{ display: "grid", gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Business Address</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
@@ -467,7 +490,9 @@ export function AccountProfilePanel({
                 <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || "No address entered yet."}</div>
               </div>
             </div>
+            )}
 
+            {showAccountSection("business_hours") && (
             <div style={{ display: "grid", gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Timezone & Business Hours</h2>
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
@@ -532,7 +557,9 @@ export function AccountProfilePanel({
                 ))}
               </div>
             </div>
+            )}
 
+            {showAccountSection("call_forwarding") && (
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
@@ -623,7 +650,9 @@ export function AccountProfilePanel({
                 )}
               </div>
             </div>
+            )}
 
+            {showAccountSection("voicemail") && (
             <div style={{ display: "grid", gap: 12, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
               <div>
                 <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>Voicemail Greeting</h2>
@@ -719,6 +748,10 @@ export function AccountProfilePanel({
               <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
                 For best Twilio playback compatibility, uploaded greeting files should be `mp3` or `wav`.
               </p>
+            </div>
+            )}
+
+            {showAccountSection("help_desk") && (
               <div style={{ padding: 14, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
                 <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Tradesman Help Desk &amp; voicemail greeting line</h3>
                 <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
@@ -738,7 +771,7 @@ export function AccountProfilePanel({
                   <div>The recording updates this user&apos;s Tradesman voicemail greeting automatically.</div>
                 </div>
               </div>
-            </div>
+            )}
 
             {message && <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p>}
             {error && <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p>}
@@ -747,7 +780,7 @@ export function AccountProfilePanel({
               <button type="button" onClick={() => void handleSave()} disabled={saving} style={{ padding: "10px 16px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
                 {saving ? "Saving..." : adminContext ? "Save user account" : "Save account"}
               </button>
-              {showPasswordReset && (
+              {showPasswordReset && showAccountSection("password_reset") && (
                 <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer" }}>
                   {resetting ? "Sending..." : "Reset password"}
                 </button>

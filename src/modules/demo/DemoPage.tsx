@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 
 const DEMO_EMAILS = "joe@tradesman-us.com,justin@tradesman-us.com"
@@ -50,7 +51,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
   const labelStyle: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: theme.text }
 
   return (
-    <div style={{ minHeight: "100vh", background: theme.background }}>
+    <div style={{ minHeight: "100vh", background: theme.background, display: "flex", flexDirection: "column" }}>
       <header
         style={{
           padding: "16px 24px",
@@ -70,7 +71,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
         </button>
       </header>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: 24, flex: 1 }}>
         <h1 style={{ color: theme.text, marginBottom: 8 }}>Dashboard preview</h1>
         <p style={{ color: theme.text, opacity: 0.8, marginBottom: 24 }}>
           Start a conversation to get in touch with our team.
@@ -211,6 +212,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
           </div>
         )}
       </div>
+      <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 20 }} />
     </div>
   )
 }

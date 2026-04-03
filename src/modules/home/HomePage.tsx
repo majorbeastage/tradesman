@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import logo from "../../assets/logo.png"
 
@@ -6,6 +7,8 @@ type HomePageProps = {
   onLogin: () => void
   onOfficeManagerLogin: () => void
   onAdminLogin: () => void
+  onSignup: () => void
+  onAboutUs: () => void
   onRequestDemo: () => void
 }
 
@@ -47,8 +50,7 @@ const FEATURES: { id: string; title: string; body: string }[] = [
   },
 ]
 
-export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onRequestDemo }: HomePageProps) {
-  const year = new Date().getFullYear()
+export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo }: HomePageProps) {
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [pinnedId, setPinnedId] = useState<string | null>(null)
@@ -195,7 +197,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               </button>
               <button
                 type="button"
-                onClick={onRequestDemo}
+                onClick={onSignup}
                 style={{
                   padding: "12px 20px",
                   background: "transparent",
@@ -207,7 +209,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                Request a demo
+                Sign up
               </button>
             </div>
           </div>
@@ -334,16 +336,32 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               >
                 Request a demo
               </button>
+              <button
+                type="button"
+                onClick={onAboutUs}
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  padding: "10px 12px",
+                  background: "transparent",
+                  color: theme.charcoal,
+                  border: `2px solid ${theme.border}`,
+                  borderRadius: 10,
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                About Us
+              </button>
             </div>
           </div>
         </div>
 
         <div style={{ marginTop: "auto", paddingTop: 26 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ color: theme.text, opacity: 0.7, fontSize: 12 }}>
-              © {year} Tradesman. All rights reserved.
-            </div>
-            <div style={{ color: theme.text, opacity: 0.7, fontSize: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <CopyrightVersionFooter variant="default" style={{ borderTop: "none", paddingTop: 0, paddingBottom: 0, marginTop: 0 }} />
+            <div style={{ color: theme.text, opacity: 0.7, fontSize: 12, paddingBottom: 2 }}>
               Designed for desktop and mobile web.
             </div>
           </div>

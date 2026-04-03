@@ -1,0 +1,141 @@
+import { useEffect, useState } from "react"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
+import { theme } from "../../styles/theme"
+import { supabase } from "../../lib/supabase"
+import {
+  ABOUT_US_SETTINGS_KEY,
+  DEFAULT_ABOUT_US_CONTENT,
+  parseAboutUsContent,
+  type AboutUsContent,
+} from "../../types/about-us"
+import logo from "../../assets/logo.png"
+
+type Props = {
+  onBack: () => void
+}
+
+export default function AboutUsPage({ onBack }: Props) {
+  const [content, setContent] = useState<AboutUsContent>({ ...DEFAULT_ABOUT_US_CONTENT, blocks: [...DEFAULT_ABOUT_US_CONTENT.blocks] })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false)
+      return
+    }
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", ABOUT_US_SETTINGS_KEY)
+          .maybeSingle()
+        if (!error && data?.value) setContent(parseAboutUsContent(data.value))
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [])
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0f1419", color: "#e5e7eb" }}>
+      <div
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          inset: 0,
+          background:
+            "radial-gradient(800px 400px at 15% 0%, rgba(249,115,22,0.15), transparent 55%), radial-gradient(600px 300px at 85% 30%, rgba(255,255,255,0.06), transparent 50%)",
+          pointerEvents: "none",
+        }}
+      />
+      <div style={{ position: "relative", maxWidth: 760, margin: "0 auto", padding: "28px 20px 56px" }}>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{
+            marginBottom: 24,
+            padding: "10px 16px",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.2)",
+            borderRadius: 10,
+            color: "#fff",
+            fontWeight: 600,
+            cursor: "pointer",
+            fontSize: 14,
+          }}
+        >
+          ← Home
+        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
+          <img src={logo} alt="" style={{ width: 56, height: "auto", borderRadius: 12, opacity: 0.95 }} />
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: theme.primary, fontWeight: 800 }}>Tradesman</div>
+            <div style={{ fontSize: 13, opacity: 0.75 }}>Leads • Quotes • Scheduling</div>
+          </div>
+        </div>
+
+        {loading ? (
+          <p style={{ opacity: 0.8 }}>Loading…</p>
+        ) : (
+          <>
+            <h1 style={{ fontSize: "clamp(1.75rem, 4vw, 2.35rem)", fontWeight: 800, margin: "0 0 12px", letterSpacing: -0.5, lineHeight: 1.2 }}>
+              {content.title}
+            </h1>
+            <p style={{ fontSize: 18, opacity: 0.88, lineHeight: 1.55, margin: "0 0 36px", maxWidth: 640 }}>
+              {content.subtitle}
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+              {content.blocks.map((block) => {
+                if (block.type === "text") {
+                  return (
+                    <div
+                      key={block.id}
+                      style={{
+                        padding: "22px 24px",
+                        borderRadius: 14,
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        fontSize: 16,
+                        lineHeight: 1.7,
+                        color: "rgba(229,231,235,0.92)",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {block.body}
+                    </div>
+                  )
+                }
+                return (
+                  <figure key={block.id} style={{ margin: 0 }}>
+                    <div
+                      style={{
+                        borderRadius: 14,
+                        overflow: "hidden",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: "rgba(0,0,0,0.25)",
+                      }}
+                    >
+                      {block.url ? (
+                        <img src={block.url} alt={block.alt || ""} style={{ width: "100%", height: "auto", display: "block" }} />
+                      ) : (
+                        <div style={{ padding: 48, textAlign: "center", opacity: 0.5 }}>Image URL not set</div>
+                      )}
+                    </div>
+                    {block.alt ? (
+                      <figcaption style={{ marginTop: 10, fontSize: 13, opacity: 0.65, fontStyle: "italic" }}>{block.alt}</figcaption>
+                    ) : null}
+                  </figure>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        <CopyrightVersionFooter variant="about" />
+      </div>
+    </div>
+  )
+}

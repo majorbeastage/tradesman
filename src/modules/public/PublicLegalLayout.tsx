@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { LEGAL_LINKS } from "../../lib/legalLinks"
 import { theme } from "../../styles/theme"
 import { PublicLegalNav } from "./PublicLegalNav"
@@ -51,6 +52,7 @@ export function PublicLegalLayout({ title, subtitle, children }: Props) {
             .
           </p>
         </div>
+        <CopyrightVersionFooter variant="default" align="center" style={{ borderTop: "none", paddingTop: 8 }} />
       </div>
     </div>
   )

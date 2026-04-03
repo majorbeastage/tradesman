@@ -42,7 +42,8 @@ export default function AdminUsersSection() {
   const [lastName, setLastName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [role, setRole] = useState<"user" | "office_manager" | "admin">("user")
+  const [role, setRole] = useState<"user" | "new_user" | "office_manager" | "admin">("user")
+  const [roleSavingUserId, setRoleSavingUserId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState("")
   /** user_id (managed user) → office_manager_id */
@@ -151,6 +152,31 @@ export default function AdminUsersSection() {
   }, [userIdsKey])
 
   const officeManagerCandidates = users.filter((u) => u.role === "office_manager" || u.role === "admin")
+
+  async function handleTableRoleChange(userId: string, nextRole: string) {
+    if (!supabase) return
+    const row = users.find((u) => u.id === userId)
+    const prevRole = row?.role ?? "user"
+    const involvesAdmin = nextRole === "admin" || prevRole === "admin"
+    if (involvesAdmin) {
+      const ok = window.confirm(
+        "Admin access changes must be approved by joe@tradesman-us.com before they are considered final. Email notifications are not wired yet—only proceed if you have explicit approval.\n\nApply this role change in the database now?"
+      )
+      if (!ok) return
+    }
+    setRoleSavingUserId(userId)
+    setError("")
+    try {
+      const { error: err } = await supabase.from("profiles").update({ role: nextRole, updated_at: new Date().toISOString() }).eq("id", userId)
+      if (err) {
+        setError(err.message)
+        return
+      }
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: nextRole } : u)))
+    } finally {
+      setRoleSavingUserId(null)
+    }
+  }
 
   const filteredUsers = useMemo(() => {
     const q = userTableSearch.trim().toLowerCase()
@@ -387,7 +413,11 @@ export default function AdminUsersSection() {
       <AdminSettingBlock id="admin:users:add_user_heading">
       <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 16 }}>Add user</h2>
       <p style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
-        All profiles are created here. Choose role: User, Office Manager, or Admin.
+        All profiles are created here. Choose role: User, New User (onboarding), Office Manager, or Admin.
+      </p>
+      <p style={{ color: theme.text, opacity: 0.85, marginBottom: 12, fontSize: 13, lineHeight: 1.5, padding: 12, borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251, 191, 36, 0.12)" }}>
+        <strong>Admin role policy (email workflow pending):</strong> Any change that <strong>grants or removes</strong> admin access must be approved by{" "}
+        <strong>joe@tradesman-us.com</strong>. The app will ask for confirmation when you change a row to or from Admin; automated approval email is planned with the outgoing mail integration.
       </p>
       </AdminSettingBlock>
       <AdminSettingBlock id="admin:users:supabase_status">
@@ -454,10 +484,11 @@ export default function AdminUsersSection() {
           Role
           <select
             value={role}
-            onChange={(e) => setRole(e.target.value as "user" | "office_manager" | "admin")}
+            onChange={(e) => setRole(e.target.value as "user" | "new_user" | "office_manager" | "admin")}
             style={inputStyle}
           >
             <option value="user">User</option>
+            <option value="new_user">New User</option>
             <option value="office_manager">Office Manager</option>
             <option value="admin">Admin</option>
           </select>
@@ -562,9 +593,31 @@ export default function AdminUsersSection() {
                 <td style={{ padding: "12px", color: theme.text }}>{first}</td>
                 <td style={{ padding: "12px", color: theme.text }}>{last}</td>
                 <td style={{ padding: "12px", color: theme.text }}>{u.email ?? "—"}</td>
-                <td style={{ padding: "12px", color: theme.text }}>{u.role}</td>
+                <td style={{ padding: "12px", color: theme.text, minWidth: 160 }}>
+                  <select
+                    value={u.role}
+                    disabled={roleSavingUserId === u.id}
+                    onChange={(e) => void handleTableRoleChange(u.id, e.target.value)}
+                    style={{
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      fontSize: 13,
+                      width: "100%",
+                      maxWidth: 200,
+                      background: "white",
+                      color: theme.text,
+                    }}
+                  >
+                    <option value="user">user</option>
+                    <option value="new_user">new_user</option>
+                    <option value="office_manager">office_manager</option>
+                    <option value="admin">admin</option>
+                  </select>
+                  {roleSavingUserId === u.id && <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.8 }}>Saving…</span>}
+                </td>
                 <td style={{ padding: "12px", color: theme.text }}>
-                  {u.role === "user" ? (
+                  {u.role === "user" || u.role === "new_user" ? (
                     <select
                       value={omByUserId[u.id] ?? ""}
                       onChange={(e) => void handleSetOfficeManager(u.id, e.target.value || null)}

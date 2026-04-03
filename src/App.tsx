@@ -13,6 +13,8 @@ import AccountPage from "./modules/account/AccountPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
+import SignupPage from "./modules/auth/SignupPage"
+import AboutUsPage from "./modules/public/AboutUsPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import SmsConsentPage from "./modules/public/SmsConsentPage"
@@ -26,7 +28,7 @@ import { useIsMobile } from "./hooks/useIsMobile"
 import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
 
-type View = "home" | "login" | "admin-login" | "demo" | "app" | "office" | "admin"
+type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
 
 function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
@@ -175,6 +177,9 @@ function App() {
   if (pathname === "/sms-consent") {
     return <SmsConsentPage />
   }
+  if (pathname === "/about") {
+    return <AboutUsPage onBack={() => (window.location.href = "/")} />
+  }
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")
@@ -211,6 +216,8 @@ function App() {
         onLogin={() => { setLoginType("user"); setView("login"); setLoginError("") }}
         onOfficeManagerLogin={() => { setLoginType("office_manager"); setView("login"); setLoginError("") }}
         onAdminLogin={() => { setLoginType("admin"); setView("admin-login"); setLoginError("") }}
+        onSignup={() => setView("signup")}
+        onAboutUs={() => setView("about")}
         onRequestDemo={() => setView("demo")}
       />
     )
@@ -218,6 +225,19 @@ function App() {
 
   if (view === "demo") {
     return <DemoPage onBack={() => setView("home")} />
+  }
+
+  if (view === "signup") {
+    return (
+      <SignupPage
+        onBack={() => setView("home")}
+        onSuccessNeedVerify={() => setView("home")}
+      />
+    )
+  }
+
+  if (view === "about") {
+    return <AboutUsPage onBack={() => setView("home")} />
   }
 
   if (view === "login" || view === "admin-login") {

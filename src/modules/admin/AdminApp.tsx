@@ -7,24 +7,34 @@ import { AdminSettingBlock, AdminVisibilityFooter } from "../../components/admin
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
+import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import AdminUsersSection from "./AdminUsersSection"
 import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
 import AdminPortalAssistant from "./AdminPortalAssistant"
 import AdminCommunicationsSection from "./AdminCommunicationsSection"
+import AdminAboutUsSection from "./AdminAboutUsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   USER_PORTAL_TAB_IDS,
   TAB_ID_LABELS,
-  PORTAL_SETTING_KEYS,
-  PORTAL_SETTING_LABELS,
-  PORTAL_DROPDOWN_KEYS,
-  PORTAL_DROPDOWN_LABELS,
   PAGE_CONTROLS,
   DEFAULT_OPTIONS,
   LEADS_TABLE_COLUMN_IDS,
   LEADS_TABLE_COLUMN_LABELS,
+  ACCOUNT_PORTAL_SECTIONS,
   getDefaultControlItems,
+  getAccountSectionVisible,
 } from "../../types/portal-builder"
+import {
+  ALL_USERS_ID,
+  ALL_OFFICE_MANAGERS_ID,
+  ALL_NEW_USERS_ID,
+  ALL_ADMINS_ID,
+  isBulkPortalAudienceId,
+  isProfileUserId,
+  profilesMatchingPortalAudience,
+  labelForPortalAudience,
+} from "./portalAudiences"
 
 function getCustomActionButtonsFromConfig(cfg: PortalConfig, tabId: string): CustomActionButton[] {
   if (tabId === "leads") {
@@ -47,7 +57,6 @@ type ProfileRow = {
 }
 
 /** Batch-edit only: apply config to all profiles. Not used for login or admin auth — login uses the signed-in user's profile. */
-const ALL_USERS_ID = "__all__"
 
 /** User dropdown label: prefer email, then display_name, then role + short id */
 function profileOptionLabel(p: ProfileRow): string {
@@ -97,6 +106,8 @@ function hasRemovals(config: PortalConfig): boolean {
       const current = ov[controlId]
       if (Array.isArray(current) && current.length < defaultArr.length) return true
     }
+    const acct = config.accountSections
+    if (acct && typeof acct === "object" && !Array.isArray(acct) && Object.values(acct).some((v) => v === false)) return true
     return false
   } catch {
     return false
@@ -135,20 +146,6 @@ function getVisibleTabs(config: PortalConfig): Array<{ tab_id: string; label: st
   return all
     .filter((t) => getVisible(config, "tabs", t.id))
     .map((t) => ({ tab_id: t.id, label: t.label }))
-}
-
-function getAllSettingIds(config: PortalConfig): { id: string; label: string }[] {
-  const default_ = PORTAL_SETTING_KEYS.map((id) => ({ id, label: PORTAL_SETTING_LABELS[id] ?? id }))
-  const customList = Array.isArray(config.customSettings) ? config.customSettings : []
-  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
-  return [...default_, ...custom]
-}
-
-function getAllDropdownIds(config: PortalConfig): { id: string; label: string }[] {
-  const default_ = PORTAL_DROPDOWN_KEYS.map((id) => ({ id, label: PORTAL_DROPDOWN_LABELS[id] ?? id }))
-  const customList = Array.isArray(config.customDropdowns) ? config.customDropdowns : []
-  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
-  return [...default_, ...custom]
 }
 
 type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null, config?: PortalConfig) => ReactNode
@@ -463,6 +460,18 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
       )
     }) as MockFn,
   },
+  account: {
+    title: "My T (Account)",
+    description: "Business profile, routing-related fields, and support. Use the panel on the right to show or hide each block for this user.",
+    mock: (
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden", background: "var(--charcoal-smoke, #1f2937)", color: "#e5e7eb" }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}`, fontSize: 12, opacity: 0.9 }}>Account</div>
+        <div style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
+          <p style={{ margin: "0 0 8px" }}>Profile, address, hours, call forwarding, voicemail, help desk, password reset — visibility is controlled in the builder.</p>
+        </div>
+      </div>
+    ),
+  },
 }
 
 function getPreviewForTab(
@@ -521,8 +530,6 @@ function AdminAppInner() {
 
   // Add custom (inline new id/label)
   const [newTabLabel, setNewTabLabel] = useState("")
-  const [newSettingLabel, setNewSettingLabel] = useState("")
-  const [newDropdownLabel, setNewDropdownLabel] = useState("")
   const [newHeaderButtonLabel, setNewHeaderButtonLabel] = useState("")
   const [newSettingItemLabel, setNewSettingItemLabel] = useState("")
   const [newSettingItemType, setNewSettingItemType] = useState<'checkbox' | 'dropdown' | 'custom_field'>('checkbox')
@@ -536,7 +543,7 @@ function AdminAppInner() {
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
-  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications">("portal")
+  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications" | "about">("portal")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -561,9 +568,24 @@ function AdminAppInner() {
   const filteredProfiles = profiles.filter((p) =>
     profileOptionLabel(p).toLowerCase().includes(userSearchQuery.trim().toLowerCase())
   )
-  const selectedProfile = selectedId === ALL_USERS_ID ? null : profiles.find((p) => p.id === selectedId)
+  const selectedProfile =
+    !selectedId || isBulkPortalAudienceId(selectedId) ? null : profiles.find((p) => p.id === selectedId)
   const selectedDisplayLabel =
-    selectedId === ALL_USERS_ID ? "All users" : selectedProfile ? profileOptionLabel(selectedProfile) : ""
+    !selectedId
+      ? ""
+      : isBulkPortalAudienceId(selectedId)
+        ? labelForPortalAudience(selectedId)
+        : selectedProfile
+          ? profileOptionLabel(selectedProfile)
+          : ""
+
+  const communicationsMode: "all_users_insights" | "select_user_first" | "single_client" =
+    selectedId === ALL_USERS_ID
+      ? "all_users_insights"
+      : Boolean(selectedId) && isBulkPortalAudienceId(selectedId as string)
+        ? "select_user_first"
+        : "single_client"
+  const communicationsSelectedUserId = selectedId && isProfileUserId(selectedId) ? selectedId : null
 
   useEffect(() => {
     if (!supabase) {
@@ -580,20 +602,16 @@ function AdminAppInner() {
       setHasRemovedSomething(false)
       return
     }
-    if (selectedId === ALL_USERS_ID) {
-      // Default "All users" starts with empty config; seed from first profile so the builder isn't blank.
-      setConfig((prev) => {
-        if (prev && Object.keys(prev).length > 0) return prev
-        const p0 = profiles[0]
-        const raw = p0?.portal_config
-        return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {}
-      })
+    if (isBulkPortalAudienceId(selectedId)) {
+      const subset = profilesMatchingPortalAudience(profiles, selectedId)
+      const p0 = subset[0]
+      const raw = p0?.portal_config
+      setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
       setHasRemovedSomething(false)
       return
     }
     const p = profiles.find((x) => x.id === selectedId)
     const raw = p?.portal_config
-    // Normalize: DB may return null, or malformed JSON (e.g. string). Always set a plain object.
     setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {})
     setHasRemovedSomething(false)
   }, [selectedId, profiles])
@@ -610,16 +628,28 @@ function AdminAppInner() {
     setSaving(true)
     setError("")
     setMessage("")
-    if (selectedId === ALL_USERS_ID) {
+    if (isBulkPortalAudienceId(selectedId)) {
+      const targets = profilesMatchingPortalAudience(profiles, selectedId)
+      if (targets.length === 0) {
+        setSaving(false)
+        setMessage("No profiles match this audience yet.")
+        return
+      }
       let failed = 0
-      for (const p of profiles) {
+      for (const p of targets) {
         const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", p.id)
         if (err) failed++
       }
       setSaving(false)
-      setMessage(failed === 0 ? "Saved. Portal config applied to all users." : `Saved for ${profiles.length - failed} users. ${failed} failed.`)
+      const label = labelForPortalAudience(selectedId)
+      setMessage(
+        failed === 0
+          ? `Saved. Portal config applied to ${targets.length} profile(s) (${label}).`
+          : `Saved for ${targets.length - failed} of ${targets.length} profiles. ${failed} failed.`
+      )
       if (failed === 0) {
-        setProfiles((prev) => prev.map((p) => ({ ...p, portal_config: config })))
+        const targetIds = new Set(targets.map((t) => t.id))
+        setProfiles((prev) => prev.map((p) => (targetIds.has(p.id) ? { ...p, portal_config: config } : p)))
         setHasRemovedSomething(false)
       }
       return
@@ -639,34 +669,37 @@ function AdminAppInner() {
     setConfig(setVisible(config, section, key, !getVisible(config, section, key)))
   }
 
-  function addCustom(section: "customTabs" | "customSettings" | "customDropdowns", label: string) {
+  function addCustomTab(label: string) {
     const trimmed = label.trim()
     if (!trimmed) return
     const id = trimmed.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "")
     if (!id) return
-    const key = section === "customTabs" ? "tabs" : section === "customSettings" ? "settings" : "dropdowns"
-    const arr = (config[section] ?? []) as PortalCustomItem[]
+    const arr = (config.customTabs ?? []) as PortalCustomItem[]
     if (arr.some((x) => x.id === id)) return
-    const next: PortalConfig = {
+    setConfig({
       ...config,
-      [section]: [...arr, { id, label: trimmed }],
-      [key]: { ...config[key], [id]: true },
-    }
-    setConfig(next)
-    if (section === "customTabs") setNewTabLabel("")
-    if (section === "customSettings") setNewSettingLabel("")
-    if (section === "customDropdowns") setNewDropdownLabel("")
+      customTabs: [...arr, { id, label: trimmed }],
+      tabs: { ...config.tabs, [id]: true },
+    })
+    setNewTabLabel("")
   }
 
-  function removeCustom(section: "customTabs" | "customSettings" | "customDropdowns", id: string) {
+  function removeCustomTab(id: string) {
     setHasRemovedSomething(true)
-    const key = section === "customTabs" ? "tabs" : section === "customSettings" ? "settings" : "dropdowns"
-    const arr = ((config[section] ?? []) as PortalCustomItem[]).filter((x) => x.id !== id)
-    const next: PortalConfig = { ...config, [section]: arr.length ? arr : undefined }
-    const keyObj = { ...next[key] }
+    const arr = (config.customTabs ?? []).filter((x) => x.id !== id)
+    const next: PortalConfig = { ...config, customTabs: arr.length ? arr : undefined }
+    const keyObj = { ...next.tabs }
     delete keyObj[id]
-    next[key] = Object.keys(keyObj).length ? keyObj : undefined
+    next.tabs = Object.keys(keyObj).length ? keyObj : undefined
     setConfig(next)
+  }
+
+  function toggleAccountPortalSection(sectionId: string) {
+    const visible = getAccountSectionVisible(config, sectionId)
+    const acc = { ...(config.accountSections ?? {}) }
+    if (visible) acc[sectionId] = false
+    else delete acc[sectionId]
+    setConfig({ ...config, accountSections: Object.keys(acc).length ? acc : undefined })
   }
 
   function getOptionValues(controlId: string): string[] {
@@ -956,12 +989,29 @@ function AdminAppInner() {
           >
             Routing & Access
           </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("about")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "about" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "about" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            About Us page
+          </button>
         </div>
         </AdminSettingBlock>
         {(adminPanel === "portal" || adminPanel === "communications") && (
         <AdminSettingBlock id="admin:sidebar:portal_intro" variant="dark">
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
-          Select a user to configure their portal or routing/access settings.
+          Pick a person or an audience row (all users, all office managers, etc.) for portal defaults. Routing &amp; Access still needs one specific user.
         </p>
         </AdminSettingBlock>
         )}
@@ -1022,7 +1072,58 @@ function AdminAppInner() {
                   cursor: "pointer",
                 }}
               >
-                All users — apply settings to everyone
+                {labelForPortalAudience(ALL_USERS_ID)}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedId(ALL_OFFICE_MANAGERS_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: selectedId === ALL_OFFICE_MANAGERS_ID ? "rgba(249,115,22,0.3)" : "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {labelForPortalAudience(ALL_OFFICE_MANAGERS_ID)}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedId(ALL_NEW_USERS_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: selectedId === ALL_NEW_USERS_ID ? "rgba(249,115,22,0.3)" : "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {labelForPortalAudience(ALL_NEW_USERS_ID)}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedId(ALL_ADMINS_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: selectedId === ALL_ADMINS_ID ? "rgba(249,115,22,0.3)" : "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {labelForPortalAudience(ALL_ADMINS_ID)}
               </button>
               {filteredProfiles.length === 0 && (
                 <div style={{ padding: "10px 12px", color: "rgba(255,255,255,0.7)", fontSize: 13 }}>No matching users</div>
@@ -1080,10 +1181,12 @@ function AdminAppInner() {
           </div>
         ) : adminPanel === "communications" ? (
           <AdminCommunicationsSection
-            selectedUserId={selectedId}
+            mode={communicationsMode}
+            selectedUserId={communicationsSelectedUserId}
             selectedUserLabel={selectedDisplayLabel}
-            allUsersId={ALL_USERS_ID}
           />
+        ) : adminPanel === "about" ? (
+          <AdminAboutUsSection />
         ) : loading ? (
           <AdminSettingBlock id="admin:portal:loading_profiles">
           <p style={{ color: theme.text }}>Loading profiles…</p>
@@ -1101,7 +1204,12 @@ function AdminAppInner() {
             <AdminSettingBlock id="admin:portal:header">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
               <h1 style={{ color: theme.text, margin: 0 }}>
-                Portal config for {selectedId === ALL_USERS_ID ? "All users" : selectedProfile ? profileOptionLabel(selectedProfile) : "User"}
+                Portal config for{" "}
+                {isBulkPortalAudienceId(selectedId ?? "")
+                  ? labelForPortalAudience(selectedId!)
+                  : selectedProfile
+                    ? profileOptionLabel(selectedProfile)
+                    : "User"}
               </h1>
               <button
                 type="button"
@@ -1199,57 +1307,33 @@ function AdminAppInner() {
                             <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
                             <span style={{ color: theme.text }}>{label}</span>
                           </label>
-                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustom("customTabs", id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
+                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustomTab(id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
                         </AdminSettingBlock>
                       ))}
                       <AdminSettingBlock id="admin:portal:add_custom_tab">
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <input type="text" placeholder="New tab label" value={newTabLabel} onChange={(e) => setNewTabLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customTabs", newTabLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customTabs", newTabLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add tab</button>
+                        <input type="text" placeholder="New tab label" value={newTabLabel} onChange={(e) => setNewTabLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustomTab(newTabLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
+                        <button type="button" onClick={() => addCustomTab(newTabLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add tab</button>
                       </div>
                       </AdminSettingBlock>
                     </section>
-                    <section style={{ marginBottom: 24 }}>
-                      <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Settings sections</h2>
-                      {getAllSettingIds(config).map(({ id, label }) => (
-                        <AdminSettingBlock key={id} id={`admin:portal:setting_row:${id}`}>
-                        <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
-                          <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("settings", id)}>
-                            <input type="checkbox" checked={getVisible(config, "settings", id)} onChange={() => toggle("settings", id)} />
-                            <span style={{ color: theme.text }}>{label}</span>
-                          </label>
-                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customSettings ?? []).some((t) => t.id === id) ? removeCustom("customSettings", id) : setConfig(setVisible(config, "settings", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
-                        </div>
-                        </AdminSettingBlock>
-                      ))}
-                      <AdminSettingBlock id="admin:portal:add_custom_setting">
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <input type="text" placeholder="New setting label" value={newSettingLabel} onChange={(e) => setNewSettingLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customSettings", newSettingLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customSettings", newSettingLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
-                      </div>
-                      </AdminSettingBlock>
-                    </section>
-                    <section style={{ marginBottom: 24 }}>
-                      <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Dropdowns / options</h2>
-                      {getAllDropdownIds(config).map(({ id, label }) => (
-                        <AdminSettingBlock key={id} id={`admin:portal:dropdown_row:${id}`}>
-                        <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
-                          <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("dropdowns", id)}>
-                            <input type="checkbox" checked={getVisible(config, "dropdowns", id)} onChange={() => toggle("dropdowns", id)} />
-                            <span style={{ color: theme.text }}>{label}</span>
-                          </label>
-                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customDropdowns ?? []).some((t) => t.id === id) ? removeCustom("customDropdowns", id) : setConfig(setVisible(config, "dropdowns", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
-                        </div>
-                        </AdminSettingBlock>
-                      ))}
-                      <AdminSettingBlock id="admin:portal:add_custom_dropdown">
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <input type="text" placeholder="New dropdown label" value={newDropdownLabel} onChange={(e) => setNewDropdownLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustom("customDropdowns", newDropdownLabel))} style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 13 }} />
-                        <button type="button" onClick={() => addCustom("customDropdowns", newDropdownLabel)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer", fontSize: 13 }}>Add</button>
-                      </div>
-                      </AdminSettingBlock>
-                    </section>
+                    {previewPage === "account" ? (
+                      <section style={{ marginBottom: 24 }}>
+                        <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>My T (Account) — visible to user</h2>
+                        <p style={{ fontSize: 12, color: theme.text, opacity: 0.8, margin: "0 0 10px" }}>
+                          Uncheck a row to hide that block on the user&apos;s Account tab. Admins always see the full form in Routing &amp; Access.
+                        </p>
+                        {ACCOUNT_PORTAL_SECTIONS.map(({ id, label }) => (
+                          <AdminSettingBlock key={id} id={`admin:portal:account_section:${id}`}>
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggleAccountPortalSection(id)}>
+                              <input type="checkbox" checked={getAccountSectionVisible(config, id)} onChange={() => toggleAccountPortalSection(id)} />
+                              <span style={{ color: theme.text }}>{label}</span>
+                            </label>
+                          </AdminSettingBlock>
+                        ))}
+                      </section>
+                    ) : null}
                   </>
                 ) : (
                   <>
@@ -1516,7 +1600,7 @@ function AdminAppInner() {
                             </p>
                             <CalendarUserPreferencesEditor
                               profiles={profiles.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email ?? null }))}
-                              defaultUserId={selectedId === ALL_USERS_ID ? null : selectedId}
+                              defaultUserId={selectedId && isProfileUserId(selectedId) ? selectedId : null}
                             />
                           </>
                         )}
@@ -1698,6 +1782,7 @@ function AdminAppInner() {
           </>
         )}
         <AdminVisibilityFooter />
+        <CopyrightVersionFooter variant="default" />
       </main>
     </div>
   )

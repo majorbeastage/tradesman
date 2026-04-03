@@ -36,10 +36,12 @@ type AccessLogRow = {
   revoked_at: string | null
 }
 
+export type AdminCommunicationsMode = "all_users_insights" | "single_client" | "select_user_first"
+
 type Props = {
+  mode: AdminCommunicationsMode
   selectedUserId: string | null
   selectedUserLabel: string
-  allUsersId: string
 }
 
 type HelpDeskOption = {
@@ -136,7 +138,7 @@ function emptyAccessLog(userId: string): AccessLogRow {
   }
 }
 
-export default function AdminCommunicationsSection({ selectedUserId, selectedUserLabel, allUsersId }: Props) {
+export default function AdminCommunicationsSection({ mode, selectedUserId, selectedUserLabel }: Props) {
   const [rows, setRows] = useState<ChannelRow[]>([])
   const [accessLogs, setAccessLogs] = useState<AccessLogRow[]>([])
   const [allRows, setAllRows] = useState<Array<ChannelRow & { profile_name?: string | null; profile_email?: string | null }>>([])
@@ -150,7 +152,7 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
   const [error, setError] = useState("")
 
   useEffect(() => {
-    if (!supabase || selectedUserId !== allUsersId) return
+    if (!supabase || mode !== "all_users_insights") return
     setLoading(true)
     setError("")
     void (async () => {
@@ -216,10 +218,10 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
         setLoading(false)
       }
     })()
-  }, [selectedUserId, allUsersId])
+  }, [mode])
 
   useEffect(() => {
-    if (!supabase || !selectedUserId || selectedUserId === allUsersId) {
+    if (!supabase || mode !== "single_client" || !selectedUserId) {
       setRows([])
       setAccessLogs([])
       return
@@ -247,7 +249,7 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
         setLoading(false)
       }
     })()
-  }, [selectedUserId, allUsersId])
+  }, [mode, selectedUserId])
 
   function updateRow(id: string, patch: Partial<ChannelRow>) {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
@@ -258,7 +260,7 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
   }
 
   async function saveAll() {
-    if (!supabase || !selectedUserId || selectedUserId === allUsersId) return
+    if (!supabase || mode !== "single_client" || !selectedUserId) return
     setSaving(true)
     setMessage("")
     setError("")
@@ -345,7 +347,7 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
   }
 
   async function saveAccessLogs() {
-    if (!supabase || !selectedUserId || selectedUserId === allUsersId) return
+    if (!supabase || mode !== "single_client" || !selectedUserId) return
     setSavingAccess(true)
     setMessage("")
     setError("")
@@ -479,7 +481,7 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
   }
 
   async function saveHelpDeskSettings() {
-    if (!supabase || selectedUserId !== allUsersId) return
+    if (!supabase || mode !== "all_users_insights") return
     setSavingHelpDesk(true)
     setMessage("")
     setError("")
@@ -563,7 +565,20 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
     }
   }
 
-  if (selectedUserId === allUsersId) {
+  if (mode === "select_user_first") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <AdminSettingBlock id="admin:communications:pick_user">
+          <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Routing &amp; Access</h1>
+          <p style={{ color: theme.text, opacity: 0.85, margin: 0, lineHeight: 1.55 }}>
+            You have a <strong>group</strong> selected in the sidebar ({selectedUserLabel}). Choose a <strong>specific user</strong> to edit phone routing, access logs, and the account form. Group rows are for portal configuration only.
+          </p>
+        </AdminSettingBlock>
+      </div>
+    )
+  }
+
+  if (mode === "all_users_insights") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <AdminSettingBlock id="admin:communications:select_user">
@@ -717,11 +732,24 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
         {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
       </AdminSettingBlock>
 
-      {selectedUserId && (
-        <AdminSettingBlock id="admin:communications:user_account">
-          <AccountProfilePanel profileUserId={selectedUserId} adminContext />
-        </AdminSettingBlock>
-      )}
+      {mode === "single_client" && selectedUserId ? (
+        <div
+          style={{
+            padding: "14px 16px",
+            borderRadius: 8,
+            border: "1px solid #fbbf24",
+            background: "linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(245, 158, 11, 0.08))",
+            color: theme.text,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6, color: "#b45309" }}>Before Monday beta: voicemail &amp; greetings</div>
+          <div style={{ opacity: 0.95 }}>
+            Voicemail and greeting flows still need a focused test pass (upload, PIN, Twilio routing). Please budget time today to validate end-to-end. After this layout pass, we can move on to in-app email.
+          </div>
+        </div>
+      ) : null}
 
       <AdminSettingBlock id="admin:communications:channels">
         {loading ? (
@@ -874,6 +902,16 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
           </div>
         )}
       </AdminSettingBlock>
+
+      {mode === "single_client" && selectedUserId ? (
+        <AdminSettingBlock id="admin:communications:user_account">
+          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 18 }}>User account (My T)</h2>
+          <p style={{ color: theme.text, opacity: 0.8, margin: "0 0 12px", fontSize: 13 }}>
+            Full account form for this user. Portal Builder controls which blocks they see on their Account tab.
+          </p>
+          <AccountProfilePanel profileUserId={selectedUserId} adminContext />
+        </AdminSettingBlock>
+      ) : null}
     </div>
   )
 }

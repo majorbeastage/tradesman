@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
-    const allowedRoles = ["user", "office_manager", "admin"]
+    const allowedRoles = ["user", "new_user", "office_manager", "admin"]
     const roleVal = allowedRoles.includes(role) ? role : "user"
 
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({

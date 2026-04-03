@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 
-export type UserRole = "user" | "office_manager" | "admin"
+export type UserRole = "user" | "new_user" | "office_manager" | "admin"
 
 export type ProfileFetchResult = { role: UserRole | null; error?: string }
 
