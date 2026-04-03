@@ -185,8 +185,8 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "business_address", label: "Business address" },
   { id: "business_hours", label: "Timezone & business hours" },
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
-  { id: "voicemail", label: "Voicemail greeting (script, upload, PIN)" },
-  { id: "help_desk", label: "Help desk number & call-in recording instructions" },
+  { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
+  { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
   { id: "password_reset", label: "Password reset button" },
 ]
 

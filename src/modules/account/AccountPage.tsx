@@ -158,6 +158,7 @@ export function AccountProfilePanel({
   const [recordingGreeting, setRecordingGreeting] = useState(false)
   const [recordingSupported, setRecordingSupported] = useState(false)
   const [recordingPreviewUrl, setRecordingPreviewUrl] = useState("")
+  const [voicemailExpanded, setVoicemailExpanded] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -653,123 +654,167 @@ export function AccountProfilePanel({
             )}
 
             {showAccountSection("voicemail") && (
-            <div style={{ display: "grid", gap: 12, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
-              <div>
-                <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>Voicemail Greeting</h2>
-                <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
-                  Choose an AI text-to-voice greeting or use a hosted recording URL for a custom recorded greeting.
-                </p>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
-                  <input
-                    type="radio"
-                    name="voicemail_greeting_mode"
-                    checked={form.voicemail_greeting_mode === "ai_text"}
-                    onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "ai_text" }))}
-                  />
-                  AI text to voice
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
-                  <input
-                    type="radio"
-                    name="voicemail_greeting_mode"
-                    checked={form.voicemail_greeting_mode === "recorded"}
-                    onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "recorded" }))}
-                  />
-                  Recorded greeting
-                </label>
-              </div>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting script</span>
-                <textarea
-                  value={form.voicemail_greeting_text}
-                  onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_text: e.target.value }))}
-                  style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }}
-                  placeholder="Thanks for calling. We missed you. Please leave your name, number, and a short message after the tone."
-                />
-              </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Recorded greeting URL</span>
-                <input
-                  value={form.voicemail_greeting_recording_url}
-                  onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_recording_url: e.target.value }))}
-                  style={theme.formInput}
-                  placeholder="https://..."
-                />
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 220px) auto", gap: 10, alignItems: "end" }}>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call-in greeting PIN</span>
-                  <input
-                    value={form.voicemail_greeting_pin}
-                    onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_pin: normalizePin(e.target.value) }))}
-                    style={theme.formInput}
-                    placeholder="6-digit PIN"
-                    maxLength={6}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, voicemail_greeting_pin: createGreetingPin() }))}
-                  style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", height: 42 }}
-                >
-                  Generate new PIN
-                </button>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}>
-                  {uploadingGreeting ? "Uploading..." : "Upload greeting audio"}
-                  <input type="file" accept="audio/*" onChange={(e) => void handleGreetingFileChange(e)} disabled={uploadingGreeting} style={{ display: "none" }} />
-                </label>
-                {recordingSupported && (
-                  <button
-                    type="button"
-                    onClick={() => (recordingGreeting ? handleStopRecording() : void handleStartRecording())}
-                    disabled={uploadingGreeting}
-                    style={{ padding: "10px 16px", background: recordingGreeting ? "#7f1d1d" : "#fff", color: recordingGreeting ? "#fff" : theme.text, border: `1px solid ${recordingGreeting ? "#7f1d1d" : theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}
-                  >
-                    {recordingGreeting ? "Stop recording" : "Record greeting"}
-                  </button>
-                )}
-              </div>
-              {(recordingPreviewUrl || form.voicemail_greeting_recording_url) && (
-                <div style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting preview</span>
-                  <audio controls src={recordingPreviewUrl || form.voicemail_greeting_recording_url} />
+            <div style={{ display: "grid", gap: 10, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
+              <button
+                type="button"
+                onClick={() => setVoicemailExpanded((v) => !v)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "12px 14px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  color: theme.text,
+                }}
+              >
+                <span>
+                  Voicemail greeting
+                  <span style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "#6b7280" }}>
+                    {form.voicemail_greeting_mode === "ai_text" ? "AI reads your script" : "Custom audio recording"}
+                    {!voicemailExpanded ? " · Expand to change" : ""}
+                  </span>
+                </span>
+                <span style={{ fontSize: 14, color: "#6b7280", flexShrink: 0 }} aria-hidden>
+                  {voicemailExpanded ? "▲" : "▼"}
+                </span>
+              </button>
+
+              {voicemailExpanded && (
+                <div style={{ display: "grid", gap: 14, paddingTop: 4 }}>
+                  <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
+                    Optional. Leave collapsed if the default greeting is fine. Use <strong style={{ color: theme.text }}>Save account</strong> below after changes.
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
+                      <input
+                        type="radio"
+                        name="voicemail_greeting_mode"
+                        checked={form.voicemail_greeting_mode === "ai_text"}
+                        onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "ai_text" }))}
+                      />
+                      AI text to voice
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
+                      <input
+                        type="radio"
+                        name="voicemail_greeting_mode"
+                        checked={form.voicemail_greeting_mode === "recorded"}
+                        onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "recorded" }))}
+                      />
+                      Recorded greeting
+                    </label>
+                  </div>
+
+                  {form.voicemail_greeting_mode === "ai_text" && (
+                    <>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting script</span>
+                        <textarea
+                          value={form.voicemail_greeting_text}
+                          onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_text: e.target.value }))}
+                          style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }}
+                          placeholder="Thanks for calling. We missed you. Please leave your name, number, and a short message after the tone."
+                        />
+                      </label>
+                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
+                        This text is what callers hear when your mailbox uses the AI voice path. No upload or PIN needed for this option.
+                      </p>
+                    </>
+                  )}
+
+                  {form.voicemail_greeting_mode === "recorded" && (
+                    <>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Recorded greeting URL (optional)</span>
+                        <input
+                          value={form.voicemail_greeting_recording_url}
+                          onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_recording_url: e.target.value }))}
+                          style={theme.formInput}
+                          placeholder="https://..."
+                        />
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 220px) auto", gap: 10, alignItems: "end" }}>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call-in PIN (6 digits)</span>
+                          <input
+                            value={form.voicemail_greeting_pin}
+                            onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_pin: normalizePin(e.target.value) }))}
+                            style={theme.formInput}
+                            placeholder="Required to update by phone"
+                            maxLength={6}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, voicemail_greeting_pin: createGreetingPin() }))}
+                          style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", height: 42 }}
+                        >
+                          New PIN
+                        </button>
+                      </div>
+                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
+                        Call {HELP_DESK_PHONE_DISPLAY} from the <strong style={{ color: theme.text }}>Primary phone</strong> on this account (or verify that number if you call from another line), enter this PIN, then record. That number is Tradesman&apos;s line—not your business caller ID.
+                      </p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                        <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}>
+                          {uploadingGreeting ? "Uploading..." : "Upload audio (MP3 or WAV)"}
+                          <input type="file" accept="audio/*" onChange={(e) => void handleGreetingFileChange(e)} disabled={uploadingGreeting} style={{ display: "none" }} />
+                        </label>
+                        {recordingSupported && (
+                          <button
+                            type="button"
+                            onClick={() => (recordingGreeting ? handleStopRecording() : void handleStartRecording())}
+                            disabled={uploadingGreeting}
+                            style={{ padding: "10px 16px", background: recordingGreeting ? "#7f1d1d" : "#fff", color: recordingGreeting ? "#fff" : theme.text, border: `1px solid ${recordingGreeting ? "#7f1d1d" : theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}
+                          >
+                            {recordingGreeting ? "Stop recording" : "Record in browser"}
+                          </button>
+                        )}
+                      </div>
+                      {(recordingPreviewUrl || form.voicemail_greeting_recording_url) && (
+                        <div style={{ display: "grid", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Preview</span>
+                          <audio controls src={recordingPreviewUrl || form.voicemail_greeting_recording_url} />
+                        </div>
+                      )}
+                      <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.45 }}>
+                        If no recording URL is saved, callers still hear the script text as a fallback. Prefer MP3 or WAV for phone networks.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
-              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
-                If recorded greeting is selected, Twilio will play that audio file. If no recording URL is present, Tradesman will fall back to the greeting script automatically.
-              </p>
-              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
-                Recorded greetings are uploaded to the Supabase Storage bucket `voicemail-greetings`.
-              </p>
-              <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
-                For best Twilio playback compatibility, uploaded greeting files should be `mp3` or `wav`.
-              </p>
             </div>
             )}
 
             {showAccountSection("help_desk") && (
               <div style={{ padding: 14, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
-                <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Tradesman Help Desk &amp; voicemail greeting line</h3>
+                <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
                 <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                  <span style={{ fontWeight: 700, color: theme.text }}>Help Desk:</span>{" "}
+                  <span style={{ fontWeight: 700, color: theme.text }}>Tradesman toll-free:</span>{" "}
                   <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
                     {HELP_DESK_PHONE_DISPLAY}
                   </a>
                 </p>
-                <p style={{ margin: "0 0 12px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                  <span style={{ fontWeight: 700, color: theme.text }}>Voicemail greeting (call-in):</span> same number — call from the Primary Phone saved on this account, or verify with that Primary Phone number if you call from another line; then enter your 6-digit PIN from this page and record your greeting.
+                <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+                  Same number for product help and for updating a <strong style={{ color: theme.text }}>recorded</strong> mailbox greeting by phone (open Voicemail greeting above, choose Recorded, save your PIN, then call from your saved Primary phone).
                 </p>
-                <div style={{ padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
-                  <div style={{ fontWeight: 700, color: theme.text }}>Call in and record (technical)</div>
-                  <div>Point a Twilio number to <code style={{ fontSize: 12 }}>POST /api/voicemail-greeting</code>.</div>
-                  <div>Callers enter their 6-digit PIN and record a new greeting by phone.</div>
-                  <div>If they call from a number other than the Primary Phone on this account, they must also enter that number to verify ownership.</div>
-                  <div>The recording updates this user&apos;s Tradesman voicemail greeting automatically.</div>
-                </div>
+                {adminContext && (
+                  <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio webhook</div>
+                    <div>
+                      Point the toll-free (or staging) number&apos;s voice webhook to <code style={{ fontSize: 11 }}>POST /api/voicemail-greeting</code> on your Vercel deployment. PIN + optional primary-phone verification match <code style={{ fontSize: 11 }}>profiles</code>; recording posts to <code style={{ fontSize: 11 }}>/api/voicemail-greeting-save</code>.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

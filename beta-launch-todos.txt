@@ -1,0 +1,43 @@
+BETA / Monday launch — remaining configuration (you + ops)
+============================================================
+
+DONE IN CODE (this session)
+- Account → Voicemail: collapsed by default; AI mode = script only; Recorded = URL, PIN, upload/record/preview (no script field); Save account stays global.
+- Account → Help: toll-free + short user copy; Twilio webhook notes only when editing a user in Admin → Communications (adminContext).
+- Clarified (844) 844-1611 = Tradesman toll-free, not the client primary phone (primary phone = verification when calling from another line).
+- Conversations SMS helper text → Twilio channel + /api/incoming-sms webhook reminder.
+- .env.example expanded with Vercel/Resend/Twilio hints.
+
+YOUR CHECKLIST — Supabase
+- Run any pending SQL (conversations.metadata, profiles columns, RLS) on production project.
+- Authentication → URL configuration: Site URL = production app URL; Redirect URLs include production + localhost for dev.
+- Auth email: enable SMTP or built-in provider so signup confirmation / password reset emails send (Resend SMTP or Supabase “Send email” integration).
+- Storage: bucket voicemail-greetings public read policy if uploads should play on Twilio.
+- Edge: deploy complete-signup if you use that path: supabase functions deploy complete-signup
+
+YOUR CHECKLIST — Vercel
+- Environment: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL (verified domain in Resend).
+- Twilio: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN; per-user from-numbers live in DB (communications_channels) — confirm each user’s SMS/voice numbers webhooks:
+  - SMS → https://YOUR_DOMAIN/api/incoming-sms
+  - Voice (and toll-free greeting line) → https://YOUR_DOMAIN/api/voicemail-greeting (and voice flow to incoming-call / dial-result as you already wired)
+- Custom domain + SSL on Vercel; match Supabase auth redirect URLs.
+
+YOUR CHECKLIST — Resend
+- Verify sending domain; set RESEND_FROM_EMAIL to that domain.
+- Outbound app email: already used by api/send-email.ts.
+- Inbound email → Conversations: NOT implemented as a single API route yet. Options for beta:
+  (A) Resend “Receiving” → webhook to a new Vercel handler that inserts communication_events + links conversation by customer email, or
+  (B) forward business inbox to a parser — plan post-beta if timeboxed.
+
+YOUR CHECKLIST — Twilio
+- Toll-free (844) 844-1611: voice URL points to voicemail-greeting flow for PIN-based greeting updates; main business DIDs point to incoming-call/dial-result as designed.
+- SMS consent / A2P registration if messaging at scale (carrier compliance).
+
+OFFICE MANAGER + USER PORTALS
+- Email threads already load from communication_events in Conversations when rows exist; inbound creation is the gap above.
+- OM portal uses same Account page as users — technical Twilio block appears only in Admin when editing a user’s account panel.
+
+OPTIONAL / POST-BETA
+- Phase 6: automated Supabase backups / export workflow.
+- Richer voicemail list inside Conversations (voicemail communication_events UI).
+- Replace inline /api path hint in Conversations with env-based public app URL if you want zero hardcoded paths.

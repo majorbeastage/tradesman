@@ -1275,7 +1275,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     />
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12, color: "#6b7280" }}>
-                        Sends through your configured SMS provider from the same business number when supported.
+                        Uses your Twilio SMS number from Admin → Communications (this user). Inbound texts appear here when that number&apos;s webhook targets <code style={{ fontSize: 11 }}>/api/incoming-sms</code> on your deployed app.
                       </span>
                       <button
                         type="button"
