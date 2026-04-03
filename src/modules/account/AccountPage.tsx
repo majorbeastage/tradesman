@@ -31,7 +31,6 @@ type ProfileForm = {
   voicemail_greeting_text: string
   voicemail_greeting_recording_url: string
   voicemail_greeting_pin: string
-  forward_dial_caller_id_mode: "caller_number" | "twilio_number"
   forward_whisper_on_answer: boolean
   forward_whisper_announcement_template: string
   forward_whisper_only_outside_business_hours: boolean
@@ -131,8 +130,21 @@ function createGreetingPin(): string {
   return String(Math.floor(100000 + Math.random() * 900000))
 }
 
-export default function AccountPage() {
+export type AccountProfilePanelProps = {
+  profileUserId: string
+  loginEmail?: string
+  showPasswordReset?: boolean
+  adminContext?: boolean
+}
+
+export function AccountProfilePanel({
+  profileUserId,
+  loginEmail,
+  showPasswordReset = false,
+  adminContext = false,
+}: AccountProfilePanelProps) {
   const { user, refetchProfile } = useAuth()
+  const [profileEmailFromDb, setProfileEmailFromDb] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -162,14 +174,13 @@ export default function AccountPage() {
     voicemail_greeting_text: "Sorry we missed your call. Please leave a message after the tone.",
     voicemail_greeting_recording_url: "",
     voicemail_greeting_pin: createGreetingPin(),
-    forward_dial_caller_id_mode: "caller_number",
     forward_whisper_on_answer: false,
     forward_whisper_announcement_template: "",
     forward_whisper_only_outside_business_hours: false,
     forward_whisper_require_keypress: false,
   })
 
-  const email = useMemo(() => user?.email ?? "", [user?.email])
+  const emailForDisplay = useMemo(() => (loginEmail?.trim() || profileEmailFromDb).trim(), [loginEmail, profileEmailFromDb])
 
   useEffect(() => {
     setRecordingSupported(typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia)
@@ -183,17 +194,18 @@ export default function AccountPage() {
   }, [recordingPreviewUrl])
 
   useEffect(() => {
-    if (!supabase || !user?.id) return
+    if (!supabase || !profileUserId) return
     setLoading(true)
     setError("")
     void (async () => {
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_dial_caller_id_mode, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
-          .eq("id", user.id)
+          .select("email, display_name, website_url, primary_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
+          .eq("id", profileUserId)
           .single()
         if (error) throw error
+        setProfileEmailFromDb(typeof data?.email === "string" ? data.email : "")
         setForm({
           display_name: data?.display_name ?? "",
           website_url: data?.website_url ?? "",
@@ -211,7 +223,6 @@ export default function AccountPage() {
           voicemail_greeting_text: data?.voicemail_greeting_text ?? "Sorry we missed your call. Please leave a message after the tone.",
           voicemail_greeting_recording_url: data?.voicemail_greeting_recording_url ?? "",
           voicemail_greeting_pin: normalizePin(data?.voicemail_greeting_pin ?? "") || createGreetingPin(),
-          forward_dial_caller_id_mode: data?.forward_dial_caller_id_mode === "twilio_number" ? "twilio_number" : "caller_number",
           forward_whisper_on_answer: data?.forward_whisper_on_answer === true,
           forward_whisper_announcement_template: typeof data?.forward_whisper_announcement_template === "string" ? data.forward_whisper_announcement_template : "",
           forward_whisper_only_outside_business_hours: data?.forward_whisper_only_outside_business_hours === true,
@@ -223,10 +234,10 @@ export default function AccountPage() {
         setLoading(false)
       }
     })()
-  }, [user?.id])
+  }, [profileUserId])
 
   async function handleSave() {
-    if (!supabase || !user?.id) return
+    if (!supabase || !profileUserId) return
     setSaving(true)
     setMessage("")
     setError("")
@@ -250,22 +261,31 @@ export default function AccountPage() {
         voicemail_greeting_text: form.voicemail_greeting_text.trim() || "Sorry we missed your call. Please leave a message after the tone.",
         voicemail_greeting_recording_url: form.voicemail_greeting_recording_url.trim() || null,
         voicemail_greeting_pin: normalizePin(form.voicemail_greeting_pin) || createGreetingPin(),
-        forward_dial_caller_id_mode: form.forward_dial_caller_id_mode,
         forward_whisper_on_answer: form.forward_whisper_on_answer,
         forward_whisper_announcement_template: form.forward_whisper_announcement_template.trim() || null,
         forward_whisper_only_outside_business_hours: form.forward_whisper_only_outside_business_hours,
         forward_whisper_require_keypress: form.forward_whisper_require_keypress,
         updated_at: new Date().toISOString(),
       }
-      const { error } = await supabase.from("profiles").update(payload).eq("id", user.id)
+      let { error } = await supabase.from("profiles").update(payload).eq("id", profileUserId)
+      if (
+        error &&
+        (error.code === "23505" || /duplicate key|unique constraint|voicemail_greeting_pin/i.test(error.message ?? ""))
+      ) {
+        const freshPin = createGreetingPin()
+        const payloadRetry = { ...payload, voicemail_greeting_pin: normalizePin(freshPin) }
+        setForm((prev) => ({ ...prev, voicemail_greeting_pin: freshPin }))
+        const second = await supabase.from("profiles").update(payloadRetry).eq("id", profileUserId)
+        error = second.error
+      }
       if (error) throw error
-      await refetchProfile()
+      if (user?.id === profileUserId) await refetchProfile()
       setForm((prev) => ({
         ...prev,
         website_url: website_url ?? "",
         primary_phone: formatPhone(payload.primary_phone ?? ""),
       }))
-      setMessage("Account updated.")
+      setMessage(adminContext ? "User account updated." : "Account updated.")
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -274,13 +294,13 @@ export default function AccountPage() {
   }
 
   async function handlePasswordReset() {
-    if (!supabase || !email) return
+    if (!supabase || !emailForDisplay) return
     setResetting(true)
     setMessage("")
     setError("")
     try {
       const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/` : undefined
-      const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined)
+      const { error } = await supabase.auth.resetPasswordForEmail(emailForDisplay, redirectTo ? { redirectTo } : undefined)
       if (error) throw error
       setMessage("Password reset email sent.")
     } catch (err) {
@@ -291,11 +311,11 @@ export default function AccountPage() {
   }
 
   function getGreetingFilePath(extension: string): string {
-    return `${user?.id ?? "unknown"}/greeting-${Date.now()}.${extension}`
+    return `${profileUserId}/greeting-${Date.now()}.${extension}`
   }
 
   async function uploadGreetingFile(file: Blob, extension: string, contentType: string) {
-    if (!supabase || !user?.id) return
+    if (!supabase || !profileUserId) return
     setUploadingGreeting(true)
     setMessage("")
     setError("")
@@ -316,7 +336,17 @@ export default function AccountPage() {
         if (previous) URL.revokeObjectURL(previous)
         return URL.createObjectURL(file)
       })
-      setMessage("Greeting uploaded. Save account to make it live.")
+      const { error: persistErr } = await supabase
+        .from("profiles")
+        .update({
+          voicemail_greeting_mode: "recorded",
+          voicemail_greeting_recording_url: publicUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", profileUserId)
+      if (persistErr) throw persistErr
+      if (user?.id === profileUserId) await refetchProfile()
+      setMessage(adminContext ? "Greeting uploaded and saved to this user’s profile." : "Greeting uploaded and saved.")
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -376,15 +406,15 @@ export default function AccountPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
-        <h1 style={{ margin: "0 0 8px", color: theme.text }}>Account</h1>
-        <p style={{ margin: 0, color: "#6b7280" }}>
-          This information is saved directly to Supabase and will power profile, routing, and Google Business Profile data.
-        </p>
-      </div>
-
-      <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
+    <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
+      {adminContext && (
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>User account (My T)</h2>
+          <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
+            Same fields as the client sees on Account. Saves to this user&apos;s profile row in Supabase.
+          </p>
+        </div>
+      )}
         {loading ? (
           <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
         ) : (
@@ -392,7 +422,7 @@ export default function AccountPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Login email</span>
-                <input value={email} readOnly style={{ ...theme.formInput, background: "#f9fafb", color: "#6b7280" }} />
+                <input value={emailForDisplay} readOnly style={{ ...theme.formInput, background: "#f9fafb", color: "#6b7280" }} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Business / display name</span>
@@ -528,92 +558,69 @@ export default function AccountPage() {
               </p>
 
               <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Forwarded call — caller ID on your phone</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call screening (whisper)</span>
                 <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
                   <input
-                    type="radio"
-                    name="forward_dial_caller_id_mode"
-                    checked={form.forward_dial_caller_id_mode === "caller_number"}
-                    onChange={() => setForm((prev) => ({ ...prev, forward_dial_caller_id_mode: "caller_number" }))}
+                    type="checkbox"
+                    checked={form.forward_whisper_on_answer}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        forward_whisper_on_answer: e.target.checked,
+                        ...(e.target.checked
+                          ? {}
+                          : {
+                              forward_whisper_only_outside_business_hours: false,
+                              forward_whisper_require_keypress: false,
+                            }),
+                      }))
+                    }
                   />
                   <span>
-                    Show the caller&apos;s number (default). Your phone displays who is calling when Twilio and your carrier allow it.
+                    Play a short announcement (whisper) on my phone when I answer a forwarded call. Uses the caller&apos;s name from saved customers when matched, plus their number. This is audio on the call leg only.
                   </span>
                 </label>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
-                  <input
-                    type="radio"
-                    name="forward_dial_caller_id_mode"
-                    checked={form.forward_dial_caller_id_mode === "twilio_number"}
-                    onChange={() => setForm((prev) => ({ ...prev, forward_dial_caller_id_mode: "twilio_number" }))}
-                  />
-                  <span>
-                    Show my Tradesman / Twilio business number as caller ID. A custom title such as &quot;Tradesman Systems&quot; on the screen is controlled by your carrier&apos;s CNAM for that number, not by this app.
-                  </span>
-                </label>
-                <div style={{ display: "grid", gap: 12, marginTop: 4 }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
-                    <input
-                      type="checkbox"
-                      checked={form.forward_whisper_on_answer}
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          forward_whisper_on_answer: e.target.checked,
-                          ...(e.target.checked
-                            ? {}
-                            : {
-                                forward_whisper_only_outside_business_hours: false,
-                                forward_whisper_require_keypress: false,
-                              }),
-                        }))
-                      }
-                    />
-                    <span>
-                      Play a short announcement (whisper) on my phone when I answer a forwarded call. Uses the caller&apos;s name from saved customers when matched, plus their number. This is audio on the call leg; it does not change the caller ID shown on the phone.
-                    </span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
-                    <input
-                      type="checkbox"
-                      disabled={!form.forward_whisper_on_answer}
-                      checked={form.forward_whisper_only_outside_business_hours}
-                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
-                    />
-                    <span>
-                      Only play the whisper outside of business hours (same schedule as above). During open hours, the call connects without the whisper.
-                    </span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
-                    <input
-                      type="checkbox"
-                      disabled={!form.forward_whisper_on_answer}
-                      checked={form.forward_whisper_require_keypress}
-                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
-                    />
-                    <span>
-                      After the announcement, you must accept or decline: press 1 or say answer to connect; press 2 or say decline to end the forward (caller typically goes to Tradesman voicemail). If you do nothing for a few seconds, it is treated like decline.
-                    </span>
-                  </label>
-                  <label style={{ display: "grid", gap: 6, opacity: form.forward_whisper_on_answer ? 1 : 0.5 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Custom announcement (optional)</span>
-                    <textarea
-                      value={form.forward_whisper_announcement_template}
-                      onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_announcement_template: e.target.value }))}
-                      disabled={!form.forward_whisper_on_answer}
-                      style={{ ...theme.formInput, minHeight: 88, resize: "vertical" }}
-                      placeholder={DEFAULT_WHISPER_TEMPLATE_HINT}
-                    />
-                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                      Placeholders: <code style={{ fontSize: 11 }}>{"{caller_name}"}</code>, <code style={{ fontSize: 11 }}>{"{caller_phone}"}</code>,{" "}
-                      <code style={{ fontSize: 11 }}>{"{caller_phone_spoken}"}</code> (digits with pauses for text-to-speech). If the name is unknown,{" "}
-                      <code style={{ fontSize: 11 }}>{"{caller_name}"}</code> is read as &quot;Unknown caller&quot;.
-                    </span>
-                  </label>
-                  <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>
-                    Without this screening step, hanging up during or after the whisper can behave inconsistently by carrier. With screening, timeout or an unclear response defaults to voicemail like declining.
-                  </p>
-                </div>
+                {form.forward_whisper_on_answer && (
+                  <div style={{ display: "grid", gap: 12, marginTop: 4 }}>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.forward_whisper_only_outside_business_hours}
+                        onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
+                      />
+                      <span>
+                        Only play the whisper outside of business hours (same schedule as above). During open hours, the call connects without the whisper.
+                      </span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.forward_whisper_require_keypress}
+                        onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
+                      />
+                      <span>
+                        After the announcement, you must accept or decline: press 1 or say answer to connect; press 2 or say decline to end the forward (caller typically goes to Tradesman voicemail). If you do nothing for a few seconds, it is treated like decline.
+                      </span>
+                    </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Custom announcement (optional)</span>
+                      <textarea
+                        value={form.forward_whisper_announcement_template}
+                        onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_announcement_template: e.target.value }))}
+                        style={{ ...theme.formInput, minHeight: 88, resize: "vertical" }}
+                        placeholder={DEFAULT_WHISPER_TEMPLATE_HINT}
+                      />
+                      <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                        Placeholders: <code style={{ fontSize: 11 }}>{"{caller_name}"}</code>, <code style={{ fontSize: 11 }}>{"{caller_phone}"}</code>,{" "}
+                        <code style={{ fontSize: 11 }}>{"{caller_phone_spoken}"}</code> (digits with pauses for text-to-speech). If the name is unknown,{" "}
+                        <code style={{ fontSize: 11 }}>{"{caller_name}"}</code> is read as &quot;Unknown caller&quot;.
+                      </span>
+                    </label>
+                    <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>
+                      Without this screening step, hanging up during or after the whisper can behave inconsistently by carrier. With screening, timeout or an unclear response defaults to voicemail like declining.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -712,12 +719,24 @@ export default function AccountPage() {
               <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
                 For best Twilio playback compatibility, uploaded greeting files should be `mp3` or `wav`.
               </p>
-              <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
-                <div style={{ fontWeight: 700, color: theme.text }}>Call in and record</div>
-                <div>Point a Twilio number to `POST /api/voicemail-greeting`.</div>
-                <div>When the customer calls that number, they enter their 6-digit PIN and record a new greeting by phone.</div>
-                <div>If they call from a number other than the primary phone saved on this account, they must also enter that account phone number to verify ownership.</div>
-                <div>The saved phone greeting becomes the active Tradesman voicemail greeting automatically.</div>
+              <div style={{ padding: 14, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
+                <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Tradesman Help Desk &amp; voicemail greeting line</h3>
+                <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+                  <span style={{ fontWeight: 700, color: theme.text }}>Help Desk:</span>{" "}
+                  <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+                    {HELP_DESK_PHONE_DISPLAY}
+                  </a>
+                </p>
+                <p style={{ margin: "0 0 12px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+                  <span style={{ fontWeight: 700, color: theme.text }}>Voicemail greeting (call-in):</span> same number — call from the Primary Phone saved on this account, or verify with that Primary Phone number if you call from another line; then enter your 6-digit PIN from this page and record your greeting.
+                </p>
+                <div style={{ padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 700, color: theme.text }}>Call in and record (technical)</div>
+                  <div>Point a Twilio number to <code style={{ fontSize: 12 }}>POST /api/voicemail-greeting</code>.</div>
+                  <div>Callers enter their 6-digit PIN and record a new greeting by phone.</div>
+                  <div>If they call from a number other than the Primary Phone on this account, they must also enter that number to verify ownership.</div>
+                  <div>The recording updates this user&apos;s Tradesman voicemail greeting automatically.</div>
+                </div>
               </div>
             </div>
 
@@ -726,28 +745,34 @@ export default function AccountPage() {
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <button type="button" onClick={() => void handleSave()} disabled={saving} style={{ padding: "10px 16px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
-                {saving ? "Saving..." : "Save account"}
+                {saving ? "Saving..." : adminContext ? "Save user account" : "Save account"}
               </button>
-              <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !email} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer" }}>
-                {resetting ? "Sending..." : "Reset password"}
-              </button>
+              {showPasswordReset && (
+                <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer" }}>
+                  {resetting ? "Sending..." : "Reset password"}
+                </button>
+              )}
             </div>
           </div>
         )}
-      </div>
+    </div>
+  )
+}
 
+export default function AccountPage() {
+  const { user } = useAuth()
+  if (!user?.id) {
+    return <p style={{ padding: 24, color: theme.text }}>Sign in to manage your account.</p>
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
-        <h2 style={{ margin: "0 0 10px", fontSize: 18, color: theme.text }}>Tradesman Help Desk &amp; voicemail greeting line</h2>
-        <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-          <strong style={{ color: theme.text }}>Help Desk:</strong>{" "}
-          <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
-            {HELP_DESK_PHONE_DISPLAY}
-          </a>
-        </p>
-        <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-          <strong style={{ color: theme.text }}>Voicemail greeting (call-in):</strong> same number — call from your primary phone (or verify with your account number), enter your 6-digit PIN from this page, and record your greeting.
+        <h1 style={{ margin: "0 0 8px", color: theme.text }}>Account</h1>
+        <p style={{ margin: 0, color: "#6b7280" }}>
+          This information is saved directly to Supabase and will power profile, routing, and Google Business Profile data.
         </p>
       </div>
+      <AccountProfilePanel profileUserId={user.id} loginEmail={user.email ?? undefined} showPasswordReset />
     </div>
   )
 }

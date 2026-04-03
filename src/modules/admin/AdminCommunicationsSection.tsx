@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
+import { AccountProfilePanel } from "../account/AccountPage"
 
 type ChannelRow = {
   id: string
@@ -715,6 +716,12 @@ export default function AdminCommunicationsSection({ selectedUserId, selectedUse
         {message && <p style={{ color: "#059669", marginBottom: 0 }}>{message}</p>}
         {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
       </AdminSettingBlock>
+
+      {selectedUserId && (
+        <AdminSettingBlock id="admin:communications:user_account">
+          <AccountProfilePanel profileUserId={selectedUserId} adminContext />
+        </AdminSettingBlock>
+      )}
 
       <AdminSettingBlock id="admin:communications:channels">
         {loading ? (

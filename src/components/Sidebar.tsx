@@ -104,8 +104,6 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
         <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
           {HELP_DESK_PHONE_DISPLAY}
         </a>
-        <div style={{ marginTop: 8, fontWeight: 700, color: theme.primary, fontSize: 11 }}>Voicemail greeting (call-in)</div>
-        <div>Same number — use your Account PIN</div>
       </div>
 
       {onLogout && (
