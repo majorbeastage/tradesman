@@ -8,6 +8,10 @@
     "api/help-desk-voice.ts": { "maxDuration": 30 }
   },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
     { "source": "/sms-consent", "destination": "/" },
