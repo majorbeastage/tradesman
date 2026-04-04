@@ -46,3 +46,34 @@ export async function createUserViaAdminUsersEdge(
     return { ok: false, fallbackToSignUp: true, error: "Network error" }
   }
 }
+
+/** Set profiles.account_disabled via admin-users Edge (service role; bypasses RLS). */
+export async function patchAccountDisabledViaAdminUsersEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  userId: string,
+  accountDisabled: boolean
+): Promise<{ ok: true } | { ok: false; error: string; tryDirectDb: boolean }> {
+  const base = supabaseUrl.replace(/\/$/, "")
+  if (!base) return { ok: false, error: "Missing Supabase URL", tryDirectDb: true }
+  try {
+    const res = await fetch(`${base}/functions/v1/admin-users`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_id: userId, account_disabled: accountDisabled }),
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      error?: string
+    }
+    if (res.ok && data.ok === true) return { ok: true }
+    const errMsg = typeof data.error === "string" ? data.error : `HTTP ${res.status}`
+    if (res.status === 404) return { ok: false, error: errMsg, tryDirectDb: true }
+    return { ok: false, error: errMsg, tryDirectDb: false }
+  } catch {
+    return { ok: false, error: "Network error", tryDirectDb: true }
+  }
+}

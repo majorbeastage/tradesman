@@ -2,6 +2,8 @@ import { useEffect, useState, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
+import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
+import { reorderByIndex } from "../../lib/reorderArray"
 import { AccountProfilePanel } from "../account/AccountPage"
 
 type ChannelRow = {
@@ -672,8 +674,17 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 <p style={{ margin: 0, color: theme.text, opacity: 0.8 }}>No menu options yet.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {helpDeskSettings.options.map((option) => (
-                    <div key={option.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
+                  {helpDeskSettings.options.map((option, optIndex) => (
+                    <AdminSortableRow
+                      key={option.id}
+                      scope="help-desk-keypad-options"
+                      index={optIndex}
+                      onReorder={(from, to) =>
+                        setHelpDeskSettings((prev) => ({ ...prev, options: reorderByIndex([...prev.options], from, to) }))
+                      }
+                      rowStyle={{ marginBottom: 0 }}
+                    >
+                    <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "120px minmax(220px, 1fr) auto", gap: 12, alignItems: "end" }}>
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Digit</span>
@@ -692,6 +703,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                         Option enabled
                       </label>
                     </div>
+                    </AdminSortableRow>
                   ))}
                 </div>
               )}

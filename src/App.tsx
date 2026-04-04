@@ -25,7 +25,7 @@ import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useIsMobile } from "./hooks/useIsMobile"
-import { USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
+import { getPortalTabListForConfig, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "app" | "office" | "admin"
@@ -35,10 +35,8 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
   if (!portalConfig) return undefined
   const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
   if (!hasTabs) return undefined
-  const defaultEntries = USER_PORTAL_TAB_IDS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? null }))
-  const customEntries = (portalConfig.customTabs ?? []).map((t) => ({ tab_id: t.id, label: t.label }))
-  const all = [...defaultEntries, ...customEntries]
-  const visible = all.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  const ordered = getPortalTabListForConfig(portalConfig)
+  const visible = ordered.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
   return visible.length > 0 ? visible : undefined
 }
 

@@ -14,7 +14,8 @@ AS
     u.email,
     u.created_at,
     COALESCE(p.role, 'user') AS role,
-    p.display_name
+    p.display_name,
+    COALESCE(p.account_disabled, false) AS account_disabled
   FROM auth.users u
   LEFT JOIN public.profiles p ON p.id = u.id;
 

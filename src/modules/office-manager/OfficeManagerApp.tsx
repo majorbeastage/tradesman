@@ -17,7 +17,13 @@ import {
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { OFFICE_PORTAL_TAB_IDS, USER_PORTAL_TAB_IDS, TAB_ID_LABELS, type PortalConfig } from "../../types/portal-builder"
+import {
+  getOfficePortalTabListForConfig,
+  getPortalTabListForConfig,
+  USER_PORTAL_TAB_IDS,
+  TAB_ID_LABELS,
+  type PortalConfig,
+} from "../../types/portal-builder"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -31,10 +37,8 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
   if (!portalConfig) return undefined
   const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
   if (!hasTabs) return undefined
-  const defaultEntries = OFFICE_PORTAL_TAB_IDS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? null }))
-  const customEntries = (portalConfig.customTabs ?? []).map((t) => ({ tab_id: t.id, label: t.label }))
-  const all = [...defaultEntries, ...customEntries]
-  const visible = all.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  const ordered = getOfficePortalTabListForConfig(portalConfig)
+  const visible = ordered.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
   return visible.length > 0 ? visible : undefined
 }
 
@@ -126,14 +130,14 @@ function ManagedUserTabEditor() {
             Control which tabs this user sees in the <strong>user</strong> portal (not the office manager sidebar).
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {USER_PORTAL_TAB_IDS.map((tabId) => (
+            {getPortalTabListForConfig((ctx.scopedPortalConfig ?? {}) as PortalConfig).map(({ tab_id: tabId, label }) => (
               <label key={tabId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
                 <input
                   type="checkbox"
                   checked={localTabs[tabId] !== false}
                   onChange={(e) => setLocalTabs((prev) => ({ ...prev, [tabId]: e.target.checked }))}
                 />
-                {TAB_ID_LABELS[tabId] ?? tabId}
+                {label ?? TAB_ID_LABELS[tabId] ?? tabId}
               </label>
             ))}
           </div>

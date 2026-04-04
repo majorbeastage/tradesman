@@ -1,12 +1,13 @@
 import { useState } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
+import { TRADESMAN_TECH_SUPPORT_EMAIL } from "../constants/supportLinks"
 
 type TicketType = "web" | "tech"
 
 const supportEmails: Record<TicketType, string> = {
-  web: "Admin@tradesman-us.com",
-  tech: "Admin@tradesman-us.com",
+  web: TRADESMAN_TECH_SUPPORT_EMAIL,
+  tech: TRADESMAN_TECH_SUPPORT_EMAIL,
 }
 
 type Props = {

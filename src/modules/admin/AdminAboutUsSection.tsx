@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
+import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
 import {
   ABOUT_US_SETTINGS_KEY,
   DEFAULT_ABOUT_US_CONTENT,
@@ -35,8 +36,6 @@ export default function AdminAboutUsSection() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-
   const load = useCallback(async () => {
     if (!supabase) {
       setLoading(false)
@@ -105,7 +104,7 @@ export default function AdminAboutUsSection() {
     setContent((prev) => ({ ...prev, blocks: prev.blocks.filter((_, i) => i !== index) }))
   }
 
-  const cardStyle: React.CSSProperties = {
+  const cardStyle: CSSProperties = {
     padding: 14,
     borderRadius: 10,
     border: `1px solid ${theme.border}`,
@@ -165,46 +164,13 @@ export default function AdminAboutUsSection() {
             </p>
 
             {content.blocks.map((block, index) => (
-              <div
+              <AdminSortableRow
                 key={block.id}
-                style={cardStyle}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = "move"
-                }}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  const raw = e.dataTransfer.getData("text/plain")
-                  const from = parseInt(raw, 10)
-                  if (Number.isNaN(from)) return
-                  setContent((c) => ({ ...c, blocks: reorderBlocks(c.blocks, from, index) }))
-                  setDragIndex(null)
-                }}
+                scope="about-us-blocks"
+                index={index}
+                onReorder={(from, to) => setContent((c) => ({ ...c, blocks: reorderBlocks(c.blocks, from, to) }))}
+                rowStyle={cardStyle}
               >
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <button
-                    type="button"
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", String(index))
-                      e.dataTransfer.effectAllowed = "move"
-                      setDragIndex(index)
-                    }}
-                    onDragEnd={() => setDragIndex(null)}
-                    title="Drag to reorder"
-                    style={{
-                      cursor: "grab",
-                      padding: "8px 6px",
-                      border: `1px dashed ${theme.border}`,
-                      borderRadius: 6,
-                      background: dragIndex === index ? "rgba(249,115,22,0.15)" : "#f9fafb",
-                      color: theme.text,
-                      fontSize: 14,
-                      lineHeight: 1,
-                    }}
-                  >
-                    ⋮⋮
-                  </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: theme.primary, marginBottom: 8 }}>{block.type === "text" ? "TEXT" : "IMAGE"}</div>
                     {block.type === "text" ? (
@@ -238,12 +204,11 @@ export default function AdminAboutUsSection() {
                         ) : null}
                       </div>
                     )}
+                    <button type="button" onClick={() => removeBlock(index)} style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", cursor: "pointer", fontSize: 12 }}>
+                      Remove
+                    </button>
                   </div>
-                  <button type="button" onClick={() => removeBlock(index)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>
-                    Remove
-                  </button>
-                </div>
-              </div>
+              </AdminSortableRow>
             ))}
           </AdminSettingBlock>
 

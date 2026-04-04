@@ -92,12 +92,29 @@ Deno.serve(async (req) => {
   const uid = created.user.id
   const now = new Date().toISOString()
 
+  // Keep in sync with getDefaultPortalConfigForNewUser() in src/types/portal-builder.ts
+  const portal_config = {
+    tabs: {
+      dashboard: true,
+      leads: false,
+      conversations: false,
+      quotes: false,
+      calendar: false,
+      customers: false,
+      account: true,
+      "web-support": false,
+      "tech-support": true,
+      settings: false,
+    },
+  }
+
   const { error: profileErr } = await adminClient.from("profiles").upsert(
     {
       id: uid,
       email,
       display_name,
       role: "new_user",
+      portal_config,
       website_url: body.website_url ?? null,
       primary_phone: body.primary_phone ?? null,
       best_contact_phone: body.best_contact_phone ?? null,

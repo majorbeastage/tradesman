@@ -94,3 +94,36 @@ BEGIN
 END $$;
 
 -- Done. Reload your app; new leads should appear in the Leads tab after Create Lead.
+
+-- ============================================================
+-- 6) Profiles: deactivate users (no login) without deleting data; default tabs for new_user signups
+--    Run after profiles exists. Keeps auth user; app signs out when account_disabled = true.
+-- ============================================================
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS account_disabled BOOLEAN NOT NULL DEFAULT false;
+COMMENT ON COLUMN public.profiles.account_disabled IS 'When true, user cannot use the app; rows and history stay.';
+
+-- New auth users: new_user + limited portal tabs (Dashboard, Account, Tech Support). Sync with getDefaultPortalConfigForNewUser in src/types/portal-builder.ts
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, role, portal_config, account_disabled)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    'new_user',
+    '{"tabs": {"dashboard": true, "leads": false, "conversations": false, "quotes": false, "calendar": false, "customers": false, "account": true, "web-support": false, "tech-support": true, "settings": false}}'::jsonb,
+    false
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Optional: backfill new_user rows that have empty portal_config only (does not overwrite custom admin configs)
+UPDATE public.profiles p
+SET portal_config = '{"tabs": {"dashboard": true, "leads": false, "conversations": false, "quotes": false, "calendar": false, "customers": false, "account": true, "web-support": false, "tech-support": true, "settings": false}}'::jsonb,
+    updated_at = now()
+WHERE p.role = 'new_user'
+  AND (p.portal_config IS NULL OR p.portal_config = '{}'::jsonb OR (p.portal_config->'tabs') IS NULL);

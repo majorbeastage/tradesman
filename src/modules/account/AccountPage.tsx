@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
 import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
-import { getAccountSectionVisible } from "../../types/portal-builder"
+import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -150,6 +150,10 @@ export function AccountProfilePanel({
   const portalConfig = usePortalConfigForPage()
   const showAccountSection = (sectionId: string) =>
     adminContext || getAccountSectionVisible(portalConfig, sectionId)
+  const orderedAccountSectionIds = useMemo(
+    () => getOrderedAccountPortalSections(portalConfig).map((s) => s.id),
+    [portalConfig]
+  )
   const [profileEmailFromDb, setProfileEmailFromDb] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -430,7 +434,10 @@ export function AccountProfilePanel({
           <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
-            {showAccountSection("profile") && (
+            {orderedAccountSectionIds.map((sectionId) => {
+              if (!showAccountSection(sectionId)) return null
+              if (sectionId === "profile") return (
+            <Fragment key={sectionId}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Login email</span>
@@ -459,9 +466,10 @@ export function AccountProfilePanel({
                 />
               </label>
             </div>
-            )}
-
-            {showAccountSection("business_address") && (
+            </Fragment>
+              )
+              if (sectionId === "business_address") return (
+            <Fragment key={sectionId}>
             <div style={{ display: "grid", gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Business Address</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
@@ -491,9 +499,10 @@ export function AccountProfilePanel({
                 <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || "No address entered yet."}</div>
               </div>
             </div>
-            )}
-
-            {showAccountSection("business_hours") && (
+            </Fragment>
+              )
+              if (sectionId === "business_hours") return (
+            <Fragment key={sectionId}>
             <div style={{ display: "grid", gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Timezone & Business Hours</h2>
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
@@ -558,9 +567,10 @@ export function AccountProfilePanel({
                 ))}
               </div>
             </div>
-            )}
-
-            {showAccountSection("call_forwarding") && (
+            </Fragment>
+              )
+              if (sectionId === "call_forwarding") return (
+            <Fragment key={sectionId}>
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
@@ -651,9 +661,10 @@ export function AccountProfilePanel({
                 )}
               </div>
             </div>
-            )}
-
-            {showAccountSection("voicemail") && (
+            </Fragment>
+              )
+              if (sectionId === "voicemail") return (
+            <Fragment key={sectionId}>
             <div style={{ display: "grid", gap: 10, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
               <button
                 type="button"
@@ -793,9 +804,10 @@ export function AccountProfilePanel({
                 </div>
               )}
             </div>
-            )}
-
-            {showAccountSection("help_desk") && (
+            </Fragment>
+              )
+              if (sectionId === "help_desk") return (
+            <Fragment key={sectionId}>
               <div style={{ padding: 14, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
                 <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
                 <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
@@ -816,7 +828,20 @@ export function AccountProfilePanel({
                   </div>
                 )}
               </div>
-            )}
+            </Fragment>
+              )
+              if (sectionId === "password_reset") {
+                if (!showPasswordReset) return null
+                return (
+                  <Fragment key={sectionId}>
+                    <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer", justifySelf: "start" }}>
+                      {resetting ? "Sending..." : "Reset password"}
+                    </button>
+                  </Fragment>
+                )
+              }
+              return null
+            })}
 
             {message && <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p>}
             {error && <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p>}
@@ -825,11 +850,6 @@ export function AccountProfilePanel({
               <button type="button" onClick={() => void handleSave()} disabled={saving} style={{ padding: "10px 16px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
                 {saving ? "Saving..." : adminContext ? "Save user account" : "Save account"}
               </button>
-              {showPasswordReset && showAccountSection("password_reset") && (
-                <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer" }}>
-                  {resetting ? "Sending..." : "Reset password"}
-                </button>
-              )}
             </div>
           </div>
         )}

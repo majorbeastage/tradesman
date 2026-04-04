@@ -4,6 +4,8 @@ import { useAuth } from "../../contexts/AuthContext"
 import { useView } from "../../contexts/ViewContext"
 import { AdminVisibilityProvider } from "../../contexts/AdminVisibilityContext"
 import { AdminSettingBlock, AdminVisibilityFooter } from "../../components/admin/AdminSettingChrome"
+import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
+import { reorderByIndex } from "../../lib/reorderArray"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import Sidebar from "../../components/Sidebar"
@@ -15,15 +17,15 @@ import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import AdminAboutUsSection from "./AdminAboutUsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
-  USER_PORTAL_TAB_IDS,
   TAB_ID_LABELS,
   PAGE_CONTROLS,
   DEFAULT_OPTIONS,
   LEADS_TABLE_COLUMN_IDS,
   LEADS_TABLE_COLUMN_LABELS,
-  ACCOUNT_PORTAL_SECTIONS,
   getDefaultControlItems,
   getAccountSectionVisible,
+  getPortalTabListForConfig,
+  getOrderedAccountPortalSections,
 } from "../../types/portal-builder"
 import {
   ALL_USERS_ID,
@@ -132,20 +134,11 @@ function setVisible(config: PortalConfig, section: "tabs" | "settings" | "dropdo
   return next
 }
 
-/** All tab ids (default + custom) for current config */
-function getAllTabIds(config: PortalConfig): { id: string; label: string }[] {
-  const defaultTabs = USER_PORTAL_TAB_IDS.map((id) => ({ id, label: TAB_ID_LABELS[id] ?? id }))
-  const customList = Array.isArray(config.customTabs) ? config.customTabs : []
-  const custom = customList.map((t) => ({ id: t.id, label: t.label }))
-  return [...defaultTabs, ...custom]
-}
-
-/** Visible tabs only, for sidebar preview / app */
+/** Visible tabs only (respects sidebar order), for sidebar preview / app */
 function getVisibleTabs(config: PortalConfig): Array<{ tab_id: string; label: string | null }> {
-  const all = getAllTabIds(config)
-  return all
-    .filter((t) => getVisible(config, "tabs", t.id))
-    .map((t) => ({ tab_id: t.id, label: t.label }))
+  return getPortalTabListForConfig(config)
+    .filter(({ tab_id }) => getVisible(config, "tabs", tab_id))
+    .map(({ tab_id, label }) => ({ tab_id, label }))
 }
 
 type MockFn = (onSelect: (controlId: string) => void, selectedId: string | null, config?: PortalConfig) => ReactNode
@@ -688,10 +681,67 @@ function AdminAppInner() {
     setHasRemovedSomething(true)
     const arr = (config.customTabs ?? []).filter((x) => x.id !== id)
     const next: PortalConfig = { ...config, customTabs: arr.length ? arr : undefined }
-    const keyObj = { ...next.tabs }
+    const keyObj = { ...(next.tabs ?? {}) }
     delete keyObj[id]
     next.tabs = Object.keys(keyObj).length ? keyObj : undefined
+    if (config.sidebarTabOrder?.length) {
+      const filtered = config.sidebarTabOrder.filter((x) => x !== id)
+      next.sidebarTabOrder = filtered.length ? filtered : undefined
+    }
     setConfig(next)
+  }
+
+  function reorderSidebarTabs(from: number, to: number) {
+    const ids = getPortalTabListForConfig(config).map((t) => t.tab_id)
+    setConfig({ ...config, sidebarTabOrder: reorderByIndex(ids, from, to) })
+  }
+
+  function reorderAccountSections(from: number, to: number) {
+    const ids = getOrderedAccountPortalSections(config).map((s) => s.id)
+    setConfig({ ...config, accountSectionOrder: reorderByIndex(ids, from, to) })
+  }
+
+  function reorderOptionValues(controlId: string, from: number, to: number) {
+    const cur = [...getOptionValues(controlId)]
+    setConfig({ ...config, optionValues: { ...config.optionValues, [controlId]: reorderByIndex(cur, from, to) } })
+  }
+
+  function reorderCustomActionButtonsRow(from: number, to: number) {
+    const arr = [...getCustomActionButtons()]
+    const next = reorderByIndex(arr, from, to)
+    if (previewPage === "leads") {
+      setConfig({ ...config, customActionButtons: next })
+    } else {
+      setConfig({ ...config, customActionButtonsByTab: { ...config.customActionButtonsByTab, [previewPage]: next } })
+    }
+  }
+
+  function reorderCustomActionButtonItemsRow(buttonId: string, from: number, to: number) {
+    const btn = getCustomActionButton(buttonId)
+    if (!btn) return
+    const allItems = btn.items
+    const visibleOnly = showPortalItemsHiddenFromAdmin ? allItems : allItems.filter((x) => !x.hideFromAdmin)
+    const fromItem = visibleOnly[from]
+    const toItem = visibleOnly[to]
+    if (!fromItem || !toItem) return
+    const full = [...allItems]
+    const fromIdx = full.findIndex((x) => x.id === fromItem.id)
+    const toIdx = full.findIndex((x) => x.id === toItem.id)
+    if (fromIdx < 0 || toIdx < 0) return
+    updateCustomActionButton(buttonId, { items: reorderByIndex(full, fromIdx, toIdx) })
+  }
+
+  function reorderControlItemsRow(tabId: string, controlId: string, from: number, to: number) {
+    const allItems = getControlItems(tabId, controlId)
+    const visibleOnly = showPortalItemsHiddenFromAdmin ? allItems : allItems.filter((x) => !x.hideFromAdmin)
+    const fromItem = visibleOnly[from]
+    const toItem = visibleOnly[to]
+    if (!fromItem || !toItem) return
+    const full = [...allItems]
+    const fromIdx = full.findIndex((x) => x.id === fromItem.id)
+    const toIdx = full.findIndex((x) => x.id === toItem.id)
+    if (fromIdx < 0 || toIdx < 0) return
+    setControlItems(tabId, controlId, reorderByIndex(full, fromIdx, toIdx))
   }
 
   function toggleAccountPortalSection(sectionId: string) {
@@ -1300,16 +1350,19 @@ function AdminAppInner() {
                   <>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Sidebar tabs</h2>
-                      {getAllTabIds(config).map(({ id, label }) => (
-                        <AdminSettingBlock key={id} id={`admin:portal:tab_row:${id}`}>
+                      <p style={{ fontSize: 12, color: theme.text, opacity: 0.8, margin: "0 0 8px" }}>Drag ⋮⋮ to reorder. Order applies to the user and office manager portals.</p>
+                      {getPortalTabListForConfig(config).map(({ tab_id: id, label }, index) => (
+                        <AdminSortableRow key={id} scope="portal-sidebar-tabs" index={index} onReorder={reorderSidebarTabs} rowStyle={{ marginBottom: 4 }}>
+                        <AdminSettingBlock id={`admin:portal:tab_row:${id}`}>
                         <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
                           <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("tabs", id)}>
                             <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
-                            <span style={{ color: theme.text }}>{label}</span>
+                            <span style={{ color: theme.text }}>{label ?? TAB_ID_LABELS[id] ?? id}</span>
                           </label>
                           <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustomTab(id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
                         </AdminSettingBlock>
+                        </AdminSortableRow>
                       ))}
                       <AdminSettingBlock id="admin:portal:add_custom_tab">
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -1322,15 +1375,17 @@ function AdminAppInner() {
                       <section style={{ marginBottom: 24 }}>
                         <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>My T (Account) — visible to user</h2>
                         <p style={{ fontSize: 12, color: theme.text, opacity: 0.8, margin: "0 0 10px" }}>
-                          Uncheck a row to hide that block on the user&apos;s Account tab. Admins always see the full form in Routing &amp; Access.
+                          Drag ⋮⋮ to reorder blocks on the user&apos;s Account tab. Uncheck to hide. Admins always see the full form in Routing &amp; Access.
                         </p>
-                        {ACCOUNT_PORTAL_SECTIONS.map(({ id, label }) => (
-                          <AdminSettingBlock key={id} id={`admin:portal:account_section:${id}`}>
+                        {getOrderedAccountPortalSections(config).map(({ id, label }, index) => (
+                          <AdminSortableRow key={id} scope="portal-account-sections" index={index} onReorder={reorderAccountSections} rowStyle={{ marginBottom: 4 }}>
+                          <AdminSettingBlock id={`admin:portal:account_section:${id}`}>
                             <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggleAccountPortalSection(id)}>
                               <input type="checkbox" checked={getAccountSectionVisible(config, id)} onChange={() => toggleAccountPortalSection(id)} />
                               <span style={{ color: theme.text }}>{label}</span>
                             </label>
                           </AdminSettingBlock>
+                          </AdminSortableRow>
                         ))}
                       </section>
                     ) : null}
@@ -1396,16 +1451,18 @@ function AdminAppInner() {
                         </h3>
                         {selectedControlForPage === "custom_header_button" && (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Custom buttons appear next to Settings. Add below; click a button to add/remove checkboxes, dropdowns, and custom fields inside it.</p>
-                            <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: theme.text }}>
-                              {getCustomActionButtons().map((b) => (
-                                <li key={b.id} style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Custom buttons appear next to Settings. Drag ⋮⋮ to reorder. Add below; click a button to add/remove checkboxes, dropdowns, and custom fields inside it.</p>
+                            <div style={{ margin: "0 0 12px", fontSize: 13, color: theme.text }}>
+                              {getCustomActionButtons().map((b, index) => (
+                                <AdminSortableRow key={b.id} scope={`custom-actions-${previewPage}`} index={index} onReorder={reorderCustomActionButtonsRow} rowStyle={{ marginBottom: 6 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                   <span>{b.label}</span>
                                   <button type="button" onClick={() => setSelectedControl({ tab: previewPage, controlId: "custom_action_button:" + b.id })} style={{ fontSize: 11, padding: "2px 6px" }}>Edit</button>
                                   <button type="button" onClick={() => removeCustomActionButton(b.id)} style={REMOVE_BTN_STYLE}>Remove</button>
-                                </li>
+                                </div>
+                                </AdminSortableRow>
                               ))}
-                            </ul>
+                            </div>
                             <div style={{ display: "flex", gap: 8 }}>
                               <input
                                 type="text"
@@ -1444,12 +1501,13 @@ function AdminAppInner() {
                                   <span>Show {hiddenInButtonCount} item{hiddenInButtonCount === 1 ? "" : "s"} hidden from admin</span>
                                 </label>
                               )}
-                              <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
-                                {itemsForButtonBuilder.map((item) => {
+                              <div style={{ margin: "0 0 12px", fontSize: 13, color: theme.text }}>
+                                {itemsForButtonBuilder.map((item, itemIndex) => {
                                   const isSelected = selectedCustomButtonItemId === item.id
                                   const otherItems = otherItemsInButton(item.id)
                                   return (
-                                    <li key={item.id} style={{ marginBottom: 10, padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
+                                    <AdminSortableRow key={item.id} scope={`cab-items-${buttonId.replace(/[^a-zA-Z0-9_-]/g, "_")}`} index={itemIndex} onReorder={(from, to) => reorderCustomActionButtonItemsRow(buttonId, from, to)} rowStyle={{ marginBottom: 10 }}>
+                                    <div style={{ padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
                                         <span style={{ fontWeight: 500 }}>{item.label}</span>
                                         <select
@@ -1552,10 +1610,11 @@ function AdminAppInner() {
                                           <button type="button" onClick={() => setSelectedCustomButtonItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                         </div>
                                       )}
-                                    </li>
+                                    </div>
+                                    </AdminSortableRow>
                                   )
                                 })}
-                              </ul>
+                              </div>
                               <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
                                 <p style={{ fontSize: 11, color: theme.text, marginBottom: 6 }}>Add item</p>
                                 <input type="text" placeholder="Label" value={newSettingItemLabel} onChange={(e) => setNewSettingItemLabel(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
@@ -1621,19 +1680,21 @@ function AdminAppInner() {
                           const otherItemsFor = (itemId: string) => allItems.filter((x) => x.id !== itemId)
                           return (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Edit each item: change type, dropdown options (Options), dependency (Dependency), visible to user, and hide from admin builder. Same options on every tab.</p>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Drag ⋮⋮ to reorder. Edit each item: type, dropdown options (Options), dependency (Dependency), visible to user, and hide from admin builder. Same options on every tab.</p>
                             {hiddenPortalItemCount > 0 && (
                               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
                                 <input type="checkbox" checked={showPortalItemsHiddenFromAdmin} onChange={(e) => setShowPortalItemsHiddenFromAdmin(e.target.checked)} />
                                 <span>Show {hiddenPortalItemCount} item{hiddenPortalItemCount === 1 ? "" : "s"} hidden from admin ({showPortalItemsHiddenFromAdmin ? "visible" : "concealed"})</span>
                               </label>
                             )}
-                            <ul style={{ margin: "0 0 12px", paddingLeft: 0, fontSize: 13, color: theme.text, listStyle: "none" }}>
-                              {itemsForBuilderList.map((item) => {
+                            <div style={{ margin: "0 0 12px", fontSize: 13, color: theme.text }}>
+                              {itemsForBuilderList.map((item, itemIndex) => {
                                 const isSelected = selectedControlItemId === item.id
                                 const otherItems = otherItemsFor(item.id)
+                                const ctlScope = `ctl-${tabId}-${controlId}`.replace(/[^a-zA-Z0-9_-]/g, "_")
                                 return (
-                                  <li key={item.id} style={{ marginBottom: 10, padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
+                                  <AdminSortableRow key={item.id} scope={ctlScope} index={itemIndex} onReorder={(from, to) => reorderControlItemsRow(tabId, controlId, from, to)} rowStyle={{ marginBottom: 10 }}>
+                                  <div style={{ padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
                                       <span style={{ fontWeight: 500 }}>{item.label}</span>
                                       <select
@@ -1736,10 +1797,11 @@ function AdminAppInner() {
                                         <button type="button" onClick={() => setSelectedControlItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                       </div>
                                     )}
-                                  </li>
+                                  </div>
+                                  </AdminSortableRow>
                                 )
                               })}
-                            </ul>
+                            </div>
                             <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${theme.border}` }}>
                               <p style={{ fontSize: 11, color: theme.text, marginBottom: 6 }}>Add item</p>
                               <input type="text" placeholder="Label" value={newSettingItemLabel} onChange={(e) => setNewSettingItemLabel(e.target.value)} style={{ width: "100%", padding: "6px 8px", marginBottom: 6, borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }} />
@@ -1756,15 +1818,17 @@ function AdminAppInner() {
                         })()}
                         {selectedControlForPage === "table_columns" && (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Columns shown in the leads table. Remove to hide; add back below.</p>
-                            <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: theme.text }}>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Drag ⋮⋮ to reorder columns. Remove to hide; add back below.</p>
+                            <div style={{ margin: "0 0 12px", fontSize: 13, color: theme.text }}>
                               {getOptionValues("leads_table_columns").map((colId, i) => (
-                                <li key={colId} style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                                <AdminSortableRow key={colId} scope="leads-table-columns" index={i} onReorder={(from, to) => reorderOptionValues("leads_table_columns", from, to)} rowStyle={{ marginBottom: 4 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                   <span>{LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}</span>
                                   <button type="button" onClick={() => removeOptionValue("leads_table_columns", i)} style={REMOVE_BTN_STYLE}>Remove</button>
-                                </li>
+                                </div>
+                                </AdminSortableRow>
                               ))}
-                            </ul>
+                            </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               {(LEADS_TABLE_COLUMN_IDS as readonly string[]).filter((colId) => !getOptionValues("leads_table_columns").includes(colId)).map((colId) => (
                                 <button key={colId} type="button" onClick={() => addOptionValue("leads_table_columns", colId)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontSize: 12 }}>{LEADS_TABLE_COLUMN_LABELS[colId] ?? colId}</button>

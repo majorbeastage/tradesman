@@ -51,7 +51,10 @@ Deno.serve(async (req) => {
       })
     }
     const ids = users.users.map((u) => u.id)
-    const { data: profiles } = await adminClient.from("profiles").select("id, email, role, display_name").in("id", ids)
+    const { data: profiles } = await adminClient
+      .from("profiles")
+      .select("id, email, role, display_name, account_disabled")
+      .in("id", ids)
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]))
     const list = users.users.map((u) => ({
       id: u.id,
@@ -59,6 +62,7 @@ Deno.serve(async (req) => {
       created_at: u.created_at,
       role: profileMap.get(u.id)?.role ?? "user",
       display_name: profileMap.get(u.id)?.display_name ?? null,
+      account_disabled: profileMap.get(u.id)?.account_disabled === true,
     }))
     return new Response(JSON.stringify({ users: list }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -106,12 +110,31 @@ Deno.serve(async (req) => {
     const displayName =
       typeof display_name === "string" && display_name.trim() ? display_name.trim() : null
     const trimmedEmail = email.trim()
+    const newUserPortal =
+      roleVal === "new_user"
+        ? {
+            tabs: {
+              dashboard: true,
+              leads: false,
+              conversations: false,
+              quotes: false,
+              calendar: false,
+              customers: false,
+              account: true,
+              "web-support": false,
+              "tech-support": true,
+              settings: false,
+            },
+          }
+        : undefined
     await adminClient.from("profiles").upsert(
       {
         id: newUser.user.id,
         email: trimmedEmail,
         role: roleVal,
         display_name: displayName,
+        ...(newUserPortal ? { portal_config: newUserPortal } : {}),
+        account_disabled: false,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "id" }
@@ -127,6 +150,67 @@ Deno.serve(async (req) => {
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
+  }
+
+  if (req.method === "PATCH") {
+    let body: { user_id?: string; account_disabled?: boolean }
+    try {
+      body = await req.json()
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    const targetId = typeof body.user_id === "string" ? body.user_id.trim() : ""
+    if (!targetId) {
+      return new Response(JSON.stringify({ error: "user_id required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    if (typeof body.account_disabled !== "boolean") {
+      return new Response(JSON.stringify({ error: "account_disabled must be true or false" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    if (targetId === user.id) {
+      return new Response(JSON.stringify({ error: "Cannot change your own access from here" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    const { data: updated, error: patchErr } = await adminClient
+      .from("profiles")
+      .update({
+        account_disabled: body.account_disabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", targetId)
+      .select("id")
+      .maybeSingle()
+    if (patchErr) {
+      return new Response(JSON.stringify({ error: patchErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    if (!updated?.id) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "No profile row for that user. Add a profiles row or ensure account_disabled column exists (run supabase-run-this.sql).",
+        }),
+        {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      )
+    }
+    return new Response(JSON.stringify({ ok: true, id: updated.id, account_disabled: body.account_disabled }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
   }
 
   return new Response(JSON.stringify({ error: "Method not allowed" }), {

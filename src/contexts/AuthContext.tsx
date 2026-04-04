@@ -27,6 +27,9 @@ type AuthState = {
   signOut: () => Promise<void>
   /** Refetch profile from DB and return role (e.g. to retry after login). */
   refetchProfile: () => Promise<ProfileFetchResult>
+  /** True after sign-in when profiles.account_disabled is true; user is signed out. Cleared when starting a new sign-in attempt. */
+  accountAccessBlocked: boolean
+  clearAccessBlockedReason: () => void
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -38,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [clientId, setClientId] = useState<string>(DEFAULT_CLIENT_ID)
   const [portalConfig, setPortalConfig] = useState<PortalConfig | null>(null)
   const [loading, setLoading] = useState(true)
+  const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
+
+  const clearAccessBlockedReason = useCallback(() => setAccountAccessBlocked(false), [])
 
   useEffect(() => {
     if (!supabase) {
@@ -65,17 +71,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setPortalConfig(null)
       return
     }
+    const sb = supabase
     let cancelled = false
     const timeoutMs = 8000
     const timeoutId = window.setTimeout(() => {
       if (!cancelled) setRole("user")
     }, timeoutMs)
-    supabase
+    sb
       .from("profiles")
-      .select("role, client_id, portal_config")
+      .select("role, client_id, portal_config, account_disabled")
       .eq("id", user.id)
       .single()
       .then(({ data, error }) => {
+        if (!cancelled && data?.account_disabled === true) {
+          clearTimeout(timeoutId)
+          setAccountAccessBlocked(true)
+          void sb.auth.signOut()
+          return
+        }
         if (!cancelled) {
           clearTimeout(timeoutId)
           if (!error && data?.role) setRole(data.role as UserRole)
@@ -111,9 +124,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase || !user?.id) return { role: null }
     const { data, error } = await supabase
       .from("profiles")
-      .select("role, client_id, portal_config")
+      .select("role, client_id, portal_config, account_disabled")
       .eq("id", user.id)
       .single()
+    if (data?.account_disabled === true) {
+      setAccountAccessBlocked(true)
+      await supabase.auth.signOut()
+      return { role: null, error: "Account deactivated" }
+    }
     if (error) {
       const fallback: UserRole = "user"
       setRole(fallback)
@@ -146,6 +164,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signUp,
     signOut,
     refetchProfile,
+    accountAccessBlocked,
+    clearAccessBlockedReason,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

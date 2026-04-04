@@ -3,6 +3,8 @@ import { useAuth } from "../../contexts/AuthContext"
 import type { UserRole } from "../../contexts/AuthContext"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
+import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
+import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } from "../../constants/supportLinks"
 
 type LoginType = "user" | "office_manager" | "admin"
 
@@ -14,7 +16,7 @@ type LoginPageProps = {
 }
 
 export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack }: LoginPageProps) {
-  const { signIn, signUp, user, role } = useAuth()
+  const { signIn, signUp, user, role, accountAccessBlocked, clearAccessBlockedReason } = useAuth()
   const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
   const [mode, setMode] = useState<"signin" | "signup">("signin")
   const [email, setEmail] = useState("")
@@ -113,6 +115,38 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               : "Sign up to get your own workspace."}
         </p>
 
+        {accountAccessBlocked && (
+          <div
+            role="alert"
+            style={{
+              margin: "0 0 16px",
+              padding: "14px 16px",
+              borderRadius: 8,
+              fontSize: 14,
+              lineHeight: 1.55,
+              color: "#991b1b",
+              background: "rgba(185, 28, 28, 0.08)",
+              border: "1px solid rgba(185, 28, 28, 0.25)",
+            }}
+          >
+            <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
+              This account has been deactivated. Contact your administrator if you need access again.
+            </p>
+            <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
+              <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
+                Email tech support
+              </a>
+              <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
+            </p>
+            <p style={{ margin: 0, color: "#7f1d1d" }}>
+              Help desk:{" "}
+              <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+                {HELP_DESK_PHONE_DISPLAY}
+              </a>
+            </p>
+          </div>
+        )}
+
         {!isAdminLogin && mode === "signin" && (
           <div style={{ marginBottom: 16 }}>
             <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>Login as</label>
@@ -132,7 +166,10 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           <input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value)
+              clearAccessBlockedReason()
+            }}
             autoComplete="email"
             style={inputStyle}
             placeholder="you@example.com"

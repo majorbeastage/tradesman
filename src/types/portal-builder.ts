@@ -155,6 +155,22 @@ export type PortalConfig = {
    * My T (Account) tab: hide whole blocks from the user. Missing key or true = visible; false = hidden.
    */
   accountSections?: Record<string, boolean>
+  /** Sidebar tab order (tab ids). Default + custom tabs merged; missing ids append in default order. */
+  sidebarTabOrder?: string[]
+  /** Account (My T) section rows order in admin builder + user-facing block order when present. */
+  accountSectionOrder?: string[]
+}
+
+/** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
+export const NEW_USER_VISIBLE_TAB_IDS: readonly string[] = ['dashboard', 'account', 'tech-support']
+
+/** Default `profiles.portal_config` for new_user (and Signup / complete-signup). */
+export function getDefaultPortalConfigForNewUser(): PortalConfig {
+  const tabs: Record<string, boolean> = {}
+  for (const id of USER_PORTAL_TAB_IDS) {
+    tabs[id] = NEW_USER_VISIBLE_TAB_IDS.includes(id)
+  }
+  return { tabs }
 }
 
 /** True if a standard page action should show (default visible). */
@@ -189,6 +205,57 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
   { id: "password_reset", label: "Password reset button" },
 ]
+
+/** Merge saved order with canonical id list (unique, stable tail for new ids). */
+export function mergeCanonicalOrder(savedOrder: string[] | undefined, canonicalIds: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  if (Array.isArray(savedOrder)) {
+    for (const id of savedOrder) {
+      if (canonicalIds.includes(id) && !seen.has(id)) {
+        out.push(id)
+        seen.add(id)
+      }
+    }
+  }
+  for (const id of canonicalIds) {
+    if (!seen.has(id)) {
+      out.push(id)
+      seen.add(id)
+    }
+  }
+  return out
+}
+
+/** Ordered tab entries for user portal sidebar (default + custom labels). */
+export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
+  const customTabs = portalConfig.customTabs ?? []
+  const canonical = [...USER_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const order = mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical)
+  const labelById = new Map<string, string | null>()
+  for (const id of USER_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const t of customTabs) labelById.set(t.id, t.label)
+  return order.filter((id) => labelById.has(id)).map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+}
+
+/** Office manager portal: same `sidebarTabOrder` as user config, canonical tabs exclude Settings. */
+export function getOfficePortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
+  const customTabs = portalConfig.customTabs ?? []
+  const canonical = [...OFFICE_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const order = mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical)
+  const labelById = new Map<string, string | null>()
+  for (const id of OFFICE_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const t of customTabs) labelById.set(t.id, t.label)
+  return order.filter((id) => labelById.has(id)).map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+}
+
+/** Account portal section definitions in admin/user order. */
+export function getOrderedAccountPortalSections(portalConfig: PortalConfig | null): { id: string; label: string }[] {
+  const canonical = ACCOUNT_PORTAL_SECTIONS.map((s) => s.id)
+  const order = mergeCanonicalOrder(portalConfig?.accountSectionOrder, canonical)
+  const byId = new Map(ACCOUNT_PORTAL_SECTIONS.map((s) => [s.id, s]))
+  return order.map((id) => byId.get(id)).filter((x): x is { id: string; label: string } => Boolean(x))
+}
 
 export function getAccountSectionVisible(portalConfig: PortalConfig | null, sectionId: string): boolean {
   const s = portalConfig?.accountSections

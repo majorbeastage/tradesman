@@ -12,14 +12,24 @@ ALTER TABLE public.profiles
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS best_contact_phone TEXT;
 
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS account_disabled BOOLEAN NOT NULL DEFAULT false;
+
 COMMENT ON COLUMN public.profiles.best_contact_phone IS 'Optional alternate phone for reaching the business (e.g. if different from primary_phone).';
+COMMENT ON COLUMN public.profiles.account_disabled IS 'When true, user cannot use the app; data is kept.';
 
 -- New signups default to new_user until an admin promotes them.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, role)
-  VALUES (NEW.id, NEW.email, 'new_user')
+  INSERT INTO public.profiles (id, email, role, portal_config, account_disabled)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    'new_user',
+    '{"tabs": {"dashboard": true, "leads": false, "conversations": false, "quotes": false, "calendar": false, "customers": false, "account": true, "web-support": false, "tech-support": true, "settings": false}}'::jsonb,
+    false
+  )
   ON CONFLICT (id) DO UPDATE
     SET email = EXCLUDED.email,
         updated_at = now();

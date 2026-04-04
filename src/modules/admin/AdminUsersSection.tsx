@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
+import { getDefaultPortalConfigForNewUser } from "../../types/portal-builder"
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
@@ -13,6 +14,7 @@ type UserRow = {
   created_at: string
   role: string
   display_name: string | null
+  account_disabled: boolean
 }
 
 /** `profiles.display_name` is stored as "First Last" from admin create; split for table columns. */
@@ -29,11 +31,12 @@ function userRowSearchText(u: UserRow): string {
   const parts = dn ? dn.split(/\s+/) : []
   const first = parts[0] ?? ""
   const last = parts.length > 1 ? parts.slice(1).join(" ") : ""
-  return [dn, first, last, u.email ?? "", u.role, u.id].join(" ").toLowerCase()
+  const access = u.account_disabled ? "inactive" : "active"
+  return [dn, first, last, u.email ?? "", u.role, u.id, access].join(" ").toLowerCase()
 }
 
 export default function AdminUsersSection() {
-  const { session } = useAuth()
+  const { session, user: currentAuthUser } = useAuth()
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("") // loading user list (don't overwrite create success)
@@ -73,6 +76,7 @@ export default function AdminUsersSection() {
               created_at: u.created_at ?? "",
               role: (u.role as string) ?? "user",
               display_name: u.display_name ?? null,
+              account_disabled: (u as { account_disabled?: boolean }).account_disabled === true,
             }))
             setUsers(rows)
             return
@@ -89,16 +93,26 @@ export default function AdminUsersSection() {
       }
       const { data: list } = await supabase
         .from("admin_users_list")
-        .select("id, email, created_at, role, display_name")
+        .select("id, email, created_at, role, display_name, account_disabled")
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, email, role, display_name, created_at")
+        .select("id, email, role, display_name, created_at, account_disabled")
 
       const merged = new Map<string, UserRow>()
-      for (const row of (list ?? []) as UserRow[]) {
-        merged.set(row.id, { ...row })
+      for (const row of (list ?? []) as Array<Omit<UserRow, "account_disabled"> & { account_disabled?: boolean }>) {
+        merged.set(row.id, {
+          ...row,
+          account_disabled: row.account_disabled === true,
+        })
       }
-      for (const p of (profiles ?? []) as Array<{ id: string; email?: string | null; role: string; display_name: string | null; created_at?: string }>) {
+      for (const p of (profiles ?? []) as Array<{
+        id: string
+        email?: string | null
+        role: string
+        display_name: string | null
+        created_at?: string
+        account_disabled?: boolean | null
+      }>) {
         const prev = merged.get(p.id)
         merged.set(p.id, {
           id: p.id,
@@ -106,6 +120,7 @@ export default function AdminUsersSection() {
           created_at: p.created_at ?? prev?.created_at ?? "",
           role: p.role ?? prev?.role ?? "user",
           display_name: p.display_name ?? prev?.display_name ?? null,
+          account_disabled: p.account_disabled === true || prev?.account_disabled === true,
         })
       }
 
@@ -175,6 +190,55 @@ export default function AdminUsersSection() {
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: nextRole } : u)))
     } finally {
       setRoleSavingUserId(null)
+    }
+  }
+
+  const [accessSavingUserId, setAccessSavingUserId] = useState<string | null>(null)
+
+  async function handleTableAccessChange(userId: string, disabled: boolean) {
+    if (!supabase) return
+    if (currentAuthUser?.id && userId === currentAuthUser.id) {
+      setError("You cannot deactivate your own account from this screen.")
+      return
+    }
+    setAccessSavingUserId(userId)
+    setError("")
+    try {
+      if (session?.access_token && supabaseUrl) {
+        const edge = await patchAccountDisabledViaAdminUsersEdge(
+          supabaseUrl,
+          session.access_token,
+          userId,
+          disabled
+        )
+        if (edge.ok) {
+          setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, account_disabled: disabled } : u)))
+          return
+        }
+        if (!edge.tryDirectDb) {
+          setError(edge.error)
+          return
+        }
+      }
+
+      const { data, error: err } = await supabase
+        .from("profiles")
+        .update({ account_disabled: disabled, updated_at: new Date().toISOString() })
+        .eq("id", userId)
+        .select("id")
+      if (err) {
+        setError(err.message)
+        return
+      }
+      if (!data?.length) {
+        setError(
+          "Access did not save (database rejected the update or no matching profile). Run the account_disabled section in supabase-run-this.sql, redeploy the admin-users Edge Function (supabase functions deploy admin-users), then try again."
+        )
+        return
+      }
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, account_disabled: disabled } : u)))
+    } finally {
+      setAccessSavingUserId(null)
     }
   }
 
@@ -307,7 +371,14 @@ export default function AdminUsersSection() {
         setUsers((prev) => {
           if (prev.some((u) => u.id === newUserId)) return prev
           return [
-            { id: newUserId, email: trimmedEmail, created_at: new Date().toISOString(), role, display_name: displayName },
+            {
+              id: newUserId,
+              email: trimmedEmail,
+              created_at: new Date().toISOString(),
+              role,
+              display_name: displayName,
+              account_disabled: false,
+            },
             ...prev,
           ]
         })
@@ -316,6 +387,7 @@ export default function AdminUsersSection() {
       // Edge Function already upserted profiles; signUp path still needs role upsert (trigger may have inserted 'user' only)
       if (!skipProfileUpsert) {
         try {
+          const portalPayload = role === "new_user" ? getDefaultPortalConfigForNewUser() : undefined
           const { error: profileError } = await supabase
             .from("profiles")
             .upsert(
@@ -324,6 +396,8 @@ export default function AdminUsersSection() {
                 email: trimmedEmail,
                 role,
                 display_name: displayName,
+                account_disabled: false,
+                ...(portalPayload ? { portal_config: portalPayload } : {}),
                 updated_at: new Date().toISOString(),
               },
               { onConflict: "id" }
@@ -359,6 +433,7 @@ export default function AdminUsersSection() {
               created_at: new Date().toISOString(),
               role,
               display_name: displayName,
+              account_disabled: false,
             },
             ...prev,
           ]
@@ -564,13 +639,14 @@ export default function AdminUsersSection() {
           )}
           <AdminSettingBlock id="admin:users:user_table">
           <div style={{ width: "100%", overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: 980, borderCollapse: "collapse", background: "white", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+        <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse", background: "white", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
           <thead>
             <tr style={{ background: theme.charcoalSmoke, color: "white" }}>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>First name</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Last name</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Email</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Role</th>
+              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Access</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Office manager</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Customer</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Created</th>
@@ -578,10 +654,10 @@ export default function AdminUsersSection() {
           </thead>
           <tbody>
             {users.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>No users in list. Create one above — they will appear here.</td></tr>
+              <tr><td colSpan={8} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>No users in list. Create one above — they will appear here.</td></tr>
             ) : filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>
+                <td colSpan={8} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>
                   No users match your search. Clear the search box to see everyone.
                 </td>
               </tr>
@@ -615,6 +691,38 @@ export default function AdminUsersSection() {
                     <option value="admin">admin</option>
                   </select>
                   {roleSavingUserId === u.id && <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.8 }}>Saving…</span>}
+                </td>
+                <td style={{ padding: "12px", color: theme.text, minWidth: 120 }}>
+                  <select
+                    value={u.account_disabled ? "inactive" : "active"}
+                    disabled={
+                      accessSavingUserId === u.id ||
+                      (!!currentAuthUser?.id && u.id === currentAuthUser.id)
+                    }
+                    onChange={(e) =>
+                      void handleTableAccessChange(u.id, e.target.value === "inactive")
+                    }
+                    style={{
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      fontSize: 13,
+                      maxWidth: 160,
+                      background: "white",
+                      color: theme.text,
+                    }}
+                    title={
+                      currentAuthUser?.id === u.id
+                        ? "Use another admin to change your access."
+                        : "Active: can sign in. Inactive: cannot sign in; data is kept."
+                    }
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                  {accessSavingUserId === u.id && (
+                    <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.8 }}>Saving…</span>
+                  )}
                 </td>
                 <td style={{ padding: "12px", color: theme.text }}>
                   {u.role === "user" || u.role === "new_user" ? (

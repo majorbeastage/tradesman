@@ -3,6 +3,7 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { TIMEZONE_OPTIONS } from "../../constants/timezones"
+import { getDefaultPortalConfigForNewUser } from "../../types/portal-builder"
 
 type Props = {
   onBack: () => void
@@ -60,15 +61,21 @@ async function tryCompleteSignupViaEdge(body: {
   if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) return "not_deployed"
   const base = supabaseUrlEnv.replace(/\/$/, "")
   const fnUrl = `${base}/functions/v1/complete-signup`
-  const res = await fetch(fnUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${supabaseAnonEnv}`,
-      apikey: supabaseAnonEnv,
-    },
-    body: JSON.stringify(body),
-  })
+  let res: Response
+  try {
+    res = await fetch(fnUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${supabaseAnonEnv}`,
+        apikey: supabaseAnonEnv,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    // Network / CORS / ad-block / wrong URL — fall back to client signUp instead of blocking signup.
+    return "not_deployed"
+  }
   if (res.status === 404) return "not_deployed"
   let json: { error?: string } = {}
   try {
@@ -206,6 +213,7 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
         address_zip: zip.trim() || null,
         business_address,
         timezone,
+        portal_config: getDefaultPortalConfigForNewUser(),
         updated_at: new Date().toISOString(),
       }
 
