@@ -1,8 +1,10 @@
 // Resend inbound email webhook (email.received). Use this URL in Resend when Vercel /api/* is served as the SPA.
 //
 // Deploy:  supabase functions deploy resend-inbound
-// Secrets: supabase secrets set RESEND_API_KEY=re_xxx
-//           supabase secrets set RESEND_WEBHOOK_SECRET=whsec_xxx   (Resend signing secret)
+// Secrets (two different values — do not swap):
+//   RESEND_API_KEY          → Resend dashboard → API Keys → re_...
+//   RESEND_WEBHOOK_SECRET   → Resend → Webhooks → [your endpoint] → Signing secret (often whsec_...)
+//       NOT the API key. Copy the secret shown for that webhook URL only.
 // Optional: supabase secrets set RESEND_FROM_EMAIL=you@domain.com  (forward copy “from” fallback)
 //
 // URL:     https://<project-ref>.supabase.co/functions/v1/resend-inbound
@@ -299,12 +301,22 @@ Deno.serve(async (req) => {
   }
 
   const rawBody = await req.text()
+  console.info("resend-inbound POST", {
+    bytes: rawBody.length,
+    svix: Boolean(req.headers.get("svix-id")),
+    contentType: req.headers.get("content-type")?.slice(0, 48) ?? "",
+  })
 
   let payload: Record<string, unknown>
   try {
     payload = parseVerifiedPayload(rawBody, req)
   } catch (e) {
-    return json(401, { error: e instanceof Error ? e.message : "Webhook verification failed" })
+    const msg = e instanceof Error ? e.message : "Webhook verification failed"
+    console.error("resend-inbound: verify failed", msg)
+    return json(401, {
+      error: msg,
+      hint: "RESEND_WEBHOOK_SECRET must be the Signing secret from this webhook in Resend (not your re_ API key).",
+    })
   }
 
   const type = typeof payload.type === "string" ? payload.type : ""
