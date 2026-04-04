@@ -78,6 +78,7 @@ function ConvoCollapsible({
   defaultOpen,
   showUnreadDot,
   onOpen,
+  countBadge,
   children,
 }: {
   title: string
@@ -85,6 +86,8 @@ function ConvoCollapsible({
   showUnreadDot?: boolean
   /** Called when the user expands this section (not on initial mount). */
   onOpen?: () => void
+  /** Shown next to the title when collapsed or open (e.g. message count). */
+  countBadge?: number
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen ?? false)
@@ -122,8 +125,11 @@ function ConvoCollapsible({
           color: "#111827",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {title}
+          {typeof countBadge === "number" && countBadge > 0 ? (
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#6b7280" }}>({countBadge})</span>
+          ) : null}
           {showUnreadDot ? (
             <span
               title="Unread"
@@ -138,7 +144,7 @@ function ConvoCollapsible({
             />
           ) : null}
         </span>
-        <span style={{ fontSize: 18, lineHeight: 1, color: "#6b7280" }} aria-hidden>
+        <span style={{ fontSize: 18, lineHeight: 1, color: "#6b7280", flexShrink: 0 }} aria-hidden>
           {open ? "−" : "+"}
         </span>
       </button>
@@ -383,35 +389,6 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     loadConversations()
   }, [userId])
 
-  /** Default-open SMS + email sections are visible when the row opens — mark read in one update to avoid parallel metadata races. */
-  useEffect(() => {
-    if (!supabase || !selectedConversation?.id) return
-    let cancelled = false
-    const convoId = selectedConversation.id
-    const prev =
-      selectedConversation.metadata && typeof selectedConversation.metadata === "object"
-        ? { ...(selectedConversation.metadata as Record<string, unknown>) }
-        : {}
-    const prevRead =
-      prev.convoReadAt && typeof prev.convoReadAt === "object" && !Array.isArray(prev.convoReadAt)
-        ? { ...(prev.convoReadAt as Record<string, string>) }
-        : {}
-    const now = new Date().toISOString()
-    const convoReadAt = { ...prevRead, sms: now, email: now }
-    const metadata = { ...prev, convoReadAt }
-    void (async () => {
-      const { error } = await supabase.from("conversations").update({ metadata }).eq("id", convoId)
-      if (cancelled || error) {
-        if (error) console.error(error)
-        return
-      }
-      setSelectedConversation((c: any) => (c && c.id === convoId ? { ...c, metadata } : c))
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [selectedConversation?.id])
-
   async function loadCustomerList() {
     if (!supabase || !userId) return
     const { data } = await supabase
@@ -551,22 +528,27 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     setDetailForm(buildDetailFormFromConversation(data))
     setDetailEditMode(false)
 
-    const { data: msgs } = await supabase
+    const { data: msgsDesc } = await supabase
       .from("messages")
       .select("*")
       .eq("conversation_id", convoId)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
+      .limit(80)
 
-    setMessages(msgs || [])
-    const { data: emailData } = await supabase
+    const msgs = msgsDesc || []
+    setMessages([...msgs].reverse())
+
+    const { data: emailDesc } = await supabase
       .from("communication_events")
       .select("id, subject, body, direction, created_at, metadata")
       .eq("conversation_id", convoId)
       .eq("event_type", "email")
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
+      .limit(80)
 
-    setEmailEvents((emailData as EmailEventRow[] | null) ?? [])
-    const latestOutbound = ((emailData as EmailEventRow[] | null) ?? [])
+    const emailData: EmailEventRow[] = emailDesc ? ([...emailDesc].reverse() as EmailEventRow[]) : []
+    setEmailEvents(emailData)
+    const latestOutbound = emailData
       .filter((evt) => evt.direction === "outbound" && evt.subject)
       .slice(-1)[0]
     setReplySubject(latestOutbound?.subject ?? "")
@@ -1230,18 +1212,21 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-sms`}
                 title="Text messages"
-                defaultOpen
+                countBadge={messages.length}
                 showUnreadDot={unreadChannels.sms}
                 onOpen={() => void markChannelRead("sms")}
               >
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
+                  Latest messages appear at the bottom. Scroll for older (up to 80 stored per thread).
+                </p>
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
                     padding: 12,
                     borderRadius: 8,
                     background: "#fff",
-                    minHeight: 200,
-                    maxHeight: 280,
+                    minHeight: 72,
+                    maxHeight: "min(38vh, 360px)",
                     overflow: "auto",
                     boxSizing: "border-box",
                   }}
@@ -1325,18 +1310,21 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-email`}
                 title="Emails"
-                defaultOpen
+                countBadge={emailEvents.length}
                 showUnreadDot={unreadChannels.email}
                 onOpen={() => void markChannelRead("email")}
               >
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
+                  Inbound mail appears here after Resend routes it to this thread. Scroll for older (up to 80 per thread).
+                </p>
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
                     padding: 12,
                     borderRadius: 8,
                     background: "#fff",
-                    minHeight: 200,
-                    maxHeight: 280,
+                    minHeight: 72,
+                    maxHeight: "min(38vh, 360px)",
                     overflow: "auto",
                     boxSizing: "border-box",
                   }}

@@ -898,8 +898,18 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
                 In Resend → <strong>Webhooks</strong>, add event <code style={{ fontSize: 11 }}>email.received</code> →{" "}
                 <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code>. Set{" "}
-                <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> and <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> on Vercel. Matching mail creates a
-                conversation thread and optionally forwards a copy to <strong>Reply-to / forward-to email</strong>.
+                <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> (signing secret from Resend) and <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> on Vercel.{" "}
+                The app loads the full message from Resend using that API key, matches the recipient, then creates the thread.
+              </p>
+              <p style={{ margin: "10px 0 0", padding: "10px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, lineHeight: 1.55 }}>
+                <strong style={{ color: "#9a3412" }}>Must match exactly:</strong> the <strong>To</strong> address on the inbound message (as Resend reports it) must equal this user&apos;s{" "}
+                <strong>Business email address</strong> on an <strong>Email</strong> channel row — same spelling, full address (e.g.{" "}
+                <code style={{ fontSize: 11 }}>support@tradesman-us.com</code>), saved lowercase. That row must be <strong>Active</strong> and <strong>Email enabled</strong>.{" "}
+                MX/DNS only gets mail into Resend; the <strong>webhook</strong> is what creates the conversation. If Resend shows &quot;received&quot; but nothing appears in the app, check the webhook delivery in Resend (HTTP 200 body may say{" "}
+                <code style={{ fontSize: 11 }}>routed: false</code> with a <code style={{ fontSize: 11 }}>to</code> list — fix the channel address to match).
+              </p>
+              <p style={{ margin: "10px 0 0", opacity: 0.9 }}>
+                After a message is routed into Tradesman, the app can <strong>forward a copy</strong> to <strong>Reply-to / forward-to email</strong> using Resend send — that is separate from MX; it only runs when inbound routing succeeded.
               </p>
             </div>
             <div>

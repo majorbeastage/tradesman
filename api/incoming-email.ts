@@ -84,10 +84,19 @@ function stripHtml(html: string): string {
 function extractToList(data: Record<string, unknown>): string[] {
   const raw = data.to
   if (Array.isArray(raw)) {
-    return raw.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+    return raw.map((x) => normalizeToAddress(String(x))).filter(Boolean)
   }
-  if (typeof raw === "string" && raw.trim()) return [raw.trim().toLowerCase()]
+  if (typeof raw === "string" && raw.trim()) return [normalizeToAddress(raw)].filter(Boolean)
   return []
+}
+
+/** Resend may return To as plain email or RFC display form "Name <addr@domain>". */
+function normalizeToAddress(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  const angle = trimmed.match(/<([^>]+)>/)
+  const addr = (angle ? angle[1] : trimmed).trim().toLowerCase()
+  return addr
 }
 
 async function fetchResendReceivedEmail(apiKey: string, emailId: string): Promise<ResendReceivedPayload | null> {
@@ -176,7 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const toList = Array.isArray(received.to)
-    ? received.to.map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+    ? received.to.map((t) => normalizeToAddress(String(t))).filter(Boolean)
     : extractToList(received as unknown as Record<string, unknown>)
 
   const supabase = createServiceSupabase()
