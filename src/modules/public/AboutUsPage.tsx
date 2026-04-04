@@ -90,6 +90,7 @@ export default function AboutUsPage({ onBack }: Props) {
             <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
               {content.blocks.map((block) => {
                 if (block.type === "text") {
+                  const href = block.link_url?.trim()
                   return (
                     <div
                       key={block.id}
@@ -105,6 +106,18 @@ export default function AboutUsPage({ onBack }: Props) {
                       }}
                     >
                       {block.body}
+                      {href ? (
+                        <div style={{ marginTop: 14 }}>
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: theme.primary, fontWeight: 700, textDecoration: "underline" }}
+                          >
+                            {block.link_label?.trim() || href}
+                          </a>
+                        </div>
+                      ) : null}
                     </div>
                   )
                 }

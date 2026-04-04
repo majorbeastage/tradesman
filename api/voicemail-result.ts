@@ -6,6 +6,10 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   return res.status(200).send(body)
 }
 
+function isLikelyUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim())
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST")
@@ -19,6 +23,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
   const transcriptionText = pickFirstString(req.body?.TranscriptionText, req.query?.TranscriptionText)
   const completedAt = new Date().toISOString()
+
+  const notifyRaw = typeof req.query?.notifyUserIds === "string" ? req.query.notifyUserIds : ""
+  const notifyUserIds = notifyRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(isLikelyUuid)
+
+  if (notifyUserIds.length > 0) {
+    try {
+      const supabase = createServiceSupabase()
+      const summaryText =
+        transcriptionText && transcriptionText.length > 280
+          ? `${transcriptionText.slice(0, 277)}...`
+          : transcriptionText || null
+      for (const userId of notifyUserIds) {
+        await logCommunicationEvent(supabase, {
+          user_id: userId,
+          customer_id: null,
+          conversation_id: null,
+          channel_id: null,
+          event_type: "voicemail",
+          direction: "inbound",
+          external_id: recordingSid || null,
+          body: transcriptionText || "Help desk voicemail",
+          recording_url: recordingUrl || null,
+          transcript_text: transcriptionText || null,
+          summary_text: summaryText,
+          previous_customer: false,
+          unread: true,
+          metadata: {
+            from,
+            to,
+            help_desk: true,
+            voicemail_completed_at: completedAt,
+            caller_number: from,
+            recording_url: recordingUrl || null,
+          },
+        })
+      }
+    } catch {
+      // Twilio still needs TwiML
+    }
+    return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)
+  }
 
   try {
     const supabase = createServiceSupabase()

@@ -1,5 +1,5 @@
 export type AboutUsBlock =
-  | { id: string; type: "text"; body: string }
+  | { id: string; type: "text"; body: string; link_url?: string; link_label?: string }
   | { id: string; type: "image"; url: string; alt: string }
 
 export type AboutUsContent = {
@@ -38,7 +38,15 @@ export function parseAboutUsContent(raw: unknown): AboutUsContent {
       const b = item as Record<string, unknown>
       const id = typeof b.id === "string" && b.id ? b.id : `block-${blocks.length}`
       if (b.type === "text" && typeof b.body === "string") {
-        blocks.push({ id, type: "text", body: b.body })
+        const link_url = typeof b.link_url === "string" ? b.link_url.trim() : ""
+        const link_label = typeof b.link_label === "string" ? b.link_label.trim() : ""
+        blocks.push({
+          id,
+          type: "text",
+          body: b.body,
+          ...(link_url ? { link_url } : {}),
+          ...(link_label ? { link_label } : {}),
+        })
       } else if (b.type === "image" && typeof b.url === "string") {
         blocks.push({ id, type: "image", url: b.url, alt: typeof b.alt === "string" ? b.alt : "" })
       }

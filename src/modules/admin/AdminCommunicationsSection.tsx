@@ -62,6 +62,8 @@ type HelpDeskSettings = {
   greeting_recording_url: string
   menu_enabled: boolean
   options: HelpDeskOption[]
+  /** Comma-separated profile UUIDs; each receives help-desk voicemails in their portal. */
+  voicemail_notify_user_ids: string
 }
 
 function normalizePhone(value: string | null | undefined): string | null {
@@ -102,6 +104,7 @@ function defaultHelpDeskSettings(): HelpDeskSettings {
     greeting_text: "Thank you for calling Tradesman. Please listen carefully to the following options.",
     greeting_recording_url: "",
     menu_enabled: false,
+    voicemail_notify_user_ids: "",
     options: [
       { id: crypto.randomUUID(), digit: "1", label: "Customer care", enabled: true, forward_to_phone: "" },
       { id: crypto.randomUUID(), digit: "2", label: "Technical support", enabled: true, forward_to_phone: "" },
@@ -204,6 +207,13 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         } else {
           const raw = (settingData as { value?: Record<string, unknown> } | null)?.value ?? {}
           const optionInput = Array.isArray(raw.options) ? raw.options : []
+          const notifyRaw = raw.voicemail_notify_user_ids
+          const notifyStr =
+            Array.isArray(notifyRaw)
+              ? notifyRaw.map(String).join(", ")
+              : typeof notifyRaw === "string"
+                ? notifyRaw
+                : ""
           setHelpDeskSettings({
             title: typeof raw.title === "string" && raw.title.trim() ? raw.title : "Tradesman Help Desk",
             greeting_mode: raw.greeting_mode === "recorded" ? "recorded" : "ai_text",
@@ -214,6 +224,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             greeting_recording_url:
               typeof raw.greeting_recording_url === "string" ? raw.greeting_recording_url : "",
             menu_enabled: raw.menu_enabled === true,
+            voicemail_notify_user_ids: notifyStr,
             options: optionInput.map((option) => {
               const row = option && typeof option === "object" ? (option as Record<string, unknown>) : {}
               return {
@@ -536,9 +547,15 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
 
       for (const option of normalizedOptions) {
         if (!option.digit || !option.label) throw new Error("Each help desk option needs both a keypad digit and a label.")
+        if (option.digit === "0") throw new Error("Digit 0 is reserved for help desk voicemail. Use 1–9 for menu options.")
         if (digits.has(option.digit)) throw new Error("Each help desk option must use a unique keypad digit.")
         digits.add(option.digit)
       }
+
+      const notifyIds = helpDeskSettings.voicemail_notify_user_ids
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
 
       const payload = {
         title: helpDeskSettings.title.trim() || "Tradesman Help Desk",
@@ -548,6 +565,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
           "Thank you for calling Tradesman. Please listen carefully to the following options.",
         greeting_recording_url: helpDeskSettings.greeting_recording_url.trim(),
         menu_enabled: helpDeskSettings.menu_enabled,
+        voicemail_notify_user_ids: notifyIds,
         options: normalizedOptions,
       }
 
@@ -565,6 +583,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         title: payload.title,
         greeting_text: payload.greeting_text,
         greeting_recording_url: payload.greeting_recording_url,
+        voicemail_notify_user_ids: notifyIds.join(", "),
         options: normalizedOptions.map((option) => ({ ...option })),
       }))
       setMessage("Tradesman help desk settings saved.")
@@ -658,7 +677,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             <div>
               <h2 style={{ color: theme.text, margin: "0 0 6px", fontSize: 18 }}>Tradesman Help Desk Options</h2>
               <p style={{ color: theme.text, opacity: 0.8, margin: 0 }}>
-                Manage the shared Tradesman support number greeting now and stage future phone-menu options in one admin-only place.
+                Configure the toll-free greeting, live keypad menu, voicemail recipients, and optional call logging for the shared Tradesman help desk number.
               </p>
             </div>
             <button type="button" onClick={() => void saveHelpDeskSettings()} disabled={savingHelpDesk} style={{ padding: "10px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "white", fontWeight: 600, cursor: savingHelpDesk ? "wait" : "pointer" }}>
@@ -684,6 +703,20 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               Enable keypad menu options after the greeting
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
+                Voicemail notify user IDs (comma-separated profile UUIDs)
+              </span>
+              <textarea
+                value={helpDeskSettings.voicemail_notify_user_ids}
+                onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, voicemail_notify_user_ids: e.target.value }))}
+                style={{ ...theme.formInput, minHeight: 72, resize: "vertical" }}
+                placeholder="e.g. joe and justin profiles’ auth user UUIDs from Supabase"
+              />
+              <span style={{ fontSize: 11, color: theme.text, opacity: 0.75 }}>
+                When set, callers can press 0 after the menu (or reach voicemail on a bad key / menu timeout) and each listed user gets the recording in Conversations. Digit 0 cannot be used as a menu option.
+              </span>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Greeting script</span>
               <textarea value={helpDeskSettings.greeting_text} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, greeting_text: e.target.value }))} style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }} placeholder="Thank you for calling Tradesman..." />
             </label>
@@ -706,9 +739,9 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h3 style={{ color: theme.text, margin: 0, fontSize: 16 }}>Future Menu Options</h3>
+                  <h3 style={{ color: theme.text, margin: 0, fontSize: 16 }}>Help Desk Menu Options</h3>
                   <p style={{ color: theme.text, opacity: 0.8, margin: "6px 0 0" }}>
-                    Stage the keypad choices you want this Tradesman number to offer later.
+                    Live keypad choices for this number (1–9 only; 0 is reserved for voicemail when notify IDs are set).
                   </p>
                 </div>
                 <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskOption()] }))} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>

@@ -243,9 +243,10 @@ export function buildVoicemailTwiml(params: {
   const recordedUrl = params.routingProfile?.voicemail_greeting_recording_url?.trim() || ""
   const useRecordedGreeting =
     params.routingProfile?.voicemail_greeting_mode === "recorded" && !!recordedUrl
+  const sayAttrs = `voice="Polly.Matthew" language="en-US"`
   const greetingNode = useRecordedGreeting
     ? `<Play>${xmlEscape(recordedUrl)}</Play>`
-    : `<Say>${xmlEscape(greetingText)}</Say>`
+    : `<Say ${sayAttrs}>${xmlEscape(greetingText)}</Say>`
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +

@@ -50,7 +50,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const callerNumber = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
 
   if (!userId || !recordingUrl) {
-    return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Missing recording details. Goodbye.</Say><Hangup/></Response>`)
+    return sendTwiml(
+      res,
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew" language="en-US">Missing recording details. Goodbye.</Say><Hangup/></Response>`
+    )
   }
 
   try {
@@ -84,12 +87,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return sendTwiml(
       res,
-      `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Your voicemail greeting has been saved and is now active.</Say><Hangup/></Response>`
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew" language="en-US">Your voicemail greeting has been saved and is now active.</Say><Hangup/></Response>`
     )
   } catch {
     return sendTwiml(
       res,
-      `<?xml version="1.0" encoding="UTF-8"?><Response><Say>We were not able to save your greeting right now. Please try again later.</Say><Hangup/></Response>`
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew" language="en-US">We were not able to save your greeting right now. Please try again later.</Say><Hangup/></Response>`
     )
   }
 }

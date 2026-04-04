@@ -1,15 +1,44 @@
+import { useEffect, useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { LEGAL_LINKS } from "../../lib/legalLinks"
+import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
+import {
+  DEFAULT_SMS_CONSENT_PAGE,
+  SMS_CONSENT_SETTINGS_KEY,
+  parseSmsConsentLegalPage,
+  type SmsConsentLegalPage,
+} from "../../types/legal-pages"
 import { PublicLegalNav } from "./PublicLegalNav"
 
-const consentStatement =
-  "By providing your mobile phone number and opting in, you agree to receive text messages from Tradesman regarding customer support, appointment coordination, job updates, account notifications, and service-related follow-up. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help."
-
-const sampleMessage =
-  "Tradesman: Thanks for contacting us. This is a customer support update regarding your request. Message frequency varies. Reply STOP to opt out, HELP for help."
-
 export default function SmsConsentPage() {
+  const [content, setContent] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false)
+      return
+    }
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", SMS_CONSENT_SETTINGS_KEY)
+          .maybeSingle()
+        if (!error && data?.value) setContent(parseSmsConsentLegalPage(data.value, DEFAULT_SMS_CONSENT_PAGE))
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [])
+
+  const consent =
+    content.consent_statement?.trim() ? content.consent_statement : DEFAULT_SMS_CONSENT_PAGE.consent_statement
+  const sample = content.sample_message?.trim() ? content.sample_message : DEFAULT_SMS_CONSENT_PAGE.sample_message
+  const bodyExtra = content.body?.trim() ? content.body : DEFAULT_SMS_CONSENT_PAGE.body
+
   return (
     <div
       style={{
@@ -37,23 +66,18 @@ export default function SmsConsentPage() {
           }}
         >
           <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>Tradesman</div>
-          <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>SMS Consent and Messaging Terms</h1>
-          <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>
-            This page describes how Tradesman collects SMS opt-in consent for customer support, appointment coordination, and service-related messaging tied to our business phone numbers, including verified toll-free messaging.
-          </p>
+          <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>{content.title}</h1>
+          <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{content.subtitle}</p>
         </div>
 
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>Opt-In Method</h2>
-          <p style={{ margin: "0 0 10px", color: "#4b5563" }}>
-            Customers opt in to receive SMS messages from Tradesman by providing their phone number directly through one of the following channels and expressly consenting to receive messages:
-          </p>
-          <ul style={{ margin: 0, paddingLeft: 18, color: "#4b5563" }}>
-            <li>Website contact, estimate request, or service request forms</li>
-            <li>Direct customer intake during scheduling or support interactions</li>
-            <li>Customer service conversations where the customer requests text follow-up</li>
-          </ul>
-        </div>
+        {bodyExtra ? (
+          <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
+            <h2 style={{ margin: "0 0 10px", color: theme.text }}>Details</h2>
+            <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+              {loading ? "Loading…" : bodyExtra}
+            </p>
+          </div>
+        ) : null}
 
         <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
           <h2 style={{ margin: "0 0 10px", color: theme.text }}>Consent Language</h2>
@@ -67,21 +91,8 @@ export default function SmsConsentPage() {
               lineHeight: 1.65,
             }}
           >
-            {consentStatement}
+            {consent}
           </div>
-        </div>
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>Use Case</h2>
-          <p style={{ margin: "0 0 8px", color: "#4b5563" }}>
-            Tradesman sends conversational and service-related messages only. Messaging may include:
-          </p>
-          <ul style={{ margin: 0, paddingLeft: 18, color: "#4b5563" }}>
-            <li>Customer support follow-up</li>
-            <li>Appointment reminders and coordination</li>
-            <li>Job updates and service status messages</li>
-            <li>Estimate, scheduling, and account-related notifications</li>
-          </ul>
         </div>
 
         <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
@@ -96,28 +107,8 @@ export default function SmsConsentPage() {
               lineHeight: 1.65,
             }}
           >
-            {sampleMessage}
+            {sample}
           </div>
-        </div>
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>Help and Opt-Out</h2>
-          <ul style={{ margin: 0, paddingLeft: 18, color: "#4b5563" }}>
-            <li>Customers can reply `STOP` at any time to opt out of SMS messages.</li>
-            <li>Customers can reply `HELP` for assistance.</li>
-            <li>Message frequency varies based on the customer’s support, scheduling, and service activity.</li>
-            <li>Message and data rates may apply.</li>
-          </ul>
-        </div>
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>Contact for Messaging Notifications</h2>
-          <p style={{ margin: "0 0 6px", color: "#4b5563" }}>
-            Notification and compliance contact email: <a href="mailto:Admin@tradesman-us.com">Admin@tradesman-us.com</a>
-          </p>
-          <p style={{ margin: 0, color: "#4b5563" }}>
-            For support related to messaging, customers can also reply `HELP` or contact Tradesman through the business support channels listed on the main site.
-          </p>
         </div>
 
         <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 18 }}>

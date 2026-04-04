@@ -15,6 +15,7 @@ import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
 import AdminPortalAssistant from "./AdminPortalAssistant"
 import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import AdminAboutUsSection from "./AdminAboutUsSection"
+import AdminSignupRequirementsSection from "./AdminSignupRequirementsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -536,7 +537,7 @@ function AdminAppInner() {
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
-  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications" | "about">("portal")
+  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications" | "about" | "signup">("portal")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -1041,6 +1042,23 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("signup")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "signup" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "signup" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Sign up requirements
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("about")}
             style={{
               padding: "8px 12px",
@@ -1237,6 +1255,8 @@ function AdminAppInner() {
           />
         ) : adminPanel === "about" ? (
           <AdminAboutUsSection />
+        ) : adminPanel === "signup" ? (
+          <AdminSignupRequirementsSection />
         ) : loading ? (
           <AdminSettingBlock id="admin:portal:loading_profiles">
           <p style={{ color: theme.text }}>Loading profiles…</p>

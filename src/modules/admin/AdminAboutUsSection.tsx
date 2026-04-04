@@ -174,12 +174,32 @@ export default function AdminAboutUsSection() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: theme.primary, marginBottom: 8 }}>{block.type === "text" ? "TEXT" : "IMAGE"}</div>
                     {block.type === "text" ? (
-                      <textarea
-                        value={block.body}
-                        onChange={(e) => updateBlock(index, { body: e.target.value })}
-                        placeholder="Paragraph or bio text…"
-                        style={{ ...theme.formInput, width: "100%", minHeight: 120, resize: "vertical" }}
-                      />
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <textarea
+                          value={block.body}
+                          onChange={(e) => updateBlock(index, { body: e.target.value })}
+                          placeholder="Paragraph or bio text…"
+                          style={{ ...theme.formInput, width: "100%", minHeight: 120, resize: "vertical" }}
+                        />
+                        <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                          Optional link URL
+                          <input
+                            value={block.link_url ?? ""}
+                            onChange={(e) => updateBlock(index, { link_url: e.target.value })}
+                            style={{ ...theme.formInput, width: "100%", marginTop: 4 }}
+                            placeholder="https://…"
+                          />
+                        </label>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                          Optional link label
+                          <input
+                            value={block.link_label ?? ""}
+                            onChange={(e) => updateBlock(index, { link_label: e.target.value })}
+                            style={{ ...theme.formInput, width: "100%", marginTop: 4 }}
+                            placeholder="Shown as the clickable text"
+                          />
+                        </label>
+                      </div>
                     ) : (
                       <div style={{ display: "grid", gap: 10 }}>
                         <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>

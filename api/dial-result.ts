@@ -6,6 +6,13 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   return res.status(200).send(body)
 }
 
+function requestPublicOrigin(req: VercelRequest): string {
+  const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
+  const host = pickFirstString(req.headers.host)
+  if (!host) return "https://tradesman.vercel.app"
+  return `${proto}://${host}`
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST")
@@ -25,14 +32,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const dialCallSid = pickFirstString(req.body?.DialCallSid, req.query?.DialCallSid)
 
   if (dialCallStatus === "no-answer" || dialCallStatus === "busy" || dialCallStatus === "failed") {
-    let recordAction = "/api/voicemail-complete"
-    if (channelId || to || from) {
-      const params = new URLSearchParams()
-      if (channelId) params.set("channelId", channelId)
-      if (to) params.set("to", to)
-      if (from) params.set("from", from)
-      recordAction += `?${params.toString()}`
-    }
+    const origin = requestPublicOrigin(req)
+    const params = new URLSearchParams()
+    if (channelId) params.set("channelId", channelId)
+    if (to) params.set("to", to)
+    if (from) params.set("from", from)
+    const recordAction = `${origin}/api/voicemail-complete${params.size ? `?${params.toString()}` : ""}`
 
     try {
       const supabase = createServiceSupabase()

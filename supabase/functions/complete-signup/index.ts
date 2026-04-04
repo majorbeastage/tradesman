@@ -25,6 +25,7 @@ type Body = {
   address_zip?: string | null
   business_address?: string | null
   timezone?: string | null
+  signup_extras?: Record<string, string | null> | null
 }
 
 Deno.serve(async (req) => {
@@ -108,6 +109,11 @@ Deno.serve(async (req) => {
     },
   }
 
+  const extras =
+    body.signup_extras && typeof body.signup_extras === "object" && !Array.isArray(body.signup_extras)
+      ? body.signup_extras
+      : {}
+
   const { error: profileErr } = await adminClient.from("profiles").upsert(
     {
       id: uid,
@@ -125,6 +131,7 @@ Deno.serve(async (req) => {
       address_zip: body.address_zip ?? null,
       business_address: body.business_address ?? null,
       timezone: body.timezone?.trim() || "America/New_York",
+      signup_extras: extras,
       updated_at: now,
     },
     { onConflict: "id" }
