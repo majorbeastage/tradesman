@@ -897,7 +897,8 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               <strong style={{ color: theme.text }}>3. Inbound into Tradesman Conversations</strong>
               <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
                 In Resend → <strong>Webhooks</strong>, add event <code style={{ fontSize: 11 }}>email.received</code> →{" "}
-                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code>. Set{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code> (or{" "}
+                <code style={{ fontSize: 11 }}>/api/resend-inbound</code> — same handler if the primary path returns HTML/404). Set{" "}
                 <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> (signing secret from Resend) and <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> on Vercel.{" "}
                 The app loads the full message from Resend using that API key, matches the recipient, then creates the thread.
               </p>

@@ -5,13 +5,10 @@
   "installCommand": "npm install",
   "functions": {
     "api/incoming-email.ts": { "maxDuration": 60 },
+    "api/resend-inbound.ts": { "maxDuration": 60 },
     "api/help-desk-voice.ts": { "maxDuration": 30 }
   },
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    },
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
     { "source": "/sms-consent", "destination": "/" },

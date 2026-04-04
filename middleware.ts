@@ -1,16 +1,18 @@
 import { next } from "@vercel/functions"
 
 /**
- * Runs on the Edge before static assets. Vite + dist-only routing was serving the SPA for /api/*;
- * short-circuit GET (and OPTIONS) here so probes and Resend URL checks work. POST continues to the Node handler in api/incoming-email.ts.
+ * Edge middleware before static routing. Vite deployments were serving index.html for /api/*;
+ * we handle GET/OPTIONS for probe + incoming-email here. POST /api/incoming-email uses next() → Node api/incoming-email.ts.
+ *
+ * Matcher is `/api/:path*` so path-to-regexp matches nested routes; exact paths are checked in code.
  */
 export const config = {
-  matcher: ["/api/incoming-email", "/api/probe"],
+  matcher: "/api/:path*",
 }
 
 const corsJson = {
   "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store, no-cache, must-revalidate",
+  "cache-control": "no-store, no-cache, must-revalidate, pragma: no-cache",
   "access-control-allow-origin": "*",
 } as const
 
@@ -33,7 +35,7 @@ export default function middleware(request: Request): Response {
     return next()
   }
 
-  if (path === "/api/incoming-email") {
+  if (path === "/api/incoming-email" || path === "/api/resend-inbound") {
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -48,9 +50,12 @@ export default function middleware(request: Request): Response {
       return new Response(
         JSON.stringify({
           ok: true,
-          route: "incoming-email",
+          route: path === "/api/resend-inbound" ? "resend-inbound" : "incoming-email",
           via: "edge-middleware",
-          hint: "Configure Resend webhook (email.received) to POST here. POST is handled by the Node function after middleware.",
+          hint:
+            path === "/api/resend-inbound"
+              ? "Alternate Resend URL (same Node handler as /api/incoming-email). POST webhooks here if the primary path fails."
+              : "Configure Resend webhook (email.received) to POST here. POST is handled by the Node function after middleware.",
         }),
         { status: 200, headers: corsJson }
       )
