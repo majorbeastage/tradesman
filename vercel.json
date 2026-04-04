@@ -10,6 +10,10 @@
   "rewrites": [
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
-    { "source": "/sms-consent", "destination": "/" }
+    { "source": "/sms-consent", "destination": "/" },
+    {
+      "source": "/((?!api/|assets/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
