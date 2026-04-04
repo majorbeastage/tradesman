@@ -1,3 +1,7 @@
+/**
+ * Vercel serverless inbound email (Resend). If your host serves /api/* as the SPA, use
+ * Supabase Edge Function `resend-inbound` instead (see supabase/functions/resend-inbound).
+ */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { Webhook } from "svix"
 import {

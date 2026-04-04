@@ -46,6 +46,12 @@ type Props = {
   selectedUserLabel: string
 }
 
+/** Resend inbound webhook (Supabase Edge). Vercel /api/* may serve the SPA instead of serverless. */
+const RESEND_INBOUND_WEBHOOK_URL =
+  typeof import.meta.env.VITE_SUPABASE_URL === "string" && import.meta.env.VITE_SUPABASE_URL.trim() !== ""
+    ? `${String(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1/resend-inbound`
+    : "https://YOUR_PROJECT_REF.supabase.co/functions/v1/resend-inbound"
+
 type HelpDeskOption = {
   id: string
   digit: string
@@ -896,11 +902,18 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             <div>
               <strong style={{ color: theme.text }}>3. Inbound into Tradesman Conversations</strong>
               <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
-                In Resend → <strong>Webhooks</strong>, add event <code style={{ fontSize: 11 }}>email.received</code> →{" "}
-                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code> (or{" "}
-                <code style={{ fontSize: 11 }}>/api/resend-inbound</code> — same handler if the primary path returns HTML/404). Set{" "}
-                <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> (signing secret from Resend) and <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> on Vercel.{" "}
-                The app loads the full message from Resend using that API key, matches the recipient, then creates the thread.
+                <strong>Recommended (works with Vite on Vercel):</strong> deploy the Supabase Edge Function{" "}
+                <code style={{ fontSize: 11 }}>resend-inbound</code> (<code style={{ fontSize: 11 }}>supabase functions deploy resend-inbound</code>
+                ). In Resend → <strong>Webhooks</strong>, set event <code style={{ fontSize: 11 }}>email.received</code> →{" "}
+                <code style={{ fontSize: 11 }}>POST {RESEND_INBOUND_WEBHOOK_URL}</code>. In Supabase → Project Settings → Edge Functions → Secrets, set{" "}
+                <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> and <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> (same signing secret as in Resend).{" "}
+                Open the URL in a browser: you should see JSON <code style={{ fontSize: 11 }}>{`{"ok":true,"route":"resend-inbound"}`}</code> with{" "}
+                <code style={{ fontSize: 11 }}>runtime: supabase-edge</code>.
+              </p>
+              <p style={{ margin: "8px 0 0", opacity: 0.85, fontSize: 12 }}>
+                Optional Vercel URL (often returns the SPA instead of JSON):{" "}
+                <code style={{ fontSize: 11 }}>{typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code> — requires{" "}
+                <code style={{ fontSize: 11 }}>RESEND_*</code> env vars on Vercel if routing works.
               </p>
               <p style={{ margin: "10px 0 0", padding: "10px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, lineHeight: 1.55 }}>
                 <strong style={{ color: "#9a3412" }}>Must match exactly:</strong> the <strong>To</strong> address on the inbound message (as Resend reports it) must equal this user&apos;s{" "}

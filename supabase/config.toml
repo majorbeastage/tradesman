@@ -1,6 +1,10 @@
 # Supabase CLI / Edge Functions — https://supabase.com/docs/guides/cli/config
 # After changing this file, redeploy: supabase functions deploy portal-assistant
 
+[functions.resend-inbound]
+# Resend webhooks have no Supabase JWT; handler verifies Svix + uses service role internally.
+verify_jwt = false
+
 [functions.portal-assistant]
 # When true, the API gateway validates JWT before your code runs. A failed check can
 # return a response without CORS headers; browsers then show only "Failed to send a request
