@@ -28,7 +28,7 @@ const variantStyles: Record<
   },
 }
 
-/** © line plus Version x.y.z underneath (single source: `src/constants/appVersion.ts`). */
+/** © line plus Version x.y.z — version comes from root `package.json` (see `vite.config.ts` + `appVersion.ts`). */
 export function CopyrightVersionFooter({ variant = "default", align = "left", style }: Props) {
   const year = new Date().getFullYear()
   const v = variantStyles[variant]
