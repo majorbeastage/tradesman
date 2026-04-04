@@ -112,6 +112,17 @@ export default function AdminAboutUsSection() {
     marginBottom: 10,
   }
 
+  const secondaryOutlineButton: CSSProperties = {
+    padding: "8px 14px",
+    borderRadius: 8,
+    border: `1px solid ${theme.border}`,
+    background: "#fff",
+    color: theme.text,
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 14,
+  }
+
   return (
     <div>
       <AdminSettingBlock id="admin:about:header">
@@ -150,10 +161,10 @@ export default function AdminAboutUsSection() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
               <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Content blocks</h2>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => setContent((c) => ({ ...c, blocks: [...c.blocks, newTextBlock()] }))} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontWeight: 600 }}>
+                <button type="button" onClick={() => setContent((c) => ({ ...c, blocks: [...c.blocks, newTextBlock()] }))} style={secondaryOutlineButton}>
                   + Text
                 </button>
-                <button type="button" onClick={() => setContent((c) => ({ ...c, blocks: [...c.blocks, newImageBlock()] }))} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontWeight: 600 }}>
+                <button type="button" onClick={() => setContent((c) => ({ ...c, blocks: [...c.blocks, newImageBlock()] }))} style={secondaryOutlineButton}>
                   + Image
                 </button>
               </div>

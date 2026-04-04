@@ -105,10 +105,13 @@ For support related to messaging, customers can also reply HELP or contact Trade
 export function parseSimpleLegalPage(raw: unknown, fallback: SimpleLegalPage): SimpleLegalPage {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...fallback }
   const o = raw as Record<string, unknown>
+  const subtitle =
+    typeof o.subtitle === "string" && o.subtitle.trim() ? o.subtitle : fallback.subtitle
+  const body = typeof o.body === "string" && o.body.trim() ? o.body : fallback.body
   return {
     title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : fallback.title,
-    subtitle: typeof o.subtitle === "string" ? o.subtitle : fallback.subtitle,
-    body: typeof o.body === "string" ? o.body : fallback.body,
+    subtitle,
+    body,
   }
 }
 

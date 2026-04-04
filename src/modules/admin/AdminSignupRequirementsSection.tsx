@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
@@ -40,6 +40,58 @@ function newCustomField(): SignupCustomField {
   return { id: `field-${crypto.randomUUID().slice(0, 8)}`, label: "", required: false }
 }
 
+const secondaryOutlineButton: CSSProperties = {
+  padding: "8px 14px",
+  borderRadius: 8,
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  color: theme.text,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 14,
+}
+
+function CollapsibleLegalBlock({
+  sectionId,
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  sectionId: string
+  title: string
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <AdminSettingBlock id={sectionId}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          display: "flex",
+          width: "100%",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: 0,
+          marginBottom: open ? 12 : 0,
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: 17, color: theme.text }}>{title}</h2>
+        <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, flexShrink: 0 }}>{open ? "Hide" : "Show"}</span>
+      </button>
+      {open ? children : null}
+    </AdminSettingBlock>
+  )
+}
+
 export default function AdminSignupRequirementsSection() {
   const [signup, setSignup] = useState<SignupRequirementsValue>({
     ...DEFAULT_SIGNUP_REQUIREMENTS,
@@ -53,6 +105,9 @@ export default function AdminSignupRequirementsSection() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const [privacyOpen, setPrivacyOpen] = useState(false)
+  const [termsOpen, setTermsOpen] = useState(false)
+  const [smsOpen, setSmsOpen] = useState(false)
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -262,9 +317,9 @@ export default function AdminSignupRequirementsSection() {
           <button
             type="button"
             onClick={() => setSignup((p) => ({ ...p, custom_fields: [...p.custom_fields, newCustomField()] }))}
-            style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.background, cursor: "pointer", fontWeight: 600 }}
+            style={secondaryOutlineButton}
           >
-            Add field
+            + Add field
           </button>
         </div>
         {signup.custom_fields.length === 0 ? (
@@ -312,8 +367,15 @@ export default function AdminSignupRequirementsSection() {
         )}
       </AdminSettingBlock>
 
-      <AdminSettingBlock id="admin:signup:privacy">
-        <h2 style={{ margin: "0 0 12px", fontSize: 17, color: theme.text }}>Privacy page (/privacy)</h2>
+      <CollapsibleLegalBlock
+        sectionId="admin:signup:privacy"
+        title="Privacy page (/privacy)"
+        open={privacyOpen}
+        onToggle={() => setPrivacyOpen((v) => !v)}
+      >
+        <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
+          This matches the public <code style={{ fontSize: 12 }}>/privacy</code> page. If the body was saved empty in the database, the full default copy is shown here so you can edit it.
+        </p>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={privacy.title} onChange={(e) => setPrivacy((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
@@ -326,10 +388,17 @@ export default function AdminSignupRequirementsSection() {
           Body
           <textarea value={privacy.body} onChange={(e) => setPrivacy((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 200, display: "block" }} />
         </label>
-      </AdminSettingBlock>
+      </CollapsibleLegalBlock>
 
-      <AdminSettingBlock id="admin:signup:terms">
-        <h2 style={{ margin: "0 0 12px", fontSize: 17, color: theme.text }}>Terms page (/terms)</h2>
+      <CollapsibleLegalBlock
+        sectionId="admin:signup:terms"
+        title="Terms page (/terms)"
+        open={termsOpen}
+        onToggle={() => setTermsOpen((v) => !v)}
+      >
+        <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
+          This matches the public <code style={{ fontSize: 12 }}>/terms</code> page. If the body was saved empty in the database, the full default copy is shown here so you can edit it.
+        </p>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={terms.title} onChange={(e) => setTerms((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
@@ -342,10 +411,14 @@ export default function AdminSignupRequirementsSection() {
           Body
           <textarea value={terms.body} onChange={(e) => setTerms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 200, display: "block" }} />
         </label>
-      </AdminSettingBlock>
+      </CollapsibleLegalBlock>
 
-      <AdminSettingBlock id="admin:signup:sms">
-        <h2 style={{ margin: "0 0 12px", fontSize: 17, color: theme.text }}>SMS consent page (/sms-consent)</h2>
+      <CollapsibleLegalBlock
+        sectionId="admin:signup:sms"
+        title="SMS consent page (/sms-consent)"
+        open={smsOpen}
+        onToggle={() => setSmsOpen((v) => !v)}
+      >
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={sms.title} onChange={(e) => setSms((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
@@ -366,7 +439,7 @@ export default function AdminSignupRequirementsSection() {
           Remaining body (pre-wrap; optional sections, bullet lines, etc.)
           <textarea value={sms.body} onChange={(e) => setSms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 180, display: "block" }} />
         </label>
-      </AdminSettingBlock>
+      </CollapsibleLegalBlock>
     </div>
   )
 }
