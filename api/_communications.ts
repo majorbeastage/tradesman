@@ -261,7 +261,9 @@ export async function lookupChannelByPublicAddress(
   publicAddress: string
 ): Promise<CommunicationChannel | null> {
   if (!publicAddress) return null
-  const normalized = normalizePhone(publicAddress) || publicAddress.trim()
+  const trimmed = publicAddress.trim()
+  const normalized =
+    trimmed.includes("@") ? trimmed.toLowerCase() : normalizePhone(publicAddress) || trimmed
   const { data, error } = await supabase
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
@@ -271,6 +273,16 @@ export async function lookupChannelByPublicAddress(
     .maybeSingle()
   if (error) throw error
   return (data as CommunicationChannel | null) ?? null
+}
+
+/** Inbound email: must be an active email channel (not a Twilio voice row). */
+export async function lookupEmailChannelByInboundAddress(
+  supabase: SupabaseClient,
+  publicAddress: string
+): Promise<CommunicationChannel | null> {
+  const ch = await lookupChannelByPublicAddress(supabase, publicAddress)
+  if (!ch || ch.channel_kind !== "email" || ch.email_enabled !== true) return null
+  return ch
 }
 
 export async function lookupChannelById(

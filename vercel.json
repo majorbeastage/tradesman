@@ -3,6 +3,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+  "functions": {
+    "api/incoming-email.ts": { "maxDuration": 60 },
+    "api/help-desk-voice.ts": { "maxDuration": 30 }
+  },
   "rewrites": [
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },

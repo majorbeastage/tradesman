@@ -1,0 +1,302 @@
+import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { Webhook } from "svix"
+import {
+  createServiceSupabase,
+  firstEnv,
+  getOrCreateCustomerByEmail,
+  getOrCreateConversation,
+  logCommunicationEvent,
+  lookupEmailChannelByInboundAddress,
+  pickFirstString,
+} from "./_communications.js"
+
+/** Required for Svix signature verification (raw body). */
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+}
+
+type ResendReceivedPayload = {
+  id?: string
+  to?: string[]
+  from?: string
+  subject?: string | null
+  text?: string | null
+  html?: string | null
+  message_id?: string | null
+}
+
+function readRawBody(req: VercelRequest): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+    })
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+    req.on("error", reject)
+  })
+}
+
+function getSvixHeaders(req: VercelRequest): { id: string; timestamp: string; signature: string } | null {
+  const id = pickFirstString(req.headers["svix-id"] as string | string[] | undefined)
+  const timestamp = pickFirstString(req.headers["svix-timestamp"] as string | string[] | undefined)
+  const signature = pickFirstString(req.headers["svix-signature"] as string | string[] | undefined)
+  if (!id || !timestamp || !signature) return null
+  return { id, timestamp, signature }
+}
+
+function parseVerifiedPayload(rawBody: string, req: VercelRequest): Record<string, unknown> {
+  const secret = firstEnv("RESEND_WEBHOOK_SECRET")
+  if (secret) {
+    const headers = getSvixHeaders(req)
+    if (!headers) throw new Error("Missing Svix webhook headers (svix-id, svix-timestamp, svix-signature).")
+    const wh = new Webhook(secret)
+    return wh.verify(rawBody, {
+      "svix-id": headers.id,
+      "svix-timestamp": headers.timestamp,
+      "svix-signature": headers.signature,
+    }) as Record<string, unknown>
+  }
+  try {
+    return JSON.parse(rawBody || "{}") as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function parseEmailAddressFromHeader(from: string): string {
+  const trimmed = from.trim()
+  const angle = trimmed.match(/<([^>]+)>/)
+  const addr = (angle ? angle[1] : trimmed).trim().toLowerCase()
+  return addr
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function extractToList(data: Record<string, unknown>): string[] {
+  const raw = data.to
+  if (Array.isArray(raw)) {
+    return raw.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+  }
+  if (typeof raw === "string" && raw.trim()) return [raw.trim().toLowerCase()]
+  return []
+}
+
+async function fetchResendReceivedEmail(apiKey: string, emailId: string): Promise<ResendReceivedPayload | null> {
+  const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  })
+  if (!res.ok) return null
+  return (await res.json()) as ResendReceivedPayload
+}
+
+async function forwardCopyViaResend(params: {
+  apiKey: string
+  fromAddress: string
+  to: string
+  subject: string
+  textBody: string
+}): Promise<void> {
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: params.fromAddress,
+      to: [params.to],
+      subject: `[Tradesman] Fwd: ${params.subject}`,
+      text: params.textBody,
+    }),
+  })
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*")
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "content-type, svix-id, svix-timestamp, svix-signature")
+
+  if (req.method === "OPTIONS") return res.status(204).end()
+
+  if (req.method === "GET") {
+    return res.status(200).json({
+      ok: true,
+      route: "incoming-email",
+      hint: "Configure Resend webhook (email.received) to POST here. Set RESEND_WEBHOOK_SECRET and RESEND_API_KEY on Vercel.",
+    })
+  }
+
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" })
+
+  const apiKey = firstEnv("RESEND_API_KEY")
+  if (!apiKey) {
+    return res.status(500).json({ error: "RESEND_API_KEY is not configured." })
+  }
+
+  let rawBody: string
+  try {
+    rawBody = await readRawBody(req)
+  } catch {
+    rawBody = ""
+  }
+  if (!rawBody && req.body && typeof req.body === "object") {
+    rawBody = JSON.stringify(req.body)
+  }
+
+  let payload: Record<string, unknown>
+  try {
+    payload = parseVerifiedPayload(rawBody, req)
+  } catch (e) {
+    return res.status(401).json({ error: e instanceof Error ? e.message : "Webhook verification failed" })
+  }
+
+  const type = typeof payload.type === "string" ? payload.type : ""
+  if (type !== "email.received") {
+    return res.status(200).json({ ok: true, ignored: true, type: type || null })
+  }
+
+  const data = payload.data && typeof payload.data === "object" ? (payload.data as Record<string, unknown>) : {}
+  const emailId = typeof data.email_id === "string" ? data.email_id : typeof data.id === "string" ? data.id : ""
+  if (!emailId) {
+    return res.status(400).json({ error: "Missing email_id on webhook payload." })
+  }
+
+  const received = await fetchResendReceivedEmail(apiKey, emailId)
+  if (!received?.id) {
+    return res.status(502).json({ error: "Could not load received email from Resend.", emailId })
+  }
+
+  const toList = Array.isArray(received.to)
+    ? received.to.map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+    : extractToList(received as unknown as Record<string, unknown>)
+
+  const supabase = createServiceSupabase()
+
+  const { data: existing } = await supabase
+    .from("communication_events")
+    .select("id")
+    .eq("event_type", "email")
+    .eq("direction", "inbound")
+    .eq("external_id", received.id)
+    .limit(1)
+    .maybeSingle()
+  if (existing?.id) {
+    return res.status(200).json({ ok: true, duplicate: true, external_id: received.id })
+  }
+
+  let channel: Awaited<ReturnType<typeof lookupEmailChannelByInboundAddress>> = null
+  let matchedTo = ""
+  for (const addr of toList) {
+    const ch = await lookupEmailChannelByInboundAddress(supabase, addr)
+    if (ch) {
+      channel = ch
+      matchedTo = addr
+      break
+    }
+  }
+
+  if (!channel?.user_id) {
+    return res.status(200).json({
+      ok: true,
+      routed: false,
+      hint: "No matching Email channel (public_address + email enabled) for To addresses.",
+      to: toList,
+    })
+  }
+
+  const fromHeader = typeof received.from === "string" ? received.from : ""
+  const fromEmail = fromHeader ? parseEmailAddressFromHeader(fromHeader) : ""
+  if (!fromEmail) {
+    return res.status(400).json({ error: "Could not parse sender email." })
+  }
+
+  const subject = typeof received.subject === "string" ? received.subject : "(no subject)"
+  const textRaw = typeof received.text === "string" && received.text.trim() ? received.text : ""
+  const htmlRaw = typeof received.html === "string" && received.html.trim() ? received.html : ""
+  const bodyForMessage = textRaw || (htmlRaw ? stripHtml(htmlRaw) : "(empty body)")
+
+  let customerId = ""
+  let conversationId = ""
+  let previousCustomer = false
+  try {
+    const customer = await getOrCreateCustomerByEmail(supabase, channel.user_id, fromEmail)
+    customerId = customer.customerId
+    previousCustomer = customer.previousCustomer
+    conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+  } catch (err) {
+    return res.status(500).json({
+      error: err instanceof Error ? err.message : String(err),
+      step: "customer_conversation",
+    })
+  }
+
+  const messageContent =
+    typeof received.message_id === "string" && received.message_id
+      ? `${bodyForMessage}\n\n[Message-ID: ${received.message_id}]`
+      : bodyForMessage
+
+  const { error: messageErr } = await supabase.from("messages").insert({
+    conversation_id: conversationId,
+    sender: "customer",
+    content: messageContent,
+  })
+  if (messageErr) {
+    return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
+  }
+
+  await logCommunicationEvent(supabase, {
+    user_id: channel.user_id,
+    customer_id: customerId,
+    conversation_id: conversationId,
+    channel_id: channel.id,
+    event_type: "email",
+    direction: "inbound",
+    external_id: received.id,
+    subject,
+    body: bodyForMessage.slice(0, 8000),
+    unread: true,
+    previous_customer: previousCustomer,
+    metadata: {
+      from: fromEmail,
+      to: matchedTo,
+      resend_email_id: received.id,
+      provider: "resend-inbound",
+    },
+  })
+
+  const forwardTo = channel.forward_to_email?.trim()
+  if (forwardTo) {
+    try {
+      const fromSend = channel.public_address?.trim().toLowerCase() || firstEnv("RESEND_FROM_EMAIL")
+      if (fromSend) {
+        await forwardCopyViaResend({
+          apiKey,
+          fromAddress: fromSend,
+          to: forwardTo,
+          subject,
+          textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
+        })
+      }
+    } catch {
+      // Non-fatal: inbox still has the thread
+    }
+  }
+
+  return res.status(200).json({
+    ok: true,
+    userId: channel.user_id,
+    conversationId,
+    customerId,
+    matchedTo,
+    forwarded: Boolean(forwardTo),
+  })
+}

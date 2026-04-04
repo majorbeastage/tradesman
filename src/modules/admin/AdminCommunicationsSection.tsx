@@ -51,6 +51,8 @@ type HelpDeskOption = {
   digit: string
   label: string
   enabled: boolean
+  /** Optional: Twilio will dial this E.164 number when caller presses this digit. */
+  forward_to_phone: string
 }
 
 type HelpDeskSettings = {
@@ -77,12 +79,19 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   return trimmed ? trimmed : null
 }
 
+/** Lowercase so inbound routing and Resend `to` matching stay consistent. */
+function normalizeEmailPublicAddress(value: string | null | undefined): string | null {
+  const trimmed = value?.trim().toLowerCase() ?? ""
+  return trimmed ? trimmed : null
+}
+
 function createHelpDeskOption(): HelpDeskOption {
   return {
     id: crypto.randomUUID(),
     digit: "",
     label: "",
     enabled: true,
+    forward_to_phone: "",
   }
 }
 
@@ -94,8 +103,8 @@ function defaultHelpDeskSettings(): HelpDeskSettings {
     greeting_recording_url: "",
     menu_enabled: false,
     options: [
-      { id: crypto.randomUUID(), digit: "1", label: "Customer care", enabled: true },
-      { id: crypto.randomUUID(), digit: "2", label: "Technical support", enabled: true },
+      { id: crypto.randomUUID(), digit: "1", label: "Customer care", enabled: true, forward_to_phone: "" },
+      { id: crypto.randomUUID(), digit: "2", label: "Technical support", enabled: true, forward_to_phone: "" },
     ],
   }
 }
@@ -212,6 +221,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 digit: typeof row.digit === "string" ? normalizeDigit(row.digit) : "",
                 label: typeof row.label === "string" ? row.label : "",
                 enabled: row.enabled !== false,
+                forward_to_phone: typeof row.forward_to_phone === "string" ? row.forward_to_phone : "",
               }
             }),
           })
@@ -254,7 +264,26 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
   }, [mode, selectedUserId])
 
   function updateRow(id: string, patch: Partial<ChannelRow>) {
-    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== id) return row
+        const next: ChannelRow = { ...row, ...patch }
+        if (patch.channel_kind === "email") {
+          next.provider = "resend"
+          next.email_enabled = true
+          next.voice_enabled = false
+          next.sms_enabled = false
+          next.voicemail_enabled = false
+        } else if (patch.channel_kind === "voice_sms") {
+          next.provider = "twilio"
+          next.email_enabled = false
+          next.voice_enabled = true
+          next.sms_enabled = true
+          next.voicemail_enabled = true
+        }
+        return next
+      })
+    )
   }
 
   function updateAccessLog(id: string, patch: Partial<AccessLogRow>) {
@@ -270,13 +299,16 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
       const existingRows = rows.filter((r) => !r.id.startsWith("new-"))
       const newRows = rows.filter((r) => r.id.startsWith("new-"))
       for (const row of existingRows) {
-        const normalizedPublicAddress = row.channel_kind === "voice_sms" ? normalizePhone(row.public_address) : normalizeOptionalText(row.public_address)
+        const normalizedPublicAddress =
+          row.channel_kind === "voice_sms"
+            ? normalizePhone(row.public_address)
+            : normalizeEmailPublicAddress(row.public_address)
         const normalizedForwardToPhone = normalizePhone(row.forward_to_phone)
         if (!normalizedPublicAddress) throw new Error("Each channel needs a public number/address before saving.")
         const { error: err } = await supabase
           .from("client_communication_channels")
           .update({
-            provider: row.provider,
+            provider: row.channel_kind === "email" ? "resend" : row.provider,
             channel_kind: row.channel_kind,
             provider_sid: normalizeOptionalText(row.provider_sid),
             friendly_name: normalizeOptionalText(row.friendly_name),
@@ -296,11 +328,14 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
       }
       if (newRows.length > 0) {
         const payload = newRows.map((row) => {
-          const normalizedPublicAddress = row.channel_kind === "voice_sms" ? normalizePhone(row.public_address) : normalizeOptionalText(row.public_address)
+          const normalizedPublicAddress =
+            row.channel_kind === "voice_sms"
+              ? normalizePhone(row.public_address)
+              : normalizeEmailPublicAddress(row.public_address)
           if (!normalizedPublicAddress) throw new Error("Each channel needs a public number/address before saving.")
           return {
             user_id: selectedUserId,
-            provider: row.provider,
+            provider: row.channel_kind === "email" ? "resend" : row.provider,
             channel_kind: row.channel_kind,
             provider_sid: normalizeOptionalText(row.provider_sid),
             friendly_name: normalizeOptionalText(row.friendly_name),
@@ -495,6 +530,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
           digit: normalizeDigit(option.digit),
           label: option.label.trim(),
           enabled: option.enabled,
+          forward_to_phone: normalizePhone(option.forward_to_phone) ?? "",
         }))
         .filter((option) => option.digit || option.label)
 
@@ -608,6 +644,15 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
           )}
           {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
         </AdminSettingBlock>
+        <AdminSettingBlock id="admin:communications:webhook_urls">
+          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 18 }}>Twilio &amp; SMS webhooks (capture events)</h2>
+          <p style={{ color: theme.text, opacity: 0.88, margin: "0 0 10px", fontSize: 14, lineHeight: 1.55 }}>
+            For each user&apos;s <strong>Twilio SMS-capable number</strong>, set <strong>A message comes in</strong> to{" "}
+            <code style={{ fontSize: 12 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-sms</code> (HTTP POST, form URL-encoded). The <code style={{ fontSize: 12 }}>To</code> number must match a saved{" "}
+            <strong>Public number</strong> on that user&apos;s Voice/SMS channel so the app routes to the right account. Inbound SMS creates a conversation message, a <code style={{ fontSize: 12 }}>communication_events</code> row, and uses env fallbacks{" "}
+            <code style={{ fontSize: 12 }}>INCOMING_SMS_DEFAULT_USER_ID</code> / <code style={{ fontSize: 12 }}>INCOMING_SMS_ROUTING_JSON</code> when no channel matches.
+          </p>
+        </AdminSettingBlock>
         <AdminSettingBlock id="admin:communications:help_desk">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <div>
@@ -685,7 +730,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                       rowStyle={{ marginBottom: 0 }}
                     >
                     <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "120px minmax(220px, 1fr) auto", gap: 12, alignItems: "end" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "120px minmax(200px, 1fr) minmax(180px, 1fr) auto", gap: 12, alignItems: "end" }}>
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Digit</span>
                           <input value={option.digit} onChange={(e) => updateHelpDeskOption(option.id, { digit: normalizeDigit(e.target.value) })} style={theme.formInput} placeholder="1" maxLength={1} />
@@ -693,6 +738,15 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Label</span>
                           <input value={option.label} onChange={(e) => updateHelpDeskOption(option.id, { label: e.target.value })} style={theme.formInput} placeholder="Customer care" />
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone (optional)</span>
+                          <input
+                            value={option.forward_to_phone}
+                            onChange={(e) => updateHelpDeskOption(option.id, { forward_to_phone: e.target.value })}
+                            style={theme.formInput}
+                            placeholder="+15551234567"
+                          />
                         </label>
                         <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: prev.options.filter((row) => row.id !== option.id) }))} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "white", color: "#b91c1c", cursor: "pointer", height: 40 }}>
                           Remove
@@ -709,9 +763,14 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               )}
             </div>
             <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 13, display: "grid", gap: 6 }}>
-              <div style={{ fontWeight: 700, color: theme.text }}>Recommended use</div>
-              <div>Point your future shared Tradesman support number to a dedicated help-desk webhook once you are ready to activate the menu logic.</div>
-              <div>This section stores the global greeting and option list now, so the voice flow can be plugged into it next without redesigning the admin UI.</div>
+              <div style={{ fontWeight: 700, color: theme.text }}>Go live: Twilio Voice URL</div>
+              <div>
+                In Twilio → your toll-free / help desk number → <strong>A call comes in</strong> → Webhook →{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/help-desk-voice</code>
+                . Optional: set <code style={{ fontSize: 11 }}>HELP_DESK_LOG_USER_ID</code> on Vercel (a real <code style={{ fontSize: 11 }}>auth.users</code> UUID) to log help-desk calls in{" "}
+                <strong>Communication events</strong>.
+              </div>
+              <div>Per menu option you can set <strong>Forward to phone</strong> to dial support or the contractor; leave blank to play a thank-you message only.</div>
             </div>
           </div>
           {message && <p style={{ color: "#059669", marginBottom: 0 }}>{message}</p>}
@@ -758,9 +817,74 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         >
           <div style={{ fontWeight: 700, marginBottom: 6, color: "#b45309" }}>Before Monday beta: voicemail &amp; greetings</div>
           <div style={{ opacity: 0.95 }}>
-            Voicemail and greeting flows still need a focused test pass (upload, PIN, Twilio routing). Please budget time today to validate end-to-end. After this layout pass, we can move on to in-app email.
+            Voicemail and greeting flows still need a focused test pass (upload, PIN, Twilio routing). Use <strong>Email routing</strong> below for Tradesman addresses and Resend.
           </div>
         </div>
+      ) : null}
+
+      {mode === "single_client" && selectedUserId ? (
+        <AdminSettingBlock id="admin:communications:email_routing_guide">
+          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 18 }}>Email routing (Resend + Google / lead capture)</h2>
+          <p style={{ color: theme.text, opacity: 0.88, margin: "0 0 14px", lineHeight: 1.55, fontSize: 14 }}>
+            Company mail and public listings should use a <strong>Tradesman-hosted address</strong> (your domain on Resend, e.g.{" "}
+            <code style={{ fontSize: 12 }}>jane.plumbing@tradesman-us.com</code>) so everything can route into this user&apos;s portal. Their{" "}
+            <strong>personal inbox</strong> stays private: you set it in <strong>Reply-to / forward-to email</strong> below.
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              padding: "14px 16px",
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#fafafa",
+              fontSize: 13,
+              lineHeight: 1.55,
+              color: theme.text,
+            }}
+          >
+            <div>
+              <strong style={{ color: theme.text }}>1. Outbound (working today)</strong>
+              <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
+                When this user sends email from <strong>Conversations</strong>, the app calls{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/send-email</code> on your deployment.{" "}
+                Vercel needs <code style={{ fontSize: 11 }}>RESEND_API_KEY</code>. The message is sent <strong>from</strong> the{" "}
+                <strong>Business email address</strong> on the Email channel row, with <strong>Reply-To</strong> set to{" "}
+                <strong>Reply-to / forward-to email</strong> when provided—so customers reply to the contractor&apos;s real inbox.
+              </p>
+            </div>
+            <div>
+              <strong style={{ color: theme.text }}>2. Public address (Google Business Profile, website, lead forms)</strong>
+              <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
+                Add an <strong>Email</strong> channel (kind = Email). Put the published address in <strong>Business email address</strong>—that is what you list on GBP, ads, and cards.{" "}
+                In Resend, enable <strong>Receiving</strong> for the same domain and create that mailbox/alias so Resend accepts mail for it.
+              </p>
+            </div>
+            <div>
+              <strong style={{ color: theme.text }}>3. Inbound into Tradesman Conversations</strong>
+              <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
+                In Resend → <strong>Webhooks</strong>, add event <code style={{ fontSize: 11 }}>email.received</code> →{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/incoming-email</code>. Set{" "}
+                <code style={{ fontSize: 11 }}>RESEND_WEBHOOK_SECRET</code> and <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> on Vercel. Matching mail creates a
+                conversation thread and optionally forwards a copy to <strong>Reply-to / forward-to email</strong>.
+              </p>
+            </div>
+            <div>
+              <strong style={{ color: theme.text }}>4. Field cheat sheet</strong>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 20, opacity: 0.9 }}>
+                <li>
+                  <strong>Business email address</strong> — public Tradesman address; must match Resend sending domain and receiving routes.
+                </li>
+                <li>
+                  <strong>Reply-to / forward-to email</strong> — contractor&apos;s personal or work Gmail; used as Reply-To on outbound; target for optional forward when inbound is fully connected.
+                </li>
+                <li>
+                  <strong>Email enabled</strong> — must be on for this row to be chosen as the user&apos;s primary email channel for <code style={{ fontSize: 11 }}>/api/send-email</code>.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </AdminSettingBlock>
       ) : null}
 
       <AdminSettingBlock id="admin:communications:channels">
@@ -782,7 +906,17 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{row.channel_kind === "email" ? "Business email address" : "Public number / address"}</span>
-                    <input value={row.public_address} onChange={(e) => updateRow(row.id, { public_address: e.target.value })} style={theme.formInput} placeholder={row.channel_kind === "email" ? "hello@clientdomain.com" : "+15551234567"} />
+                    <input
+                      value={row.public_address}
+                      onChange={(e) => updateRow(row.id, { public_address: e.target.value })}
+                      style={theme.formInput}
+                      placeholder={row.channel_kind === "email" ? "e.g. jane.plumbing@tradesman-us.com" : "+15551234567"}
+                    />
+                    {row.channel_kind === "email" && (
+                      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
+                        List this exact address on Google Business Profile, lead capture, and marketing. Saved lowercase for routing.
+                      </span>
+                    )}
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone</span>
@@ -790,7 +924,17 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{row.channel_kind === "email" ? "Reply-to / forward-to email" : "Forward to email"}</span>
-                    <input value={row.forward_to_email ?? ""} onChange={(e) => updateRow(row.id, { forward_to_email: e.target.value })} style={theme.formInput} placeholder="future@email.com" />
+                    <input
+                      value={row.forward_to_email ?? ""}
+                      onChange={(e) => updateRow(row.id, { forward_to_email: e.target.value })}
+                      style={theme.formInput}
+                      placeholder={row.channel_kind === "email" ? "contractor.personal@gmail.com" : "optional@email.com"}
+                    />
+                    {row.channel_kind === "email" && (
+                      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
+                        Outbound mail uses this as Reply-To. Keep it current so customers reach the right inbox.
+                      </span>
+                    )}
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Provider SID</span>
@@ -808,6 +952,12 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                     </select>
                   </label>
                 </div>
+                <p style={{ margin: "10px 0 0", fontSize: 12, color: "#6b7280" }}>
+                  Provider: <strong style={{ color: theme.text }}>{row.channel_kind === "email" ? "resend" : row.provider || "twilio"}</strong>
+                  {row.channel_kind === "email"
+                    ? " — add the domain in Resend (send + receive) so this address works end-to-end."
+                    : " — Twilio number / SMS webhooks use voice_sms channels."}
+                </p>
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
                   {[
                     ["voice_enabled", "Voice enabled"],
@@ -815,7 +965,14 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                     ["email_enabled", "Email enabled"],
                     ["voicemail_enabled", "Twilio voicemail enabled"],
                     ["active", "Active"],
-                  ].map(([key, label]) => (
+                  ]
+                    .filter(([key]) => {
+                      if (row.channel_kind === "email") {
+                        return key === "email_enabled" || key === "active"
+                      }
+                      return key !== "email_enabled"
+                    })
+                    .map(([key, label]) => (
                     <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
                       <input type="checkbox" checked={Boolean(row[key as keyof ChannelRow])} onChange={(e) => updateRow(row.id, { [key]: e.target.checked } as Partial<ChannelRow>)} />
                       {label}

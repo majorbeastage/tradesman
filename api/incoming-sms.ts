@@ -85,7 +85,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const payload = parseBody(req)
   const { from, to } = getSmsNumbers(payload)
-  const body = pickFirstString(payload.body, payload.message, payload.text, payload.Body)
+  const numMediaRaw = pickFirstString(payload.NumMedia, payload.num_media)
+  const numMedia = parseInt(numMediaRaw || "0", 10) || 0
+  let body = pickFirstString(payload.body, payload.message, payload.text, payload.Body)
+  if (!body && numMedia > 0) {
+    body = `[${numMedia} MMS attachment(s) — view media in Twilio Console for this MessageSid]`
+  }
   const messageId = pickFirstString(payload.message_sid, payload.messageSid, payload.MessageSid, payload.id)
   const supabase = createServiceSupabase()
   const channel = to ? await lookupChannelByPublicAddress(supabase, to) : null
@@ -99,7 +104,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
   if (!from) return res.status(400).json({ error: "Could not determine sender phone number from payload." })
-  if (!body) return res.status(400).json({ error: "Missing SMS message body." })
+  if (!body) {
+    return res.status(400).json({
+      error: "Missing SMS body (and no MMS).",
+      hint: "Twilio must POST UrlEncoded Body, From, To. For MMS-only, we now accept a placeholder if NumMedia > 0.",
+    })
+  }
 
   let customerId = ""
   let conversationId = ""
