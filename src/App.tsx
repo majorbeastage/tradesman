@@ -100,7 +100,7 @@ function MainApp() {
 
       {page === "dashboard" && (
         <>
-          <h1 style={{ marginBottom: 10 }}>Dashboard</h1>
+          <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>Dashboard</h1>
           <div
             style={{
               display: "grid",

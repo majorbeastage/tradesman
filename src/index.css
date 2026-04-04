@@ -66,3 +66,14 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* User / office-manager portal: charcoal shell; light-scheme :root color must not apply here */
+.portal-charcoal {
+  color: #e5e7eb;
+}
+.portal-charcoal a {
+  color: #93c5fd;
+}
+.portal-charcoal a:hover {
+  color: #dbeafe;
+}
