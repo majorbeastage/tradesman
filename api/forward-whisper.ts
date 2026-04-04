@@ -20,6 +20,47 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   return res.status(200).send(body)
 }
 
+function normalizeSpeech(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function isDeclineInput(digits: string, speech: string): boolean {
+  if (digits === "2") return true
+  if (!speech) return false
+  const s = normalizeSpeech(speech)
+  return /\bdecline\b/.test(s) || /\breject\b/.test(s)
+}
+
+function isAcceptInput(digits: string, speech: string): boolean {
+  if (digits === "1") return true
+  if (!speech) return false
+  const s = normalizeSpeech(speech)
+  if (/\bdecline\b/.test(s) || /\breject\b/.test(s)) return false
+  if (/\bdon'?t\s+answer\b/.test(s) || /\bdo\s+not\s+answer\b/.test(s) || /\bnever\s+answer\b/.test(s)) return false
+  if (/\banswer\b/.test(s)) return true
+  if (/^(yes|ok|okay|accept)\s*$/i.test(speech.trim())) return true
+  return false
+}
+
+async function handleWhisperKeypress(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST")
+    return res.status(405).send("Method not allowed")
+  }
+
+  const digits = pickFirstString(req.body?.Digits)
+  const speech = pickFirstString(req.body?.SpeechResult, req.body?.speechResult)
+
+  if (isDeclineInput(digits, speech)) {
+    return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)
+  }
+  if (isAcceptInput(digits, speech)) {
+    return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`)
+  }
+
+  return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)
+}
+
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
   const host = pickFirstString(req.headers.host)
@@ -66,6 +107,10 @@ function applyWhisperTemplate(
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (pickFirstString(req.query?.step) === "keypress") {
+    return handleWhisperKeypress(req, res)
+  }
+
   if (req.method !== "GET" && req.method !== "POST") {
     res.setHeader("Allow", "GET, POST")
     return res.status(405).send("Method not allowed")
@@ -105,7 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : defaultWhisperLine(nameFromQuerySafe, spoken)
 
   const origin = requestPublicOrigin(req)
-  const keypressUrl = `${origin}/api/forward-whisper-keypress`
+  const keypressUrl = `${origin}/api/forward-whisper?step=keypress`
 
   const say = `<Say voice="Polly.Joanna">${xmlEscape(line)}</Say>`
 

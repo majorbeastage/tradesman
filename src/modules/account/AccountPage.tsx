@@ -823,7 +823,7 @@ export function AccountProfilePanel({
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
                     <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio webhook</div>
                     <div>
-                      Point the toll-free (or staging) number&apos;s voice webhook to <code style={{ fontSize: 11 }}>POST /api/voicemail-greeting</code> on your Vercel deployment. PIN + optional primary-phone verification match <code style={{ fontSize: 11 }}>profiles</code>; recording posts to <code style={{ fontSize: 11 }}>/api/voicemail-greeting-save</code>.
+                      Point the toll-free (or staging) number&apos;s voice webhook to <code style={{ fontSize: 11 }}>POST /api/voicemail-greeting</code> on your Vercel deployment. PIN + optional primary-phone verification match <code style={{ fontSize: 11 }}>profiles</code>; recording posts to <code style={{ fontSize: 11 }}>/api/voicemail-greeting?phase=save</code> (same path Twilio receives after Record).
                     </div>
                   </div>
                 )}

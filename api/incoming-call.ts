@@ -73,7 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (to) query.set("to", to)
   if (from) query.set("from", from)
   const q = query.size ? `?${query.toString()}` : ""
-  const voicemailActionUrl = `${origin}/api/voicemail-complete${q}`
+  const voicemailActionUrl = `${origin}/api/voicemail-result${q}`
   if (!forwardTo) {
     return sendTwiml(res, buildVoicemailTwiml({ recordAction: voicemailActionUrl, routingProfile }))
   }

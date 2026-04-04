@@ -83,7 +83,7 @@ function buildMenuSay(options: HelpDeskOption[], includeVoicemailHint: boolean):
 function helpDeskVoicemailInnerVerbs(origin: string, notifyIds: string[]): string {
   const params = new URLSearchParams()
   params.set("notifyUserIds", notifyIds.join(","))
-  const action = `${origin}/api/voicemail-complete?${params.toString()}`
+  const action = `${origin}/api/voicemail-result?${params.toString()}`
   return (
     `<Say ${SAY}>Please leave your message after the tone. When you are finished, you may hang up.</Say>` +
     `<Record action="${xmlEscape(action)}" method="POST" transcribe="true" maxLength="240" />`

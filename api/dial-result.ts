@@ -37,7 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (channelId) params.set("channelId", channelId)
     if (to) params.set("to", to)
     if (from) params.set("from", from)
-    const recordAction = `${origin}/api/voicemail-complete${params.size ? `?${params.toString()}` : ""}`
+    const recordAction = `${origin}/api/voicemail-result${params.size ? `?${params.toString()}` : ""}`
 
     try {
       const supabase = createServiceSupabase()
