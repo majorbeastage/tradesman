@@ -44,7 +44,7 @@ function MainApp() {
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
-  const { clientId, portalConfig } = useAuth()
+  const { clientId, portalConfig, role: authRole } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
   const isMobile = useIsMobile()
   // Prefer per-user portal_config from admin (default + custom tabs, filtered by visibility)
@@ -74,6 +74,23 @@ function MainApp() {
 
   return (
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={TAB_ID_LABELS[page] ?? page}>
+      {authRole === "demo_user" && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "#fef3c7",
+            border: "1px solid #fcd34d",
+            color: "#92400e",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>Demo account.</strong> Leads, conversations, quotes, calendar, and inbox-style activity are cleared on a schedule (typically every hour or two). Your login and profile stay; Twilio channels are not removed. Ask your admin for a full account when you are ready.
+        </div>
+      )}
+
       {connectionStatus !== "ok" && (
         <div style={{
           position: "fixed",

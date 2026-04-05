@@ -45,7 +45,7 @@ export default function AdminUsersSection() {
   const [lastName, setLastName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [role, setRole] = useState<"user" | "new_user" | "office_manager" | "admin">("user")
+  const [role, setRole] = useState<"user" | "new_user" | "demo_user" | "office_manager" | "admin">("user")
   const [roleSavingUserId, setRoleSavingUserId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState("")
@@ -182,7 +182,13 @@ export default function AdminUsersSection() {
     setRoleSavingUserId(userId)
     setError("")
     try {
-      const { error: err } = await supabase.from("profiles").update({ role: nextRole, updated_at: new Date().toISOString() }).eq("id", userId)
+      const payload: {
+        role: string
+        updated_at: string
+        portal_config?: Record<string, unknown>
+      } = { role: nextRole, updated_at: new Date().toISOString() }
+      if (nextRole === "demo_user") payload.portal_config = {}
+      const { error: err } = await supabase.from("profiles").update(payload).eq("id", userId)
       if (err) {
         setError(err.message)
         return
@@ -387,7 +393,8 @@ export default function AdminUsersSection() {
       // Edge Function already upserted profiles; signUp path still needs role upsert (trigger may have inserted 'user' only)
       if (!skipProfileUpsert) {
         try {
-          const portalPayload = role === "new_user" ? getDefaultPortalConfigForNewUser() : undefined
+          const portalPayload =
+            role === "new_user" ? getDefaultPortalConfigForNewUser() : role === "demo_user" ? {} : undefined
           const { error: profileError } = await supabase
             .from("profiles")
             .upsert(
@@ -559,11 +566,14 @@ export default function AdminUsersSection() {
           Role
           <select
             value={role}
-            onChange={(e) => setRole(e.target.value as "user" | "new_user" | "office_manager" | "admin")}
+            onChange={(e) =>
+              setRole(e.target.value as "user" | "new_user" | "demo_user" | "office_manager" | "admin")
+            }
             style={inputStyle}
           >
             <option value="user">User</option>
             <option value="new_user">New User</option>
+            <option value="demo_user">Demo user (data resets on schedule)</option>
             <option value="office_manager">Office Manager</option>
             <option value="admin">Admin</option>
           </select>
@@ -687,6 +697,7 @@ export default function AdminUsersSection() {
                   >
                     <option value="user">user</option>
                     <option value="new_user">new_user</option>
+                    <option value="demo_user">demo_user</option>
                     <option value="office_manager">office_manager</option>
                     <option value="admin">admin</option>
                   </select>
@@ -725,7 +736,7 @@ export default function AdminUsersSection() {
                   )}
                 </td>
                 <td style={{ padding: "12px", color: theme.text }}>
-                  {u.role === "user" || u.role === "new_user" ? (
+                  {u.role === "user" || u.role === "new_user" || u.role === "demo_user" ? (
                     <select
                       value={omByUserId[u.id] ?? ""}
                       onChange={(e) => void handleSetOfficeManager(u.id, e.target.value || null)}

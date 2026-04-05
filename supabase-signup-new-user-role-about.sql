@@ -7,7 +7,7 @@
 ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
 ALTER TABLE public.profiles
   ADD CONSTRAINT profiles_role_check
-  CHECK (role IN ('user', 'new_user', 'office_manager', 'admin'));
+  CHECK (role IN ('user', 'new_user', 'demo_user', 'office_manager', 'admin'));
 
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS best_contact_phone TEXT;
@@ -37,7 +37,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-COMMENT ON TABLE public.profiles IS 'Roles: user, new_user (self-signup), office_manager, admin.';
+COMMENT ON TABLE public.profiles IS 'Roles: user, new_user (self-signup), demo_user (scheduled data purge), office_manager, admin. See supabase-demo-user-role-and-purge-cron.sql.';
 
 -- Public marketing copy for /about (read-only for anon; admins manage via app + existing admin policy)
 DROP POLICY IF EXISTS "Public read tradesman about us" ON public.platform_settings;
