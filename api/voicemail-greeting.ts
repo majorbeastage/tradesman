@@ -74,27 +74,42 @@ function requestPublicOrigin(req: VercelRequest): string {
   return `${proto}://${host}`
 }
 
-async function fetchTwilioRecordingBuffer(recordingUrl: string): Promise<ArrayBuffer> {
+async function fetchTwilioRecordingBuffer(recordingUrl: string, recordingSid?: string): Promise<ArrayBuffer> {
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
   if (!accountSid || !authToken) {
     throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN (required to download the recording from Twilio)")
   }
   const authHeader = { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` }
-  const candidates = recordingUrl.endsWith(".mp3")
-    ? [recordingUrl, recordingUrl.replace(/\.mp3$/i, "")]
-    : [`${recordingUrl}.mp3`, recordingUrl]
+  const candidates: string[] = []
+  if (recordingUrl) {
+    candidates.push(
+      ...(recordingUrl.endsWith(".mp3")
+        ? [recordingUrl, recordingUrl.replace(/\.mp3$/i, "")]
+        : [`${recordingUrl}.mp3`, recordingUrl])
+    )
+  }
+  if (recordingSid && accountSid) {
+    const base = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recordingSid}`
+    candidates.push(`${base}.mp3`, base)
+  }
+  const seen = new Set<string>()
+  const unique = candidates.filter((u) => {
+    if (!u || seen.has(u)) return false
+    seen.add(u)
+    return true
+  })
   let lastStatus = 0
-  for (const url of candidates) {
+  for (const url of unique) {
     const response = await fetch(url, { headers: authHeader })
     if (response.ok) return response.arrayBuffer()
     lastStatus = response.status
   }
-  throw new Error(`Failed to fetch Twilio recording (last HTTP ${lastStatus})`)
+  throw new Error(`Failed to fetch Twilio recording (last HTTP ${lastStatus}). Check Twilio credentials on Vercel and Recording URL/Sid.`)
 }
 
-async function uploadTwilioRecordingToStorage(userId: string, recordingUrl: string): Promise<string> {
-  const arrayBuffer = await fetchTwilioRecordingBuffer(recordingUrl)
+async function uploadTwilioRecordingToStorage(userId: string, recordingUrl: string, recordingSid?: string): Promise<string> {
+  const arrayBuffer = await fetchTwilioRecordingBuffer(recordingUrl, recordingSid)
   const supabase = createServiceSupabase()
   const filePath = `${userId}/greeting-callin-${Date.now()}.mp3`
   const { error } = await supabase.storage
@@ -124,7 +139,7 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
   }
 
   try {
-    const publicUrl = await uploadTwilioRecordingToStorage(userId, recordingUrl)
+    const publicUrl = await uploadTwilioRecordingToStorage(userId, recordingUrl, recordingSid || undefined)
     const supabase = createServiceSupabase()
     const { error } = await supabase
       .from("profiles")
@@ -160,7 +175,11 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Your voicemail greeting has been saved and is now active.</Say><Hangup/></Response>`
     )
   } catch (e) {
-    console.error("[voicemail-greeting] handleGreetingSave", e instanceof Error ? e.message : e)
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error("[voicemail-greeting] handleGreetingSave", msg)
+    if (/Bucket not found|not found/i.test(msg) || /storage/i.test(msg)) {
+      console.error("[voicemail-greeting] Hint: run supabase-voicemail-greetings-storage.sql in Supabase to create bucket voicemail-greetings")
+    }
     return sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We were not able to save your greeting right now. Please try again later.</Say><Hangup/></Response>`

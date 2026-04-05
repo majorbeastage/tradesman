@@ -98,7 +98,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (error.code === "23505") {
         // duplicate recording callback
       } else {
-        console.error("[help-desk-trouble-ticket] insert", error.message)
+        console.error(
+          "[help-desk-trouble-ticket] insert failed:",
+          error.message,
+          "| Run supabase/support-tickets-setup-complete.sql in Supabase SQL Editor if table is missing.",
+        )
       }
     } else if (row?.id) {
       await supabase.from("support_ticket_notes").insert({

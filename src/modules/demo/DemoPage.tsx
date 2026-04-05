@@ -2,6 +2,7 @@ import { useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
+import { hintForSupportTicketsError } from "../../lib/supabaseTicketErrors"
 
 type DemoPageProps = {
   onBack: () => void
@@ -73,7 +74,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
 
     setSubmitting(false)
     if (insertError) {
-      setError(insertError.message)
+      setError(hintForSupportTicketsError(insertError.message))
       return
     }
     setTicketNumber(data?.ticket_number ?? null)
@@ -228,7 +229,9 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                 placeholder="Describe what you're looking for..."
               />
             </label>
-            {error && <p style={{ color: "#b91c1c", fontSize: 14, marginBottom: 8 }}>{error}</p>}
+            {error && (
+              <p style={{ color: "#b91c1c", fontSize: 14, marginBottom: 8, whiteSpace: "pre-line", lineHeight: 1.5 }}>{error}</p>
+            )}
             <div style={{ display: "flex", gap: 12 }}>
               <button
                 type="submit"

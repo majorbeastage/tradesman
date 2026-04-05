@@ -40,6 +40,32 @@ type ConversationRow = {
 type ConversationsPageProps = { setPage?: (page: string) => void }
 
 /** Supabase PostgrestError and other objects stringify to [object Object] in alerts */
+/** Prefer JSON `message` / `hint` from API routes; explain opaque Vercel failures. */
+function formatFetchApiError(response: Response, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
+    return (
+      "The server function crashed or timed out. Open Vercel → your deployment → Logs, filter by /api/send-email or /api/send-sms, and check the stack trace. " +
+      "Common causes: missing SUPABASE_SERVICE_ROLE_KEY, Resend API/domain errors, or Twilio errors."
+    )
+  }
+  if (trimmed.startsWith("{")) {
+    try {
+      const j = JSON.parse(trimmed) as {
+        error?: string
+        message?: string
+        hint?: string
+        logWarning?: string
+      }
+      const parts = [j.error, j.message, j.hint, j.logWarning].filter(Boolean)
+      if (parts.length) return parts.join("\n\n")
+    } catch {
+      /* ignore */
+    }
+  }
+  return trimmed || `Request failed (HTTP ${response.status})`
+}
+
 function formatAppError(err: unknown): string {
   if (err instanceof Error) return err.message
   if (err && typeof err === "object") {
@@ -668,7 +694,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       })
       const raw = await response.text()
       if (!response.ok) {
-        throw new Error(raw || `Failed with HTTP ${response.status}`)
+        throw new Error(formatFetchApiError(response, raw))
       }
       const { error } = await supabase.from("messages").insert({
         conversation_id: selectedConversation.id,
@@ -713,7 +739,18 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         }),
       })
       const raw = await response.text()
-      if (!response.ok) throw new Error(raw || `Failed with HTTP ${response.status}`)
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      let logWarning: string | undefined
+      try {
+        const j = JSON.parse(raw) as { logWarning?: string }
+        logWarning = typeof j.logWarning === "string" ? j.logWarning : undefined
+      } catch {
+        /* ignore */
+      }
+      if (logWarning) {
+        console.warn("[send-email]", logWarning)
+        alert(`${logWarning}\n\nThe customer may still have received the email. Refresh conversations to confirm.`)
+      }
       const event: EmailEventRow = {
         id: crypto.randomUUID(),
         subject,

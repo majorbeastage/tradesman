@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
+import { hintForSupportTicketsError } from "../lib/supabaseTicketErrors"
 import { TRADESMAN_TECH_SUPPORT_EMAIL } from "../constants/supportLinks"
 
 type TicketType = "web" | "tech"
@@ -70,7 +71,7 @@ export function SupportTicketForm({ type, title }: Props) {
 
     setSubmitting(false)
     if (insertError) {
-      setError(insertError.message)
+      setError(hintForSupportTicketsError(insertError.message))
       return
     }
     const num = data?.ticket_number ?? null
@@ -222,7 +223,7 @@ export function SupportTicketForm({ type, title }: Props) {
           />
         </label>
         {error && (
-          <p style={{ color: "#B91C1C", fontSize: 14 }}>{error}</p>
+          <p style={{ color: "#B91C1C", fontSize: 14, whiteSpace: "pre-line", lineHeight: 1.5 }}>{error}</p>
         )}
         <button
           type="submit"
