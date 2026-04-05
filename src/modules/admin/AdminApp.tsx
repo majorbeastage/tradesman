@@ -16,6 +16,7 @@ import AdminPortalAssistant from "./AdminPortalAssistant"
 import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import AdminAboutUsSection from "./AdminAboutUsSection"
 import AdminSignupRequirementsSection from "./AdminSignupRequirementsSection"
+import AdminTroubleTicketsSection from "./AdminTroubleTicketsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -537,7 +538,9 @@ function AdminAppInner() {
   const [hasRemovedSomething, setHasRemovedSomething] = useState(false)
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
-  const [adminPanel, setAdminPanel] = useState<"portal" | "users" | "communications" | "about" | "signup">("portal")
+  const [adminPanel, setAdminPanel] = useState<
+    "signup" | "communications" | "users" | "portal" | "tickets" | "about"
+  >("portal")
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -991,6 +994,57 @@ function AdminAppInner() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button
             type="button"
+            onClick={() => setAdminPanel("signup")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "signup" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "signup" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Sign up requirements
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("communications")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "communications" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "communications" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Routing &amp; Access
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("users")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "users" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "users" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Users &amp; office managers
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("portal")}
             style={{
               padding: "8px 12px",
@@ -1008,54 +1062,20 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
-            onClick={() => setAdminPanel("users")}
+            onClick={() => setAdminPanel("tickets")}
             style={{
               padding: "8px 12px",
               borderRadius: 6,
               border: `1px solid rgba(255,255,255,0.35)`,
-              background: adminPanel === "users" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              background: adminPanel === "tickets" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
               color: "white",
               fontSize: 13,
               cursor: "pointer",
-              fontWeight: adminPanel === "users" ? 600 : 400,
+              fontWeight: adminPanel === "tickets" ? 600 : 400,
               textAlign: "left",
             }}
           >
-            Users & office managers
-          </button>
-          <button
-            type="button"
-            onClick={() => setAdminPanel("communications")}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 6,
-              border: `1px solid rgba(255,255,255,0.35)`,
-              background: adminPanel === "communications" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
-              color: "white",
-              fontSize: 13,
-              cursor: "pointer",
-              fontWeight: adminPanel === "communications" ? 600 : 400,
-              textAlign: "left",
-            }}
-          >
-            Routing & Access
-          </button>
-          <button
-            type="button"
-            onClick={() => setAdminPanel("signup")}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 6,
-              border: `1px solid rgba(255,255,255,0.35)`,
-              background: adminPanel === "signup" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
-              color: "white",
-              fontSize: 13,
-              cursor: "pointer",
-              fontWeight: adminPanel === "signup" ? 600 : 400,
-              textAlign: "left",
-            }}
-          >
-            Sign up requirements
+            Trouble tickets
           </button>
           <button
             type="button"
@@ -1253,6 +1273,8 @@ function AdminAppInner() {
             selectedUserId={communicationsSelectedUserId}
             selectedUserLabel={selectedDisplayLabel}
           />
+        ) : adminPanel === "tickets" ? (
+          <AdminTroubleTicketsSection />
         ) : adminPanel === "about" ? (
           <AdminAboutUsSection />
         ) : adminPanel === "signup" ? (

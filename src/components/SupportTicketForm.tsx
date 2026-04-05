@@ -17,11 +17,14 @@ type Props = {
 
 export function SupportTicketForm({ type, title }: Props) {
   const [name, setName] = useState("")
+  const [businessName, setBusinessName] = useState("")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")
+  const [summaryTitle, setSummaryTitle] = useState("")
   const [message, setMessage] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [ticketNumber, setTicketNumber] = useState<string | null>(null)
+  const [ticketId, setTicketId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const recipient = supportEmails[type]
@@ -34,21 +37,36 @@ export function SupportTicketForm({ type, title }: Props) {
       return
     }
     if (!supabase) {
-      setError("Database not configured. Run supabase-support-tickets.sql in Supabase.")
+      setError("Database not configured. Run supabase-support-tickets.sql and support-tickets-trouble-system.sql in Supabase.")
       return
     }
     setSubmitting(true)
+    const resolvedTitle =
+      summaryTitle.trim() ||
+      (message.trim() ? message.trim().slice(0, 120) + (message.trim().length > 120 ? "…" : "") : `${type === "tech" ? "Tech" : "Web"} support request`)
+
     const { data, error: insertError } = await supabase
       .from("support_tickets")
       .insert({
         type,
         name: name.trim(),
+        business_name: businessName.trim() || null,
         phone: phone.trim(),
         email: email.trim(),
+        title: resolvedTitle,
         message: message.trim() || null,
       })
-      .select("ticket_number")
+      .select("id, ticket_number")
       .single()
+
+    if (!insertError && data?.id) {
+      const bodyText = message.trim() || "(No additional message)"
+      await supabase.from("support_ticket_notes").insert({
+        ticket_id: data.id,
+        body: bodyText,
+        author_label: `portal:${type}`,
+      })
+    }
 
     setSubmitting(false)
     if (insertError) {
@@ -57,6 +75,7 @@ export function SupportTicketForm({ type, title }: Props) {
     }
     const num = data?.ticket_number ?? null
     setTicketNumber(num)
+    setTicketId(data?.id ?? null)
   }
 
   function openMailto() {
@@ -66,8 +85,10 @@ export function SupportTicketForm({ type, title }: Props) {
       [
         `Ticket: ${ticketNumber}`,
         `Name: ${name}`,
+        `Business: ${businessName || "—"}`,
         `Phone: ${phone}`,
         `Email: ${email}`,
+        `Title: ${summaryTitle || "—"}`,
         "",
         message.trim() || "(No message)",
       ].join("\n")
@@ -98,10 +119,15 @@ export function SupportTicketForm({ type, title }: Props) {
     return (
       <div style={{ maxWidth: 420 }}>
         <p style={{ color: theme.text, marginBottom: 12 }}>
-          Ticket <strong>{ticketNumber}</strong> has been created.
+          Ticket <strong>{ticketNumber}</strong> has been created and appears in the admin <strong>Trouble tickets</strong> tab.
         </p>
+        {ticketId && (
+          <p style={{ color: theme.text, opacity: 0.85, marginBottom: 12, fontSize: 13 }}>
+            Your message is saved as the first note on this ticket.
+          </p>
+        )}
         <p style={{ color: theme.text, marginBottom: 12 }}>
-          Open your email client to send the details to {recipient}:
+          Optionally open your email client to send a copy to {recipient}:
         </p>
         <button
           type="button"
@@ -125,7 +151,7 @@ export function SupportTicketForm({ type, title }: Props) {
   return (
     <div>
       <h2 style={{ color: theme.text, marginBottom: 16 }}>{title}</h2>
-      <form onSubmit={handleSubmit} style={formStyle}>
+      <form onSubmit={(e) => void handleSubmit(e)} style={formStyle}>
         <label style={labelStyle}>
           Name <span style={{ color: theme.primary }}>*</span>
           <input
@@ -135,6 +161,16 @@ export function SupportTicketForm({ type, title }: Props) {
             required
             style={{ ...inputStyle, width: "100%", marginTop: 4, display: "block" }}
             placeholder="Your name"
+          />
+        </label>
+        <label style={labelStyle}>
+          Business name (optional)
+          <input
+            type="text"
+            value={businessName}
+            onChange={(e) => setBusinessName(e.target.value)}
+            style={{ ...inputStyle, width: "100%", marginTop: 4, display: "block" }}
+            placeholder="Company or DBA"
           />
         </label>
         <label style={labelStyle}>
@@ -157,6 +193,16 @@ export function SupportTicketForm({ type, title }: Props) {
             required
             style={{ ...inputStyle, width: "100%", marginTop: 4, display: "block" }}
             placeholder="your@email.com"
+          />
+        </label>
+        <label style={labelStyle}>
+          Short title / summary (optional)
+          <input
+            type="text"
+            value={summaryTitle}
+            onChange={(e) => setSummaryTitle(e.target.value)}
+            style={{ ...inputStyle, width: "100%", marginTop: 4, display: "block" }}
+            placeholder="e.g. Cannot log in on mobile"
           />
         </label>
         <label style={labelStyle}>

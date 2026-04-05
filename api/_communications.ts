@@ -39,6 +39,11 @@ export function normalizePhone(value: unknown): string {
   return `${keepPlus ? "+" : ""}${digits}`
 }
 
+/** ILIKE pattern for exact match (escapes %, _, \\). */
+function escapeIlikeExact(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
+}
+
 export function pickFirstString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim()
@@ -265,13 +270,15 @@ export async function lookupChannelByPublicAddress(
   const trimmed = publicAddress.trim()
   const normalized =
     trimmed.includes("@") ? trimmed.toLowerCase() : normalizePhone(publicAddress) || trimmed
-  const { data, error } = await supabase
+  const isEmail = trimmed.includes("@")
+  let q = supabase
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
-    .eq("public_address", normalized)
     .eq("active", true)
-    .limit(1)
-    .maybeSingle()
+  q = isEmail
+    ? q.ilike("public_address", escapeIlikeExact(normalized))
+    : q.eq("public_address", normalized)
+  const { data, error } = await q.limit(1).maybeSingle()
   if (error) throw error
   return (data as CommunicationChannel | null) ?? null
 }
@@ -284,6 +291,47 @@ export async function lookupEmailChannelByInboundAddress(
   const ch = await lookupChannelByPublicAddress(supabase, publicAddress)
   if (!ch || ch.channel_kind !== "email" || ch.email_enabled !== true) return null
   return ch
+}
+
+/**
+ * Explains why inbound Resend mail did not route (mirrors supabase/functions/_shared/inbound-email-channel.ts messages).
+ */
+export async function resolveInboundEmailChannel(
+  supabase: SupabaseClient,
+  toAddresses: string[]
+): Promise<
+  | { ok: true; channel: CommunicationChannel; matchedTo: string }
+  | { ok: false; reasons: string[] }
+> {
+  const reasons: string[] = []
+  for (const addr of toAddresses) {
+    const trimmed = addr.trim()
+    if (!trimmed) continue
+    const ch = await lookupChannelByPublicAddress(supabase, trimmed)
+    if (!ch) {
+      reasons.push(
+        `No active channel with Business email "${trimmed}". In Tradesman: Admin → Communications → add a row with Kind = Email, set Business email address to exactly this address, Active on, Email enabled on, then Save.`,
+      )
+      continue
+    }
+    if (ch.channel_kind !== "email") {
+      reasons.push(
+        `A channel exists for "${trimmed}" but Kind is "${ch.channel_kind}" (phone/SMS). Inbound mail needs a separate row with Kind = Email and the same Business email address.`,
+      )
+      continue
+    }
+    if (ch.email_enabled !== true) {
+      reasons.push(
+        `Email row for "${trimmed}" has "Email enabled" off. Turn it on in Admin → Communications for that row and Save.`,
+      )
+      continue
+    }
+    return { ok: true, channel: ch, matchedTo: trimmed }
+  }
+  if (reasons.length === 0) {
+    reasons.push("No To addresses in the message to match.")
+  }
+  return { ok: false, reasons }
 }
 
 export async function lookupChannelById(

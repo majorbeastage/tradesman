@@ -50,6 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
   const fromEmail = normalizeEmail(dbChannel?.public_address || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM"))
   const resendApiKey = firstEnv("RESEND_API_KEY")
+  const copyInbox = normalizeEmail(dbChannel?.forward_to_email)
 
   if (!resendApiKey || !fromEmail) {
     return res.status(500).json({
@@ -58,19 +59,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
+  /** BCC the contractor's real inbox so they get a copy of every email sent to the customer from Conversations. */
+  const bcc =
+    copyInbox && copyInbox !== to
+      ? [copyInbox]
+      : undefined
+
+  const resendPayload: Record<string, unknown> = {
+    from: fromEmail,
+    to: [to],
+    subject,
+    text: body,
+    reply_to: copyInbox ? [copyInbox] : undefined,
+  }
+  if (bcc) resendPayload.bcc = bcc
+
   const resendResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${resendApiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      from: fromEmail,
-      to: [to],
-      subject,
-      text: body,
-      reply_to: dbChannel?.forward_to_email ? [dbChannel.forward_to_email] : undefined,
-    }),
+    body: JSON.stringify(resendPayload),
   })
 
   const detail = await resendResponse.text()
@@ -86,8 +96,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     subject,
     body,
     unread: false,
-    metadata: { to, from: fromEmail, provider: dbChannel?.provider ?? "resend" },
+    metadata: {
+      to,
+      from: fromEmail,
+      provider: dbChannel?.provider ?? "resend",
+      reply_to: copyInbox || undefined,
+      bcc: bcc?.[0] || undefined,
+    },
   })
 
-  return res.status(200).json({ ok: true, provider: "resend", to, from: fromEmail, detail })
+  return res.status(200).json({
+    ok: true,
+    provider: "resend",
+    to,
+    from: fromEmail,
+    bcc: bcc?.[0] ?? null,
+    detail,
+  })
 }

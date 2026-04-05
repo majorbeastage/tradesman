@@ -19,6 +19,54 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
 
 const SAY = `voice="Polly.Matthew" language="en-US"`
 
+/** Last 10 digits for US-style caller / forward match. */
+function phoneKey(value: string): string {
+  const d = value.replace(/\D/g, "")
+  if (d.length <= 10) return d
+  return d.slice(-10)
+}
+
+/**
+ * If the caller ID matches exactly one account (by profile.primary_phone or a unique
+ * active channel forward_to_phone), skip PIN / phone re-entry and go straight to recording.
+ */
+async function resolveTrustedGreetingUserId(callerNorm: string): Promise<string | null> {
+  const key = phoneKey(callerNorm)
+  if (key.length < 10) return null
+  try {
+    const supabase = createServiceSupabase()
+    const { data: profiles, error: pErr } = await supabase.from("profiles").select("id, primary_phone").not("primary_phone", "is", null)
+    if (pErr) throw pErr
+    const byPrimary: string[] = []
+    for (const row of profiles ?? []) {
+      const id = (row as { id?: string }).id
+      const ph = normalizePhone((row as { primary_phone?: string }).primary_phone ?? "")
+      if (!id || !ph) continue
+      if (phoneKey(ph) === key) byPrimary.push(String(id))
+    }
+    if (byPrimary.length === 1) return byPrimary[0]
+
+    const { data: channels, error: cErr } = await supabase
+      .from("client_communication_channels")
+      .select("user_id, forward_to_phone")
+      .eq("active", true)
+      .not("forward_to_phone", "is", null)
+    if (cErr) throw cErr
+    const byForward = new Set<string>()
+    for (const row of channels ?? []) {
+      const uid = (row as { user_id?: string }).user_id
+      const fwd = normalizePhone((row as { forward_to_phone?: string }).forward_to_phone ?? "")
+      if (!uid || !fwd) continue
+      if (phoneKey(fwd) === key) byForward.add(String(uid))
+    }
+    if (byForward.size === 1) return [...byForward][0]
+    return null
+  } catch (e) {
+    console.error("[voicemail-greeting] resolveTrustedGreetingUserId", e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
   const host = pickFirstString(req.headers.host)
@@ -26,17 +74,27 @@ function requestPublicOrigin(req: VercelRequest): string {
   return `${proto}://${host}`
 }
 
-async function uploadTwilioRecordingToStorage(userId: string, recordingUrl: string): Promise<string> {
+async function fetchTwilioRecordingBuffer(recordingUrl: string): Promise<ArrayBuffer> {
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
-  const sourceUrl = recordingUrl.endsWith(".mp3") ? recordingUrl : `${recordingUrl}.mp3`
-  const response = await fetch(sourceUrl, {
-    headers: accountSid && authToken ? { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` } : undefined,
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Twilio recording (${response.status})`)
+  if (!accountSid || !authToken) {
+    throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN (required to download the recording from Twilio)")
   }
-  const arrayBuffer = await response.arrayBuffer()
+  const authHeader = { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` }
+  const candidates = recordingUrl.endsWith(".mp3")
+    ? [recordingUrl, recordingUrl.replace(/\.mp3$/i, "")]
+    : [`${recordingUrl}.mp3`, recordingUrl]
+  let lastStatus = 0
+  for (const url of candidates) {
+    const response = await fetch(url, { headers: authHeader })
+    if (response.ok) return response.arrayBuffer()
+    lastStatus = response.status
+  }
+  throw new Error(`Failed to fetch Twilio recording (last HTTP ${lastStatus})`)
+}
+
+async function uploadTwilioRecordingToStorage(userId: string, recordingUrl: string): Promise<string> {
+  const arrayBuffer = await fetchTwilioRecordingBuffer(recordingUrl)
   const supabase = createServiceSupabase()
   const filePath = `${userId}/greeting-callin-${Date.now()}.mp3`
   const { error } = await supabase.storage
@@ -78,7 +136,7 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
       .eq("id", userId)
     if (error) throw error
 
-    await supabase.from("communication_events").insert({
+    const { error: evtErr } = await supabase.from("communication_events").insert({
       user_id: userId,
       event_type: "voicemail",
       direction: "inbound",
@@ -93,12 +151,16 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
         completed_at: new Date().toISOString(),
       },
     })
+    if (evtErr) {
+      console.error("[voicemail-greeting] communication_events insert failed (greeting still saved)", evtErr.message)
+    }
 
     return sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Your voicemail greeting has been saved and is now active.</Say><Hangup/></Response>`
     )
-  } catch {
+  } catch (e) {
+    console.error("[voicemail-greeting] handleGreetingSave", e instanceof Error ? e.message : e)
     return sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We were not able to save your greeting right now. Please try again later.</Say><Hangup/></Response>`
@@ -164,6 +226,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const callerNumber = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
   const digits = pickFirstString(req.body?.Digits, req.query?.Digits).replace(/\D/g, "")
   if (!digits) {
+    const trustedId = await resolveTrustedGreetingUserId(callerNumber)
+    if (trustedId) {
+      return sendTwiml(res, buildRecordGreetingTwiml(origin, trustedId))
+    }
     return sendTwiml(res, buildGatherTwiml(origin, "Please enter your six digit greeting pin."))
   }
 

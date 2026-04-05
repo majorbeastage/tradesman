@@ -1,12 +1,30 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv, logCommunicationEvent, normalizePhone, pickFirstString } from "./_communications.js"
 
+type HelpDeskOnSelect = "dial" | "pin_greeting" | "team_voicemail" | "thanks" | "submenu" | "trouble_ticket"
+
 type HelpDeskOption = {
   id?: string
   digit?: string
   label?: string
   enabled?: boolean
   forward_to_phone?: string | null
+  /** Empty or omitted = main menu row. Set to a main-menu digit (1–8) to show this row only in that submenu. */
+  depends_on_digit?: string | null
+  /** Optional audio URL played before the spoken action (dial, redirect, etc.). */
+  play_recording_url?: string | null
+  /** What to do when this key is pressed (stored as on_select in platform_settings). */
+  on_select?: string | null
+}
+
+type NormalizedMenuOption = {
+  digit: string
+  label: string
+  enabled: boolean
+  forward_to_phone: string
+  depends_on_digit: string
+  play_recording_url: string
+  on_select: HelpDeskOnSelect
 }
 
 type HelpDeskPayload = {
@@ -16,7 +34,6 @@ type HelpDeskPayload = {
   greeting_recording_url?: string
   menu_enabled?: boolean
   options?: HelpDeskOption[]
-  /** Profile UUIDs that receive help-desk voicemails in Conversations / events. */
   voicemail_notify_user_ids?: unknown
 }
 
@@ -41,15 +58,30 @@ function requestPublicOrigin(req: VercelRequest): string {
   return `${proto}://${host}`
 }
 
-function normalizeMenuOptions(raw: HelpDeskOption[] | undefined): HelpDeskOption[] {
+function normalizeOnSelect(o: HelpDeskOption, forward: string): HelpDeskOnSelect {
+  const s = typeof o.on_select === "string" ? o.on_select.trim() : ""
+  if (s === "pin_greeting" || s === "team_voicemail" || s === "thanks" || s === "dial" || s === "submenu" || s === "trouble_ticket")
+    return s
+  return forward ? "dial" : "thanks"
+}
+
+function normalizeMenuOptions(raw: HelpDeskOption[] | undefined): NormalizedMenuOption[] {
   if (!Array.isArray(raw)) return []
   return raw
-    .map((o) => ({
-      digit: typeof o.digit === "string" ? o.digit.replace(/\D/g, "").slice(0, 1) : "",
-      label: typeof o.label === "string" ? o.label.trim() : "",
-      enabled: o.enabled !== false,
-      forward_to_phone: typeof o.forward_to_phone === "string" ? o.forward_to_phone.trim() : "",
-    }))
+    .map((o) => {
+      const forward = typeof o.forward_to_phone === "string" ? o.forward_to_phone.trim() : ""
+      const depRaw = typeof o.depends_on_digit === "string" ? o.depends_on_digit.replace(/\D/g, "").slice(0, 1) : ""
+      const play = typeof o.play_recording_url === "string" ? o.play_recording_url.trim() : ""
+      return {
+        digit: typeof o.digit === "string" ? o.digit.replace(/\D/g, "").slice(0, 1) : "",
+        label: typeof o.label === "string" ? o.label.trim() : "",
+        enabled: o.enabled !== false,
+        forward_to_phone: forward,
+        depends_on_digit: depRaw,
+        play_recording_url: play,
+        on_select: normalizeOnSelect(o, forward),
+      }
+    })
     .filter((o) => o.digit && o.label)
 }
 
@@ -72,12 +104,24 @@ function parseNotifyUserIds(raw: unknown): string[] {
   return []
 }
 
-function buildMenuSay(options: HelpDeskOption[], includeVoicemailHint: boolean): string {
+/** Reserved: 0 = help-desk voicemail, 9 = transfer to PIN-based personal greeting recorder. */
+function buildMenuSay(
+  options: NormalizedMenuOption[],
+  includeVoicemailHint: boolean,
+  includePersonalGreetingHint: boolean
+): string {
   const parts = options
     .filter((o) => o.enabled)
     .map((o) => `Press ${o.digit} for ${o.label}.`)
   if (includeVoicemailHint) parts.push("Press 0 to leave a voicemail for our team.")
+  if (includePersonalGreetingHint) parts.push("Press 9 to update your mailbox greeting using your PIN.")
   return parts.join(" ")
+}
+
+function playVerbs(url: string): string {
+  const t = url.trim()
+  if (!t) return ""
+  return `<Play>${xmlEscape(t)}</Play>`
 }
 
 function helpDeskVoicemailInnerVerbs(origin: string, notifyIds: string[]): string {
@@ -90,8 +134,30 @@ function helpDeskVoicemailInnerVerbs(origin: string, notifyIds: string[]): strin
   )
 }
 
-function buildHelpDeskVoicemailTwiml(origin: string, notifyIds: string[]): string {
-  return `<?xml version="1.0" encoding="UTF-8"?><Response>${helpDeskVoicemailInnerVerbs(origin, notifyIds)}</Response>`
+function buildHelpDeskVoicemailTwiml(origin: string, notifyIds: string[], prefixPlay?: string): string {
+  const inner = `${playVerbs(prefixPlay ?? "")}${helpDeskVoicemailInnerVerbs(origin, notifyIds)}`
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${inner}</Response>`
+}
+
+function buildTroubleTicketRecordTwiml(origin: string, prefixPlay: string): string {
+  const base = `${origin}/api/help-desk-trouble-ticket-result`
+  const recordAction = `${base}?phase=record`
+  const transcribeCb = `${base}?phase=transcribe`
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?><Response>` +
+    playVerbs(prefixPlay) +
+    `<Say ${SAY}>Please briefly explain your issue. Someone will return your call as soon as possible. When you are finished, you may hang up.</Say>` +
+    `<Record action="${xmlEscape(recordAction)}" transcribeCallback="${xmlEscape(transcribeCb)}" method="POST" transcribe="true" maxLength="180" playBeep="true" />` +
+    `<Say ${SAY}>We did not receive your message. Goodbye.</Say>` +
+    `<Hangup/>` +
+    `</Response>`
+  )
+}
+
+function gatherActionUrl(selfUrl: string, parentDigit: string): string {
+  let u = `${selfUrl}?gather=1`
+  if (parentDigit) u += `&parent=${encodeURIComponent(parentDigit)}`
+  return u
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -99,7 +165,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       ok: true,
       route: "help-desk-voice",
-      hint: "Set this URL as the Twilio Voice webhook (POST) for your Tradesman toll-free / help desk number.",
+      hint:
+        "Set your Twilio toll-free Voice webhook (POST) to this URL for the Tradesman help desk menu. Use /api/voicemail-greeting only if you use a separate number for PIN greeting updates.",
     })
   }
 
@@ -110,7 +177,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
-  const digits = pickFirstString(req.body?.Digits, req.query?.Digits).replace(/\D/g, "").slice(0, 1)
+  const digitsRaw = pickFirstString(req.body?.Digits, req.query?.Digits).replace(/\D/g, "").slice(0, 1)
+  const fromGather = pickFirstString(req.query?.gather) === "1"
+  const parentDigit = pickFirstString(req.query?.parent).replace(/\D/g, "").slice(0, 1)
   const logUserId = firstEnv("HELP_DESK_LOG_USER_ID", "HELP_DESK_EVENTS_USER_ID")
 
   let settings: HelpDeskPayload = {}
@@ -139,11 +208,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     settings.greeting_mode === "recorded" && typeof settings.greeting_recording_url === "string"
       ? settings.greeting_recording_url.trim()
       : ""
-  const menuEnabled = settings.menu_enabled === true
+
   const options = normalizeMenuOptions(settings.options)
+  const enabledOptions = options.filter((o) => o.enabled)
+  const rootOptions = enabledOptions.filter((o) => !o.depends_on_digit)
+  /** Treat missing menu_enabled as true when root options exist (older JSON omitted the flag). */
+  const menuExplicitOff = settings.menu_enabled === false
+  const menuEnabled = !menuExplicitOff && rootOptions.length > 0
 
   const origin = requestPublicOrigin(req)
   const selfUrl = `${origin}/api/help-desk-voice`
+  const voicemailGreetingUrl = `${origin}/api/voicemail-greeting`
 
   async function logHelpDesk(body: string, meta: Record<string, unknown>) {
     if (!logUserId) return
@@ -167,27 +242,133 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  if (!digits) {
-    await logHelpDesk("Help desk: answered", { phase: "greeting" })
+  function optionPool(): NormalizedMenuOption[] {
+    if (parentDigit) return enabledOptions.filter((o) => o.depends_on_digit === parentDigit)
+    return rootOptions
+  }
 
-    const greetingNode = greetingUrl
-      ? `<Play>${xmlEscape(greetingUrl)}</Play>`
-      : `<Say ${SAY}>${xmlEscape(greetingText)}</Say>`
-
-    if (menuEnabled && options.length > 0) {
-      const menuText = buildMenuSay(options, notifyUserIds.length > 0)
-      const afterGather =
-        notifyUserIds.length > 0
-          ? helpDeskVoicemailInnerVerbs(origin, notifyUserIds)
-          : `<Say ${SAY}>We did not receive your selection. Goodbye.</Say><Hangup/>`
+  // Callback from <Gather>: user pressed a key, or timeout (empty Digits).
+  if (fromGather) {
+    if (!digitsRaw) {
+      await logHelpDesk("Help desk: menu timeout (no digit)", { phase: "gather_timeout", parent: parentDigit || null })
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>` +
         `<Response>` +
-        greetingNode +
-        `<Gather numDigits="1" action="${xmlEscape(selfUrl)}" method="POST" timeout="8">` +
+        `<Say ${SAY}>We did not receive your selection. Please call again. Goodbye.</Say>` +
+        `<Hangup/>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    if (digitsRaw === "9") {
+      await logHelpDesk("Help desk: redirect to personal greeting (digit 9)", { phase: "greeting_redirect", digit: "9" })
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        `<Redirect method="POST">${xmlEscape(voicemailGreetingUrl)}</Redirect>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    if (digitsRaw === "0" && notifyUserIds.length > 0) {
+      await logHelpDesk("Help desk: voicemail (digit 0)", { phase: "voicemail", digit: "0" })
+      return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds))
+    }
+
+    const pool = optionPool()
+    const choice = pool.find((o) => o.digit === digitsRaw)
+    if (!choice) {
+      await logHelpDesk(`Help desk: invalid key ${digitsRaw}`, { phase: "invalid", digit: digitsRaw, parent: parentDigit || null })
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        `<Say ${SAY}>That option is not available. Goodbye.</Say>` +
+        `<Hangup/>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    const forward = normalizePhone(choice.forward_to_phone || "")
+    await logHelpDesk(`Help desk: pressed ${digitsRaw} — ${choice.label}`, {
+      phase: "selection",
+      digit: digitsRaw,
+      label: choice.label,
+      on_select: choice.on_select,
+      forward_to: forward || null,
+      parent: parentDigit || null,
+    })
+
+    if (choice.on_select === "submenu") {
+      if (parentDigit) {
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>That option is not available. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      const subRows = enabledOptions.filter((o) => o.depends_on_digit === choice.digit)
+      if (subRows.length === 0) {
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>That menu is not set up yet. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      const menuText = buildMenuSay(subRows, false, false)
+      const action = gatherActionUrl(selfUrl, choice.digit)
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20">` +
         `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
         `</Gather>` +
-        afterGather +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    if (choice.on_select === "trouble_ticket") {
+      return sendTwiml(res, buildTroubleTicketRecordTwiml(origin, choice.play_recording_url))
+    }
+
+    if (choice.on_select === "pin_greeting") {
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Say ${SAY}>${xmlEscape("Please wait while we connect you to the greeting recorder.")}</Say>` +
+        `<Redirect method="POST">${xmlEscape(voicemailGreetingUrl)}</Redirect>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    if (choice.on_select === "team_voicemail") {
+      if (notifyUserIds.length > 0) {
+        return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds, choice.play_recording_url))
+      }
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Say ${SAY}>Team voicemail is not available right now. Goodbye.</Say>` +
+        `<Hangup/>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
+    if (choice.on_select === "dial" && forward) {
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Say ${SAY}>${xmlEscape(`Connecting you to ${choice.label}. Please hold.`)}</Say>` +
+        `<Dial timeout="30">${xmlEscape(forward)}</Dial>` +
+        `<Say ${SAY}>We could not complete your call. Goodbye.</Say>` +
+        `<Hangup/>` +
         `</Response>`
       return sendTwiml(res, twiml)
     }
@@ -195,49 +376,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const twiml =
       `<?xml version="1.0" encoding="UTF-8"?>` +
       `<Response>` +
+      playVerbs(choice.play_recording_url) +
+      `<Say ${SAY}>${xmlEscape(`Thank you for calling Tradesman. Goodbye.`)}</Say>` +
+      `<Hangup/>` +
+      `</Response>`
+    return sendTwiml(res, twiml)
+  }
+
+  // Initial answer (no gather callback).
+  await logHelpDesk("Help desk: answered", { phase: "greeting" })
+
+  const greetingNode = greetingUrl
+    ? `<Play>${xmlEscape(greetingUrl)}</Play>`
+    : `<Say ${SAY}>${xmlEscape(greetingText)}</Say>`
+
+  if (menuEnabled) {
+    const menuText = buildMenuSay(rootOptions, notifyUserIds.length > 0, true)
+    const action = gatherActionUrl(selfUrl, "")
+    // Important: do NOT put <Record> or voicemail after </Gather> — on timeout Twilio runs those verbs immediately,
+    // which skipped the menu and dumped callers into voicemail.
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response>` +
       greetingNode +
-      `<Say ${SAY}>Goodbye.</Say>` +
-      `<Hangup/>` +
-      `</Response>`
-    return sendTwiml(res, twiml)
-  }
-
-  if (digits === "0" && notifyUserIds.length > 0) {
-    await logHelpDesk("Help desk: voicemail (digit 0)", { phase: "voicemail", digit: "0" })
-    return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds))
-  }
-
-  const choice = options.find((o) => o.enabled && o.digit === digits)
-  if (!choice) {
-    await logHelpDesk(`Help desk: invalid key ${digits}`, { phase: "invalid", digit: digits })
-    if (notifyUserIds.length > 0) {
-      return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds))
-    }
-    const twiml =
-      `<?xml version="1.0" encoding="UTF-8"?>` +
-      `<Response>` +
-      `<Say ${SAY}>That option is not available. Goodbye.</Say>` +
-      `<Hangup/>` +
-      `</Response>`
-    return sendTwiml(res, twiml)
-  }
-
-  const forward = normalizePhone(choice.forward_to_phone || "")
-  await logHelpDesk(`Help desk: pressed ${digits} — ${choice.label}`, {
-    phase: "selection",
-    digit: digits,
-    label: choice.label,
-    forward_to: forward || null,
-  })
-
-  if (forward) {
-    const twiml =
-      `<?xml version="1.0" encoding="UTF-8"?>` +
-      `<Response>` +
-      `<Say ${SAY}>${xmlEscape(`Connecting you to ${choice.label}. Please hold.`)}</Say>` +
-      `<Dial timeout="30">${xmlEscape(forward)}</Dial>` +
-      `<Say ${SAY}>We could not complete your call. Goodbye.</Say>` +
-      `<Hangup/>` +
+      `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20">` +
+      `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
+      `</Gather>` +
       `</Response>`
     return sendTwiml(res, twiml)
   }
@@ -245,7 +409,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
-    `<Say ${SAY}>${xmlEscape(`You selected ${choice.label}. Thank you for calling Tradesman. Goodbye.`)}</Say>` +
+    greetingNode +
+    `<Say ${SAY}>Goodbye.</Say>` +
     `<Hangup/>` +
     `</Response>`
   return sendTwiml(res, twiml)

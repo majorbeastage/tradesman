@@ -1,8 +1,7 @@
 import { useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
-
-const DEMO_EMAILS = "joe@tradesman-us.com,justin@tradesman-us.com"
+import { supabase } from "../../lib/supabase"
 
 type DemoPageProps = {
   onBack: () => void
@@ -11,29 +10,73 @@ type DemoPageProps = {
 export default function DemoPage({ onBack }: DemoPageProps) {
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState("")
+  const [businessName, setBusinessName] = useState("")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")
   const [preferredContact, setPreferredContact] = useState("email")
   const [description, setDescription] = useState("")
+  const [summaryTitle, setSummaryTitle] = useState("")
   const [submitted, setSubmitted] = useState(false)
+  const [ticketNumber, setTicketNumber] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const subject = encodeURIComponent(`Demo request from ${name || "Someone"}`)
-    const body = encodeURIComponent(
-      [
-        "Demo / Contact request",
+    setError(null)
+    if (!name.trim()) {
+      setError("Name is required.")
+      return
+    }
+    if (!email.trim() && !phone.trim()) {
+      setError("Please provide an email or a phone number so we can reach you.")
+      return
+    }
+    if (!supabase) {
+      setError("Database not configured. Run supabase-support-tickets.sql and support-tickets-trouble-system.sql.")
+      return
+    }
+    setSubmitting(true)
+    const resolvedTitle =
+      summaryTitle.trim() ||
+      (description.trim() ? description.trim().slice(0, 120) + (description.trim().length > 120 ? "…" : "") : "Demo request")
+
+    const { data, error: insertError } = await supabase
+      .from("support_tickets")
+      .insert({
+        type: "demo",
+        name: name.trim(),
+        business_name: businessName.trim() || null,
+        phone: phone.trim() || null,
+        email: email.trim() || null,
+        title: resolvedTitle,
+        preferred_contact: preferredContact,
+        message: description.trim() || null,
+      })
+      .select("id, ticket_number")
+      .single()
+
+    if (!insertError && data?.id) {
+      const noteBody = [
+        "Request a demo submission",
         "",
-        "Name: " + (name || "—"),
-        "Phone: " + (phone || "—"),
-        "Email: " + (email || "—"),
-        "Preferred contact method: " + preferredContact,
+        `Preferred contact: ${preferredContact}`,
         "",
-        "What they're looking for:",
-        description || "(not provided)",
+        description.trim() || "(No details provided)",
       ].join("\n")
-    )
-    window.location.href = `mailto:${DEMO_EMAILS}?subject=${subject}&body=${body}`
+      await supabase.from("support_ticket_notes").insert({
+        ticket_id: data.id,
+        body: noteBody,
+        author_label: "public:demo",
+      })
+    }
+
+    setSubmitting(false)
+    if (insertError) {
+      setError(insertError.message)
+      return
+    }
+    setTicketNumber(data?.ticket_number ?? null)
     setSubmitted(true)
   }
 
@@ -98,7 +141,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
 
         {showForm && !submitted && (
           <form
-            onSubmit={handleSubmit}
+            onSubmit={(e) => void handleSubmit(e)}
             style={{
               maxWidth: 440,
               padding: 24,
@@ -110,13 +153,24 @@ export default function DemoPage({ onBack }: DemoPageProps) {
           >
             <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 20 }}>Contact details</h2>
             <label style={labelStyle}>
-              Name
+              Name <span style={{ color: theme.primary }}>*</span>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 style={inputStyle}
                 placeholder="Your name"
+                required
+              />
+            </label>
+            <label style={labelStyle}>
+              Business name (optional)
+              <input
+                type="text"
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                style={inputStyle}
+                placeholder="Company name"
               />
             </label>
             <label style={labelStyle}>
@@ -137,6 +191,19 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                 onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle}
                 placeholder="you@example.com"
+              />
+            </label>
+            <p style={{ fontSize: 12, color: "#6b7280", marginTop: -8, marginBottom: 16 }}>
+              Provide at least one of email or phone.
+            </p>
+            <label style={labelStyle}>
+              Short title / summary (optional)
+              <input
+                type="text"
+                value={summaryTitle}
+                onChange={(e) => setSummaryTitle(e.target.value)}
+                style={inputStyle}
+                placeholder="e.g. Demo for roofing office"
               />
             </label>
             <label style={labelStyle}>
@@ -161,9 +228,11 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                 placeholder="Describe what you're looking for..."
               />
             </label>
+            {error && <p style={{ color: "#b91c1c", fontSize: 14, marginBottom: 8 }}>{error}</p>}
             <div style={{ display: "flex", gap: 12 }}>
               <button
                 type="submit"
+                disabled={submitting}
                 style={{
                   padding: "12px 20px",
                   background: theme.primary,
@@ -171,10 +240,10 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                   border: "none",
                   borderRadius: 6,
                   fontWeight: 600,
-                  cursor: "pointer",
+                  cursor: submitting ? "wait" : "pointer",
                 }}
               >
-                Submit and send email
+                {submitting ? "Submitting…" : "Submit request"}
               </button>
               <button
                 type="button"
@@ -206,9 +275,14 @@ export default function DemoPage({ onBack }: DemoPageProps) {
             }}
           >
             <p style={{ margin: 0, fontWeight: 600 }}>Thank you!</p>
-            <p style={{ margin: "8px 0 0" }}>
-              Your email client should open with a message addressed to our team. Please send that email to reach us. We'll be in touch ASAP.
-            </p>
+            {ticketNumber && (
+              <p style={{ margin: "8px 0 0" }}>
+                Your request is ticket <strong>{ticketNumber}</strong>. Our team will see it in the admin Trouble tickets tab.
+              </p>
+            )}
+            {!ticketNumber && (
+              <p style={{ margin: "8px 0 0" }}>We received your request.</p>
+            )}
           </div>
         )}
       </div>

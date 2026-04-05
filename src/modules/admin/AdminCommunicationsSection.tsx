@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from "react"
+import { useEffect, useMemo, useState, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
@@ -52,13 +52,21 @@ const RESEND_INBOUND_WEBHOOK_URL =
     ? `${String(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1/resend-inbound`
     : "https://YOUR_PROJECT_REF.supabase.co/functions/v1/resend-inbound"
 
+type HelpDeskOnSelect = "dial" | "pin_greeting" | "team_voicemail" | "thanks" | "submenu" | "trouble_ticket"
+
 type HelpDeskOption = {
   id: string
   digit: string
   label: string
   enabled: boolean
-  /** Optional: Twilio will dial this E.164 number when caller presses this digit. */
+  /** Optional: Twilio will dial this E.164 number when caller presses this digit and action is Dial. */
   forward_to_phone: string
+  /** Empty = main menu. Set to a main-menu digit (1–8) so this row only appears in that submenu. */
+  depends_on_digit: string
+  /** Optional announcement clip before the action (URL to audio). */
+  play_recording_url: string
+  /** Stored in platform_settings as on_select. */
+  on_select: HelpDeskOnSelect
 }
 
 type HelpDeskSettings = {
@@ -93,6 +101,32 @@ function normalizeEmailPublicAddress(value: string | null | undefined): string |
   return trimmed ? trimmed : null
 }
 
+/** Live UI + save: public vs private inbox must differ. */
+function emailChannelAddressConflict(row: ChannelRow): string | null {
+  if (row.channel_kind !== "email") return null
+  const pub = normalizeEmailPublicAddress(row.public_address)
+  const fwd = normalizeEmailPublicAddress(row.forward_to_email)
+  if (pub && fwd && pub === fwd) {
+    return "Cannot match public address. Tradesman would keep forwarding copies to the same inbox Resend already delivered to — that creates an endless loop. Use a different mailbox (personal Gmail, Apple Mail, etc.)."
+  }
+  return null
+}
+
+function validateEmailChannelsForSave(channelRows: ChannelRow[]) {
+  for (const row of channelRows) {
+    if (row.channel_kind !== "email") continue
+    const msg = emailChannelAddressConflict(row)
+    if (msg) throw new Error(`Email channel: ${msg}`)
+  }
+}
+
+function inferHelpDeskOnSelect(row: Record<string, unknown>, forward: string): HelpDeskOnSelect {
+  const s = typeof row.on_select === "string" ? row.on_select.trim() : ""
+  if (s === "pin_greeting" || s === "team_voicemail" || s === "thanks" || s === "dial" || s === "submenu" || s === "trouble_ticket")
+    return s
+  return forward.trim() ? "dial" : "thanks"
+}
+
 function createHelpDeskOption(): HelpDeskOption {
   return {
     id: crypto.randomUUID(),
@@ -100,6 +134,9 @@ function createHelpDeskOption(): HelpDeskOption {
     label: "",
     enabled: true,
     forward_to_phone: "",
+    depends_on_digit: "",
+    play_recording_url: "",
+    on_select: "dial",
   }
 }
 
@@ -109,11 +146,29 @@ function defaultHelpDeskSettings(): HelpDeskSettings {
     greeting_mode: "ai_text",
     greeting_text: "Thank you for calling Tradesman. Please listen carefully to the following options.",
     greeting_recording_url: "",
-    menu_enabled: false,
+    menu_enabled: true,
     voicemail_notify_user_ids: "",
     options: [
-      { id: crypto.randomUUID(), digit: "1", label: "Customer care", enabled: true, forward_to_phone: "" },
-      { id: crypto.randomUUID(), digit: "2", label: "Technical support", enabled: true, forward_to_phone: "" },
+      {
+        id: crypto.randomUUID(),
+        digit: "1",
+        label: "Customer care",
+        enabled: true,
+        forward_to_phone: "",
+        depends_on_digit: "",
+        play_recording_url: "",
+        on_select: "dial",
+      },
+      {
+        id: crypto.randomUUID(),
+        digit: "2",
+        label: "Technical support",
+        enabled: true,
+        forward_to_phone: "",
+        depends_on_digit: "",
+        play_recording_url: "",
+        on_select: "dial",
+      },
     ],
   }
 }
@@ -170,6 +225,18 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
   const [uploadingHelpDeskGreeting, setUploadingHelpDeskGreeting] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+
+  const helpDeskSubmenuParentDigits = useMemo(
+    () =>
+      [
+        ...new Set(
+          helpDeskSettings.options
+            .filter((o) => !o.depends_on_digit && /^[1-8]$/.test(o.digit) && o.on_select === "submenu")
+            .map((o) => o.digit),
+        ),
+      ].sort(),
+    [helpDeskSettings.options],
+  )
 
   useEffect(() => {
     if (!supabase || mode !== "all_users_insights") return
@@ -229,16 +296,22 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 : "Thank you for calling Tradesman. Please listen carefully to the following options.",
             greeting_recording_url:
               typeof raw.greeting_recording_url === "string" ? raw.greeting_recording_url : "",
-            menu_enabled: raw.menu_enabled === true,
+            menu_enabled: raw.menu_enabled !== false,
             voicemail_notify_user_ids: notifyStr,
             options: optionInput.map((option) => {
               const row = option && typeof option === "object" ? (option as Record<string, unknown>) : {}
+              const forward = typeof row.forward_to_phone === "string" ? row.forward_to_phone : ""
+              const dep = typeof row.depends_on_digit === "string" ? normalizeDigit(row.depends_on_digit) : ""
+              const play = typeof row.play_recording_url === "string" ? row.play_recording_url : ""
               return {
                 id: typeof row.id === "string" && row.id ? row.id : crypto.randomUUID(),
                 digit: typeof row.digit === "string" ? normalizeDigit(row.digit) : "",
                 label: typeof row.label === "string" ? row.label : "",
                 enabled: row.enabled !== false,
-                forward_to_phone: typeof row.forward_to_phone === "string" ? row.forward_to_phone : "",
+                forward_to_phone: forward,
+                depends_on_digit: dep,
+                play_recording_url: play,
+                on_select: inferHelpDeskOnSelect(row, forward),
               }
             }),
           })
@@ -307,12 +380,29 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
     setAccessLogs((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
   }
 
-  async function saveAll() {
+  async function removeRow(row: ChannelRow) {
+    if (!supabase) return
+    if (row.id.startsWith("new-")) {
+      setRows((prev) => prev.filter((r) => r.id !== row.id))
+      return
+    }
+    if (!window.confirm(`Remove ${row.public_address || "this channel"}?`)) return
+    const { error: err } = await supabase.from("client_communication_channels").delete().eq("id", row.id)
+    if (err) {
+      setError(err.message)
+      return
+    }
+    setRows((prev) => prev.filter((r) => r.id !== row.id))
+  }
+
+  /** Saves communication channels + Google access log in one action (single_client only). */
+  async function saveRoutingAndAccess() {
     if (!supabase || mode !== "single_client" || !selectedUserId) return
     setSaving(true)
     setMessage("")
     setError("")
     try {
+      validateEmailChannelsForSave(rows)
       const existingRows = rows.filter((r) => !r.id.startsWith("new-"))
       const newRows = rows.filter((r) => r.id.startsWith("new-"))
       for (const row of existingRows) {
@@ -370,7 +460,49 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         const { error: err } = await supabase.from("client_communication_channels").insert(payload)
         if (err) throw err
       }
-      setMessage("Communications settings saved.")
+
+      const accessExisting = accessLogs.filter((r) => !r.id.startsWith("new-"))
+      const accessNew = accessLogs.filter((r) => r.id.startsWith("new-"))
+      for (const row of accessExisting) {
+        if (!row.account_label.trim()) throw new Error("Each access log needs an account label before saving.")
+        const { error: err } = await supabase
+          .from("client_external_access_logs")
+          .update({
+            system_kind: row.system_kind,
+            account_label: row.account_label.trim(),
+            account_identifier: normalizeOptionalText(row.account_identifier),
+            access_email: normalizeOptionalText(row.access_email),
+            access_level: normalizeOptionalText(row.access_level),
+            status: row.status,
+            notes: normalizeOptionalText(row.notes),
+            granted_at: row.granted_at || new Date().toISOString(),
+            revoked_at: normalizeOptionalText(row.revoked_at),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id)
+        if (err) throw err
+      }
+      if (accessNew.length > 0) {
+        const payload = accessNew.map((row) => {
+          if (!row.account_label.trim()) throw new Error("Each access log needs an account label before saving.")
+          return {
+            user_id: selectedUserId,
+            system_kind: row.system_kind,
+            account_label: row.account_label.trim(),
+            account_identifier: normalizeOptionalText(row.account_identifier),
+            access_email: normalizeOptionalText(row.access_email),
+            access_level: normalizeOptionalText(row.access_level),
+            status: row.status,
+            notes: normalizeOptionalText(row.notes),
+            granted_at: row.granted_at || new Date().toISOString(),
+            revoked_at: normalizeOptionalText(row.revoked_at),
+          }
+        })
+        const { error: err } = await supabase.from("client_external_access_logs").insert(payload)
+        if (err) throw err
+      }
+
+      setMessage("Phone, email routing, and access records saved.")
       const { data, error: reloadErr } = await supabase
         .from("client_communication_channels")
         .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
@@ -378,26 +510,18 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         .order("created_at", { ascending: true })
       if (reloadErr) throw reloadErr
       setRows((data as ChannelRow[] | null) ?? [])
+      const { data: accessData, error: accessErr } = await supabase
+        .from("client_external_access_logs")
+        .select("id, user_id, system_kind, account_label, account_identifier, access_email, access_level, status, notes, granted_at, revoked_at")
+        .eq("user_id", selectedUserId)
+        .order("created_at", { ascending: true })
+      if (accessErr) throw accessErr
+      setAccessLogs((accessData as AccessLogRow[] | null) ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
-  }
-
-  async function removeRow(row: ChannelRow) {
-    if (!supabase) return
-    if (row.id.startsWith("new-")) {
-      setRows((prev) => prev.filter((r) => r.id !== row.id))
-      return
-    }
-    if (!window.confirm(`Remove ${row.public_address || "this channel"}?`)) return
-    const { error: err } = await supabase.from("client_communication_channels").delete().eq("id", row.id)
-    if (err) {
-      setError(err.message)
-      return
-    }
-    setRows((prev) => prev.filter((r) => r.id !== row.id))
   }
 
   async function saveAccessLogs() {
@@ -446,7 +570,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         const { error: err } = await supabase.from("client_external_access_logs").insert(payload)
         if (err) throw err
       }
-      setMessage("Routing, email, and access settings saved.")
+      setMessage("Access records saved.")
       const { data: accessData, error: accessErr } = await supabase
         .from("client_external_access_logs")
         .select("id, user_id, system_kind, account_label, account_identifier, access_email, access_level, status, notes, granted_at, revoked_at")
@@ -540,7 +664,6 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
     setMessage("")
     setError("")
     try {
-      const digits = new Set<string>()
       const normalizedOptions = helpDeskSettings.options
         .map((option) => ({
           id: option.id,
@@ -548,20 +671,78 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
           label: option.label.trim(),
           enabled: option.enabled,
           forward_to_phone: normalizePhone(option.forward_to_phone) ?? "",
+          depends_on_digit: normalizeDigit(option.depends_on_digit),
+          play_recording_url: option.play_recording_url.trim(),
+          on_select: option.on_select,
         }))
         .filter((option) => option.digit || option.label)
-
-      for (const option of normalizedOptions) {
-        if (!option.digit || !option.label) throw new Error("Each help desk option needs both a keypad digit and a label.")
-        if (option.digit === "0") throw new Error("Digit 0 is reserved for help desk voicemail. Use 1–9 for menu options.")
-        if (digits.has(option.digit)) throw new Error("Each help desk option must use a unique keypad digit.")
-        digits.add(option.digit)
-      }
 
       const notifyIds = helpDeskSettings.voicemail_notify_user_ids
         .split(/[\s,]+/)
         .map((s) => s.trim())
         .filter(Boolean)
+
+      const rootDigits = new Set<string>()
+      const childDigitsByParent = new Map<string, Set<string>>()
+
+      for (const option of normalizedOptions) {
+        if (!option.digit || !option.label) throw new Error("Each help desk option needs both a keypad digit and a label.")
+        if (option.digit === "0") throw new Error("Digit 0 is reserved for help desk voicemail. Use 1–8 for menu options.")
+        if (option.digit === "9") throw new Error("Digit 9 is reserved for mailbox greeting updates (PIN flow). Use 1–8 for menu options.")
+        if (option.depends_on_digit && (option.depends_on_digit === "0" || option.depends_on_digit === "9")) {
+          throw new Error(`Dependency key ${option.depends_on_digit}: submenus can only attach to main keys 1–8.`)
+        }
+        if (option.depends_on_digit) {
+          if (!childDigitsByParent.has(option.depends_on_digit)) childDigitsByParent.set(option.depends_on_digit, new Set())
+          const s = childDigitsByParent.get(option.depends_on_digit)!
+          if (s.has(option.digit)) {
+            throw new Error(`Duplicate digit ${option.digit} under submenu ${option.depends_on_digit}. Each key must be unique within that submenu.`)
+          }
+          s.add(option.digit)
+        } else {
+          if (rootDigits.has(option.digit)) throw new Error(`Main menu digit ${option.digit} is used twice. Each main key must be unique.`)
+          rootDigits.add(option.digit)
+        }
+        if (option.on_select === "dial" && !option.forward_to_phone) {
+          throw new Error(
+            `Key ${option.digit}: “Dial” requires a phone number, or change “When pressed” to PIN greeting, team voicemail, submenu, or thank you.`,
+          )
+        }
+        if (option.on_select === "team_voicemail" && notifyIds.length === 0) {
+          throw new Error(
+            `Key ${option.digit}: add voicemail notify user IDs above before using “Team voicemail” on a menu option.`,
+          )
+        }
+        if (option.on_select === "submenu" && option.depends_on_digit) {
+          throw new Error(`Key ${option.digit}: “Open submenu” is only allowed on main menu rows (clear “Show after key”).`)
+        }
+      }
+
+      const roots = normalizedOptions.filter((o) => !o.depends_on_digit)
+      if (roots.length === 0 && normalizedOptions.length > 0) {
+        throw new Error("Add at least one main menu row (clear “Show after key”) so callers hear a top-level menu.")
+      }
+
+      for (const r of roots) {
+        if (r.on_select !== "submenu") continue
+        const kids = normalizedOptions.filter((o) => o.depends_on_digit === r.digit && o.enabled)
+        if (kids.length === 0) {
+          throw new Error(`Main key ${r.digit}: “Open submenu” needs at least one enabled row with “Show after key” = ${r.digit}.`)
+        }
+      }
+
+      for (const o of normalizedOptions) {
+        if (!o.depends_on_digit) continue
+        const parent = roots.find((r) => r.digit === o.depends_on_digit)
+        if (!parent) {
+          throw new Error(`Row “${o.label}”: no main menu key ${o.depends_on_digit}. Add that digit on a main row first.`)
+        }
+        if (parent.on_select !== "submenu") {
+          throw new Error(
+            `Row “${o.label}”: main key ${o.depends_on_digit} must use “Open submenu” so dependent rows appear after callers press that key.`,
+          )
+        }
+      }
 
       const payload = {
         title: helpDeskSettings.title.trim() || "Tradesman Help Desk",
@@ -572,7 +753,16 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         greeting_recording_url: helpDeskSettings.greeting_recording_url.trim(),
         menu_enabled: helpDeskSettings.menu_enabled,
         voicemail_notify_user_ids: notifyIds,
-        options: normalizedOptions,
+        options: normalizedOptions.map((o) => ({
+          id: o.id,
+          digit: o.digit,
+          label: o.label,
+          enabled: o.enabled,
+          forward_to_phone: o.forward_to_phone,
+          depends_on_digit: o.depends_on_digit || undefined,
+          play_recording_url: o.play_recording_url || undefined,
+          on_select: o.on_select,
+        })),
       }
 
       const { error: err } = await supabase.from("platform_settings").upsert(
@@ -590,7 +780,11 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         greeting_text: payload.greeting_text,
         greeting_recording_url: payload.greeting_recording_url,
         voicemail_notify_user_ids: notifyIds.join(", "),
-        options: normalizedOptions.map((option) => ({ ...option })),
+        options: normalizedOptions.map((option) => ({
+          ...option,
+          depends_on_digit: option.depends_on_digit ?? "",
+          play_recording_url: option.play_recording_url ?? "",
+        })),
       }))
       setMessage("Tradesman help desk settings saved.")
     } catch (err) {
@@ -719,7 +913,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 placeholder="e.g. joe and justin profiles’ auth user UUIDs from Supabase"
               />
               <span style={{ fontSize: 11, color: theme.text, opacity: 0.75 }}>
-                When set, callers can press 0 after the menu (or reach voicemail on a bad key / menu timeout) and each listed user gets the recording in Conversations. Digit 0 cannot be used as a menu option.
+                When set, callers can press 0 after the menu for help-desk voicemail; each listed user gets the recording in Conversations. Digits 0 and 9 are reserved (9 transfers to the PIN-based personal greeting recorder). Use 1–8 for menu options only.
               </span>
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -747,12 +941,35 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 <div>
                   <h3 style={{ color: theme.text, margin: 0, fontSize: 16 }}>Help Desk Menu Options</h3>
                   <p style={{ color: theme.text, opacity: 0.8, margin: "6px 0 0" }}>
-                    Live keypad choices for this number (1–9 only; 0 is reserved for voicemail when notify IDs are set).
+                    Configure digits 1–8 on the main menu or in a one-level submenu. Built-in keys <strong>0</strong> and <strong>9</strong> are always active when the menu runs (see below). Optional <strong>Announcement URL</strong> plays before dial, redirect, or voicemail. If your caller ID matches{" "}
+                    <strong>Forward to phone</strong> on a channel or <strong>primary phone</strong> on the profile, the greeting recorder skips PIN entry. Twilio voice URL:{" "}
+                    <code style={{ fontSize: 11 }}>POST …/api/help-desk-voice</code>.
                   </p>
                 </div>
                 <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskOption()] }))} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
                   Add option
                 </button>
+              </div>
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid #93c5fd",
+                  background: "linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)",
+                  fontSize: 13,
+                  color: "#1e3a8a",
+                  lineHeight: 1.5,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Built-in keys (not editable here — always wired in the auto attendant)</div>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  <li>
+                    <strong>0</strong> — Help-desk team voicemail (requires <em>Voicemail notify user IDs</em> above). Same behavior as a menu row set to “Team voicemail”.
+                  </li>
+                  <li>
+                    <strong>9</strong> — Personal mailbox greeting (PIN flow at <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code>). Same as a row set to “PIN greeting recorder”.
+                  </li>
+                </ul>
               </div>
               {helpDeskSettings.options.length === 0 ? (
                 <p style={{ margin: 0, color: theme.text, opacity: 0.8 }}>No menu options yet.</p>
@@ -768,34 +985,83 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                       }
                       rowStyle={{ marginBottom: 0 }}
                     >
-                    <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "120px minmax(200px, 1fr) minmax(180px, 1fr) auto", gap: 12, alignItems: "end" }}>
-                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Digit</span>
-                          <input value={option.digit} onChange={(e) => updateHelpDeskOption(option.id, { digit: normalizeDigit(e.target.value) })} style={theme.formInput} placeholder="1" maxLength={1} />
-                        </label>
-                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Label</span>
-                          <input value={option.label} onChange={(e) => updateHelpDeskOption(option.id, { label: e.target.value })} style={theme.formInput} placeholder="Customer care" />
-                        </label>
-                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone (optional)</span>
-                          <input
-                            value={option.forward_to_phone}
-                            onChange={(e) => updateHelpDeskOption(option.id, { forward_to_phone: e.target.value })}
+                      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14, background: "#fff" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, alignItems: "end" }}>
+                          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Show after key</span>
+                            <select
+                              value={option.depends_on_digit || ""}
+                              onChange={(e) => updateHelpDeskOption(option.id, { depends_on_digit: normalizeDigit(e.target.value) })}
+                              style={theme.formInput}
+                            >
+                              <option value="">Main menu (top level)</option>
+                              {helpDeskSubmenuParentDigits.map((d) => (
+                                <option key={d} value={d}>
+                                  Submenu after caller presses {d}
+                                </option>
+                              ))}
+                            </select>
+                            <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45 }}>Add a main row with “Open submenu” first, then attach rows here.</span>
+                          </label>
+                          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Digit</span>
+                            <input value={option.digit} onChange={(e) => updateHelpDeskOption(option.id, { digit: normalizeDigit(e.target.value) })} style={theme.formInput} placeholder="1" maxLength={1} />
+                          </label>
+                          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Label</span>
+                            <input value={option.label} onChange={(e) => updateHelpDeskOption(option.id, { label: e.target.value })} style={theme.formInput} placeholder="Customer care" />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: prev.options.filter((row) => row.id !== option.id) }))}
+                            style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "white", color: "#b91c1c", cursor: "pointer", height: 40 }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, alignItems: "end", marginTop: 12 }}>
+                          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone (optional)</span>
+                            <input
+                              value={option.forward_to_phone}
+                              onChange={(e) => updateHelpDeskOption(option.id, { forward_to_phone: e.target.value })}
+                              style={theme.formInput}
+                              placeholder="+15551234567"
+                            />
+                          </label>
+                          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Announcement / recording URL (optional)</span>
+                            <input
+                              value={option.play_recording_url}
+                              onChange={(e) => updateHelpDeskOption(option.id, { play_recording_url: e.target.value })}
+                              style={theme.formInput}
+                              placeholder="https://…/clip.mp3"
+                            />
+                          </label>
+                        </div>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>When caller presses this key</span>
+                          <select
+                            value={option.on_select}
+                            onChange={(e) => updateHelpDeskOption(option.id, { on_select: e.target.value as HelpDeskOnSelect })}
                             style={theme.formInput}
-                            placeholder="+15551234567"
-                          />
+                          >
+                            <option value="dial">Dial the number above</option>
+                            <option value="submenu">Open submenu (add rows with “Show after key” = this row&apos;s digit)</option>
+                            <option value="pin_greeting">PIN greeting recorder (same as pressing 9)</option>
+                            <option value="team_voicemail">Team voicemail (same as pressing 0)</option>
+                            <option value="thanks">Thank you and hang up</option>
+                            <option value="trouble_ticket">Trouble ticket (voicemail + AI transcript → admin Trouble Tickets)</option>
+                          </select>
+                          <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45 }}>
+                            Routing uses this dropdown. <strong>Open submenu</strong> only on main-menu rows; then add dependent rows for the second menu tier.
+                          </span>
                         </label>
-                        <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: prev.options.filter((row) => row.id !== option.id) }))} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "white", color: "#b91c1c", cursor: "pointer", height: 40 }}>
-                          Remove
-                        </button>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, marginTop: 12 }}>
+                          <input type="checkbox" checked={option.enabled} onChange={(e) => updateHelpDeskOption(option.id, { enabled: e.target.checked })} />
+                          Option enabled
+                        </label>
                       </div>
-                      <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, marginTop: 12 }}>
-                        <input type="checkbox" checked={option.enabled} onChange={(e) => updateHelpDeskOption(option.id, { enabled: e.target.checked })} />
-                        Option enabled
-                      </label>
-                    </div>
                     </AdminSortableRow>
                   ))}
                 </div>
@@ -809,7 +1075,12 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 . Optional: set <code style={{ fontSize: 11 }}>HELP_DESK_LOG_USER_ID</code> on Vercel (a real <code style={{ fontSize: 11 }}>auth.users</code> UUID) to log help-desk calls in{" "}
                 <strong>Communication events</strong>.
               </div>
-              <div>Per menu option you can set <strong>Forward to phone</strong> to dial support or the contractor; leave blank to play a thank-you message only.</div>
+              <div style={{ padding: "8px 10px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", color: "#9a3412" }}>
+                If the voice URL is set to <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear this menu — they only get the PIN / record flow. Use <code style={{ fontSize: 11 }}>help-desk-voice</code> here; press <strong>9</strong> on the menu to reach the greeting PIN flow.
+              </div>
+              <div>
+                <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Dial</strong> needs a number; <strong>Open submenu</strong> needs dependent rows; <strong>PIN greeting</strong> matches key 9; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).
+              </div>
             </div>
           </div>
           {message && <p style={{ color: "#059669", marginBottom: 0 }}>{message}</p>}
@@ -825,22 +1096,54 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Routing &amp; Access for {selectedUserLabel}</h1>
-            <p style={{ color: theme.text, opacity: 0.8, margin: 0 }}>
-              Manage phone/email routing now, with room for future access tracking in the same admin area. No redeploy needed for new numbers.
+            <p style={{ color: theme.text, opacity: 0.85, margin: 0, lineHeight: 1.5 }}>
+              Use the channel cards below for <strong>both</strong> phone/SMS and email. <strong>Save all (phone, email &amp; access)</strong> saves those channels and the Google access records together. Add extra channels only when you need more numbers or addresses.
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={() => selectedUserId && setRows((prev) => [...prev, emptyChannel(selectedUserId)])} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
               Add channel
             </button>
-            <button type="button" onClick={() => void saveAll()} disabled={saving} style={{ padding: "10px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "white", fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
-              {saving ? "Saving..." : "Save routing & access"}
+            <button
+              type="button"
+              onClick={() => void saveRoutingAndAccess()}
+              disabled={saving}
+              style={{ padding: "10px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "white", fontWeight: 600, cursor: saving ? "wait" : "pointer" }}
+            >
+              {saving ? "Saving..." : "Save all (phone, email & access)"}
             </button>
           </div>
         </div>
         {message && <p style={{ color: "#059669", marginBottom: 0 }}>{message}</p>}
         {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
       </AdminSettingBlock>
+
+      {mode === "single_client" && selectedUserId ? (
+        <AdminSettingBlock id="admin:communications:simple_outbound_email">
+          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 17 }}>Email to customers — simple model</h2>
+          <p style={{ margin: "0 0 12px", color: theme.text, lineHeight: 1.55, fontSize: 14 }}>
+            <strong>From</strong> your public Tradesman address · <strong>To</strong> the customer · <strong>BCC</strong> (and Reply-To) your real inbox in Step 2 — so you always get a copy in your own mail without anything extra.
+          </p>
+          <ol style={{ margin: "0 0 8px", paddingLeft: 22, color: theme.text, lineHeight: 1.55, fontSize: 14 }}>
+            <li>
+              <strong>Step 1</strong> = address customers see. Create it in{" "}
+              <a href="https://resend.com/domains" target="_blank" rel="noreferrer" style={{ color: theme.primary }}>
+                Resend
+              </a>{" "}
+              to match exactly.
+            </li>
+            <li>
+              <strong>Step 2</strong> = your personal/work inbox (must differ from Step 1). Saves here → Tradesman <strong>BCCs</strong> you on every Conversations send to a customer.
+            </li>
+            <li>
+              Click <strong>Save</strong> below. Vercel needs <code style={{ fontSize: 11 }}>RESEND_API_KEY</code>.
+            </li>
+          </ol>
+          <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+            No separate “forward” setup for outbound copies — BCC handles it. If copies are missing, check spam and Resend delivery logs.
+          </p>
+        </AdminSettingBlock>
+      ) : null}
 
       {mode === "single_client" && selectedUserId ? (
         <div
@@ -856,14 +1159,19 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
         >
           <div style={{ fontWeight: 700, marginBottom: 6, color: "#b45309" }}>Before Monday beta: voicemail &amp; greetings</div>
           <div style={{ opacity: 0.95 }}>
-            Voicemail and greeting flows still need a focused test pass (upload, PIN, Twilio routing). Use <strong>Email routing</strong> below for Tradesman addresses and Resend.
+            Voicemail and greeting flows still need a focused test pass (upload, PIN, Twilio routing). Configure Tradesman email addresses in the <strong>Email</strong> channel rows below.
           </div>
         </div>
       ) : null}
 
       {mode === "single_client" && selectedUserId ? (
         <AdminSettingBlock id="admin:communications:email_routing_guide">
-          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 18 }}>Email routing (Resend + Google / lead capture)</h2>
+          <details style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 14px", background: "#fafafa" }}>
+            <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text, fontSize: 16 }}>
+              Email &amp; Resend reference (webhook URL, troubleshooting) — expand if needed
+            </summary>
+            <div style={{ marginTop: 14 }}>
+          <h2 style={{ color: theme.text, margin: "0 0 8px", fontSize: 17 }}>Email routing (Resend + Google / lead capture)</h2>
           <p style={{ color: theme.text, opacity: 0.88, margin: "0 0 14px", lineHeight: 1.55, fontSize: 14 }}>
             Company mail and public listings should use a <strong>Tradesman-hosted address</strong> (your domain on Resend, e.g.{" "}
             <code style={{ fontSize: 12 }}>jane.plumbing@tradesman-us.com</code>) so everything can route into this user&apos;s portal. Their{" "}
@@ -883,13 +1191,12 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             }}
           >
             <div>
-              <strong style={{ color: theme.text }}>1. Outbound (working today)</strong>
+              <strong style={{ color: theme.text }}>1. Outbound (Conversations → customer)</strong>
               <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
-                When this user sends email from <strong>Conversations</strong>, the app calls{" "}
-                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/send-email</code> on your deployment.{" "}
-                Vercel needs <code style={{ fontSize: 11 }}>RESEND_API_KEY</code>. The message is sent <strong>from</strong> the{" "}
-                <strong>Business email address</strong> on the Email channel row, with <strong>Reply-To</strong> set to{" "}
-                <strong>Reply-to / forward-to email</strong> when provided—so customers reply to the contractor&apos;s real inbox.
+                The app calls{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/send-email</code>.{" "}
+                Vercel needs <code style={{ fontSize: 11 }}>RESEND_API_KEY</code>. Sends <strong>from</strong> Step 1 (public business address), <strong>To</strong> = customer,{" "}
+                <strong>Reply-To</strong> = Step 2, and <strong>BCC</strong> = Step 2 (so the contractor gets a copy in their real inbox).
               </p>
             </div>
             <div>
@@ -927,122 +1234,217 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               </p>
             </div>
             <div>
-              <strong style={{ color: theme.text }}>4. Field cheat sheet</strong>
+              <strong style={{ color: theme.text }}>4. Field cheat sheet (matches the channel form)</strong>
               <ul style={{ margin: "8px 0 0", paddingLeft: 20, opacity: 0.9 }}>
                 <li>
-                  <strong>Business email address</strong> — public Tradesman address; must match Resend sending domain and receiving routes.
+                  <strong>Step 1 — Public business email</strong> — the address the world uses; must match Resend receiving and inbound <code style={{ fontSize: 11 }}>To</code>.
                 </li>
                 <li>
-                  <strong>Reply-to / forward-to email</strong> — contractor&apos;s personal or work Gmail; used as Reply-To on outbound; target for optional forward when inbound is fully connected.
+                  <strong>Step 2 — Personal or work inbox</strong> — different mailbox; Reply-To on outbound and optional copy of inbound. Never the same as Step 1.
                 </li>
                 <li>
-                  <strong>Email enabled</strong> — must be on for this row to be chosen as the user&apos;s primary email channel for <code style={{ fontSize: 11 }}>/api/send-email</code>.
+                  <strong>Email enabled</strong> — on so this row is used for <code style={{ fontSize: 11 }}>/api/send-email</code> and inbound routing.
                 </li>
               </ul>
             </div>
           </div>
+            </div>
+          </details>
         </AdminSettingBlock>
       ) : null}
 
       <AdminSettingBlock id="admin:communications:channels">
+        <h2 style={{ color: theme.text, margin: "0 0 12px", fontSize: 18 }}>Phone &amp; email channels</h2>
         {loading ? (
           <p style={{ margin: 0, color: theme.text }}>Loading communication channels...</p>
         ) : rows.length === 0 ? (
-          <p style={{ margin: 0, color: theme.text, opacity: 0.8 }}>No channels yet. Add the client's Twilio number and forwarding destination above.</p>
+          <p style={{ margin: 0, color: theme.text, opacity: 0.8 }}>No channels yet. Add a row for Twilio (phone/SMS) and/or Email — use Step 1 + Step 2 for any Email channel.</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {rows.map((row) => (
+            {rows.map((row) => {
+              const emailConflict = row.channel_kind === "email" ? emailChannelAddressConflict(row) : null
+              return (
               <div key={row.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 16, background: "#fff" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Channel kind</span>
-                    <select value={row.channel_kind} onChange={(e) => updateRow(row.id, { channel_kind: e.target.value as ChannelRow["channel_kind"] })} style={theme.formInput}>
-                      <option value="voice_sms">Voice / SMS</option>
-                      <option value="email">Email</option>
-                    </select>
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{row.channel_kind === "email" ? "Business email address" : "Public number / address"}</span>
-                    <input
-                      value={row.public_address}
-                      onChange={(e) => updateRow(row.id, { public_address: e.target.value })}
-                      style={theme.formInput}
-                      placeholder={row.channel_kind === "email" ? "e.g. jane.plumbing@tradesman-us.com" : "+15551234567"}
-                    />
-                    {row.channel_kind === "email" && (
-                      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
-                        List this exact address on Google Business Profile, lead capture, and marketing. Saved lowercase for routing.
-                      </span>
-                    )}
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone</span>
-                    <input value={row.forward_to_phone ?? ""} onChange={(e) => updateRow(row.id, { forward_to_phone: e.target.value })} style={theme.formInput} placeholder="+15557654321" />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{row.channel_kind === "email" ? "Reply-to / forward-to email" : "Forward to email"}</span>
-                    <input
-                      value={row.forward_to_email ?? ""}
-                      onChange={(e) => updateRow(row.id, { forward_to_email: e.target.value })}
-                      style={theme.formInput}
-                      placeholder={row.channel_kind === "email" ? "contractor.personal@gmail.com" : "optional@email.com"}
-                    />
-                    {row.channel_kind === "email" && (
-                      <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
-                        Outbound mail uses this as Reply-To. Keep it current so customers reach the right inbox.
-                      </span>
-                    )}
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Provider SID</span>
-                    <input value={row.provider_sid ?? ""} onChange={(e) => updateRow(row.id, { provider_sid: e.target.value })} style={theme.formInput} placeholder="PN..." />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Friendly name</span>
-                    <input value={row.friendly_name ?? ""} onChange={(e) => updateRow(row.id, { friendly_name: e.target.value })} style={theme.formInput} placeholder="Main line" />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Voicemail mode</span>
-                    <select value={row.voicemail_mode} onChange={(e) => updateRow(row.id, { voicemail_mode: e.target.value as ChannelRow["voicemail_mode"] })} style={theme.formInput}>
-                      <option value="summary">Summary</option>
-                      <option value="full_transcript">Full transcript</option>
-                    </select>
-                  </label>
-                </div>
-                <p style={{ margin: "10px 0 0", fontSize: 12, color: "#6b7280" }}>
-                  Provider: <strong style={{ color: theme.text }}>{row.channel_kind === "email" ? "resend" : row.provider || "twilio"}</strong>
-                  {row.channel_kind === "email"
-                    ? " — add the domain in Resend (send + receive) so this address works end-to-end."
-                    : " — Twilio number / SMS webhooks use voice_sms channels."}
-                </p>
-                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
-                  {[
-                    ["voice_enabled", "Voice enabled"],
-                    ["sms_enabled", "SMS enabled"],
-                    ["email_enabled", "Email enabled"],
-                    ["voicemail_enabled", "Twilio voicemail enabled"],
-                    ["active", "Active"],
-                  ]
-                    .filter(([key]) => {
-                      if (row.channel_kind === "email") {
-                        return key === "email_enabled" || key === "active"
-                      }
-                      return key !== "email_enabled"
-                    })
-                    .map(([key, label]) => (
-                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
-                      <input type="checkbox" checked={Boolean(row[key as keyof ChannelRow])} onChange={(e) => updateRow(row.id, { [key]: e.target.checked } as Partial<ChannelRow>)} />
-                      {label}
+                {row.channel_kind === "email" ? (
+                  <>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 160 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Channel kind</span>
+                        <select value={row.channel_kind} onChange={(e) => updateRow(row.id, { channel_kind: e.target.value as ChannelRow["channel_kind"] })} style={theme.formInput}>
+                          <option value="voice_sms">Voice / SMS</option>
+                          <option value="email">Email</option>
+                        </select>
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6, flex: "1 1 220px" }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Label (optional)</span>
+                        <input value={row.friendly_name ?? ""} onChange={(e) => updateRow(row.id, { friendly_name: e.target.value })} style={theme.formInput} placeholder="e.g. Main company email" />
+                      </label>
+                    </div>
+
+                    <div
+                      style={{
+                        border: "1px solid #93c5fd",
+                        borderRadius: 10,
+                        padding: 14,
+                        background: "linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)",
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e3a8a", marginBottom: 6 }}>Step 1 — Public address (where the world sends mail)</div>
+                      <p style={{ fontSize: 12, color: "#1e40af", margin: "0 0 12px", lineHeight: 1.55, opacity: 0.95 }}>
+                        Same address on Google Business Profile, website, and Resend receiving. Tradesman matches inbound mail to this field — not to your personal inbox below.
+                      </p>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#1e3a8a" }}>Public business email</span>
+                        <input
+                          value={row.public_address}
+                          onChange={(e) => updateRow(row.id, { public_address: e.target.value })}
+                          style={theme.formInput}
+                          placeholder="jane.plumbing@your-domain.com"
+                        />
+                        <span style={{ fontSize: 11, color: "#3730a3", lineHeight: 1.45 }}>Stored lowercase. Must match the address Resend reports on inbound messages.</span>
+                      </label>
+                    </div>
+
+                    <div
+                      style={{
+                        border: "1px solid #fcd34d",
+                        borderRadius: 10,
+                        padding: 14,
+                        background: "linear-gradient(180deg, #fffbeb 0%, #fff 100%)",
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#78350f", marginBottom: 6 }}>Step 2 — Your real inbox (Reply-To + BCC)</div>
+                      <p style={{ fontSize: 12, color: "#92400e", margin: "0 0 12px", lineHeight: 1.55 }}>
+                        When this user sends email to a <strong>customer</strong> from Conversations, Tradesman sets this address as <strong>Reply-To</strong> and <strong>BCC</strong> so you get a copy in your normal mail app. Optional: inbound-forward copies can still use this address per your Resend setup. Must be <strong>different</strong> from Step 1 (same address in both causes a loop; blocked on save).
+                      </p>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#78350f" }}>Personal or work inbox (Gmail, Outlook, …)</span>
+                        <input
+                          value={row.forward_to_email ?? ""}
+                          onChange={(e) => updateRow(row.id, { forward_to_email: e.target.value })}
+                          style={theme.formInput}
+                          placeholder="you.personal@gmail.com"
+                        />
+                        <span style={{ fontSize: 11, color: "#a16207", lineHeight: 1.45 }}>
+                          Leave blank to skip Reply-To and BCC on outbound (you will only see sends inside Tradesman). Tradesman blocks loops if this matches Step 1.
+                        </span>
+                      </label>
+                      {emailConflict ? (
+                        <div
+                          role="alert"
+                          style={{
+                            marginTop: 12,
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            background: "#fef2f2",
+                            border: "1px solid #fecaca",
+                            color: "#991b1b",
+                            fontSize: 12,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {emailConflict}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxWidth: 420 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Provider SID (optional)</span>
+                      <input value={row.provider_sid ?? ""} onChange={(e) => updateRow(row.id, { provider_sid: e.target.value })} style={theme.formInput} placeholder="Resend reference if you use one" />
                     </label>
-                  ))}
-                </div>
+
+                    <p style={{ margin: "0 0 12px", fontSize: 12, color: "#6b7280" }}>
+                      Provider: <strong style={{ color: theme.text }}>resend</strong> — configure send + receive for this domain in Resend.
+                    </p>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                      {[
+                        ["email_enabled", "Email enabled"],
+                        ["active", "Active"],
+                      ].map(([key, label]) => (
+                        <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
+                          <input type="checkbox" checked={Boolean(row[key as keyof ChannelRow])} onChange={(e) => updateRow(row.id, { [key]: e.target.checked } as Partial<ChannelRow>)} />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Channel kind</span>
+                        <select value={row.channel_kind} onChange={(e) => updateRow(row.id, { channel_kind: e.target.value as ChannelRow["channel_kind"] })} style={theme.formInput}>
+                          <option value="voice_sms">Voice / SMS</option>
+                          <option value="email">Email</option>
+                        </select>
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Public number / address</span>
+                        <input
+                          value={row.public_address}
+                          onChange={(e) => updateRow(row.id, { public_address: e.target.value })}
+                          style={theme.formInput}
+                          placeholder="+15551234567"
+                        />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to phone</span>
+                        <input value={row.forward_to_phone ?? ""} onChange={(e) => updateRow(row.id, { forward_to_phone: e.target.value })} style={theme.formInput} placeholder="+15557654321" />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Forward to email (optional)</span>
+                        <input
+                          value={row.forward_to_email ?? ""}
+                          onChange={(e) => updateRow(row.id, { forward_to_email: e.target.value })}
+                          style={theme.formInput}
+                          placeholder="optional@email.com"
+                        />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Provider SID</span>
+                        <input value={row.provider_sid ?? ""} onChange={(e) => updateRow(row.id, { provider_sid: e.target.value })} style={theme.formInput} placeholder="PN..." />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Friendly name</span>
+                        <input value={row.friendly_name ?? ""} onChange={(e) => updateRow(row.id, { friendly_name: e.target.value })} style={theme.formInput} placeholder="Main line" />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Voicemail mode</span>
+                        <select value={row.voicemail_mode} onChange={(e) => updateRow(row.id, { voicemail_mode: e.target.value as ChannelRow["voicemail_mode"] })} style={theme.formInput}>
+                          <option value="summary">Summary</option>
+                          <option value="full_transcript">Full transcript</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p style={{ margin: "10px 0 0", fontSize: 12, color: "#6b7280" }}>
+                      Provider: <strong style={{ color: theme.text }}>{row.provider || "twilio"}</strong>
+                      {" — Twilio number / SMS webhooks use voice_sms channels."}
+                    </p>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
+                      {[
+                        ["voice_enabled", "Voice enabled"],
+                        ["sms_enabled", "SMS enabled"],
+                        ["voicemail_enabled", "Twilio voicemail enabled"],
+                        ["active", "Active"],
+                      ].map(([key, label]) => (
+                        <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
+                          <input type="checkbox" checked={Boolean(row[key as keyof ChannelRow])} onChange={(e) => updateRow(row.id, { [key]: e.target.checked } as Partial<ChannelRow>)} />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
                   <button type="button" onClick={() => void removeRow(row)} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "white", color: "#b91c1c", cursor: "pointer" }}>
                     Remove channel
                   </button>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </AdminSettingBlock>
@@ -1059,8 +1461,13 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
             <button type="button" onClick={() => selectedUserId && setAccessLogs((prev) => [...prev, emptyAccessLog(selectedUserId)])} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
               Add access record
             </button>
-            <button type="button" onClick={() => void saveAccessLogs()} disabled={savingAccess} style={{ padding: "10px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "white", fontWeight: 600, cursor: savingAccess ? "wait" : "pointer" }}>
-              {savingAccess ? "Saving..." : "Save access log"}
+            <button
+              type="button"
+              onClick={() => void saveAccessLogs()}
+              disabled={savingAccess || saving}
+              style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, fontWeight: 600, cursor: savingAccess || saving ? "wait" : "pointer" }}
+            >
+              {savingAccess ? "Saving..." : "Save access only"}
             </button>
           </div>
         </div>

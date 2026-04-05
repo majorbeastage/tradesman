@@ -11,16 +11,16 @@
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { Webhook } from "https://esm.sh/svix@1.90.0"
-
-type CommunicationChannel = {
-  id: string
-  user_id: string
-  channel_kind: "voice_sms" | "email"
-  public_address: string
-  forward_to_email: string | null
-  email_enabled?: boolean
-  active: boolean
-}
+import {
+  resolveInboundEmailChannel,
+  type InboundCommunicationChannel as CommunicationChannel,
+} from "../_shared/inbound-email-channel.ts"
+import {
+  forwardHeadersForTradesmanCopy,
+  normalizeResendHeaderMap,
+  shouldSkipForwardCopy,
+  shouldSuppressInboundEmail,
+} from "../_shared/inbound-email-loop-guard.ts"
 
 type ResendReceivedPayload = {
   id?: string
@@ -30,6 +30,7 @@ type ResendReceivedPayload = {
   text?: string | null
   html?: string | null
   message_id?: string | null
+  headers?: Record<string, unknown>
 }
 
 const cors = {
@@ -43,41 +44,6 @@ function json(status: number, body: Record<string, unknown>): Response {
     status,
     headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" },
   })
-}
-
-function normalizePhone(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ""
-  const keepPlus = trimmed.startsWith("+")
-  const digits = trimmed.replace(/\D/g, "")
-  if (!digits) return ""
-  return `${keepPlus ? "+" : ""}${digits}`
-}
-
-async function lookupChannelByPublicAddress(
-  supabase: SupabaseClient,
-  publicAddress: string
-): Promise<CommunicationChannel | null> {
-  const trimmed = publicAddress.trim()
-  const normalized = trimmed.includes("@") ? trimmed.toLowerCase() : normalizePhone(publicAddress) || trimmed
-  const { data, error } = await supabase
-    .from("client_communication_channels")
-    .select("id, user_id, channel_kind, public_address, forward_to_email, email_enabled, active")
-    .eq("public_address", normalized)
-    .eq("active", true)
-    .limit(1)
-    .maybeSingle()
-  if (error) throw error
-  return (data as CommunicationChannel | null) ?? null
-}
-
-async function lookupEmailChannelByInboundAddress(
-  supabase: SupabaseClient,
-  publicAddress: string
-): Promise<CommunicationChannel | null> {
-  const ch = await lookupChannelByPublicAddress(supabase, publicAddress)
-  if (!ch || ch.channel_kind !== "email" || ch.email_enabled !== true) return null
-  return ch
 }
 
 async function getOrCreateCustomerByEmail(
@@ -251,8 +217,8 @@ async function forwardCopyViaResend(params: {
   to: string
   subject: string
   textBody: string
-}): Promise<void> {
-  await fetch("https://api.resend.com/emails", {
+}): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${params.apiKey}`,
@@ -263,8 +229,18 @@ async function forwardCopyViaResend(params: {
       to: [params.to],
       subject: `[Tradesman] Fwd: ${params.subject}`,
       text: params.textBody,
+      headers: forwardHeadersForTradesmanCopy(),
     }),
   })
+  if (res.ok) return { ok: true }
+  let detail = await res.text()
+  try {
+    const j = JSON.parse(detail) as { message?: string }
+    if (typeof j?.message === "string") detail = j.message
+  } catch {
+    /* keep text */
+  }
+  return { ok: false, status: res.status, detail: detail.slice(0, 500) }
 }
 
 Deno.serve(async (req) => {
@@ -351,28 +327,27 @@ Deno.serve(async (req) => {
     .limit(1)
     .maybeSingle()
   if (existing?.id) {
-    return json(200, { ok: true, duplicate: true, external_id: received.id })
+    return json(200, {
+      ok: true,
+      routed: true,
+      duplicate: true,
+      external_id: received.id,
+      hint: "Already stored; Resend retried the webhook.",
+    })
   }
 
-  let channel: CommunicationChannel | null = null
-  let matchedTo = ""
-  for (const addr of toList) {
-    const ch = await lookupEmailChannelByInboundAddress(supabase, addr)
-    if (ch) {
-      channel = ch
-      matchedTo = addr
-      break
-    }
-  }
-
-  if (!channel?.user_id) {
+  const resolved = await resolveInboundEmailChannel(supabase, toList)
+  if (!resolved.ok) {
     return json(200, {
       ok: true,
       routed: false,
-      hint: "No matching Email channel (public_address + email enabled) for To addresses.",
+      hint: "Resend delivered the webhook, but Tradesman has no qualifying Email channel for the To address(es). See reasons.",
+      reasons: resolved.reasons,
       to: toList,
     })
   }
+  const channel = resolved.channel
+  const matchedTo = resolved.matchedTo
 
   const fromHeader = typeof received.from === "string" ? received.from : ""
   const fromEmail = fromHeader ? parseEmailAddressFromHeader(fromHeader) : ""
@@ -384,6 +359,25 @@ Deno.serve(async (req) => {
   const textRaw = typeof received.text === "string" && received.text.trim() ? received.text : ""
   const htmlRaw = typeof received.html === "string" && received.html.trim() ? received.html : ""
   const bodyForMessage = textRaw || (htmlRaw ? stripHtml(htmlRaw) : "(empty body)")
+
+  const headerMap = normalizeResendHeaderMap(received.headers)
+  const suppressInbound = shouldSuppressInboundEmail({
+    subject,
+    headers: headerMap,
+    fromEmail,
+    forwardToEmail: channel.forward_to_email,
+  })
+  if (suppressInbound.suppressed) {
+    console.warn("resend-inbound suppressed (loop guard)", suppressInbound.reason, { fromEmail, matchedTo })
+    return json(200, {
+      ok: true,
+      routed: false,
+      suppressed: true,
+      reason: suppressInbound.reason,
+      hint:
+        "Stopped a forward loop or Tradesman-generated echo. Do not forward personal mail back to the business address; Reply-to / forward-to must differ from Business email.",
+    })
+  }
 
   let customerId = ""
   let conversationId = ""
@@ -435,30 +429,46 @@ Deno.serve(async (req) => {
   })
 
   const forwardTo = channel.forward_to_email?.trim()
+  let forwardResult: { skipped?: string; sent?: boolean; error?: string } = {}
   if (forwardTo) {
-    try {
+    const skipFwd = shouldSkipForwardCopy({ forwardTo, matchedTo, fromEmail })
+    if (skipFwd.suppressed) {
+      forwardResult = { skipped: `Loop guard: ${skipFwd.reason}` }
+    } else {
       const fromSend =
         channel.public_address?.trim().toLowerCase() || Deno.env.get("RESEND_FROM_EMAIL")?.trim() || ""
-      if (fromSend) {
-        await forwardCopyViaResend({
-          apiKey,
-          fromAddress: fromSend,
-          to: forwardTo,
-          subject,
-          textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
-        })
+      if (!fromSend) {
+        forwardResult = { skipped: "No from address: set channel Business email or secret RESEND_FROM_EMAIL." }
+      } else {
+        try {
+          const fr = await forwardCopyViaResend({
+            apiKey,
+            fromAddress: fromSend,
+            to: forwardTo,
+            subject,
+            textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
+          })
+          if (fr.ok) forwardResult = { sent: true }
+          else {
+            forwardResult = { error: `Resend forward HTTP ${fr.status}: ${fr.detail}` }
+            console.error("resend-inbound forward failed", forwardResult.error)
+          }
+        } catch (e) {
+          forwardResult = { error: e instanceof Error ? e.message : String(e) }
+          console.error("resend-inbound forward exception", forwardResult.error)
+        }
       }
-    } catch {
-      // non-fatal
     }
   }
 
   return json(200, {
     ok: true,
+    routed: true,
     userId: channel.user_id,
     conversationId,
     customerId,
     matchedTo,
-    forwarded: Boolean(forwardTo),
+    forwardToConfigured: Boolean(forwardTo),
+    ...forwardResult,
   })
 })

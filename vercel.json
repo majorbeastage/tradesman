@@ -5,7 +5,8 @@
   "installCommand": "npm install",
   "functions": {
     "api/incoming-email.ts": { "maxDuration": 60 },
-    "api/help-desk-voice.ts": { "maxDuration": 30 }
+    "api/help-desk-voice.ts": { "maxDuration": 30 },
+    "api/help-desk-trouble-ticket-result.ts": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/privacy", "destination": "/" },

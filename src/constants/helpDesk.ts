@@ -1,7 +1,6 @@
 /**
- * Tradesman toll-free: help desk + phone-based voicemail greeting updates.
- * This is NOT the client’s primary business phone — callers use this number to reach Tradesman / record a greeting with PIN + primary-phone verification.
- * Override with Vite env if the number changes.
+ * Tradesman toll-free: help desk menu (POST /api/help-desk-voice) + press 9 for PIN-based greeting updates (/api/voicemail-greeting).
+ * Not the client’s primary business line. Override with Vite env if the number changes.
  */
 const display = import.meta.env.VITE_HELP_DESK_PHONE_DISPLAY?.trim()
 const e164 = import.meta.env.VITE_HELP_DESK_PHONE_E164?.trim()

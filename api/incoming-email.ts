@@ -10,9 +10,15 @@ import {
   getOrCreateCustomerByEmail,
   getOrCreateConversation,
   logCommunicationEvent,
-  lookupEmailChannelByInboundAddress,
   pickFirstString,
+  resolveInboundEmailChannel,
 } from "./_communications.js"
+import {
+  forwardHeadersForTradesmanCopy,
+  normalizeResendHeaderMap,
+  shouldSkipForwardCopy,
+  shouldSuppressInboundEmail,
+} from "./inbound-email-loop-guard.js"
 
 /** Required for Svix signature verification (raw body). */
 export const config = {
@@ -29,6 +35,7 @@ type ResendReceivedPayload = {
   text?: string | null
   html?: string | null
   message_id?: string | null
+  headers?: Record<string, unknown>
 }
 
 function readRawBody(req: VercelRequest): Promise<string> {
@@ -117,8 +124,8 @@ async function forwardCopyViaResend(params: {
   to: string
   subject: string
   textBody: string
-}): Promise<void> {
-  await fetch("https://api.resend.com/emails", {
+}): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${params.apiKey}`,
@@ -129,8 +136,18 @@ async function forwardCopyViaResend(params: {
       to: [params.to],
       subject: `[Tradesman] Fwd: ${params.subject}`,
       text: params.textBody,
+      headers: forwardHeadersForTradesmanCopy(),
     }),
   })
+  if (res.ok) return { ok: true }
+  let detail = await res.text()
+  try {
+    const j = JSON.parse(detail) as { message?: string }
+    if (typeof j?.message === "string") detail = j.message
+  } catch {
+    /* keep text */
+  }
+  return { ok: false, status: res.status, detail: detail.slice(0, 500) }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -204,28 +221,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .limit(1)
     .maybeSingle()
   if (existing?.id) {
-    return res.status(200).json({ ok: true, duplicate: true, external_id: received.id })
+    return res.status(200).json({
+      ok: true,
+      routed: true,
+      duplicate: true,
+      external_id: received.id,
+      hint: "Already stored; Resend retried the webhook.",
+    })
   }
 
-  let channel: Awaited<ReturnType<typeof lookupEmailChannelByInboundAddress>> = null
-  let matchedTo = ""
-  for (const addr of toList) {
-    const ch = await lookupEmailChannelByInboundAddress(supabase, addr)
-    if (ch) {
-      channel = ch
-      matchedTo = addr
-      break
-    }
-  }
-
-  if (!channel?.user_id) {
+  const resolved = await resolveInboundEmailChannel(supabase, toList)
+  if (!resolved.ok) {
     return res.status(200).json({
       ok: true,
       routed: false,
-      hint: "No matching Email channel (public_address + email enabled) for To addresses.",
+      hint: "Resend delivered the webhook, but Tradesman has no qualifying Email channel for the To address(es). See reasons.",
+      reasons: resolved.reasons,
       to: toList,
     })
   }
+  const channel = resolved.channel
+  const matchedTo = resolved.matchedTo
 
   const fromHeader = typeof received.from === "string" ? received.from : ""
   const fromEmail = fromHeader ? parseEmailAddressFromHeader(fromHeader) : ""
@@ -237,6 +253,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const textRaw = typeof received.text === "string" && received.text.trim() ? received.text : ""
   const htmlRaw = typeof received.html === "string" && received.html.trim() ? received.html : ""
   const bodyForMessage = textRaw || (htmlRaw ? stripHtml(htmlRaw) : "(empty body)")
+
+  const headerMap = normalizeResendHeaderMap(received.headers)
+  const suppressInbound = shouldSuppressInboundEmail({
+    subject,
+    headers: headerMap,
+    fromEmail,
+    forwardToEmail: channel.forward_to_email,
+  })
+  if (suppressInbound.suppressed) {
+    return res.status(200).json({
+      ok: true,
+      routed: false,
+      suppressed: true,
+      reason: suppressInbound.reason,
+      hint:
+        "Stopped a forward loop or Tradesman-generated echo. Do not forward personal mail back to the business address; Reply-to / forward-to must differ from Business email.",
+    })
+  }
 
   let customerId = ""
   let conversationId = ""
@@ -288,29 +322,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   })
 
   const forwardTo = channel.forward_to_email?.trim()
+  let forwardPayload: Record<string, unknown> = {}
   if (forwardTo) {
-    try {
+    const skipFwd = shouldSkipForwardCopy({ forwardTo, matchedTo, fromEmail })
+    if (skipFwd.suppressed) {
+      forwardPayload = { skipped: `Loop guard: ${skipFwd.reason}` }
+    } else {
       const fromSend = channel.public_address?.trim().toLowerCase() || firstEnv("RESEND_FROM_EMAIL")
-      if (fromSend) {
-        await forwardCopyViaResend({
-          apiKey,
-          fromAddress: fromSend,
-          to: forwardTo,
-          subject,
-          textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
-        })
+      if (!fromSend) {
+        forwardPayload = { skipped: "No from address: set channel Business email or RESEND_FROM_EMAIL." }
+      } else {
+        try {
+          const fr = await forwardCopyViaResend({
+            apiKey,
+            fromAddress: fromSend,
+            to: forwardTo,
+            subject,
+            textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
+          })
+          forwardPayload = fr.ok ? { sent: true } : { error: `Resend forward HTTP ${fr.status}: ${fr.detail}` }
+        } catch (e) {
+          forwardPayload = { error: e instanceof Error ? e.message : String(e) }
+        }
       }
-    } catch {
-      // Non-fatal: inbox still has the thread
     }
   }
 
   return res.status(200).json({
     ok: true,
+    routed: true,
     userId: channel.user_id,
     conversationId,
     customerId,
     matchedTo,
-    forwarded: Boolean(forwardTo),
+    forwardToConfigured: Boolean(forwardTo),
+    ...forwardPayload,
   })
 }

@@ -821,9 +821,9 @@ export function AccountProfilePanel({
                 </p>
                 {adminContext && (
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
-                    <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio webhook</div>
+                    <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio toll-free</div>
                     <div>
-                      Point the toll-free (or staging) number&apos;s voice webhook to <code style={{ fontSize: 11 }}>POST /api/voicemail-greeting</code> on your Vercel deployment. PIN + optional primary-phone verification match <code style={{ fontSize: 11 }}>profiles</code>; recording posts to <code style={{ fontSize: 11 }}>/api/voicemail-greeting?phase=save</code> (same path Twilio receives after Record).
+                      The shared toll-free should use <code style={{ fontSize: 11 }}>POST /api/help-desk-voice</code> for the main menu. Callers press <strong>9</strong> there to open the PIN / record flow (<code style={{ fontSize: 11 }}>/api/voicemail-greeting</code>). Do not point the toll-free directly at voicemail-greeting or the keypad menu will never run.
                     </div>
                   </div>
                 )}
