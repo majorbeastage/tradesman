@@ -1194,7 +1194,8 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               <strong style={{ color: theme.text }}>1. Outbound (Conversations → customer)</strong>
               <p style={{ margin: "6px 0 0", opacity: 0.9 }}>
                 The app calls{" "}
-                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/send-email</code>.{" "}
+                <code style={{ fontSize: 11 }}>POST {typeof window !== "undefined" ? window.location.origin : ""}/api/send-email</code>{" "}
+                (rewrites to <code style={{ fontSize: 11 }}>/api/outbound-messages</code> on Vercel).{" "}
                 Vercel needs <code style={{ fontSize: 11 }}>RESEND_API_KEY</code>. Sends <strong>from</strong> Step 1 (public business address), <strong>To</strong> = customer,{" "}
                 <strong>Reply-To</strong> = Step 2, and <strong>BCC</strong> = Step 2 (so the contractor gets a copy in their real inbox).
               </p>

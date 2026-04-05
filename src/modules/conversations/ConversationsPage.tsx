@@ -45,7 +45,7 @@ function formatFetchApiError(response: Response, raw: string): string {
   const trimmed = raw.trim()
   if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
     return (
-      "The server function crashed or timed out. Open Vercel → your deployment → Logs, filter by /api/send-email or /api/send-sms, and check the stack trace. " +
+      "The server function crashed or timed out. Open Vercel → your deployment → Logs, filter by /api/outbound-messages (or legacy /api/send-email, /api/send-sms), and check the stack trace. " +
       "Common causes: missing SUPABASE_SERVICE_ROLE_KEY, Resend API/domain errors, or Twilio errors."
     )
   }
