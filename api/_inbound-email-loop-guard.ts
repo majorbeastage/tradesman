@@ -1,5 +1,7 @@
 /**
  * Prevents Resend ↔ Tradesman forward loops. Mirror: supabase/functions/_shared/inbound-email-loop-guard.ts
+ *
+ * File name is prefixed with _ so Vercel does not count this as a separate Serverless Function (Hobby limit: 12).
  */
 
 export const TRADESMAN_INBOUND_FORWARD_HEADER = "X-Tradesman-Inbound-Forward"

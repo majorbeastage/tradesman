@@ -18,7 +18,7 @@ import {
   normalizeResendHeaderMap,
   shouldSkipForwardCopy,
   shouldSuppressInboundEmail,
-} from "./inbound-email-loop-guard.js"
+} from "./_inbound-email-loop-guard.js"
 
 /** Required for Svix signature verification (raw body). */
 export const config = {

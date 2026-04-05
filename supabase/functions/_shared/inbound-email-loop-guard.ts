@@ -1,6 +1,6 @@
 /**
  * Prevents Resend ↔ Tradesman forward loops (e.g. forward copy → Gmail rule → same business address → webhook again).
- * Keep api/inbound-email-loop-guard.ts in sync.
+ * Keep api/_inbound-email-loop-guard.ts in sync.
  */
 
 export const TRADESMAN_INBOUND_FORWARD_HEADER = "X-Tradesman-Inbound-Forward"
