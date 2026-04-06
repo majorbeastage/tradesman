@@ -61,14 +61,22 @@ function isBareEmailAddress(s: string): boolean {
  * Resend requires `email@domain` or `Display Name <email@domain>`.
  * Never lowercase the whole string (that can break valid formatted addresses).
  */
+function sanitizeFromRawInput(s: string): string {
+  let t = String(s || "")
+    .replace(/\u200b|\ufeff/g, "")
+    .trim()
+  t = t.replace(/^mailto:/i, "").trim()
+  const onlyBrackets = /^<([^<>]+@[^<>]+)>\s*$/i.exec(t)
+  if (onlyBrackets) t = onlyBrackets[1].trim()
+  return t.replace(/\s+/g, " ")
+}
+
 function buildResendFromField(
   rawPrimary: string,
   friendlyName: string | null | undefined,
   envDisplayName: string,
 ): string | null {
-  const raw = String(rawPrimary || "")
-    .trim()
-    .replace(/\s+/g, " ")
+  const raw = sanitizeFromRawInput(rawPrimary)
   if (!raw) return null
 
   const m = /^(.+?)\s*<([^<>]+@[^<>]+)>\s*$/i.exec(raw)
@@ -149,10 +157,16 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   }
 
   if (!resendFrom) {
+    const reason = !rawFrom.trim()
+      ? dbChannel
+        ? "email_channel_public_address_empty"
+        : "no_email_channel_for_user"
+      : "public_address_not_recognized_as_email"
     return res.status(500).json({
       error: "Invalid outbound From address for Resend.",
+      reason,
       hint:
-        'Use a real mailbox: hello@tradesman-us.com or "Tradesman <hello@tradesman-us.com>" in Admin → Communications (email channel public address), or set RESEND_FROM_EMAIL. Optional: RESEND_FROM_NAME for display name. Domain must be verified in Resend.',
+        "Admin → Communications: add an Email channel with Email enabled, public address joe@tradesman-us.com (saved). RESEND_FROM_EMAIL on Vercel is only used if no channel or empty public address — it does not override a saved joe@ address. Optional RESEND_FROM_NAME adds a display name only.",
     })
   }
 

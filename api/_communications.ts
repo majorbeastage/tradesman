@@ -425,12 +425,15 @@ export async function getPrimaryEmailChannelForUser(
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active, metadata")
     .eq("user_id", userId)
     .eq("active", true)
+    .eq("channel_kind", "email")
     .eq("email_enabled", true)
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    .limit(25)
   if (error) throw error
-  return (data as CommunicationChannel | null) ?? null
+  const rows = (data as CommunicationChannel[] | null) ?? []
+  if (rows.length === 0) return null
+  const withPublic = rows.find((r) => typeof r.public_address === "string" && r.public_address.trim() !== "")
+  return (withPublic ?? rows[0]) ?? null
 }
 
 export async function logCommunicationEvent(
