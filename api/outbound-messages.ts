@@ -21,6 +21,24 @@ type OutboundPayload = {
   customerId?: string
 }
 
+/** Vercel sometimes delivers `body` as a string; rewrites should still forward JSON. */
+function parseJsonBody(req: VercelRequest): OutboundPayload {
+  const raw = req.body
+  if (raw == null || raw === "") return {}
+  if (typeof raw === "string") {
+    try {
+      const v = JSON.parse(raw) as unknown
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as OutboundPayload) : {}
+    } catch {
+      return {}
+    }
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as OutboundPayload
+  return {}
+}
+
+const RESEND_FETCH_MS = 25_000
+
 function firstEnv(...names: string[]): string {
   for (const name of names) {
     const value = process.env[name]
@@ -51,7 +69,7 @@ function resolveChannel(req: VercelRequest, payload: OutboundPayload): "email" |
 }
 
 async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
-  const payload = (req.body && typeof req.body === "object" ? req.body : {}) as OutboundPayload
+  const payload = parseJsonBody(req)
   const to = normalizeEmail(payload.to)
   const subject = typeof payload.subject === "string" ? payload.subject.trim() : ""
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
@@ -63,7 +81,17 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     return res.status(400).json({ error: "to, subject, body, and userId are required" })
   }
 
-  const supabase = createServiceSupabase()
+  let supabase: ReturnType<typeof createServiceSupabase>
+  try {
+    supabase = createServiceSupabase()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return res.status(500).json({
+      error: "Server email misconfiguration",
+      message: msg,
+      hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel for this project.",
+    })
+  }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
   const fromEmail = normalizeEmail(dbChannel?.public_address || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM"))
   const resendApiKey = firstEnv("RESEND_API_KEY")
@@ -87,17 +115,42 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   }
   if (bcc) resendPayload.bcc = bcc
 
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(resendPayload),
-  })
+  let resendResponse: Response
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), RESEND_FETCH_MS)
+    try {
+      resendResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(resendPayload),
+        signal: ac.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch (e) {
+    const aborted = e instanceof Error && e.name === "AbortError"
+    return res.status(504).json({
+      error: aborted ? "Resend API timed out" : "Resend request failed",
+      message: e instanceof Error ? e.message : String(e),
+      hint: aborted
+        ? `No response from Resend within ${RESEND_FETCH_MS / 1000}s. Check Vercel logs and Resend status.`
+        : "Check network and RESEND_API_KEY.",
+    })
+  }
 
   const detail = await resendResponse.text()
-  if (!resendResponse.ok) return res.status(resendResponse.status).send(detail)
+  if (!resendResponse.ok) {
+    return res.status(resendResponse.status).json({
+      error: "Resend rejected the send request",
+      message: detail.slice(0, 2000),
+      hint: "Verify the from domain is verified in Resend and the API key is valid.",
+    })
+  }
 
   try {
     await logCommunicationEvent(supabase, {
@@ -143,7 +196,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
 }
 
 async function handleSms(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
-  const payload = (req.body && typeof req.body === "object" ? req.body : {}) as OutboundPayload
+  const payload = parseJsonBody(req)
   const to = normalizePhone(payload.to)
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
@@ -153,7 +206,17 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
 
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
-  const supabase = createServiceSupabase()
+  let supabase: ReturnType<typeof createServiceSupabase>
+  try {
+    supabase = createServiceSupabase()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return res.status(500).json({
+      error: "Server SMS misconfiguration",
+      message: msg,
+      hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel for this project.",
+    })
+  }
   const dbChannel = userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
   const fromNumber = normalizePhone(dbChannel?.public_address || firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const outboundWebhookUrl = firstEnv("SMS_OUTBOUND_WEBHOOK_URL")
@@ -227,7 +290,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" })
 
   try {
-    const payload = (req.body && typeof req.body === "object" ? req.body : {}) as OutboundPayload
+    const payload = parseJsonBody(req)
     const channel = resolveChannel(req, payload)
     if (channel === "email") return handleEmail(req, res)
     return handleSms(req, res)

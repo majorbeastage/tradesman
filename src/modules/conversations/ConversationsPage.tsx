@@ -12,14 +12,19 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
 type MessageRow = { content: string | null; created_at: string | null }
-type EmailEventRow = {
+type CommEventRow = {
   id: string
+  event_type: string
   subject: string | null
   body: string | null
   direction: string | null
   created_at: string | null
-  metadata?: { to?: string; from?: string } | null
+  metadata?: Record<string, unknown> | null
 }
+
+type ActivityTimelineItem =
+  | { key: string; sortMs: number; kind: "sms_thread"; message: Record<string, unknown> }
+  | { key: string; sortMs: number; kind: "comm_event"; event: CommEventRow }
 type DetailIdentifier = { id: string; type: "phone" | "email"; value: string }
 type ConversationDetailForm = {
   customerName: string
@@ -181,6 +186,52 @@ function ConvoCollapsible({
   )
 }
 
+function ExpandableTimelineRow({
+  titleContent,
+  children,
+}: {
+  titleContent: ReactNode
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      style={{
+        marginBottom: 8,
+        border: `1px solid ${theme.border}`,
+        borderRadius: 8,
+        background: "#fff",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 10,
+          padding: "10px 12px",
+          background: "#f9fafb",
+          border: "none",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>{titleContent}</div>
+        <span style={{ flexShrink: 0, color: "#6b7280", fontSize: 14, lineHeight: 1.4 }} aria-hidden>
+          {open ? "▼" : "▶"}
+        </span>
+      </button>
+      {open ? (
+        <div style={{ padding: 12, borderTop: `1px solid ${theme.border}`, fontSize: 14, color: theme.text }}>{children}</div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const userId = useScopedUserId()
   const portalConfig = usePortalConfigForPage()
@@ -212,7 +263,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [replySubject, setReplySubject] = useState("")
   const [emailReplyBody, setEmailReplyBody] = useState("")
   const [emailSending, setEmailSending] = useState(false)
-  const [emailEvents, setEmailEvents] = useState<EmailEventRow[]>([])
+  const [communicationEvents, setCommunicationEvents] = useState<CommEventRow[]>([])
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
@@ -229,6 +280,38 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [addConversationPortalValues, setAddConversationPortalValues] = useState<Record<string, string>>({})
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "conversations"), [portalConfig])
   const showAddConversationAction = getPageActionVisible(portalConfig, "conversations", "add_conversation")
+
+  const emailOnlyEvents = useMemo(
+    () => communicationEvents.filter((e) => e.event_type === "email"),
+    [communicationEvents],
+  )
+
+  const activityTimeline = useMemo((): ActivityTimelineItem[] => {
+    const items: ActivityTimelineItem[] = []
+    for (const m of messages) {
+      const raw = m as Record<string, unknown>
+      const id = String(raw.id ?? "")
+      const ca = raw.created_at
+      const at = typeof ca === "string" ? Date.parse(ca) : NaN
+      items.push({
+        key: `sms-${id}`,
+        sortMs: Number.isFinite(at) ? at : 0,
+        kind: "sms_thread",
+        message: raw,
+      })
+    }
+    for (const e of communicationEvents) {
+      const at = e.created_at ? Date.parse(e.created_at) : NaN
+      items.push({
+        key: `ev-${e.id}`,
+        sortMs: Number.isFinite(at) ? at : 0,
+        kind: "comm_event",
+        event: e,
+      })
+    }
+    items.sort((a, b) => a.sortMs - b.sortMs)
+    return items
+  }, [messages, communicationEvents])
 
   useEffect(() => {
     if (!showAddConversation) return
@@ -564,20 +647,22 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const msgs = msgsDesc || []
     setMessages([...msgs].reverse())
 
-    const { data: emailDesc } = await supabase
+    const { data: commDesc } = await supabase
       .from("communication_events")
-      .select("id, subject, body, direction, created_at, metadata")
+      .select("id, event_type, subject, body, direction, created_at, metadata")
       .eq("conversation_id", convoId)
-      .eq("event_type", "email")
       .order("created_at", { ascending: false })
-      .limit(80)
+      .limit(120)
 
-    const emailData: EmailEventRow[] = emailDesc ? ([...emailDesc].reverse() as EmailEventRow[]) : []
-    setEmailEvents(emailData)
-    const latestOutbound = emailData
-      .filter((evt) => evt.direction === "outbound" && evt.subject)
-      .slice(-1)[0]
-    setReplySubject(latestOutbound?.subject ?? "")
+    const commChrono: CommEventRow[] = commDesc
+      ? ([...commDesc].reverse() as CommEventRow[])
+      : []
+    setCommunicationEvents(commChrono)
+    const outboundSubjects = commChrono.filter(
+      (evt) => evt.event_type === "email" && evt.direction === "outbound" && evt.subject?.trim(),
+    )
+    const latestOutbound = outboundSubjects.length ? outboundSubjects[outboundSubjects.length - 1] : undefined
+    setReplySubject(latestOutbound?.subject?.trim() ?? "")
     setEmailReplyBody("")
   }
 
@@ -668,6 +753,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       setSelectedConversation(null)
       setSelectedConversationId(null)
       setMessages([])
+      setCommunicationEvents([])
       return
     }
     await openConversation(convoId)
@@ -713,6 +799,10 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
   async function sendEmailReply() {
     if (!supabase || !selectedConversation?.id) return
+    if (!userId) {
+      alert("You must be signed in to send email.")
+      return
+    }
     const to = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.() ?? ""
     const subject = replySubject.trim()
     const body = emailReplyBody.trim()
@@ -726,7 +816,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
     setEmailSending(true)
     try {
-      const response = await fetch("/api/send-email", {
+      const response = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -751,15 +841,16 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         console.warn("[send-email]", logWarning)
         alert(`${logWarning}\n\nThe customer may still have received the email. Refresh conversations to confirm.`)
       }
-      const event: EmailEventRow = {
+      const event: CommEventRow = {
         id: crypto.randomUUID(),
+        event_type: "email",
         subject,
         body,
         direction: "outbound",
         created_at: new Date().toISOString(),
         metadata: { to },
       }
-      setEmailEvents((prev) => [...prev, event])
+      setCommunicationEvents((prev) => [...prev, event])
       setEmailReplyBody("")
       await loadConversations()
     } catch (err) {
@@ -809,13 +900,13 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const smsUnread = isAfterReadAt(lastSms, smsRa)
 
     const emailRa = getChannelReadAtIso(selectedConversation.metadata, "email")
-    const inboundEmails = emailEvents.filter((e) => e.direction === "inbound" && e.created_at)
+    const inboundEmails = emailOnlyEvents.filter((e) => e.direction === "inbound" && e.created_at)
     const emailSorted = [...inboundEmails].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
     const lastEmail = emailSorted.length ? emailSorted[emailSorted.length - 1]?.created_at : undefined
     const emailUnread = isAfterReadAt(lastEmail, emailRa)
 
     return { sms: smsUnread, email: emailUnread, voicemail: false }
-  }, [selectedConversation, messages, emailEvents])
+  }, [selectedConversation, messages, emailOnlyEvents])
 
   const selectedRowText = "#0f172a"
 
@@ -1089,6 +1180,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     setSelectedConversation(null)
                     setSelectedConversationId(null)
                     setMessages([])
+                    setCommunicationEvents([])
                   }}
                   style={{
                     flexShrink: 0,
@@ -1247,6 +1339,130 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
               <div style={{ display: "flex", flexDirection: "column", gap: 0, width: "100%", maxWidth: 720 }}>
               <ConvoCollapsible
+                key={`${selectedConversation.id}-activity`}
+                title="All activity"
+                defaultOpen
+                countBadge={activityTimeline.length}
+              >
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
+                  Text thread messages plus logged SMS/email (and other events) in chronological order. Expand a row for the full message.
+                </p>
+                <div
+                  style={{
+                    border: `1px solid ${theme.border}`,
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "#fafafa",
+                    maxHeight: "min(42vh, 420px)",
+                    overflow: "auto",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {activityTimeline.length === 0 ? (
+                    <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No activity in this thread yet.</p>
+                  ) : (
+                    activityTimeline.map((item) => {
+                      if (item.kind === "sms_thread") {
+                        const m = item.message
+                        const sender = m.sender === "customer" ? "Customer" : "You"
+                        const content = typeof m.content === "string" ? m.content : ""
+                        const created = typeof m.created_at === "string" ? m.created_at : ""
+                        const oneLine = (content || "—").replace(/\s+/g, " ").trim()
+                        return (
+                          <ExpandableTimelineRow
+                            key={item.key}
+                            titleContent={
+                              <div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                                  SMS (thread) · {sender}
+                                  {created ? (
+                                    <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                      {new Date(created).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: 13,
+                                    color: "#6b7280",
+                                    marginTop: 4,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {oneLine.length > 160 ? `${oneLine.slice(0, 160)}…` : oneLine}
+                                </div>
+                              </div>
+                            }
+                          >
+                            <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{content || "—"}</p>
+                          </ExpandableTimelineRow>
+                        )
+                      }
+                      const ev = item.event
+                      const label =
+                        ev.event_type === "email"
+                          ? "Email"
+                          : ev.event_type === "sms"
+                            ? "SMS (log)"
+                            : ev.event_type === "call"
+                              ? "Call"
+                              : ev.event_type === "voicemail"
+                                ? "Voicemail"
+                                : String(ev.event_type || "Event")
+                      const dir = ev.direction === "inbound" ? "In" : ev.direction === "outbound" ? "Out" : ""
+                      const preview =
+                        ev.event_type === "email"
+                          ? (ev.subject?.trim() || "(No subject)")
+                          : (ev.body || "—").replace(/\s+/g, " ").trim().slice(0, 140)
+                      return (
+                        <ExpandableTimelineRow
+                          key={item.key}
+                          titleContent={
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                                {label}
+                                {dir ? ` · ${dir}` : ""}
+                                {ev.created_at ? (
+                                  <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                    {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 13,
+                                  color: "#6b7280",
+                                  marginTop: 4,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {preview.length > 160 ? `${preview.slice(0, 160)}…` : preview}
+                              </div>
+                            </div>
+                          }
+                        >
+                          {ev.event_type === "email" ? (
+                            <>
+                              {ev.subject?.trim() ? (
+                                <p style={{ margin: "0 0 8px", fontWeight: 700 }}>{ev.subject.trim()}</p>
+                              ) : null}
+                              <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                            </>
+                          ) : (
+                            <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                          )}
+                        </ExpandableTimelineRow>
+                      )
+                    })
+                  )}
+                </div>
+              </ConvoCollapsible>
+
+              <ConvoCollapsible
                 key={`${selectedConversation.id}-sms`}
                 title="Text messages"
                 countBadge={messages.length}
@@ -1347,42 +1563,65 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-email`}
                 title="Emails"
-                countBadge={emailEvents.length}
+                countBadge={emailOnlyEvents.length}
                 showUnreadDot={unreadChannels.email}
                 onOpen={() => void markChannelRead("email")}
               >
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
-                  Inbound mail appears here after Resend routes it to this thread. Scroll for older (up to 80 per thread).
+                  One row per message. Expand to read the full body. Inbound mail appears here after Resend routes it to this thread (up to 120 logged events).
                 </p>
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
-                    padding: 12,
+                    padding: 10,
                     borderRadius: 8,
-                    background: "#fff",
+                    background: "#fafafa",
                     minHeight: 72,
                     maxHeight: "min(38vh, 360px)",
                     overflow: "auto",
                     boxSizing: "border-box",
                   }}
                 >
-                  {emailEvents.length === 0 ? (
+                  {emailOnlyEvents.length === 0 ? (
                     <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No emails in this thread yet.</p>
                   ) : (
-                    emailEvents.map((evt) => (
-                      <div key={evt.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                          {evt.direction === "inbound" ? "Customer email" : "You"}
-                          {evt.created_at ? (
-                            <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
-                              {new Date(evt.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 6 }}>{evt.subject || "(No subject)"}</div>
-                        <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
-                      </div>
-                    ))
+                    emailOnlyEvents.map((evt) => {
+                      const subj = evt.subject?.trim() || "(No subject)"
+                      const who = evt.direction === "inbound" ? "Customer" : "You"
+                      const bodyPreview = (evt.body || "—").replace(/\s+/g, " ").trim()
+                      return (
+                        <ExpandableTimelineRow
+                          key={evt.id}
+                          titleContent={
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                                {who} · {subj}
+                                {evt.created_at ? (
+                                  <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                    {new Date(evt.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 13,
+                                  color: "#6b7280",
+                                  marginTop: 4,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {bodyPreview.length > 180 ? `${bodyPreview.slice(0, 180)}…` : bodyPreview}
+                              </div>
+                            </div>
+                          }
+                        >
+                          <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15 }}>{subj}</p>
+                          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
+                        </ExpandableTimelineRow>
+                      )
+                    })
                   )}
                 </div>
                 <ConvoCollapsible title="Compose email" defaultOpen={false}>
@@ -1449,6 +1688,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   setSelectedConversation(null)
                   setSelectedConversationId(null)
                   setMessages([])
+                  setCommunicationEvents([])
                   setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
                   const { error: updateErr } = await supabase
                     .from("conversations")
@@ -1487,6 +1727,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     setSelectedConversation(null)
                     setSelectedConversationId(null)
                     setMessages([])
+                    setCommunicationEvents([])
                     setConversations((prev) => prev.filter((c) => c.id !== idToRemove))
                     const { error: updateErr } = await supabase
                       .from("conversations")
