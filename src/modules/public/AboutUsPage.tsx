@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type CSSProperties } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
+import { sanitizeAboutCaptionHtml } from "../../lib/sanitizeAboutCaptionHtml"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import {
   ABOUT_US_SETTINGS_KEY,
   DEFAULT_ABOUT_US_CONTENT,
+  groupAboutUsBlocks,
   parseAboutUsContent,
   type AboutUsContent,
 } from "../../types/about-us"
@@ -12,6 +14,13 @@ import logo from "../../assets/logo.png"
 
 type Props = {
   onBack: () => void
+}
+
+const CAPTION_HTML_BOX: CSSProperties = {
+  marginTop: 10,
+  fontSize: 15,
+  lineHeight: 1.55,
+  color: "rgba(229,231,235,0.9)",
 }
 
 export default function AboutUsPage({ onBack }: Props) {
@@ -37,6 +46,8 @@ export default function AboutUsPage({ onBack }: Props) {
     })()
   }, [])
 
+  const groups = groupAboutUsBlocks(content.blocks)
+
   return (
     <div style={{ minHeight: "100vh", background: "#0f1419", color: "#e5e7eb" }}>
       <div
@@ -49,7 +60,7 @@ export default function AboutUsPage({ onBack }: Props) {
           pointerEvents: "none",
         }}
       />
-      <div style={{ position: "relative", maxWidth: 760, margin: "0 auto", padding: "28px 20px 56px" }}>
+      <div style={{ position: "relative", maxWidth: 900, margin: "0 auto", padding: "28px 20px 56px" }}>
         <button
           type="button"
           onClick={onBack}
@@ -88,8 +99,9 @@ export default function AboutUsPage({ onBack }: Props) {
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-              {content.blocks.map((block) => {
-                if (block.type === "text") {
+              {groups.map((group, gi) => {
+                if (group.kind === "text") {
+                  const block = group.block
                   const href = block.link_url?.trim()
                   return (
                     <div
@@ -121,26 +133,56 @@ export default function AboutUsPage({ onBack }: Props) {
                     </div>
                   )
                 }
+
                 return (
-                  <figure key={block.id} style={{ margin: 0 }}>
-                    <div
-                      style={{
-                        borderRadius: 14,
-                        overflow: "hidden",
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        background: "rgba(0,0,0,0.25)",
-                      }}
-                    >
-                      {block.url ? (
-                        <img src={block.url} alt={block.alt || ""} style={{ width: "100%", height: "auto", display: "block" }} />
-                      ) : (
-                        <div style={{ padding: 48, textAlign: "center", opacity: 0.5 }}>Image URL not set</div>
-                      )}
-                    </div>
-                    {block.alt ? (
-                      <figcaption style={{ marginTop: 10, fontSize: 13, opacity: 0.65, fontStyle: "italic" }}>{block.alt}</figcaption>
-                    ) : null}
-                  </figure>
+                  <div
+                    key={`about-us-image-row-${gi}-${group.blocks[0]?.id ?? "x"}`}
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 24,
+                      alignItems: "flex-start",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    {group.blocks.map((block) => {
+                      const safeCaption = sanitizeAboutCaptionHtml(block.caption_html ?? "")
+                      const imgAlt = block.alt?.trim() || "Team photo"
+                      return (
+                        <figure
+                          key={block.id}
+                          style={{
+                            flex: "1 1 220px",
+                            maxWidth: 380,
+                            minWidth: 200,
+                            margin: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              borderRadius: 14,
+                              overflow: "hidden",
+                              border: "1px solid rgba(255,255,255,0.12)",
+                              background: "rgba(0,0,0,0.25)",
+                            }}
+                          >
+                            {block.url ? (
+                              <img src={block.url} alt={imgAlt} style={{ width: "100%", height: "auto", display: "block" }} />
+                            ) : (
+                              <div style={{ padding: 48, textAlign: "center", opacity: 0.5 }}>No image yet</div>
+                            )}
+                          </div>
+                          {safeCaption ? (
+                            <figcaption style={CAPTION_HTML_BOX}>
+                              <div dangerouslySetInnerHTML={{ __html: safeCaption }} />
+                            </figcaption>
+                          ) : block.alt?.trim() ? (
+                            <figcaption style={{ marginTop: 10, fontSize: 13, opacity: 0.65, fontStyle: "italic" }}>{block.alt.trim()}</figcaption>
+                          ) : null}
+                        </figure>
+                      )
+                    })}
+                  </div>
                 )
               })}
             </div>

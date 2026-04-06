@@ -1,6 +1,31 @@
 export type AboutUsBlock =
   | { id: string; type: "text"; body: string; link_url?: string; link_label?: string }
-  | { id: string; type: "image"; url: string; alt: string }
+  | { id: string; type: "image"; url: string; alt: string; caption_html?: string }
+
+export type AboutUsTextBlock = Extract<AboutUsBlock, { type: "text" }>
+export type AboutUsImageBlock = Extract<AboutUsBlock, { type: "image" }>
+
+export type AboutUsBlockGroup =
+  | { kind: "text"; block: AboutUsTextBlock }
+  | { kind: "images"; blocks: AboutUsImageBlock[] }
+
+/** Consecutive image blocks render in one horizontal row (order = left to right). */
+export function groupAboutUsBlocks(blocks: AboutUsBlock[]): AboutUsBlockGroup[] {
+  const groups: AboutUsBlockGroup[] = []
+  for (const block of blocks) {
+    if (block.type === "text") {
+      groups.push({ kind: "text", block })
+      continue
+    }
+    const prev = groups[groups.length - 1]
+    if (prev?.kind === "images") {
+      prev.blocks.push(block)
+    } else {
+      groups.push({ kind: "images", blocks: [block] })
+    }
+  }
+  return groups
+}
 
 export type AboutUsContent = {
   /** Hero / page title */
@@ -11,6 +36,9 @@ export type AboutUsContent = {
 }
 
 export const ABOUT_US_SETTINGS_KEY = "tradesman_about_us"
+
+/** Supabase Storage bucket for About Us photos (public read; admin write — see supabase-about-us-images-storage.sql). */
+export const ABOUT_US_IMAGES_BUCKET = "about-us-images"
 
 export const DEFAULT_ABOUT_US_CONTENT: AboutUsContent = {
   title: "About Tradesman",
@@ -48,7 +76,14 @@ export function parseAboutUsContent(raw: unknown): AboutUsContent {
           ...(link_label ? { link_label } : {}),
         })
       } else if (b.type === "image" && typeof b.url === "string") {
-        blocks.push({ id, type: "image", url: b.url, alt: typeof b.alt === "string" ? b.alt : "" })
+        const caption_html = typeof b.caption_html === "string" ? b.caption_html : ""
+        blocks.push({
+          id,
+          type: "image",
+          url: b.url,
+          alt: typeof b.alt === "string" ? b.alt : "",
+          ...(caption_html.trim() ? { caption_html } : {}),
+        })
       }
     }
   }
