@@ -29,6 +29,41 @@ export function firstEnv(...names: string[]): string {
   return ""
 }
 
+/**
+ * Vercel/Linux env keys are case-sensitive. Some dashboards or copy-paste use `Supabase_URL` etc.
+ * Match any process.env key that equals the canonical name ignoring case.
+ */
+export function firstEnvCaseInsensitive(canonicalName: string): string {
+  const want = canonicalName.toUpperCase()
+  for (const key of Object.keys(process.env)) {
+    if (key.toUpperCase() === want) {
+      const value = process.env[key]
+      if (value != null && String(value).trim() !== "") return String(value).trim()
+    }
+  }
+  return ""
+}
+
+function pickSupabaseUrlForServer(): string {
+  const direct = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
+  if (direct) return direct
+  for (const name of ["SUPABASE_URL", "VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"]) {
+    const v = firstEnvCaseInsensitive(name)
+    if (v) return v
+  }
+  return ""
+}
+
+function pickServiceRoleKeyForServer(): string {
+  const direct = firstEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY")
+  if (direct) return direct
+  for (const name of ["SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY"]) {
+    const v = firstEnvCaseInsensitive(name)
+    if (v) return v
+  }
+  return ""
+}
+
 export function normalizePhone(value: unknown): string {
   if (typeof value !== "string") return ""
   const trimmed = value.trim()
@@ -80,22 +115,22 @@ export type UserRoutingProfile = {
 }
 
 export function createServiceSupabase(): SupabaseClient {
-  const supabaseUrl = firstEnv(
-    "SUPABASE_URL",
-    "VITE_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_URL",
-  ).replace(/\/+$/, "")
-  const serviceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY")
+  const supabaseUrl = pickSupabaseUrlForServer().replace(/\/+$/, "")
+  const serviceRoleKey = pickServiceRoleKeyForServer()
   const missing: string[] = []
   if (!supabaseUrl) {
-    missing.push("SUPABASE_URL (or VITE_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL as fallback)")
+    missing.push(
+      "SUPABASE_URL (exact name, all caps — or VITE_SUPABASE_URL; case-insensitive match also tried)",
+    )
   }
   if (!serviceRoleKey) {
-    missing.push("SUPABASE_SERVICE_ROLE_KEY (not the anon key — from Supabase → Project Settings → API → service_role)")
+    missing.push(
+      "SUPABASE_SERVICE_ROLE_KEY (exact name, all caps — not the anon key; case-insensitive match also tried)",
+    )
   }
   if (missing.length) {
     throw new Error(
-      `Missing server env: ${missing.join(" · ")}. In Vercel: Project → Settings → Environment Variables — enable for Production and Preview (or Development), then Redeploy.`,
+      `Missing server env: ${missing.join(" · ")}. In Vercel: Project → Settings → Environment Variables — use names SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, All Environments, then Redeploy (env is not applied until a new deployment).`,
     )
   }
   return createClient(supabaseUrl, serviceRoleKey, {
