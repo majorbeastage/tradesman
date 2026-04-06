@@ -51,6 +51,45 @@ function normalizeEmail(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : ""
 }
 
+/** Local part + @ + domain with at least one dot (good enough for Resend validation). */
+function isBareEmailAddress(s: string): boolean {
+  const t = s.trim().toLowerCase()
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/i.test(t)
+}
+
+/**
+ * Resend requires `email@domain` or `Display Name <email@domain>`.
+ * Never lowercase the whole string (that can break valid formatted addresses).
+ */
+function buildResendFromField(
+  rawPrimary: string,
+  friendlyName: string | null | undefined,
+  envDisplayName: string,
+): string | null {
+  const raw = String(rawPrimary || "")
+    .trim()
+    .replace(/\s+/g, " ")
+  if (!raw) return null
+
+  const m = /^(.+?)\s*<([^<>]+@[^<>]+)>\s*$/i.exec(raw)
+  if (m) {
+    const display = m[1].trim()
+    const em = m[2].trim().toLowerCase()
+    if (!isBareEmailAddress(em)) return null
+    if (!display) return em
+    return `${display} <${em}>`
+  }
+
+  if (isBareEmailAddress(raw)) {
+    const em = raw.trim().toLowerCase()
+    const dn = (friendlyName || envDisplayName || "").trim()
+    if (dn) return `${dn} <${em}>`
+    return em
+  }
+
+  return null
+}
+
 function pickFirstString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim()
@@ -93,21 +132,34 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     })
   }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
-  const fromEmail = normalizeEmail(dbChannel?.public_address || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM"))
+  const rawFrom =
+    (typeof dbChannel?.public_address === "string" && dbChannel.public_address.trim()
+      ? dbChannel.public_address.trim()
+      : "") || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM")
+  const envFromDisplay = firstEnv("RESEND_FROM_NAME", "RESEND_FROM_DISPLAY_NAME")
+  const resendFrom = buildResendFromField(rawFrom, dbChannel?.friendly_name ?? null, envFromDisplay)
   const resendApiKey = firstEnv("RESEND_API_KEY")
   const copyInbox = normalizeEmail(dbChannel?.forward_to_email)
 
-  if (!resendApiKey || !fromEmail) {
+  if (!resendApiKey) {
     return res.status(500).json({
       error: "No outbound email provider configured.",
-      hint: "Set RESEND_API_KEY and configure an email channel/public address or RESEND_FROM_EMAIL.",
+      hint: "Set RESEND_API_KEY on Vercel.",
+    })
+  }
+
+  if (!resendFrom) {
+    return res.status(500).json({
+      error: "Invalid outbound From address for Resend.",
+      hint:
+        'Use a real mailbox: hello@tradesman-us.com or "Tradesman <hello@tradesman-us.com>" in Admin → Communications (email channel public address), or set RESEND_FROM_EMAIL. Optional: RESEND_FROM_NAME for display name. Domain must be verified in Resend.',
     })
   }
 
   const bcc = copyInbox && copyInbox !== to ? [copyInbox] : undefined
 
   const resendPayload: Record<string, unknown> = {
-    from: fromEmail,
+    from: resendFrom,
     to: [to],
     subject,
     text: body,
@@ -148,7 +200,8 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     return res.status(resendResponse.status).json({
       error: "Resend rejected the send request",
       message: detail.slice(0, 2000),
-      hint: "Verify the from domain is verified in Resend and the API key is valid.",
+      hint:
+        "Add and verify tradesman-us.com (or your sender domain) in Resend → Domains. From must be an address on that domain. Fix Admin email channel public address or RESEND_FROM_EMAIL if it is not a valid email.",
     })
   }
 
@@ -165,7 +218,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       unread: false,
       metadata: {
         to,
-        from: fromEmail,
+        from: resendFrom,
         provider: dbChannel?.provider ?? "resend",
         reply_to: copyInbox || undefined,
         bcc: bcc?.[0] || undefined,
@@ -178,7 +231,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       ok: true,
       provider: "resend",
       to,
-      from: fromEmail,
+      from: resendFrom,
       bcc: bcc?.[0] ?? null,
       detail,
       logWarning: "Email was sent but the conversation log could not be saved. Check communication_events table and Vercel logs.",
@@ -189,7 +242,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     ok: true,
     provider: "resend",
     to,
-    from: fromEmail,
+    from: resendFrom,
     bcc: bcc?.[0] ?? null,
     detail,
   })
