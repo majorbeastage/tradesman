@@ -80,10 +80,23 @@ export type UserRoutingProfile = {
 }
 
 export function createServiceSupabase(): SupabaseClient {
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const serviceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY")
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY on Vercel.")
+  const supabaseUrl = firstEnv(
+    "SUPABASE_URL",
+    "VITE_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_URL",
+  ).replace(/\/+$/, "")
+  const serviceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY")
+  const missing: string[] = []
+  if (!supabaseUrl) {
+    missing.push("SUPABASE_URL (or VITE_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL as fallback)")
+  }
+  if (!serviceRoleKey) {
+    missing.push("SUPABASE_SERVICE_ROLE_KEY (not the anon key — from Supabase → Project Settings → API → service_role)")
+  }
+  if (missing.length) {
+    throw new Error(
+      `Missing server env: ${missing.join(" · ")}. In Vercel: Project → Settings → Environment Variables — enable for Production and Preview (or Development), then Redeploy.`,
+    )
   }
   return createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
