@@ -174,6 +174,9 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const resendFrom = buildResendFromField(rawFrom, dbChannel?.friendly_name ?? null, envFromDisplay)
   const resendApiKey = firstEnv("RESEND_API_KEY")
   const copyInbox = normalizeEmail(dbChannel?.forward_to_email)
+  const ccList = parseEmailList(payload.cc)
+  const userBccList = parseEmailList(payload.bcc)
+  const clientReplyToList = parseEmailList(payload.replyTo)
 
   if (!resendApiKey) {
     return res.status(500).json({
@@ -264,11 +267,12 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       body,
       unread: false,
       metadata: {
-        to,
+        to: toList,
         from: resendFrom,
         provider: dbChannel?.provider ?? "resend",
-        reply_to: copyInbox || undefined,
-        bcc: bcc?.[0] || undefined,
+        reply_to: replyToFinal,
+        cc: ccList.length ? ccList : undefined,
+        bcc: bccMerged.length ? bccMerged : undefined,
       },
     })
   } catch (logErr) {
