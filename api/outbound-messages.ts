@@ -14,6 +14,12 @@ import {
 type OutboundPayload = {
   channel?: string
   to?: string
+  /** Extra To recipients (comma-separated string or array of emails). */
+  toAdditional?: string | string[]
+  cc?: string | string[]
+  bcc?: string | string[]
+  /** Overrides default reply-to (channel forward inbox). Comma-separated or array. */
+  replyTo?: string | string[]
   subject?: string
   body?: string
   userId?: string
@@ -49,6 +55,22 @@ function firstEnv(...names: string[]): string {
 
 function normalizeEmail(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : ""
+}
+
+function parseEmailList(value: unknown): string[] {
+  if (value == null) return []
+  const parts: string[] = Array.isArray(value)
+    ? value.map((x) => String(x))
+    : String(value)
+        .split(/[,;\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+  const out: string[] = []
+  for (const p of parts) {
+    const e = normalizeEmail(p)
+    if (e && !out.includes(e)) out.push(e)
+  }
+  return out
 }
 
 /** Local part + @ + domain with at least one dot (good enough for Resend validation). */
@@ -117,15 +139,19 @@ function resolveChannel(req: VercelRequest, payload: OutboundPayload): "email" |
 
 async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
   const payload = parseJsonBody(req)
-  const to = normalizeEmail(payload.to)
+  const primaryTo = normalizeEmail(payload.to)
+  const extraTo = parseEmailList(payload.toAdditional)
+  const toList = [...new Set([primaryTo, ...extraTo].filter(Boolean))]
   const subject = typeof payload.subject === "string" ? payload.subject.trim() : ""
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
   const customerId = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
 
-  if (!to || !subject || !body || !userId) {
-    return res.status(400).json({ error: "to, subject, body, and userId are required" })
+  if (toList.length === 0 || !subject || !body || !userId) {
+    return res.status(400).json({
+      error: "to (or toAdditional), subject, body, and userId are required",
+    })
   }
 
   let supabase: ReturnType<typeof createServiceSupabase>
@@ -170,16 +196,23 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     })
   }
 
-  const bcc = copyInbox && copyInbox !== to ? [copyInbox] : undefined
+  const bccMerged: string[] = [...userBccList]
+  if (copyInbox && !toList.includes(copyInbox) && !ccList.includes(copyInbox) && !bccMerged.includes(copyInbox)) {
+    bccMerged.push(copyInbox)
+  }
+
+  const replyToFinal =
+    clientReplyToList.length > 0 ? clientReplyToList : copyInbox ? [copyInbox] : undefined
 
   const resendPayload: Record<string, unknown> = {
     from: resendFrom,
-    to: [to],
+    to: toList,
     subject,
     text: body,
-    reply_to: copyInbox ? [copyInbox] : undefined,
+    reply_to: replyToFinal,
   }
-  if (bcc) resendPayload.bcc = bcc
+  if (ccList.length) resendPayload.cc = ccList
+  if (bccMerged.length) resendPayload.bcc = bccMerged
 
   let resendResponse: Response
   try {
@@ -244,9 +277,10 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     return res.status(200).json({
       ok: true,
       provider: "resend",
-      to,
+      to: toList,
       from: resendFrom,
-      bcc: bcc?.[0] ?? null,
+      cc: ccList.length ? ccList : null,
+      bcc: bccMerged.length ? bccMerged : null,
       detail,
       logWarning: "Email was sent but the conversation log could not be saved. Check communication_events table and Vercel logs.",
     })
@@ -255,9 +289,10 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   return res.status(200).json({
     ok: true,
     provider: "resend",
-    to,
+    to: toList,
     from: resendFrom,
-    bcc: bcc?.[0] ?? null,
+    cc: ccList.length ? ccList : null,
+    bcc: bccMerged.length ? bccMerged : null,
     detail,
   })
 }

@@ -427,11 +427,12 @@ export async function getPrimaryEmailChannelForUser(
     .eq("active", true)
     .eq("channel_kind", "email")
     .eq("email_enabled", true)
-    .order("created_at", { ascending: true })
+    .order("updated_at", { ascending: false })
     .limit(25)
   if (error) throw error
   const rows = (data as CommunicationChannel[] | null) ?? []
   if (rows.length === 0) return null
+  /** Prefer the most recently updated row that has a sender address (avoids stale helpdesk@ rows left after you switch to joe@). */
   const withPublic = rows.find((r) => typeof r.public_address === "string" && r.public_address.trim() !== "")
   return (withPublic ?? rows[0]) ?? null
 }

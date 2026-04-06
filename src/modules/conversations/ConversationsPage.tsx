@@ -104,6 +104,13 @@ function isAfterReadAt(eventIso: string | null | undefined, readAtIso: string | 
   return new Date(eventIso).getTime() > new Date(readAtIso).getTime()
 }
 
+function replySubjectLine(subj: string | null | undefined): string {
+  const t = (subj ?? "").trim()
+  if (!t || t === "(No subject)") return "Re:"
+  if (/^re:\s*/i.test(t)) return t
+  return `Re: ${t}`
+}
+
 function ConvoCollapsible({
   title,
   defaultOpen,
@@ -263,6 +270,13 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [replySubject, setReplySubject] = useState("")
   const [emailReplyBody, setEmailReplyBody] = useState("")
   const [emailSending, setEmailSending] = useState(false)
+  const [emailPrimaryTo, setEmailPrimaryTo] = useState("")
+  const [emailAdditionalTo, setEmailAdditionalTo] = useState("")
+  const [emailCc, setEmailCc] = useState("")
+  const [emailBcc, setEmailBcc] = useState("")
+  const [emailReplyToOverride, setEmailReplyToOverride] = useState("")
+  const [emailSignature, setEmailSignature] = useState("")
+  const [emailComposeMountKey, setEmailComposeMountKey] = useState(0)
   const [communicationEvents, setCommunicationEvents] = useState<CommEventRow[]>([])
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
@@ -285,6 +299,15 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     () => communicationEvents.filter((e) => e.event_type === "email"),
     [communicationEvents],
   )
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("tradesman_email_signature")
+      if (typeof s === "string") setEmailSignature(s)
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const activityTimeline = useMemo((): ActivityTimelineItem[] => {
     const items: ActivityTimelineItem[] = []
@@ -664,6 +687,16 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const latestOutbound = outboundSubjects.length ? outboundSubjects[outboundSubjects.length - 1] : undefined
     setReplySubject(latestOutbound?.subject?.trim() ?? "")
     setEmailReplyBody("")
+    const custEmail =
+      (data as { customers?: { customer_identifiers?: { type: string; value: string }[] } })?.customers?.customer_identifiers
+        ?.find((i) => i.type === "email")
+        ?.value?.trim?.() ?? ""
+    setEmailPrimaryTo(custEmail)
+    setEmailAdditionalTo("")
+    setEmailCc("")
+    setEmailBcc("")
+    setEmailReplyToOverride("")
+    setEmailComposeMountKey(0)
   }
 
   async function markChannelRead(channel: "sms" | "email" | "voicemail") {
@@ -797,19 +830,33 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
   }
 
+  function beginReplyToEmail(evt: CommEventRow) {
+    setReplySubject(replySubjectLine(evt.subject))
+    const when = evt.created_at ? new Date(evt.created_at).toLocaleString() : ""
+    const role = evt.direction === "inbound" ? "Customer" : "You"
+    const quote = evt.body?.trim()
+      ? `\n\n----------\n${when} — ${role} wrote:\n\n${evt.body.trim()}`
+      : ""
+    setEmailReplyBody(quote.replace(/^\n+/, "") || "")
+    setEmailComposeMountKey((k) => k + 1)
+  }
+
   async function sendEmailReply() {
     if (!supabase || !selectedConversation?.id) return
     if (!userId) {
       alert("You must be signed in to send email.")
       return
     }
-    const to = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.() ?? ""
-    const subject = replySubject.trim()
-    const body = emailReplyBody.trim()
-    if (!to) {
-      alert("This conversation does not have a customer email address.")
+    const primary = emailPrimaryTo.trim().toLowerCase()
+    const additional = emailAdditionalTo.trim()
+    if (!primary && !additional) {
+      alert("Enter at least one recipient (To) or add addresses in Additional recipients.")
       return
     }
+    const subject = replySubject.trim()
+    let body = emailReplyBody.trim()
+    const sig = emailSignature.trim()
+    if (sig) body = `${body}${body ? "\n\n" : ""}--\n${sig}`
     if (!subject || !body) {
       alert("Enter a subject and email body.")
       return
@@ -820,7 +867,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to,
+          to: primary || undefined,
+          toAdditional: additional || undefined,
+          cc: emailCc.trim() || undefined,
+          bcc: emailBcc.trim() || undefined,
+          replyTo: emailReplyToOverride.trim() || undefined,
           subject,
           body,
           userId,
@@ -841,6 +892,10 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         console.warn("[send-email]", logWarning)
         alert(`${logWarning}\n\nThe customer may still have received the email. Refresh conversations to confirm.`)
       }
+      const toMeta =
+        primary && additional
+          ? `${primary}, ${additional}`
+          : primary || additional || ""
       const event: CommEventRow = {
         id: crypto.randomUUID(),
         event_type: "email",
@@ -848,7 +903,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         body,
         direction: "outbound",
         created_at: new Date().toISOString(),
-        metadata: { to },
+        metadata: { to: toMeta },
       }
       setCommunicationEvents((prev) => [...prev, event])
       setEmailReplyBody("")
@@ -1618,14 +1673,69 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                           }
                         >
                           <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15 }}>{subj}</p>
-                          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
+                          <p style={{ margin: "0 0 10px", whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
+                          <button
+                            type="button"
+                            onClick={() => beginReplyToEmail(evt)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              border: `1px solid ${theme.border}`,
+                              background: "#fff",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: 13,
+                              color: theme.text,
+                            }}
+                          >
+                            Reply to this message
+                          </button>
                         </ExpandableTimelineRow>
                       )
                     })
                   )}
                 </div>
-                <ConvoCollapsible title="Compose email" defaultOpen={false}>
+                <ConvoCollapsible
+                  key={`${selectedConversation.id}-compose-${emailComposeMountKey}`}
+                  title="Compose email"
+                  defaultOpen={emailComposeMountKey > 0}
+                >
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>To</label>
+                    <input
+                      value={emailPrimaryTo}
+                      onChange={(e) => setEmailPrimaryTo(e.target.value)}
+                      placeholder="customer@example.com"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Additional recipients (To)</label>
+                    <input
+                      value={emailAdditionalTo}
+                      onChange={(e) => setEmailAdditionalTo(e.target.value)}
+                      placeholder="Comma-separated extra To addresses"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>CC</label>
+                    <input
+                      value={emailCc}
+                      onChange={(e) => setEmailCc(e.target.value)}
+                      placeholder="Optional, comma-separated"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>BCC</label>
+                    <input
+                      value={emailBcc}
+                      onChange={(e) => setEmailBcc(e.target.value)}
+                      placeholder="Optional (inbox copy may still be added by your channel settings)"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Reply-To (optional)</label>
+                    <input
+                      value={emailReplyToOverride}
+                      onChange={(e) => setEmailReplyToOverride(e.target.value)}
+                      placeholder="Override where replies go; leave blank to use channel forward inbox"
+                      style={theme.formInput}
+                    />
                     <input
                       value={replySubject}
                       onChange={(e) => setReplySubject(e.target.value)}
@@ -1635,13 +1745,30 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     <textarea
                       value={emailReplyBody}
                       onChange={(e) => setEmailReplyBody(e.target.value)}
-                      rows={5}
-                      placeholder="Write an email reply..."
+                      rows={6}
+                      placeholder="Write your message…"
                       style={{ ...theme.formInput, resize: "vertical" }}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                      Signature (optional, this browser only)
+                    </label>
+                    <textarea
+                      value={emailSignature}
+                      onChange={(e) => setEmailSignature(e.target.value)}
+                      onBlur={() => {
+                        try {
+                          localStorage.setItem("tradesman_email_signature", emailSignature)
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      rows={3}
+                      placeholder="Appended to every send from this device. Account-wide signatures in MyT coming later."
+                      style={{ ...theme.formInput, resize: "vertical", fontSize: 13 }}
                     />
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12, color: "#6b7280" }}>
-                        Sends through your configured business email channel when available.
+                        From address comes from your newest saved email channel in Admin → Communications (or Vercel fallback).
                       </span>
                       <button
                         type="button"
