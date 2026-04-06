@@ -457,12 +457,12 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
   },
   account: {
     title: "My T (Account)",
-    description: "Business profile, routing-related fields, and support. Use the panel on the right to show or hide each block for this user.",
+    description: "Business profile, routing-related fields, and support. Use the panel on the right to show or hide each block for this user (including service radius).",
     mock: (
       <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden", background: "var(--charcoal-smoke, #1f2937)", color: "#e5e7eb" }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${theme.border}`, fontSize: 12, opacity: 0.9 }}>Account</div>
         <div style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
-          <p style={{ margin: "0 0 8px" }}>Profile, address, hours, call forwarding, voicemail, help desk, password reset — visibility is controlled in the builder.</p>
+          <p style={{ margin: "0 0 8px" }}>Profile, address, service radius, hours, call forwarding, voicemail, help desk, password reset — visibility is controlled in the builder.</p>
         </div>
       </div>
     ),

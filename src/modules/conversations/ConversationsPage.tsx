@@ -364,13 +364,29 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
   useEffect(() => {
     if (!showSettings || conversationSettingsItems.length === 0) return
-    const next: Record<string, string> = {}
-    conversationSettingsItems.forEach((item) => {
-      if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
-      else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
-      else next[item.id] = ""
+    setSettingsFormValues((prev) => {
+      const out = { ...prev }
+      let changed = false
+      for (const item of conversationSettingsItems) {
+        if (out[item.id] !== undefined) continue
+        changed = true
+        if (item.id === "show_internal_conversations") {
+          try {
+            const stored = JSON.parse(localStorage.getItem("convo_showInternalConversations") ?? "true")
+            out[item.id] = stored ? "checked" : "unchecked"
+          } catch {
+            out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+          }
+        } else if (item.type === "checkbox") {
+          out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          out[item.id] = item.options[0]
+        } else {
+          out[item.id] = ""
+        }
+      }
+      return changed ? out : prev
     })
-    setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
   }, [showSettings, conversationSettingsItems])
 
   function isSettingItemVisible(item: PortalSettingItem): boolean {
@@ -441,10 +457,27 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     return depValue === item.dependency.showWhenValue
   }
 
-  // Conversations settings (persist in localStorage for now)
-  const [showInternalConversations] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("convo_showInternalConversations") ?? "true") } catch { return true }
+  const [showInternalConversations, setShowInternalConversations] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("convo_showInternalConversations") ?? "true") as boolean
+    } catch {
+      return true
+    }
   })
+
+  function closeConversationSettingsModal() {
+    const v = settingsFormValues["show_internal_conversations"]
+    if (v === "checked" || v === "unchecked") {
+      const on = v === "checked"
+      try {
+        localStorage.setItem("convo_showInternalConversations", JSON.stringify(on))
+      } catch {
+        /* ignore */
+      }
+      setShowInternalConversations(on)
+    }
+    setShowSettings(false)
+  }
   // Internal conversations (in-memory for now; can wire to Supabase later)
   const [internalConversations, setInternalConversations] = useState<{ id: string; title: string; created_at: string }[]>([])
   const [showAddInternalConvo, setShowAddInternalConvo] = useState(false)
@@ -1026,7 +1059,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
             formValues={settingsFormValues}
             setFormValue={(id, value) => setSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
             isItemVisible={isSettingItemVisible}
-            onClose={() => setShowSettings(false)}
+            onClose={closeConversationSettingsModal}
           />
         )}
 

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
@@ -26,6 +26,8 @@ type ProfileForm = {
   address_city: string
   address_state: string
   address_zip: string
+  service_radius_enabled: boolean
+  service_radius_miles: string
   timezone: string
   call_forwarding_enabled: boolean
   call_forwarding_outside_business_hours: boolean
@@ -64,6 +66,15 @@ const DAY_LABELS: Array<{ key: DayKey; label: string }> = [
 ]
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
+
+const ACCOUNT_SECTION_CARD: CSSProperties = {
+  padding: 16,
+  borderRadius: 10,
+  border: `1px solid ${theme.border}`,
+  background: "#fafafa",
+  display: "grid",
+  gap: 12,
+}
 
 function defaultBusinessHours(): BusinessHours {
   return {
@@ -152,8 +163,18 @@ export function AccountProfilePanel({
     adminContext || getAccountSectionVisible(portalConfig, sectionId)
   const orderedAccountSectionIds = useMemo(
     () => getOrderedAccountPortalSections(portalConfig).map((s) => s.id),
-    [portalConfig]
+    [portalConfig],
   )
+  /** Voicemail + help desk render in one card when both are enabled in portal order. */
+  const accountSectionIdsForRender = useMemo(() => {
+    const ids = [...orderedAccountSectionIds]
+    const showVm = showAccountSection("voicemail")
+    const showHd = showAccountSection("help_desk")
+    if (showVm && showHd && ids.includes("voicemail") && ids.includes("help_desk")) {
+      return ids.filter((id) => id !== "help_desk")
+    }
+    return ids
+  }, [orderedAccountSectionIds, portalConfig, adminContext])
   const [profileEmailFromDb, setProfileEmailFromDb] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -178,6 +199,8 @@ export function AccountProfilePanel({
     address_city: "",
     address_state: "",
     address_zip: "",
+    service_radius_enabled: false,
+    service_radius_miles: "",
     timezone: "America/New_York",
     call_forwarding_enabled: true,
     call_forwarding_outside_business_hours: false,
@@ -213,11 +236,20 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
         setProfileEmailFromDb(typeof data?.email === "string" ? data.email : "")
+        const row = data as {
+          service_radius_enabled?: boolean | null
+          service_radius_miles?: number | string | null
+        }
+        const milesRaw = row.service_radius_miles
+        const milesStr =
+          milesRaw != null && milesRaw !== ""
+            ? String(typeof milesRaw === "number" ? milesRaw : String(milesRaw).trim())
+            : ""
         setForm({
           display_name: data?.display_name ?? "",
           website_url: data?.website_url ?? "",
@@ -228,6 +260,8 @@ export function AccountProfilePanel({
           address_city: data?.address_city ?? "",
           address_state: data?.address_state ?? "",
           address_zip: data?.address_zip ?? "",
+          service_radius_enabled: row.service_radius_enabled === true,
+          service_radius_miles: milesStr,
           timezone: data?.timezone ?? "America/New_York",
           call_forwarding_enabled: data?.call_forwarding_enabled !== false,
           call_forwarding_outside_business_hours: data?.call_forwarding_outside_business_hours === true,
@@ -267,6 +301,14 @@ export function AccountProfilePanel({
         address_state: form.address_state.trim() || null,
         address_zip: form.address_zip.trim() || null,
         business_address: formatBusinessAddress(form) || null,
+        service_radius_enabled: form.service_radius_enabled,
+        service_radius_miles: (() => {
+          if (!form.service_radius_enabled) return null
+          const t = form.service_radius_miles.trim()
+          if (!t) return null
+          const n = Number.parseFloat(t)
+          return Number.isFinite(n) && n >= 0 ? n : null
+        })(),
         timezone: form.timezone || "America/New_York",
         business_hours: form.business_hours,
         call_forwarding_enabled: form.call_forwarding_enabled,
@@ -349,7 +391,7 @@ export function AccountProfilePanel({
       }))
       setRecordingPreviewUrl((previous) => {
         if (previous) URL.revokeObjectURL(previous)
-        return URL.createObjectURL(file)
+        return ""
       })
       const { error: persistErr } = await supabase
         .from("profiles")
@@ -434,11 +476,16 @@ export function AccountProfilePanel({
           <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
-            {orderedAccountSectionIds.map((sectionId) => {
+            {accountSectionIdsForRender.map((sectionId) => {
               if (!showAccountSection(sectionId)) return null
               if (sectionId === "profile") return (
             <Fragment key={sectionId}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+            <div style={ACCOUNT_SECTION_CARD}>
+              <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Contact &amp; profile</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
+                Login email, display name, website, and phones.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Login email</span>
                 <input value={emailForDisplay} readOnly style={{ ...theme.formInput, background: "#f9fafb", color: "#6b7280" }} />
@@ -465,12 +512,13 @@ export function AccountProfilePanel({
                   placeholder="If different from primary"
                 />
               </label>
+              </div>
             </div>
             </Fragment>
               )
               if (sectionId === "business_address") return (
             <Fragment key={sectionId}>
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={ACCOUNT_SECTION_CARD}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Business Address</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <label style={{ display: "grid", gap: 6 }}>
@@ -494,16 +542,54 @@ export function AccountProfilePanel({
                   <input value={form.address_zip} onChange={(e) => setForm((prev) => ({ ...prev, address_zip: e.target.value }))} style={theme.formInput} />
                 </label>
               </div>
-              <div style={{ padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}` }}>
+              <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}` }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>Formatted address</div>
                 <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || "No address entered yet."}</div>
               </div>
             </div>
             </Fragment>
               )
+              if (sectionId === "service_area") return (
+            <Fragment key={sectionId}>
+            <div style={ACCOUNT_SECTION_CARD}>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Service area</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
+                Optional. Set how far you typically travel from your business address (miles). Saved for your account; lead matching can use this later.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={form.service_radius_enabled}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      service_radius_enabled: e.target.checked,
+                      ...(!e.target.checked ? { service_radius_miles: "" } : {}),
+                    }))
+                  }
+                />
+                Add service radius
+              </label>
+              {form.service_radius_enabled && (
+                <label style={{ display: "grid", gap: 6, maxWidth: 220 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Radius (miles)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={form.service_radius_miles}
+                    onChange={(e) => setForm((prev) => ({ ...prev, service_radius_miles: e.target.value }))}
+                    style={theme.formInput}
+                    placeholder="e.g. 25"
+                  />
+                </label>
+              )}
+            </div>
+            </Fragment>
+              )
               if (sectionId === "business_hours") return (
             <Fragment key={sectionId}>
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={ACCOUNT_SECTION_CARD}>
               <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Timezone & Business Hours</h2>
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Timezone</span>
@@ -571,6 +657,8 @@ export function AccountProfilePanel({
               )
               if (sectionId === "call_forwarding") return (
             <Fragment key={sectionId}>
+            <div style={ACCOUNT_SECTION_CARD}>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Call forwarding</h2>
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
@@ -661,11 +749,12 @@ export function AccountProfilePanel({
                 )}
               </div>
             </div>
+            </div>
             </Fragment>
               )
               if (sectionId === "voicemail") return (
             <Fragment key={sectionId}>
-            <div style={{ display: "grid", gap: 10, padding: 16, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
+            <div style={{ ...ACCOUNT_SECTION_CARD, background: "#f8fafc" }}>
               <button
                 type="button"
                 onClick={() => setVoicemailExpanded((v) => !v)}
@@ -803,12 +892,45 @@ export function AccountProfilePanel({
                   )}
                 </div>
               )}
+
+              {showAccountSection("help_desk") &&
+                orderedAccountSectionIds.includes("help_desk") &&
+                !accountSectionIdsForRender.includes("help_desk") && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      paddingTop: 16,
+                      borderTop: `1px solid ${theme.border}`,
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    <h3 style={{ margin: 0, fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
+                    <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+                      <span style={{ fontWeight: 700, color: theme.text }}>Tradesman toll-free:</span>{" "}
+                      <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+                        {HELP_DESK_PHONE_DISPLAY}
+                      </a>
+                    </p>
+                    <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
+                      Same number for product help and for updating a <strong style={{ color: theme.text }}>recorded</strong> mailbox greeting by phone (open Voicemail greeting above, choose Recorded, save your PIN, then call from your saved Primary phone).
+                    </p>
+                    {adminContext && (
+                      <div style={{ marginTop: 4, padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio toll-free</div>
+                        <div>
+                          The shared toll-free should use <code style={{ fontSize: 11 }}>POST /api/help-desk-voice</code> for the main menu. Callers press <strong>9</strong> there to open the PIN / record flow (<code style={{ fontSize: 11 }}>/api/voicemail-greeting</code>). Do not point the toll-free directly at voicemail-greeting or the keypad menu will never run.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
             </Fragment>
               )
               if (sectionId === "help_desk") return (
             <Fragment key={sectionId}>
-              <div style={{ padding: 14, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
+              <div style={ACCOUNT_SECTION_CARD}>
                 <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
                 <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
                   <span style={{ fontWeight: 700, color: theme.text }}>Tradesman toll-free:</span>{" "}
