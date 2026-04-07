@@ -152,7 +152,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = requestPublicOrigin(req)
   const keypressUrl = `${origin}/api/forward-whisper?step=keypress`
 
-  const say = `<Say voice="Polly.Joanna">${xmlEscape(line)}</Say>`
+  const sayAttrs = `voice="Polly.Joanna" language="en-US"`
+  const say = `<Say ${sayAttrs}>${xmlEscape(line)}</Say>`
 
   let inner: string
   if (requireKeypress) {
@@ -160,7 +161,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     inner =
       say +
       `<Gather input="speech dtmf" numDigits="1" timeout="5" speechTimeout="auto" language="en-US" hints="answer, decline" action="${xmlEscape(keypressUrl)}" method="POST">` +
-      `<Say voice="Polly.Joanna">Press 1 or say answer to accept. Press 2 or say decline to send the call to voicemail.</Say>` +
+      `<Say ${sayAttrs}>Press 1 or say answer to accept. Press 2 or say decline to send the call to voicemail.</Say>` +
       `</Gather>` +
       `<Hangup/>`
   } else {

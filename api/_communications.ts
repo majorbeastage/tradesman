@@ -286,6 +286,14 @@ function xmlEscape(value: string): string {
     .replace(/'/g, "&apos;")
 }
 
+/** Twilio <Play> is reliable for MP3/WAV; WebM/Opus from in-browser record often sounds like static or fails. */
+export function twilioPlayLikelySupportedRecordingUrl(url: string): boolean {
+  const path = url.trim().split("?")[0].toLowerCase()
+  if (/\.webm($|\?)/.test(path) || /\.opus($|\?)/.test(path)) return false
+  if (/\.ogg($|\?)/.test(path)) return false
+  return true
+}
+
 export function buildVoicemailTwiml(params: {
   recordAction: string
   routingProfile: UserRoutingProfile | null
@@ -294,8 +302,9 @@ export function buildVoicemailTwiml(params: {
     params.routingProfile?.voicemail_greeting_text?.trim() ||
     "Sorry we missed your call. Please leave a message after the tone."
   const recordedUrl = params.routingProfile?.voicemail_greeting_recording_url?.trim() || ""
-  const useRecordedGreeting =
+  const wantsRecorded =
     params.routingProfile?.voicemail_greeting_mode === "recorded" && !!recordedUrl
+  const useRecordedGreeting = wantsRecorded && twilioPlayLikelySupportedRecordingUrl(recordedUrl)
   const sayAttrs = `voice="Polly.Matthew" language="en-US"`
   const greetingNode = useRecordedGreeting
     ? `<Play>${xmlEscape(recordedUrl)}</Play>`

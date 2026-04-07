@@ -685,6 +685,11 @@ export function AccountProfilePanel({
 
               <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call screening (whisper)</span>
+                {!form.call_forwarding_enabled && (
+                  <p style={{ margin: 0, padding: 10, borderRadius: 8, background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: 13, lineHeight: 1.5 }}>
+                    <strong>Forwarding is off.</strong> Whisper and press-1/2 screening only run when a call is <strong>forwarded to your phone</strong>. With forwarding unchecked, inbound calls go straight to Tradesman voicemail — you will not hear the announcement on your cell. Turn on <strong>Call forwarding</strong> above (and set your forward number on the channel in Admin → Communications) to use screening.
+                  </p>
+                )}
                 <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
                   <input
                     type="checkbox"
@@ -832,6 +837,11 @@ export function AccountProfilePanel({
 
                   {form.voicemail_greeting_mode === "recorded" && (
                     <>
+                      {/\.webm(\?|$)/i.test(form.voicemail_greeting_recording_url.trim()) && (
+                        <p style={{ margin: 0, padding: 10, borderRadius: 8, background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: 13, lineHeight: 1.5 }}>
+                          <strong>WebM greeting:</strong> Twilio often cannot play WebM on the phone network (you may hear static or silence). Use <strong>MP3 or WAV</strong> (upload file), or record via the help-desk phone flow so the file is saved in a phone-friendly format.
+                        </p>
+                      )}
                       <label style={{ display: "grid", gap: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Recorded greeting URL (optional)</span>
                         <input
