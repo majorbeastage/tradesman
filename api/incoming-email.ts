@@ -316,7 +316,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const resolved = await resolveInboundEmailChannel(supabase, toList)
-  if (!resolved.ok) {
+  if (resolved.ok === false) {
     return res.status(200).json({
       ok: true,
       routed: false,
@@ -425,7 +425,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             subject,
             textBody: [`From: ${fromHeader}`, `To: ${matchedTo}`, "", bodyForMessage].join("\n"),
           })
-          forwardPayload = fr.ok ? { sent: true } : { error: `Resend forward HTTP ${fr.status}: ${fr.detail}` }
+          if (fr.ok) {
+            forwardPayload = { sent: true }
+          } else {
+            forwardPayload = { error: `Resend forward HTTP ${fr.status}: ${fr.detail}` }
+          }
         } catch (e) {
           forwardPayload = { error: e instanceof Error ? e.message : String(e) }
         }

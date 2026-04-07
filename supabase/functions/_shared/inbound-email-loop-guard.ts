@@ -13,7 +13,7 @@ export function normalizeResendHeaderMap(headers: unknown): Record<string, strin
     if (typeof v === "string" && v.trim()) {
       out[key] = v.trim()
     } else if (Array.isArray(v)) {
-      const parts = v.filter((x): x is string => typeof x === "string" && x.trim())
+      const parts = v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       if (parts.length) out[key] = parts.join(", ")
     }
   }
