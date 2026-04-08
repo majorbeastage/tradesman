@@ -146,6 +146,17 @@ export function hasServerSupabaseServiceConfig(): boolean {
   return Boolean(supabaseUrl && pickServiceRoleKeyForServer())
 }
 
+/** For API error responses: which Supabase server env keys are non-empty (no secret values). */
+export function describeServerSupabaseEnvForDiagnostics(): {
+  hasUrl: boolean
+  hasServiceRoleKey: boolean
+} {
+  return {
+    hasUrl: pickSupabaseUrlForServer().trim().length > 0,
+    hasServiceRoleKey: pickServiceRoleKeyForServer().trim().length > 0,
+  }
+}
+
 function pickSupabaseAnonKeyForServer(): string {
   const direct = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
   if (direct) return direct

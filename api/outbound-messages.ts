@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
   createServiceSupabase,
+  describeServerSupabaseEnvForDiagnostics,
   getPrimaryEmailChannelForUser,
   getPrimarySmsChannelForUser,
   logCommunicationEvent,
@@ -377,12 +378,14 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   const outboundWebhookUrl = firstEnv("SMS_OUTBOUND_WEBHOOK_URL")
 
   let supabase: ReturnType<typeof createServiceSupabase> | null = null
+  let supabaseInitError: string | null = null
   try {
     supabase = createServiceSupabase()
   } catch (e) {
+    supabaseInitError = e instanceof Error ? e.message : String(e)
     console.error(
       "[outbound-messages/sms] createServiceSupabase failed (same env as voicemail-greeting / incoming-sms):",
-      e instanceof Error ? e.message : e,
+      supabaseInitError,
     )
     // Per-user From needs DB; see fallback below using TWILIO_FROM_NUMBER.
   }
@@ -403,6 +406,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   }
   /** No service role on Vercel: cannot read communication_channels; allow send if a default From is set. */
   if (userId && !supabase && !fromNumber) {
+    const envSeen = describeServerSupabaseEnvForDiagnostics()
     return res.status(503).json({
       error: "Cannot load your Twilio SMS number.",
       message:
@@ -411,6 +415,9 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
         "Vercel → Project → Settings → Environment Variables: add SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY (service role, not anon). Apply to Production, save, then Redeploy.",
         "Or set TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) so replies can send from that number until Supabase is configured (logging to communication_events will be skipped).",
       ],
+      /** Booleans only — shows what this serverless invocation actually sees (misnamed vars, wrong environment, etc.). */
+      serverSeesSupabaseEnv: envSeen,
+      supabaseClientInitError: supabaseInitError,
     })
   }
 
