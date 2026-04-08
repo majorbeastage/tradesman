@@ -8,6 +8,7 @@ import PortalSettingsModal from "../../components/PortalSettingsModal"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { effectiveVoicemailTranscriptMode, voicemailTranscriptForDisplay } from "../../lib/voicemailDisplay"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -19,6 +20,9 @@ type CommEventRow = {
   body: string | null
   direction: string | null
   created_at: string | null
+  recording_url?: string | null
+  transcript_text?: string | null
+  summary_text?: string | null
   metadata?: Record<string, unknown> | null
 }
 
@@ -43,6 +47,41 @@ type ConversationRow = {
 }
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
+
+function voicemailPreviewText(ev: CommEventRow, profileVoicemailDisplay: string): string {
+  const mode = effectiveVoicemailTranscriptMode(profileVoicemailDisplay, ev.metadata?.voicemail_mode)
+  const parts = voicemailTranscriptForDisplay(ev, mode)
+  const line = (parts.primary || ev.body || "Voicemail").replace(/\s+/g, " ").trim()
+  return line.slice(0, 140)
+}
+
+function VoicemailTranscriptUi({ ev, profileVoicemailDisplay }: { ev: CommEventRow; profileVoicemailDisplay: string }) {
+  const mode = effectiveVoicemailTranscriptMode(profileVoicemailDisplay, ev.metadata?.voicemail_mode)
+  const parts = voicemailTranscriptForDisplay(ev, mode)
+  if (!parts.primary && !parts.secondary) return null
+  return (
+    <>
+      {parts.primary ? (
+        <p style={{ margin: "0 0 8px", whiteSpace: "pre-wrap", fontSize: 14 }}>
+          <strong style={{ color: theme.text }}>{parts.primaryLabel}</strong> {parts.primary}
+        </p>
+      ) : null}
+      {parts.secondary ? (
+        <p style={{ margin: "0 0 8px", whiteSpace: "pre-wrap", fontSize: 13, color: "#4b5563" }}>
+          <strong style={{ color: theme.text }}>{parts.secondaryLabel}</strong> {parts.secondary}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/** Supabase public URLs work in an audio element; raw Twilio URLs need server auth. */
+function isBrowserPlayableRecordingUrl(url: string | null | undefined): boolean {
+  const t = (url ?? "").trim().toLowerCase()
+  if (!t.startsWith("http")) return false
+  if (t.includes("api.twilio.com")) return false
+  return true
+}
 
 /** Supabase PostgrestError and other objects stringify to [object Object] in alerts */
 /** Prefer JSON `message` / `hint` from API routes; explain opaque Vercel failures. */
@@ -278,6 +317,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [emailSignature, setEmailSignature] = useState("")
   const [emailComposeMountKey, setEmailComposeMountKey] = useState(0)
   const [communicationEvents, setCommunicationEvents] = useState<CommEventRow[]>([])
+  /** profiles.voicemail_conversations_display for the portal user (scoped). */
+  const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
@@ -300,6 +341,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     [communicationEvents],
   )
 
+  const voicemailEvents = useMemo(
+    () => communicationEvents.filter((e) => e.event_type === "voicemail"),
+    [communicationEvents],
+  )
+
   useEffect(() => {
     try {
       const s = localStorage.getItem("tradesman_email_signature")
@@ -308,6 +354,25 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       /* ignore */
     }
   }, [])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("voicemail_conversations_display")
+        .eq("id", userId)
+        .maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
+      if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   const activityTimeline = useMemo((): ActivityTimelineItem[] => {
     const items: ActivityTimelineItem[] = []
@@ -705,7 +770,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
     const { data: commDesc } = await supabase
       .from("communication_events")
-      .select("id, event_type, subject, body, direction, created_at, metadata")
+      .select("id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text")
       .eq("conversation_id", convoId)
       .order("created_at", { ascending: false })
       .limit(120)
@@ -993,8 +1058,14 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const lastEmail = emailSorted.length ? emailSorted[emailSorted.length - 1]?.created_at : undefined
     const emailUnread = isAfterReadAt(lastEmail, emailRa)
 
-    return { sms: smsUnread, email: emailUnread, voicemail: false }
-  }, [selectedConversation, messages, emailOnlyEvents])
+    const vmRa = getChannelReadAtIso(selectedConversation.metadata, "voicemail")
+    const inboundVm = communicationEvents.filter((e) => e.event_type === "voicemail" && e.direction === "inbound" && e.created_at)
+    const vmSorted = [...inboundVm].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
+    const lastVm = vmSorted.length ? vmSorted[vmSorted.length - 1]?.created_at : undefined
+    const voicemailUnread = isAfterReadAt(lastVm, vmRa)
+
+    return { sms: smsUnread, email: emailUnread, voicemail: voicemailUnread }
+  }, [selectedConversation, messages, emailOnlyEvents, communicationEvents])
 
   const selectedRowText = "#0f172a"
 
@@ -1503,7 +1574,9 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       const preview =
                         ev.event_type === "email"
                           ? (ev.subject?.trim() || "(No subject)")
-                          : (ev.body || "—").replace(/\s+/g, " ").trim().slice(0, 140)
+                          : ev.event_type === "voicemail"
+                            ? voicemailPreviewText(ev, voicemailProfileDisplay)
+                            : (ev.body || "—").replace(/\s+/g, " ").trim().slice(0, 140)
                       return (
                         <ExpandableTimelineRow
                           key={item.key}
@@ -1540,6 +1613,22 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                               ) : null}
                               <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                             </>
+                          ) : ev.event_type === "voicemail" ? (
+                            <div>
+                              {ev.recording_url && isBrowserPlayableRecordingUrl(ev.recording_url) ? (
+                                <audio
+                                  controls
+                                  src={ev.recording_url}
+                                  style={{ width: "100%", maxWidth: 440, marginBottom: 10 }}
+                                />
+                              ) : ev.recording_url ? (
+                                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
+                                  This entry has a Twilio-only recording link (not playable here). New voicemails are copied to storage and will play in the browser.
+                                </p>
+                              ) : null}
+                              <VoicemailTranscriptUi ev={ev} profileVoicemailDisplay={voicemailProfileDisplay} />
+                              <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                            </div>
                           ) : (
                             <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                           )}
@@ -1627,6 +1716,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-vm`}
                 title="Voicemails"
+                countBadge={voicemailEvents.length}
                 showUnreadDot={unreadChannels.voicemail}
                 onOpen={() => void markChannelRead("voicemail")}
               >
@@ -1637,14 +1727,39 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     borderRadius: 8,
                     background: "#fff",
                     minHeight: 120,
-                    maxHeight: 200,
+                    maxHeight: "min(42vh, 380px)",
                     overflow: "auto",
                     boxSizing: "border-box",
                   }}
                 >
-                  <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                    No voicemails are attached to this conversation yet. When call recordings are linked here, they will appear in this section.
-                  </p>
+                  {voicemailEvents.length === 0 ? (
+                    <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                      No voicemails in this thread yet. When someone leaves a message on your Twilio number (webhook{" "}
+                      <code style={{ fontSize: 11 }}>/api/voicemail-result</code>), it appears here with audio. Transcription usually arrives a few seconds later (Twilio callback).
+                    </p>
+                  ) : (
+                    [...voicemailEvents].reverse().map((ev) => (
+                      <div key={ev.id} style={{ marginBottom: 16, paddingBottom: 14, borderBottom: "1px solid #f3f4f6" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                          {ev.direction === "inbound" ? "Inbound" : ev.direction || "Voicemail"}
+                          {ev.created_at ? (
+                            <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                              {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                            </span>
+                          ) : null}
+                        </div>
+                        {ev.recording_url && isBrowserPlayableRecordingUrl(ev.recording_url) ? (
+                          <audio controls src={ev.recording_url} style={{ width: "100%", maxWidth: 440, marginBottom: 8 }} />
+                        ) : ev.recording_url ? (
+                          <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
+                            Legacy Twilio recording URL only — not playable in the portal. New messages are saved to Supabase storage automatically.
+                          </p>
+                        ) : null}
+                        <VoicemailTranscriptUi ev={ev} profileVoicemailDisplay={voicemailProfileDisplay} />
+                        <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{ev.body || "Voicemail"}</p>
+                      </div>
+                    ))
+                  )}
                 </div>
               </ConvoCollapsible>
 

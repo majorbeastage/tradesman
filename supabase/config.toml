@@ -1,5 +1,11 @@
 # Supabase CLI / Edge Functions — https://supabase.com/docs/guides/cli/config
 # After changing this file, redeploy: supabase functions deploy portal-assistant
+#
+# Edge Function secrets (Dashboard → Edge Functions → Secrets, or `supabase secrets set`):
+#   TWILIO_ACCOUNT_SID   — live Account SID (align with Vercel)
+#   TWILIO_AUTH_TOKEN    — live Auth Token
+#   TWILIO_FROM_NUMBER   — optional E.164 From for future Twilio calls from Edge
+# See supabase/TWILIO_SECRETS.txt and supabase/functions/_shared/twilio-env.ts
 
 [functions.resend-inbound]
 # Resend webhooks have no Supabase JWT; handler verifies Svix + uses service role internally.

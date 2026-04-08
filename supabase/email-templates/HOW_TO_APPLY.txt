@@ -1,0 +1,34 @@
+Branded password-reset email (Tradesman orange + TRADESMAN header)
+===================================================================
+
+1. Open the Supabase dashboard for your project (same project as VITE_SUPABASE_URL).
+
+2. Go to: Authentication → Email templates.
+
+3. Click the template named "Reset password" (or "Magic Link" if your project uses a different name for recovery).
+
+4. Switch the editor to HTML / source mode if there is a toggle.
+
+5. Open the file password-recovery.html in this folder on your computer.
+
+6. Copy ALL of that file’s contents and paste them into the Supabase template body, replacing the default content.
+
+7. Keep the variable exactly as written: {{ .ConfirmationURL }} — Supabase replaces it with the real link.
+
+8. Save the template.
+
+9. Supabase → Authentication → URL configuration:
+   - Site URL: the main entry URL Supabase uses as a fallback (often your marketing domain or the app origin).
+   - Redirect URLs (allow list): must include the FULL reset URL where your React app is served, e.g.
+     https://YOUR-VERCEL-APP.vercel.app/reset-password
+     If the link in the email must land on a custom domain, that exact origin + /reset-password must be listed here too.
+
+10. In Vercel → your project → Environment Variables:
+    - VITE_SITE_URL = the origin where THIS portal app runs and /reset-password exists (no trailing slash).
+      Example: https://tradesman-us.vercel.app — NOT a marketing homepage-only domain unless that site serves the same SPA route.
+    Redeploy after changing VITE_SITE_URL.
+
+If reset links open tradesman-us.com (or similar) and you only see the marketing homepage, the app is not deployed there:
+either point VITE_SITE_URL at the Vercel app URL, or host the same build at a path on the custom domain so /reset-password loads ResetPasswordPage.
+
+After that, new reset emails use your theme. Old emails still contain old links.

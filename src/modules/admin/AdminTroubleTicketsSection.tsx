@@ -22,7 +22,15 @@ type TicketRow = {
   preferred_contact: string | null
   priority: string | null
   status: string | null
+  archived?: boolean
   created_at: string
+}
+
+const PRIORITY_VALUES = ["low", "medium", "normal", "high"] as const
+
+function normalizeTicketPriority(raw: string | null | undefined): (typeof PRIORITY_VALUES)[number] {
+  const p = String(raw || "normal").toLowerCase()
+  return PRIORITY_VALUES.includes(p as (typeof PRIORITY_VALUES)[number]) ? (p as (typeof PRIORITY_VALUES)[number]) : "normal"
 }
 
 type NoteRow = {
@@ -75,6 +83,11 @@ function extractRecordingSidFromUrl(url: string): string | null {
   return m ? m[1] : null
 }
 
+function extractTwilioAccountSidFromRecordingUrl(url: string): string | null {
+  const m = /\/Accounts\/(AC[0-9a-f]{32})\//i.exec(url)
+  return m ? m[1] : null
+}
+
 function isTwilioRecordingHost(url: string): boolean {
   return /api\.twilio\.com/i.test(url)
 }
@@ -114,6 +127,7 @@ function TicketRecordingBlock({
   const [loading, setLoading] = useState(false)
 
   const sid = (recordingSid?.trim() || extractRecordingSidFromUrl(recordingUrl?.trim() || "") || "").trim()
+  const twilioAccountSid = extractTwilioAccountSidFromRecordingUrl(recordingUrl?.trim() || "")
   const directPublic =
     recordingUrl &&
     recordingUrl.trim().startsWith("http") &&
@@ -141,7 +155,8 @@ function TicketRecordingBlock({
 
     ;(async () => {
       try {
-        const res = await fetch(`/api/twilio-recording?recordingSid=${encodeURIComponent(sid)}`, {
+        const ac = twilioAccountSid ? `&accountSid=${encodeURIComponent(twilioAccountSid)}` : ""
+        const res = await fetch(`/api/twilio-recording?recordingSid=${encodeURIComponent(sid)}${ac}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         })
         const ct = res.headers.get("content-type") || ""
@@ -182,7 +197,7 @@ function TicketRecordingBlock({
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [sid, accessToken, directPublic, recordingUrl])
+  }, [sid, accessToken, directPublic, recordingUrl, twilioAccountSid])
 
   if (directPublic && recordingUrl) {
     return (
@@ -234,6 +249,7 @@ export default function AdminTroubleTicketsSection() {
   const [ticketListOpen, setTicketListOpen] = useState(true)
   const [ticketTableSearch, setTicketTableSearch] = useState("")
   const [ticketFieldSaving, setTicketFieldSaving] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
 
   const loadTickets = useCallback(async () => {
     if (!supabase) {
@@ -246,7 +262,7 @@ export default function AdminTroubleTicketsSection() {
     const { data, error: err } = await supabase
       .from("support_tickets")
       .select(
-        "id, ticket_number, type, name, business_name, phone, email, title, message, transcription, recording_url, recording_sid, call_from_phone, preferred_contact, priority, status, created_at",
+        "id, ticket_number, type, name, business_name, phone, email, title, message, transcription, recording_url, recording_sid, call_from_phone, preferred_contact, priority, status, archived, created_at",
       )
       .order("created_at", { ascending: false })
       .limit(400)
@@ -260,8 +276,9 @@ export default function AdminTroubleTicketsSection() {
     setTickets(
       rows.map((t) => ({
         ...t,
-        priority: t.priority === "high" ? "high" : "normal",
+        priority: normalizeTicketPriority(t.priority),
         status: ["resolved", "cancelled"].includes(String(t.status)) ? String(t.status) : "open",
+        archived: Boolean((t as { archived?: boolean }).archived),
       })),
     )
   }, [])
@@ -271,10 +288,11 @@ export default function AdminTroubleTicketsSection() {
   }, [loadTickets])
 
   const filteredTickets = useMemo(() => {
+    const base = showArchived ? tickets : tickets.filter((t) => !t.archived)
     const q = ticketTableSearch.trim().toLowerCase()
-    if (!q) return tickets
-    return tickets.filter((t) => ticketSearchText(t).includes(q))
-  }, [tickets, ticketTableSearch])
+    if (!q) return base
+    return base.filter((t) => ticketSearchText(t).includes(q))
+  }, [tickets, ticketTableSearch, showArchived])
 
   const loadNotes = useCallback(async (ticketId: string) => {
     if (!supabase) return
@@ -317,16 +335,40 @@ export default function AdminTroubleTicketsSection() {
     void loadNotes(selectedId)
   }
 
-  async function patchTicket(id: string, patch: { priority?: string; status?: string }) {
+  async function patchTicket(id: string, patch: { priority?: string; status?: string; archived?: boolean }) {
     if (!supabase) return
     setTicketFieldSaving(true)
     const { error: err } = await supabase.from("support_tickets").update(patch).eq("id", id)
     setTicketFieldSaving(false)
     if (err) {
-      alert(err.message + (err.message.includes("policy") || err.message.includes("permission") ? "\n\nRun supabase/support-tickets-priority-status-admin-update.sql in Supabase (admin UPDATE policy + columns)." : ""))
+      alert(
+        err.message +
+          (err.message.includes("policy") || err.message.includes("permission")
+            ? "\n\nRun supabase SQL for admin UPDATE (and support-tickets-archive-priority-delete-profile-vm-display.sql for archive / priority / delete)."
+            : ""),
+      )
       return
     }
     setTickets((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+  }
+
+  async function deleteTicket(id: string) {
+    if (!supabase) return
+    if (!window.confirm("Permanently delete this ticket and all of its notes? This cannot be undone.")) return
+    setTicketFieldSaving(true)
+    const { error: err } = await supabase.from("support_tickets").delete().eq("id", id)
+    setTicketFieldSaving(false)
+    if (err) {
+      alert(
+        err.message +
+          (err.message.includes("policy") || err.message.includes("permission")
+            ? "\n\nRun supabase/support-tickets-archive-priority-delete-profile-vm-display.sql to add admin DELETE policy."
+            : ""),
+      )
+      return
+    }
+    setTickets((prev) => prev.filter((t) => t.id !== id))
+    if (selectedId === id) setSelectedId(null)
   }
 
   const selected = tickets.find((t) => t.id === selectedId) ?? null
@@ -339,8 +381,9 @@ export default function AdminTroubleTicketsSection() {
           From <strong style={{ color: ink }}>Tech Support</strong>, <strong style={{ color: ink }}>Request a demo</strong>, and the help desk <strong style={{ color: ink }}>Trouble ticket</strong> menu action.{" "}
           <strong style={{ color: ink }}>First-time setup:</strong> run{" "}
           <code style={{ fontSize: 11, color: ink, background: noteSurface, padding: "2px 6px", borderRadius: 4 }}>supabase/support-tickets-setup-complete.sql</code> in Supabase SQL Editor. For{" "}
-          <strong style={{ color: ink }}>priority, status, admin updates, and recording playback</strong>, also run{" "}
-          <code style={{ fontSize: 11, color: ink, background: noteSurface, padding: "2px 6px", borderRadius: 4 }}>supabase/support-tickets-priority-status-admin-update.sql</code>. Email alerts:{" "}
+          <strong style={{ color: ink }}>priority, status, archive, delete, recording playback</strong>, run{" "}
+          <code style={{ fontSize: 11, color: ink, background: noteSurface, padding: "2px 6px", borderRadius: 4 }}>supabase/support-tickets-archive-priority-delete-profile-vm-display.sql</code>{" "}
+          (and/or earlier priority migration scripts). Email alerts:{" "}
           <code style={{ fontSize: 11, color: ink, background: noteSurface, padding: "2px 6px", borderRadius: 4 }}>HELP_DESK_TICKET_EMAIL_USER_ID</code>,{" "}
           <code style={{ fontSize: 11, color: ink, background: noteSurface, padding: "2px 6px", borderRadius: 4 }}>HELP_DESK_TICKET_NOTIFY_EMAIL</code>.
         </p>
@@ -412,6 +455,10 @@ export default function AdminTroubleTicketsSection() {
                   autoComplete="off"
                 />
               </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 13, color: ink, cursor: "pointer" }}>
+                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+                Show archived tickets
+              </label>
               {tickets.length > 0 && (
                 <p style={{ fontSize: 12, color: inkSoft, margin: "0 0 10px" }}>
                   Showing {filteredTickets.length} of {tickets.length}
@@ -427,7 +474,7 @@ export default function AdminTroubleTicketsSection() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "70vh", overflow: "auto" }}>
                   {filteredTickets.map((t) => {
-                    const pri = t.priority === "high" ? "high" : "normal"
+                    const pri = normalizeTicketPriority(t.priority)
                     const st = t.status === "resolved" || t.status === "cancelled" ? t.status : "open"
                     return (
                       <button
@@ -451,6 +498,51 @@ export default function AdminTroubleTicketsSection() {
                       >
                         <span style={{ fontWeight: 700, color: ink, fontSize: 14 }}>{t.ticket_number}</span>
                         <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                          {t.archived && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: 0.5,
+                                color: "#4b5563",
+                                background: "#e5e7eb",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              ARCHIVED
+                            </span>
+                          )}
+                          {pri === "low" && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: 0.5,
+                                color: "#1e40af",
+                                background: "#dbeafe",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              LOW
+                            </span>
+                          )}
+                          {pri === "medium" && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: 0.5,
+                                color: "#92400e",
+                                background: "#fef3c7",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              MEDIUM
+                            </span>
+                          )}
                           {pri === "high" && (
                             <span
                               style={{
@@ -515,7 +607,7 @@ export default function AdminTroubleTicketsSection() {
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, fontWeight: 600, color: ink }}>
                   Priority
                   <select
-                    value={selected.priority === "high" ? "high" : "normal"}
+                    value={normalizeTicketPriority(selected.priority)}
                     disabled={ticketFieldSaving}
                     onChange={(e) => void patchTicket(selected.id, { priority: e.target.value })}
                     style={{
@@ -528,6 +620,8 @@ export default function AdminTroubleTicketsSection() {
                       minWidth: 140,
                     }}
                   >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
                     <option value="normal">Normal</option>
                     <option value="high">High</option>
                   </select>
@@ -553,6 +647,60 @@ export default function AdminTroubleTicketsSection() {
                     <option value="cancelled">Cancelled</option>
                   </select>
                 </label>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                {selected.archived ? (
+                  <button
+                    type="button"
+                    disabled={ticketFieldSaving}
+                    onClick={() => void patchTicket(selected.id, { archived: false })}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "1px solid #d1d5db",
+                      background: cardBg,
+                      color: ink,
+                      fontWeight: 600,
+                      cursor: ticketFieldSaving ? "wait" : "pointer",
+                    }}
+                  >
+                    Restore from archive
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={ticketFieldSaving}
+                    onClick={() => void patchTicket(selected.id, { archived: true })}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "1px solid #9ca3af",
+                      background: "#f9fafb",
+                      color: ink,
+                      fontWeight: 600,
+                      cursor: ticketFieldSaving ? "wait" : "pointer",
+                    }}
+                  >
+                    Archive ticket
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={ticketFieldSaving}
+                  onClick={() => void deleteTicket(selected.id)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "1px solid #b91c1c",
+                    background: "#fef2f2",
+                    color: "#991b1b",
+                    fontWeight: 600,
+                    cursor: ticketFieldSaving ? "wait" : "pointer",
+                  }}
+                >
+                  Delete permanently
+                </button>
               </div>
 
               <div style={{ display: "grid", gap: 10, fontSize: 14, color: ink }}>

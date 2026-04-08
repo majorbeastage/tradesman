@@ -14,6 +14,7 @@ import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
 import SignupPage from "./modules/auth/SignupPage"
+import ResetPasswordPage from "./modules/auth/ResetPasswordPage"
 import AboutUsPage from "./modules/public/AboutUsPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
@@ -182,6 +183,10 @@ function App() {
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
+
+  if (pathname === "/reset-password") {
+    return <ResetPasswordPage onDone={() => { window.history.replaceState(null, "", "/"); window.location.assign("/") }} />
+  }
 
   if (pathname === "/privacy") {
     return <PrivacyPage />

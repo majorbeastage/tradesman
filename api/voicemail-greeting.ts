@@ -1,5 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, firstEnv, normalizePhone, pickFirstString } from "./_communications.js"
+import {
+  createServiceSupabase,
+  firstEnv,
+  hasServerSupabaseServiceConfig,
+  normalizePhone,
+  pickFirstString,
+} from "./_communications.js"
+import { fetchTwilioRecordingBuffer, pickUploadFormat } from "./_twilioRecordingFetch.js"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -74,113 +81,12 @@ function requestPublicOrigin(req: VercelRequest): string {
   return `${proto}://${host}`
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** Twilio RecordingUrl paths include /Accounts/AC…/ — use that for REST URLs when it differs from env (subaccounts). */
-function extractAccountSidFromTwilioUrl(url: string): string | null {
-  const m = /\/Accounts\/(AC[a-f0-9]{32})\//i.exec(url)
-  return m ? m[1] : null
-}
-
-function maskSid(s: string): string {
-  if (s.length <= 8) return "…"
-  return `…${s.slice(-6)}`
-}
-
-/**
- * Twilio often POSTs the Record action before the MP3 is downloadable; short retries fix most "save failed" cases.
- * RecordingUrl may be empty in edge cases; RecordingSid + Account credentials still work via REST.
- * If the number lives on a subaccount, RecordingUrl usually contains that subaccount’s AC… — we use it for REST paths
- * so TWILIO_ACCOUNT_SID on Vercel can be the parent while downloads still target the correct account.
- */
-async function fetchTwilioRecordingBuffer(recordingUrl: string, recordingSid?: string): Promise<ArrayBuffer> {
-  const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
-  const authToken = firstEnv("TWILIO_AUTH_TOKEN")
-  if (!accountSid || !authToken) {
-    throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN (required to download the recording from Twilio)")
-  }
-  const authHeader = { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` }
-  const urlAccountSid = recordingUrl ? extractAccountSidFromTwilioUrl(recordingUrl) : null
-  const restAccountSid = urlAccountSid || accountSid
-
-  const candidates: string[] = []
-  if (recordingUrl) {
-    candidates.push(
-      ...(recordingUrl.endsWith(".mp3")
-        ? [recordingUrl, recordingUrl.replace(/\.mp3$/i, "")]
-        : [`${recordingUrl}.mp3`, recordingUrl])
-    )
-  }
-  if (recordingSid && restAccountSid) {
-    const base = `https://api.twilio.com/2010-04-01/Accounts/${restAccountSid}/Recordings/${recordingSid}`
-    candidates.push(`${base}.mp3`, base)
-  }
-  if (recordingSid && urlAccountSid && accountSid && urlAccountSid !== accountSid) {
-    const baseParent = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recordingSid}`
-    candidates.push(`${baseParent}.mp3`, baseParent)
-  }
-
-  const seen = new Set<string>()
-  const unique = candidates.filter((u) => {
-    if (!u || seen.has(u)) return false
-    seen.add(u)
-    return true
-  })
-  if (unique.length === 0) {
-    throw new Error("No Twilio recording URL or RecordingSid to download")
-  }
-
-  let lastStatus = 0
-  const maxRounds = 6
-  for (let round = 0; round < maxRounds; round++) {
-    for (const url of unique) {
-      const response = await fetch(url, { headers: authHeader })
-      if (response.ok) {
-        if (round > 0) {
-          console.log("[voicemail-greeting] Twilio recording download succeeded after retries", { round, recordingSid: recordingSid ? maskSid(recordingSid) : null })
-        }
-        const ct = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase()
-        const buf = await response.arrayBuffer()
-        return { arrayBuffer: buf, contentType: ct, sourceUrl: url }
-      }
-      lastStatus = response.status
-    }
-    if (round < maxRounds - 1) await sleep(700 + round * 350)
-  }
-
-  const hint =
-    lastStatus === 401 || lastStatus === 403
-      ? "HTTP 401/403: TWILIO_AUTH_TOKEN (and usually TWILIO_ACCOUNT_SID) must be for the Twilio account that owns this phone number. If the number is on a subaccount, use that subaccount’s SID + Auth Token in Vercel, or use master credentials that can access subaccount API URLs."
-      : lastStatus === 404
-        ? "HTTP 404: recording not found yet (retries exhausted) or wrong Account SID for this RecordingSid."
-        : "Check Twilio credentials and that the call was recorded on the same Twilio project."
-
-  console.error("[voicemail-greeting] Twilio recording download failed", {
-    lastHttpStatus: lastStatus,
-    retries: maxRounds,
-    hasRecordingUrl: Boolean(recordingUrl),
-    hasRecordingSid: Boolean(recordingSid),
-    envAccount: maskSid(accountSid),
-    urlAccount: urlAccountSid ? maskSid(urlAccountSid) : null,
-    candidateCount: unique.length,
-    hint,
-  })
-
-  throw new Error(`Failed to fetch Twilio recording (last HTTP ${lastStatus}). ${hint}`)
-}
-
-function pickUploadFormat(contentType: string, sourceUrl: string): { ext: string; contentType: string } {
-  const u = sourceUrl.toLowerCase()
-  if (contentType.includes("wav") || u.includes(".wav")) return { ext: "wav", contentType: "audio/wav" }
-  if (contentType.includes("mpeg") || contentType.includes("mp3") || u.includes(".mp3")) return { ext: "mp3", contentType: "audio/mpeg" }
-  // Twilio often returns audio/mpeg for phone recordings; default MP3 filename is OK for playback
-  return { ext: "mp3", contentType: "audio/mpeg" }
-}
-
 async function uploadTwilioRecordingToStorage(userId: string, recordingUrl: string, recordingSid?: string): Promise<string> {
-  const { arrayBuffer, contentType, sourceUrl } = await fetchTwilioRecordingBuffer(recordingUrl, recordingSid)
+  const { arrayBuffer, contentType, sourceUrl } = await fetchTwilioRecordingBuffer(
+    recordingUrl,
+    recordingSid,
+    "voicemail-greeting",
+  )
   const { ext, contentType: uploadCt } = pickUploadFormat(contentType, sourceUrl)
   const supabase = createServiceSupabase()
   const filePath = `${userId}/greeting-callin-${Date.now()}.${ext}`
@@ -207,6 +113,14 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
     return sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Missing recording details. Goodbye.</Say><Hangup/></Response>`
+    )
+  }
+
+  if (!hasServerSupabaseServiceConfig()) {
+    console.error("[voicemail-greeting] handleGreetingSave: set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel for phone greeting save")
+    return sendTwiml(
+      res,
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Your greeting cannot be saved from the phone line yet. The site host must add Supabase server connection keys, then redeploy. You can record your greeting in the app under My T until then.</Say><Hangup/></Response>`,
     )
   }
 
@@ -249,6 +163,9 @@ async function handleGreetingSave(req: VercelRequest, res: VercelResponse): Prom
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error("[voicemail-greeting] handleGreetingSave", msg)
+    if (/Missing server env/i.test(msg)) {
+      console.error("[voicemail-greeting] Vercel needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for this webhook")
+    }
     if (/Bucket not found|not found/i.test(msg) || /storage/i.test(msg)) {
       console.error("[voicemail-greeting] Hint: run supabase-voicemail-greetings-storage.sql in Supabase to create bucket voicemail-greetings")
     }
@@ -294,8 +211,8 @@ function buildRecordGreetingTwiml(origin: string, userId: string): string {
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
-    `<Say ${SAY}>After the tone, record your new voicemail greeting. Press pound when you are done.</Say>` +
-    `<Record action="${xmlEscape(action)}" method="POST" finishOnKey="#" playBeep="true" maxLength="120" />` +
+    `<Say ${SAY}>After the tone, record your new voicemail greeting. When you are finished, press any key.</Say>` +
+    `<Record action="${xmlEscape(action)}" method="POST" playBeep="true" maxLength="120" />` +
     `<Say ${SAY}>No recording was received. Goodbye.</Say>` +
     `<Hangup/>` +
     `</Response>`
@@ -303,6 +220,20 @@ function buildRecordGreetingTwiml(origin: string, userId: string): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === "GET" && pickFirstString(req.query?.check).toLowerCase() === "server") {
+    const twilioSid = firstEnv("TWILIO_ACCOUNT_SID")
+    const twilioTok = firstEnv("TWILIO_AUTH_TOKEN")
+    const ok = hasServerSupabaseServiceConfig()
+    return res.status(200).json({
+      route: "voicemail-greeting",
+      supabaseServiceRoleConfigured: ok,
+      twilioCredentialsPresent: Boolean(twilioSid && twilioTok),
+      hint: ok
+        ? "Server sees Supabase URL + service role. If phone save still fails, check Twilio recording download, voicemail-greetings bucket, and PIN / primary phone on the profile."
+        : "This deployment does not see both SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. In Vercel: Environment Variables → scope Production (not only Preview) → Redeploy after any change.",
+    })
+  }
+
   if (pickFirstString(req.query?.phase) === "save") {
     return handleGreetingSave(req, res)
   }
@@ -319,9 +250,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!digits) {
     const trustedId = await resolveTrustedGreetingUserId(callerNumber)
     if (trustedId) {
+      if (!hasServerSupabaseServiceConfig()) {
+        return sendTwiml(
+          res,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We recognized your number, but the server is not configured to save greetings from the phone. Use My T in the app, or ask your administrator to add Supabase keys on the host.</Say><Hangup/></Response>`,
+        )
+      }
       return sendTwiml(res, buildRecordGreetingTwiml(origin, trustedId))
     }
     return sendTwiml(res, buildGatherTwiml(origin, "Please enter your six digit greeting pin."))
+  }
+
+  if (!hasServerSupabaseServiceConfig()) {
+    return sendTwiml(
+      res,
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We cannot verify your pin from the phone right now. Use My T in the web app to record your greeting, or ask your administrator to add Supabase server keys on the host.</Say><Hangup/></Response>`,
+    )
   }
 
   try {

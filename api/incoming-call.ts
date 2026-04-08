@@ -30,9 +30,9 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
 
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
-  const host = pickFirstString(req.headers.host)
+  const host = pickFirstString(req.headers["x-forwarded-host"], req.headers.host)
   if (!host) return "https://tradesman.vercel.app"
-  return `${proto}://${host}`
+  return `${proto}://${host.split(",")[0].trim()}`
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -74,8 +74,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (from) query.set("from", from)
   const q = query.size ? `?${query.toString()}` : ""
   const voicemailActionUrl = `${origin}/api/voicemail-result${q}`
+  const transcribeUrl = `${voicemailActionUrl}${q ? "&" : "?"}phase=transcribe`
   if (!forwardTo) {
-    return sendTwiml(res, buildVoicemailTwiml({ recordAction: voicemailActionUrl, routingProfile }))
+    return sendTwiml(
+      res,
+      buildVoicemailTwiml({
+        recordAction: voicemailActionUrl,
+        transcribeCallback: transcribeUrl,
+        routingProfile,
+      }),
+    )
   }
 
   const dialActionUrl = `${origin}/api/dial-result${q}`
@@ -104,7 +112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     whisperEnabled && channel?.user_id && (!whisperOnlyOutsideHours || !withinBusinessHours)
   const dialInner = useWhisper
     ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
-    : xmlEscape(forwardTo)
+    : `<Number>${xmlEscape(forwardTo)}</Number>`
 
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +

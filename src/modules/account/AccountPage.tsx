@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { supabase } from "../../lib/supabase"
+import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
 import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
@@ -40,6 +41,8 @@ type ProfileForm = {
   forward_whisper_announcement_template: string
   forward_whisper_only_outside_business_hours: boolean
   forward_whisper_require_keypress: boolean
+  /** profiles.voicemail_conversations_display — overrides Conversations UI only. */
+  voicemail_conversations_display: "use_channel" | "summary" | "full_transcript"
 }
 
 const DEFAULT_WHISPER_TEMPLATE_HINT =
@@ -213,6 +216,7 @@ export function AccountProfilePanel({
     forward_whisper_announcement_template: "",
     forward_whisper_only_outside_business_hours: false,
     forward_whisper_require_keypress: false,
+    voicemail_conversations_display: "use_channel",
   })
 
   const emailForDisplay = useMemo(() => (loginEmail?.trim() || profileEmailFromDb).trim(), [loginEmail, profileEmailFromDb])
@@ -236,7 +240,7 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
@@ -274,6 +278,11 @@ export function AccountProfilePanel({
           forward_whisper_announcement_template: typeof data?.forward_whisper_announcement_template === "string" ? data.forward_whisper_announcement_template : "",
           forward_whisper_only_outside_business_hours: data?.forward_whisper_only_outside_business_hours === true,
           forward_whisper_require_keypress: data?.forward_whisper_require_keypress === true,
+          voicemail_conversations_display:
+            (data as { voicemail_conversations_display?: string }).voicemail_conversations_display === "summary" ||
+            (data as { voicemail_conversations_display?: string }).voicemail_conversations_display === "full_transcript"
+              ? ((data as { voicemail_conversations_display?: string }).voicemail_conversations_display as ProfileForm["voicemail_conversations_display"])
+              : "use_channel",
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -321,6 +330,7 @@ export function AccountProfilePanel({
         forward_whisper_announcement_template: form.forward_whisper_announcement_template.trim() || null,
         forward_whisper_only_outside_business_hours: form.forward_whisper_only_outside_business_hours,
         forward_whisper_require_keypress: form.forward_whisper_require_keypress,
+        voicemail_conversations_display: form.voicemail_conversations_display,
         updated_at: new Date().toISOString(),
       }
       let { error } = await supabase.from("profiles").update(payload).eq("id", profileUserId)
@@ -356,7 +366,7 @@ export function AccountProfilePanel({
     setMessage("")
     setError("")
     try {
-      const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/` : undefined
+      const redirectTo = getPasswordRecoveryRedirectTo() || undefined
       const { error } = await supabase.auth.resetPasswordForEmail(emailForDisplay, redirectTo ? { redirectTo } : undefined)
       if (error) throw error
       setMessage("Password reset email sent.")
@@ -794,6 +804,26 @@ export function AccountProfilePanel({
 
               {voicemailExpanded && (
                 <div style={{ display: "grid", gap: 14, paddingTop: 4 }}>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Conversations → Voicemails</span>
+                    <select
+                      value={form.voicemail_conversations_display}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          voicemail_conversations_display: e.target.value as ProfileForm["voicemail_conversations_display"],
+                        }))
+                      }
+                      style={theme.formInput}
+                    >
+                      <option value="use_channel">Match each line (Admin → Communications → Voicemail mode)</option>
+                      <option value="summary">Prefer summary (full transcript shown below when available)</option>
+                      <option value="full_transcript">Prefer full transcript</option>
+                    </select>
+                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                      Controls how voicemail text appears in the portal. Admins set the default per Twilio channel; this choice overrides only your view.
+                    </span>
+                  </label>
                   <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
                     Optional. Leave collapsed if the default greeting is fine. Use <strong style={{ color: theme.text }}>Save account</strong> below after changes.
                   </p>

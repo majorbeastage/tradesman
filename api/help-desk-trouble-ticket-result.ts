@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv, normalizePhone, pickFirstString } from "./_communications.js"
+import { mirrorTwilioRecordingToPublicUrl } from "./_mirrorTwilioToStorage.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -60,15 +61,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const phase = pickFirstString(req.query?.phase).toLowerCase() || "record"
   const origin = requestPublicOrigin(req)
-  const supabase = createServiceSupabase()
 
   if (phase === "record") {
+    let supabase: ReturnType<typeof createServiceSupabase>
+    try {
+      supabase = createServiceSupabase()
+    } catch (e) {
+      console.error("[help-desk-trouble-ticket] record: Supabase not configured", e instanceof Error ? e.message : e)
+      return sendTwiml(
+        res,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not save your message in our system right now. Please try the website or call back later.</Say><Hangup/></Response>`,
+      )
+    }
     const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
     const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
     const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
     const recordingUrl = pickFirstString(req.body?.RecordingUrl, req.query?.RecordingUrl)
 
-    if (!recordingSid || !recordingUrl) {
+    if (!recordingSid) {
       return sendTwiml(
         res,
         `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not capture your message. Goodbye.</Say><Hangup/></Response>`
@@ -89,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         call_from_phone: from || null,
         twilio_call_sid: callSid || null,
         recording_sid: recordingSid,
-        recording_url: recordingUrl,
+        recording_url: recordingUrl || null,
       })
       .select("id, ticket_number")
       .single()
@@ -105,9 +115,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
       }
     } else if (row?.id) {
+      let storedRecordingUrl = recordingUrl || null
+      if (recordingUrl || recordingSid) {
+        const mirrored = await mirrorTwilioRecordingToPublicUrl({
+          storagePathWithoutExt: `recordings/support-tickets/${row.id}/${recordingSid}`,
+          recordingUrl: recordingUrl || "",
+          recordingSid: recordingSid || undefined,
+          logTag: "help-desk-trouble-ticket",
+        })
+        if (mirrored) {
+          storedRecordingUrl = mirrored
+          const { error: upUrlErr } = await supabase
+            .from("support_tickets")
+            .update({ recording_url: mirrored })
+            .eq("id", row.id)
+          if (upUrlErr) console.error("[help-desk-trouble-ticket] update recording_url", upUrlErr.message)
+        }
+      }
       await supabase.from("support_ticket_notes").insert({
         ticket_id: row.id,
-        body: `Voicemail recording received.\nFrom: ${from || "unknown"}\nRecording: ${recordingUrl}`,
+        body: `Voicemail recording received.\nFrom: ${from || "unknown"}\nRecording: ${storedRecordingUrl || `(SID ${recordingSid})`}`,
         author_label: "system",
       })
       void notifyTicketEmail({
@@ -117,7 +144,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lines: [
           `New trouble ticket ${row.ticket_number} (help desk phone).`,
           `Caller: ${from || "unknown"}`,
-          `Recording: ${recordingUrl}`,
+          `Recording: ${storedRecordingUrl || recordingUrl || `SID ${recordingSid}`}`,
           "Transcript will follow in a separate email when ready.",
         ],
       })
@@ -130,15 +157,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (phase === "transcribe") {
+    let supabaseT: ReturnType<typeof createServiceSupabase>
+    try {
+      supabaseT = createServiceSupabase()
+    } catch (e) {
+      console.error("[help-desk-trouble-ticket] transcribe: Supabase not configured", e instanceof Error ? e.message : e)
+      return res.status(200).send("OK")
+    }
+
     const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
     const transcriptionText = pickFirstString(req.body?.TranscriptionText, req.query?.TranscriptionText)
-    const status = pickFirstString(req.body?.TranscriptionStatus, req.query?.TranscriptionStatus)
+    const statusRaw = pickFirstString(req.body?.TranscriptionStatus, req.query?.TranscriptionStatus)
+    const status = statusRaw.toLowerCase()
+    const recordingDuration = pickFirstString(req.body?.RecordingDuration, req.query?.RecordingDuration)
+    const transcriptionSid = pickFirstString(req.body?.TranscriptionSid, req.query?.TranscriptionSid)
 
     if (!recordingSid) {
       return res.status(200).send("OK")
     }
 
-    const { data: existing } = await supabase
+    const { data: existing } = await supabaseT
       .from("support_tickets")
       .select("id, ticket_number, call_from_phone, recording_url")
       .eq("recording_sid", recordingSid)
@@ -150,28 +188,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).send("OK")
     }
 
-    const summaryTitle =
-      transcriptionText && transcriptionText.trim()
-        ? transcriptionText.trim().slice(0, 120) + (transcriptionText.length > 120 ? "…" : "")
-        : status === "failed"
-          ? "Help desk trouble — transcription failed"
-          : "Help desk trouble — no transcript"
+    const trimmedText = transcriptionText.trim()
+    /** No usable text from Twilio (failed, completed-but-empty, or missing). */
+    const transcriptFailed = !trimmedText
 
-    await supabase
+    const summaryTitle = trimmedText
+      ? trimmedText.slice(0, 120) + (trimmedText.length > 120 ? "…" : "")
+      : "Help desk trouble — no transcript"
+
+    if (transcriptFailed) {
+      console.warn("[help-desk-trouble-ticket] transcribe: no usable text", {
+        recordingSid,
+        transcriptionSid: transcriptionSid || null,
+        status: statusRaw || null,
+        recordingDuration: recordingDuration || null,
+      })
+    }
+
+    await supabaseT
       .from("support_tickets")
       .update({
-        transcription: transcriptionText || null,
+        transcription: trimmedText || null,
         title: summaryTitle,
-        message: transcriptionText || existing.recording_url || "No transcript text returned.",
+        message: trimmedText || existing.recording_url || "No transcript text returned.",
       })
       .eq("id", existing.id)
 
-    await supabase.from("support_ticket_notes").insert({
+    const failureMeta = [
+      statusRaw ? `Status: ${statusRaw}` : "",
+      recordingDuration ? `Recording duration (seconds): ${recordingDuration}` : "",
+      transcriptionSid ? `TranscriptionSid: ${transcriptionSid}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+    const failureNoteBody = [
+      "Twilio transcription did not return usable text.",
+      failureMeta,
+      "Twilio only transcribes help-desk recordings between about 2 and 120 seconds; keep messages within ~2 minutes. English only. Very short or silent clips often fail.",
+    ]
+      .filter((p) => p.length > 0)
+      .join("\n\n")
+
+    await supabaseT.from("support_ticket_notes").insert({
       ticket_id: existing.id,
-      body:
-        status === "failed"
-          ? "Twilio transcription failed or returned no text."
-          : `Transcript (AI voice-to-text):\n${transcriptionText || "(empty)"}`,
+      body: transcriptFailed ? failureNoteBody : `Transcript (AI voice-to-text):\n${trimmedText}`,
       author_label: "Twilio transcription",
     })
 
@@ -184,7 +244,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `Caller: ${existing.call_from_phone || "unknown"}`,
         `Recording: ${existing.recording_url || "—"}`,
         "",
-        transcriptionText || "(No transcript text)",
+        trimmedText || "(No transcript text)",
       ],
     })
 

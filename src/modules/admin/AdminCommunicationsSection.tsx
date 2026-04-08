@@ -52,7 +52,14 @@ const RESEND_INBOUND_WEBHOOK_URL =
     ? `${String(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1/resend-inbound`
     : "https://YOUR_PROJECT_REF.supabase.co/functions/v1/resend-inbound"
 
-type HelpDeskOnSelect = "dial" | "pin_greeting" | "team_voicemail" | "thanks" | "submenu" | "trouble_ticket"
+type HelpDeskOnSelect =
+  | "dial"
+  | "pin_greeting"
+  | "record_help_desk_greeting"
+  | "team_voicemail"
+  | "thanks"
+  | "submenu"
+  | "trouble_ticket"
 
 type HelpDeskOption = {
   id: string
@@ -122,7 +129,15 @@ function validateEmailChannelsForSave(channelRows: ChannelRow[]) {
 
 function inferHelpDeskOnSelect(row: Record<string, unknown>, forward: string): HelpDeskOnSelect {
   const s = typeof row.on_select === "string" ? row.on_select.trim() : ""
-  if (s === "pin_greeting" || s === "team_voicemail" || s === "thanks" || s === "dial" || s === "submenu" || s === "trouble_ticket")
+  if (
+    s === "pin_greeting" ||
+    s === "record_help_desk_greeting" ||
+    s === "team_voicemail" ||
+    s === "thanks" ||
+    s === "dial" ||
+    s === "submenu" ||
+    s === "trouble_ticket"
+  )
     return s
   return forward.trim() ? "dial" : "thanks"
 }
@@ -1048,7 +1063,8 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                           >
                             <option value="dial">Dial the number above</option>
                             <option value="submenu">Open submenu (add rows with “Show after key” = this row&apos;s digit)</option>
-                            <option value="pin_greeting">PIN greeting recorder (same as pressing 9)</option>
+                            <option value="pin_greeting">Personal mailbox greeting (PIN — saves to that user’s profile)</option>
+                            <option value="record_help_desk_greeting">Main help desk greeting (PIN — saves to admin help desk audio; set Vercel HELP_DESK_GREETING_RECORD_PIN)</option>
                             <option value="team_voicemail">Team voicemail (same as pressing 0)</option>
                             <option value="thanks">Thank you and hang up</option>
                             <option value="trouble_ticket">Trouble ticket (voicemail + AI transcript → admin Trouble Tickets)</option>
@@ -1076,10 +1092,10 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 <strong>Communication events</strong>.
               </div>
               <div style={{ padding: "8px 10px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", color: "#9a3412" }}>
-                If the voice URL is set to <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear this menu — they only get the PIN / record flow. Use <code style={{ fontSize: 11 }}>help-desk-voice</code> here; press <strong>9</strong> on the menu to reach the greeting PIN flow.
+                If the voice URL is set to <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear this menu. Use <code style={{ fontSize: 11 }}>help-desk-voice</code> here. <strong>Press 9</strong> is only announced when no menu row uses “Personal mailbox greeting” — otherwise use that row so callers are not offered two paths. For the <strong>main</strong> opening greeting, use “Main help desk greeting” and set <code style={{ fontSize: 11 }}>HELP_DESK_GREETING_RECORD_PIN</code> on Vercel (4+ digits).
               </div>
               <div>
-                <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Dial</strong> needs a number; <strong>Open submenu</strong> needs dependent rows; <strong>PIN greeting</strong> matches key 9; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).
+                <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Personal mailbox greeting</strong> sends callers to the same flow as the old “press 9” shortcut: they enter the user’s <strong>voicemail greeting PIN</strong> from Account (My T); the recording is saved to that <strong>user’s profile</strong>, not the help desk opening clip. That save runs on Vercel and <strong>requires</strong> env <code style={{ fontSize: 11 }}>SUPABASE_URL</code> and <code style={{ fontSize: 11 }}>SUPABASE_SERVICE_ROLE_KEY</code> (same as other Twilio webhooks). <strong>Dial</strong> needs a number; <strong>Open submenu</strong> needs dependent rows; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).
               </div>
             </div>
           </div>
@@ -1425,6 +1441,9 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                           <option value="summary">Summary</option>
                           <option value="full_transcript">Full transcript</option>
                         </select>
+                        <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.4 }}>
+                          Stored with each inbound voicemail; users can override display in Account → Voicemail → Conversations.
+                        </span>
                       </label>
                     </div>
                     <p style={{ margin: "10px 0 0", fontSize: 12, color: "#6b7280" }}>

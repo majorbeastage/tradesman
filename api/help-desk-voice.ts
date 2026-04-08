@@ -1,7 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv, logCommunicationEvent, normalizePhone, pickFirstString } from "./_communications.js"
 
-type HelpDeskOnSelect = "dial" | "pin_greeting" | "team_voicemail" | "thanks" | "submenu" | "trouble_ticket"
+type HelpDeskOnSelect =
+  | "dial"
+  | "pin_greeting"
+  | "record_help_desk_greeting"
+  | "team_voicemail"
+  | "thanks"
+  | "submenu"
+  | "trouble_ticket"
 
 type HelpDeskOption = {
   id?: string
@@ -60,7 +67,15 @@ function requestPublicOrigin(req: VercelRequest): string {
 
 function normalizeOnSelect(o: HelpDeskOption, forward: string): HelpDeskOnSelect {
   const s = typeof o.on_select === "string" ? o.on_select.trim() : ""
-  if (s === "pin_greeting" || s === "team_voicemail" || s === "thanks" || s === "dial" || s === "submenu" || s === "trouble_ticket")
+  if (
+    s === "pin_greeting" ||
+    s === "record_help_desk_greeting" ||
+    s === "team_voicemail" ||
+    s === "thanks" ||
+    s === "dial" ||
+    s === "submenu" ||
+    s === "trouble_ticket"
+  )
     return s
   return forward ? "dial" : "thanks"
 }
@@ -124,13 +139,17 @@ function playVerbs(url: string): string {
   return `<Play>${xmlEscape(t)}</Play>`
 }
 
+/** Twilio only transcribes Record verb audio when duration is &gt;2s and &lt;120s (see Twilio &lt;Record transcribe&gt; docs). */
+const TWILIO_TRANSCRIBE_MAX_LENGTH_SEC = 118
+
 function helpDeskVoicemailInnerVerbs(origin: string, notifyIds: string[]): string {
   const params = new URLSearchParams()
   params.set("notifyUserIds", notifyIds.join(","))
   const action = `${origin}/api/voicemail-result?${params.toString()}`
+  const transcribeCb = `${action}&phase=transcribe`
   return (
     `<Say ${SAY}>Please leave your message after the tone. When you are finished, you may hang up.</Say>` +
-    `<Record action="${xmlEscape(action)}" method="POST" transcribe="true" maxLength="240" />`
+    `<Record action="${xmlEscape(action)}" transcribeCallback="${xmlEscape(transcribeCb)}" method="POST" transcribe="true" maxLength="${TWILIO_TRANSCRIBE_MAX_LENGTH_SEC}" />`
   )
 }
 
@@ -147,17 +166,35 @@ function buildTroubleTicketRecordTwiml(origin: string, prefixPlay: string): stri
     `<?xml version="1.0" encoding="UTF-8"?><Response>` +
     playVerbs(prefixPlay) +
     `<Say ${SAY}>Please briefly explain your issue. Someone will return your call as soon as possible. When you are finished, you may hang up.</Say>` +
-    `<Record action="${xmlEscape(recordAction)}" transcribeCallback="${xmlEscape(transcribeCb)}" method="POST" transcribe="true" maxLength="180" playBeep="true" />` +
+    `<Record action="${xmlEscape(recordAction)}" transcribeCallback="${xmlEscape(transcribeCb)}" method="POST" transcribe="true" maxLength="${TWILIO_TRANSCRIBE_MAX_LENGTH_SEC}" playBeep="true" />` +
     `<Say ${SAY}>We did not receive your message. Goodbye.</Say>` +
     `<Hangup/>` +
     `</Response>`
   )
 }
 
-function gatherActionUrl(selfUrl: string, parentDigit: string): string {
-  let u = `${selfUrl}?gather=1`
-  if (parentDigit) u += `&parent=${encodeURIComponent(parentDigit)}`
-  return u
+function gatherActionUrl(selfUrl: string, parentDigit: string, extra?: Record<string, string>): string {
+  const q = new URLSearchParams()
+  q.set("gather", "1")
+  if (parentDigit) q.set("parent", parentDigit)
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) q.set(k, v)
+    }
+  }
+  return `${selfUrl}?${q.toString()}`
+}
+
+function buildHelpDeskGreetingRecordTwiml(origin: string): string {
+  const save = `${origin}/api/help-desk-greeting-save`
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?><Response>` +
+    `<Say ${SAY}>After the tone, record the greeting callers hear when they first reach this line. When you are finished, press any key.</Say>` +
+    `<Record action="${xmlEscape(save)}" method="POST" playBeep="true" maxLength="120" />` +
+    `<Say ${SAY}>We did not receive a recording. Goodbye.</Say>` +
+    `<Hangup/>` +
+    `</Response>`
+  )
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -215,6 +252,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   /** Treat missing menu_enabled as true when root options exist (older JSON omitted the flag). */
   const menuExplicitOff = settings.menu_enabled === false
   const menuEnabled = !menuExplicitOff && rootOptions.length > 0
+  /** If a main-menu row already sends callers to the personal PIN greeting recorder, hide the extra "press 9" shortcut. */
+  const hidePersonalGreetingNineShortcut = rootOptions.some((o) => o.enabled && o.on_select === "pin_greeting")
 
   const origin = requestPublicOrigin(req)
   const selfUrl = `${origin}/api/help-desk-voice`
@@ -249,6 +288,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Callback from <Gather>: user pressed a key, or timeout (empty Digits).
   if (fromGather) {
+    const hdGatherKind = pickFirstString(req.query?.hd_gather).toLowerCase()
+    if (hdGatherKind === "help_greet_pin") {
+      const pinEnv = firstEnv("HELP_DESK_GREETING_RECORD_PIN").replace(/\D/g, "")
+      const entered = pickFirstString(req.body?.Digits, req.query?.Digits).replace(/\D/g, "")
+      if (!pinEnv || pinEnv.length < 4) {
+        await logHelpDesk("Help desk: main greeting PIN not configured on server", { phase: "help_greet_pin" })
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>This option is not set up yet. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      if (!entered) {
+        await logHelpDesk("Help desk: main greeting PIN gather timeout", { phase: "help_greet_pin" })
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>We did not receive your code. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      if (entered !== pinEnv) {
+        await logHelpDesk("Help desk: main greeting PIN incorrect", { phase: "help_greet_pin" })
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>That code is not correct. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      await logHelpDesk("Help desk: recording new main greeting (after PIN)", { phase: "help_greet_record" })
+      return sendTwiml(res, buildHelpDeskGreetingRecordTwiml(origin))
+    }
+
     if (!digitsRaw) {
       await logHelpDesk("Help desk: menu timeout (no digit)", { phase: "gather_timeout", parent: parentDigit || null })
       const twiml =
@@ -260,7 +337,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return sendTwiml(res, twiml)
     }
 
-    if (digitsRaw === "9") {
+    if (digitsRaw === "9" && !hidePersonalGreetingNineShortcut) {
       await logHelpDesk("Help desk: redirect to personal greeting (digit 9)", { phase: "greeting_redirect", digit: "9" })
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -335,6 +412,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return sendTwiml(res, buildTroubleTicketRecordTwiml(origin, choice.play_recording_url))
     }
 
+    if (choice.on_select === "record_help_desk_greeting") {
+      const pinEnv = firstEnv("HELP_DESK_GREETING_RECORD_PIN").replace(/\D/g, "")
+      if (!pinEnv || pinEnv.length < 4) {
+        await logHelpDesk("Help desk: record main greeting chosen but PIN env missing", { phase: "record_help_desk_greeting" })
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          `<Say ${SAY}>This option is not set up yet. Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        return sendTwiml(res, twiml)
+      }
+      const action = gatherActionUrl(selfUrl, parentDigit, { hd_gather: "help_greet_pin" })
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Gather numDigits="${pinEnv.length}" action="${xmlEscape(action)}" method="POST" timeout="20">` +
+        `<Say ${SAY}>Enter the operations code to record the main help desk greeting.</Say>` +
+        `</Gather>` +
+        `<Say ${SAY}>We did not receive your code. Goodbye.</Say>` +
+        `<Hangup/>` +
+        `</Response>`
+      return sendTwiml(res, twiml)
+    }
+
     if (choice.on_select === "pin_greeting") {
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -391,7 +494,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     : `<Say ${SAY}>${xmlEscape(greetingText)}</Say>`
 
   if (menuEnabled) {
-    const menuText = buildMenuSay(rootOptions, notifyUserIds.length > 0, true)
+    const menuText = buildMenuSay(rootOptions, notifyUserIds.length > 0, !hidePersonalGreetingNineShortcut)
     const action = gatherActionUrl(selfUrl, "")
     // Important: do NOT put <Record> or voicemail after </Gather> — on timeout Twilio runs those verbs immediately,
     // which skipped the menu and dumped callers into voicemail.

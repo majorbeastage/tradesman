@@ -5,6 +5,8 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } from "../../constants/supportLinks"
+import { supabase } from "../../lib/supabase"
+import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 
 type LoginType = "user" | "office_manager" | "admin"
 
@@ -18,7 +20,7 @@ type LoginPageProps = {
 export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack }: LoginPageProps) {
   const { signIn, signUp, user, role, accountAccessBlocked, clearAccessBlockedReason } = useAuth()
   const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
-  const [mode, setMode] = useState<"signin" | "signup">("signin")
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -39,6 +41,22 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
     setMessage("")
     if (!email.trim()) {
       setError("Email is required.")
+      return
+    }
+    if (mode === "forgot") {
+      if (!supabase) {
+        setError("App is not connected to Supabase.")
+        return
+      }
+      setSubmitting(true)
+      try {
+        const redirectTo = getPasswordRecoveryRedirectTo() || undefined
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined)
+        if (err) setError(err.message)
+        else setMessage("If that email is registered, you will receive a reset link. Check spam folders too.")
+      } finally {
+        setSubmitting(false)
+      }
       return
     }
     if (!password) {
@@ -104,15 +122,31 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
         >
           ← Back to home
         </button>
+        {!isAdminLogin && (
+          <div
+            style={{
+              textAlign: "center",
+              marginBottom: 14,
+              fontSize: 20,
+              fontWeight: 800,
+              letterSpacing: "0.07em",
+              color: theme.charcoal,
+            }}
+          >
+            TRADESMAN
+          </div>
+        )}
         <h1 style={{ margin: "0 0 8px", color: theme.text, fontSize: 22 }}>
-          {isAdminLogin ? "Admin sign in" : mode === "signin" ? "Sign in" : "Create account"}
+          {isAdminLogin ? "Admin sign in" : mode === "forgot" ? "Reset password" : mode === "signin" ? "Sign in" : "Create account"}
         </h1>
         <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
           {isAdminLogin
             ? "Sign in with an admin account."
-            : mode === "signin"
-              ? "Use your email and password to access your data."
-              : "Sign up to get your own workspace."}
+            : mode === "forgot"
+              ? "We will email you a link to choose a new password."
+              : mode === "signin"
+                ? "Use your email and password to access your data."
+                : "Sign up to get your own workspace."}
         </p>
 
         {accountAccessBlocked && (
@@ -175,17 +209,19 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             placeholder="you@example.com"
           />
         </label>
-        <label style={labelStyle}>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "signin" ? "current-password" : "new-password"}
-            style={inputStyle}
-            placeholder="••••••••"
-          />
-        </label>
+        {mode !== "forgot" && (
+          <label style={labelStyle}>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              style={inputStyle}
+              placeholder="••••••••"
+            />
+          </label>
+        )}
         {mode === "signup" && !isAdminLogin && (
           <label style={labelStyle}>
             Confirm password
@@ -216,11 +252,26 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             cursor: submitting ? "wait" : "pointer",
           }}
         >
-          {submitting ? "Please wait…" : mode === "signin" ? "Sign in" : "Sign up"}
+          {submitting ? "Please wait…" : mode === "forgot" ? "Send reset link" : mode === "signin" ? "Sign in" : "Sign up"}
         </button>
+        {!isAdminLogin && mode === "signin" && (
+          <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
+            <button
+              type="button"
+              onClick={() => { setMode("forgot"); setError(""); setMessage("") }}
+              style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600, padding: 0 }}
+            >
+              Forgot password?
+            </button>
+          </p>
+        )}
         {!isAdminLogin && (
           <p style={{ marginTop: 16, fontSize: 14, color: theme.text }}>
-            {mode === "signin" ? (
+            {mode === "forgot" ? (
+              <button type="button" onClick={() => { setMode("signin"); setError(""); setMessage("") }} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
+                ← Back to sign in
+              </button>
+            ) : mode === "signin" ? (
               <>
                 No account?{" "}
                 <button type="button" onClick={() => setMode("signup")} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>

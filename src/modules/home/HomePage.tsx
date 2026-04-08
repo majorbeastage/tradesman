@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import logo from "../../assets/logo.png"
+import { consumeAuthHashErrorMessage } from "../../lib/authRedirectBase"
 
 type HomePageProps = {
   onLogin: () => void
@@ -54,6 +55,12 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [pinnedId, setPinnedId] = useState<string | null>(null)
+  const [authLinkBanner, setAuthLinkBanner] = useState<string | null>(null)
+
+  useEffect(() => {
+    const msg = consumeAuthHashErrorMessage()
+    if (msg) setAuthLinkBanner(msg)
+  }, [])
 
   useEffect(() => {
     const mq = window.matchMedia("(hover: hover)")
@@ -93,6 +100,43 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
           flexDirection: "column",
         }}
       >
+        {authLinkBanner && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 14,
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "#fff7ed",
+              border: "1px solid #fdba74",
+              color: "#9a3412",
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ display: "block", marginBottom: 4 }}>Link issue</strong>
+            {authLinkBanner}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setAuthLinkBanner(null)
+                onLogin()
+              }}
+              style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "none",
+                background: theme.primary,
+                color: "#fff",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Open User Login to request a new reset
+            </button>
+          </div>
+        )}
         <div
           style={{
             display: "flex",

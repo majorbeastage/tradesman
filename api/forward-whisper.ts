@@ -63,9 +63,9 @@ async function handleWhisperKeypress(req: VercelRequest, res: VercelResponse): P
 
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
-  const host = pickFirstString(req.headers.host)
+  const host = pickFirstString(req.headers["x-forwarded-host"], req.headers.host)
   if (!host) return "https://tradesman.vercel.app"
-  return `${proto}://${host}`
+  return `${proto}://${host.split(",")[0].trim()}`
 }
 
 function sanitizeName(value: string): string {

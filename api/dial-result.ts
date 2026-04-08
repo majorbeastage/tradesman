@@ -8,9 +8,9 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
 
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
-  const host = pickFirstString(req.headers.host)
+  const host = pickFirstString(req.headers["x-forwarded-host"], req.headers.host)
   if (!host) return "https://tradesman.vercel.app"
-  return `${proto}://${host}`
+  return `${proto}://${host.split(",")[0].trim()}`
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -38,6 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (to) params.set("to", to)
     if (from) params.set("from", from)
     const recordAction = `${origin}/api/voicemail-result${params.size ? `?${params.toString()}` : ""}`
+    const transcribeUrl = `${recordAction}${params.size ? "&" : "?"}phase=transcribe`
 
     try {
       const supabase = createServiceSupabase()
@@ -62,11 +63,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           metadata: { from, to, dial_call_status: dialCallStatus, provider: channel.provider },
         })
       }
-      return sendTwiml(res, buildVoicemailTwiml({ recordAction, routingProfile }))
+      return sendTwiml(
+        res,
+        buildVoicemailTwiml({ recordAction, transcribeCallback: transcribeUrl, routingProfile }),
+      )
     } catch {
       // Twilio still needs a TwiML response even if logging fails.
     }
-    return sendTwiml(res, buildVoicemailTwiml({ recordAction, routingProfile: null }))
+    return sendTwiml(
+      res,
+      buildVoicemailTwiml({ recordAction, transcribeCallback: transcribeUrl, routingProfile: null }),
+    )
   }
 
   return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)

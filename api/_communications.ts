@@ -138,6 +138,116 @@ export function createServiceSupabase(): SupabaseClient {
   })
 }
 
+/**
+ * True when {@link createServiceSupabase} would succeed (Twilio → `/api/*` routes need this to write to DB/storage).
+ */
+export function hasServerSupabaseServiceConfig(): boolean {
+  const supabaseUrl = pickSupabaseUrlForServer().replace(/\/+$/, "")
+  return Boolean(supabaseUrl && pickServiceRoleKeyForServer())
+}
+
+function pickSupabaseAnonKeyForServer(): string {
+  const direct = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+  if (direct) return direct
+  for (const name of ["SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+    const v = firstEnvCaseInsensitive(name)
+    if (v) return v
+  }
+  return ""
+}
+
+/**
+ * Verify a user JWT and ensure profiles.role === admin, using only the anon key (no service role).
+ * Use for serverless routes where VITE_* / SUPABASE_SERVICE_ROLE_KEY may be missing but anon + URL are set.
+ */
+export async function verifyAdminJwtWithAnonSupabase(
+  accessToken: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, string> }> {
+  const supabaseUrl = pickSupabaseUrlForServer().replace(/\/+$/, "")
+  const anonKey = pickSupabaseAnonKeyForServer()
+  if (!supabaseUrl || !anonKey) {
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        error: "Missing server env for auth verification",
+        message:
+          "Set SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_ANON_KEY (or VITE_SUPABASE_ANON_KEY) on the server. For admin-only APIs that also need DB bypass, add SUPABASE_SERVICE_ROLE_KEY.",
+      },
+    }
+  }
+  const anon = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: userData, error: authErr } = await anon.auth.getUser(accessToken)
+  if (authErr || !userData?.user?.id) {
+    return { ok: false, status: 401, body: { error: "Invalid or expired session" } }
+  }
+  const asUser = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: profile, error: profileErr } = await asUser
+    .from("profiles")
+    .select("role")
+    .eq("id", userData.user.id)
+    .maybeSingle()
+  if (profileErr) {
+    console.error("[verifyAdminJwtWithAnonSupabase] profile", profileErr.message)
+    return { ok: false, status: 500, body: { error: "Could not verify access" } }
+  }
+  if ((profile as { role?: string } | null)?.role !== "admin") {
+    return { ok: false, status: 403, body: { error: "Admin only" } }
+  }
+  return { ok: true }
+}
+
+/**
+ * Prefer anon-key verification (no service role). If that fails for env or DB policy reasons,
+ * fall back to service role + {@link createServiceSupabase} so admin-only routes work when only
+ * SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set on the server (common on Vercel).
+ */
+export async function verifyAdminJwtAnonOrServiceSupabase(
+  accessToken: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, string> }> {
+  const anonResult = await verifyAdminJwtWithAnonSupabase(accessToken)
+  if (anonResult.ok) return anonResult
+  if (anonResult.status === 401 || anonResult.status === 403) return anonResult
+
+  try {
+    const supabase = createServiceSupabase()
+    const { data: userData, error: authErr } = await supabase.auth.getUser(accessToken)
+    if (authErr || !userData?.user?.id) {
+      return { ok: false, status: 401, body: { error: "Invalid or expired session" } }
+    }
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .maybeSingle()
+    if (profileErr) {
+      console.error("[verifyAdminJwtAnonOrServiceSupabase] profile", profileErr.message)
+      return { ok: false, status: 500, body: { error: "Could not verify access" } }
+    }
+    if ((profile as { role?: string } | null)?.role !== "admin") {
+      return { ok: false, status: 403, body: { error: "Admin only" } }
+    }
+    return { ok: true }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        error: "Missing server env for admin recording playback",
+        message: msg,
+        hint:
+          "Set SUPABASE_URL and either SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY for Vercel serverless (Production), then redeploy.",
+      },
+    }
+  }
+}
+
 function defaultRoutingHours(): Record<RoutingDayKey, RoutingWindow> {
   return {
     sun: { enabled: false, open: "09:00", close: "17:00" },
@@ -296,6 +406,8 @@ export function twilioPlayLikelySupportedRecordingUrl(url: string): boolean {
 
 export function buildVoicemailTwiml(params: {
   recordAction: string
+  /** Twilio POSTs here when STT completes (same query string as recordAction + phase=transcribe). */
+  transcribeCallback?: string
   routingProfile: UserRoutingProfile | null
 }): string {
   const greetingText =
@@ -310,11 +422,15 @@ export function buildVoicemailTwiml(params: {
     ? `<Play>${xmlEscape(recordedUrl)}</Play>`
     : `<Say ${sayAttrs}>${xmlEscape(greetingText)}</Say>`
 
+  const transcribeCb =
+    params.transcribeCallback && params.transcribeCallback.trim()
+      ? ` transcribeCallback="${xmlEscape(params.transcribeCallback.trim())}"`
+      : ""
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
     greetingNode +
-    `<Record action="${xmlEscape(params.recordAction)}" method="POST" transcribe="true" />` +
+    `<Record action="${xmlEscape(params.recordAction)}" method="POST" transcribe="true"${transcribeCb} maxLength="118" />` +
     `</Response>`
   )
 }

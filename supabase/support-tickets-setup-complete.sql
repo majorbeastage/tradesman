@@ -45,10 +45,11 @@ ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS call_from_phone TEXT
 ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS preferred_contact TEXT;
 ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false;
 
 ALTER TABLE public.support_tickets DROP CONSTRAINT IF EXISTS support_tickets_priority_check;
 ALTER TABLE public.support_tickets ADD CONSTRAINT support_tickets_priority_check
-  CHECK (priority IN ('normal', 'high'));
+  CHECK (priority IN ('low', 'medium', 'normal', 'high'));
 
 ALTER TABLE public.support_tickets DROP CONSTRAINT IF EXISTS support_tickets_status_check;
 ALTER TABLE public.support_tickets ADD CONSTRAINT support_tickets_status_check
@@ -124,6 +125,11 @@ CREATE POLICY "Admins update support_tickets"
   ON public.support_tickets FOR UPDATE TO authenticated
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Admins delete support_tickets" ON public.support_tickets;
+CREATE POLICY "Admins delete support_tickets"
+  ON public.support_tickets FOR DELETE TO authenticated
+  USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Allow authenticated select support_ticket_notes" ON public.support_ticket_notes;
 CREATE POLICY "Allow authenticated select support_ticket_notes"
