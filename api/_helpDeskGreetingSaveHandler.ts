@@ -15,20 +15,22 @@ const SAY = `voice="Polly.Matthew" language="en-US"`
  * Twilio Record callback: download greeting, upload to voicemail-greetings/global/…, merge into platform_settings.tradesman_help_desk.
  * Reached only after caller passed HELP_DESK_GREETING_RECORD_PIN in help-desk-voice.
  */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export async function helpDeskGreetingSaveHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST")
-    return res.status(405).send("Method not allowed")
+    res.status(405).send("Method not allowed")
+    return
   }
 
   const recordingUrl = pickFirstString(req.body?.RecordingUrl, req.query?.RecordingUrl)
   const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
 
   if (!recordingUrl && !recordingSid) {
-    return sendTwiml(
+    sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>No recording was received. Goodbye.</Say><Hangup/></Response>`,
     )
+    return
   }
 
   try {
@@ -74,14 +76,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
     if (upRowErr) throw upRowErr
 
-    return sendTwiml(
+    sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Your help desk greeting has been saved. Thank you. Goodbye.</Say><Hangup/></Response>`,
     )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error("[help-desk-greeting-save]", msg)
-    return sendTwiml(
+    sendTwiml(
       res,
       `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not save the greeting. Check server logs and Supabase storage. Goodbye.</Say><Hangup/></Response>`,
     )

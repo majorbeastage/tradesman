@@ -5,15 +5,16 @@
   "installCommand": "npm install",
   "functions": {
     "api/incoming-email.ts": { "maxDuration": 60 },
-    "api/help-desk-voice.ts": { "maxDuration": 30 },
+    "api/help-desk.ts": { "maxDuration": 30 },
     "api/help-desk-trouble-ticket-result.ts": { "maxDuration": 60 },
-    "api/help-desk-greeting-save.ts": { "maxDuration": 60 },
     "api/voicemail-greeting.ts": { "maxDuration": 60 },
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 }
   },
   "rewrites": [
+    { "source": "/api/help-desk-voice", "destination": "/api/help-desk?__route=voice" },
+    { "source": "/api/help-desk-greeting-save", "destination": "/api/help-desk?__route=greeting-save" },
     { "source": "/reset-password", "destination": "/index.html" },
     { "source": "/api/send-email", "destination": "/api/outbound-messages?__channel=email" },
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },

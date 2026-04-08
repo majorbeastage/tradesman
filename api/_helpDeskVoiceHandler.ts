@@ -60,9 +60,9 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
 
 function requestPublicOrigin(req: VercelRequest): string {
   const proto = pickFirstString(req.headers["x-forwarded-proto"], "https")
-  const host = pickFirstString(req.headers.host)
+  const host = pickFirstString(req.headers["x-forwarded-host"], req.headers.host)
   if (!host) return "https://tradesman.vercel.app"
-  return `${proto}://${host}`
+  return `${proto}://${host.split(",")[0].trim()}`
 }
 
 function normalizeOnSelect(o: HelpDeskOption, forward: string): HelpDeskOnSelect {
@@ -197,19 +197,21 @@ function buildHelpDeskGreetingRecordTwiml(origin: string): string {
   )
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method === "GET") {
-    return res.status(200).json({
+    res.status(200).json({
       ok: true,
       route: "help-desk-voice",
       hint:
         "Set your Twilio toll-free Voice webhook (POST) to this URL for the Tradesman help desk menu. Use /api/voicemail-greeting only if you use a separate number for PIN greeting updates.",
     })
+    return
   }
 
   if (req.method !== "POST") {
     res.setHeader("Allow", "GET, POST")
-    return res.status(405).send("Method not allowed")
+    res.status(405).send("Method not allowed")
+    return
   }
 
   const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
@@ -300,7 +302,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>This option is not set up yet. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       if (!entered) {
         await logHelpDesk("Help desk: main greeting PIN gather timeout", { phase: "help_greet_pin" })
@@ -310,7 +313,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>We did not receive your code. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       if (entered !== pinEnv) {
         await logHelpDesk("Help desk: main greeting PIN incorrect", { phase: "help_greet_pin" })
@@ -320,10 +324,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>That code is not correct. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       await logHelpDesk("Help desk: recording new main greeting (after PIN)", { phase: "help_greet_record" })
-      return sendTwiml(res, buildHelpDeskGreetingRecordTwiml(origin))
+      sendTwiml(res, buildHelpDeskGreetingRecordTwiml(origin))
+      return
     }
 
     if (!digitsRaw) {
@@ -334,7 +340,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>We did not receive your selection. Please call again. Goodbye.</Say>` +
         `<Hangup/>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (digitsRaw === "9" && !hidePersonalGreetingNineShortcut) {
@@ -344,12 +351,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Response>` +
         `<Redirect method="POST">${xmlEscape(voicemailGreetingUrl)}</Redirect>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (digitsRaw === "0" && notifyUserIds.length > 0) {
       await logHelpDesk("Help desk: voicemail (digit 0)", { phase: "voicemail", digit: "0" })
-      return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds))
+      sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds))
+      return
     }
 
     const pool = optionPool()
@@ -362,7 +371,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>That option is not available. Goodbye.</Say>` +
         `<Hangup/>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     const forward = normalizePhone(choice.forward_to_phone || "")
@@ -383,7 +393,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>That option is not available. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       const subRows = enabledOptions.filter((o) => o.depends_on_digit === choice.digit)
       if (subRows.length === 0) {
@@ -393,7 +404,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>That menu is not set up yet. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       const menuText = buildMenuSay(subRows, false, false)
       const action = gatherActionUrl(selfUrl, choice.digit)
@@ -405,11 +417,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
         `</Gather>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (choice.on_select === "trouble_ticket") {
-      return sendTwiml(res, buildTroubleTicketRecordTwiml(origin, choice.play_recording_url))
+      sendTwiml(res, buildTroubleTicketRecordTwiml(origin, choice.play_recording_url))
+      return
     }
 
     if (choice.on_select === "record_help_desk_greeting") {
@@ -422,7 +436,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `<Say ${SAY}>This option is not set up yet. Goodbye.</Say>` +
           `<Hangup/>` +
           `</Response>`
-        return sendTwiml(res, twiml)
+        sendTwiml(res, twiml)
+        return
       }
       const action = gatherActionUrl(selfUrl, parentDigit, { hd_gather: "help_greet_pin" })
       const twiml =
@@ -435,7 +450,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>We did not receive your code. Goodbye.</Say>` +
         `<Hangup/>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (choice.on_select === "pin_greeting") {
@@ -446,12 +462,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>${xmlEscape("Please wait while we connect you to the greeting recorder.")}</Say>` +
         `<Redirect method="POST">${xmlEscape(voicemailGreetingUrl)}</Redirect>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (choice.on_select === "team_voicemail") {
       if (notifyUserIds.length > 0) {
-        return sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds, choice.play_recording_url))
+        sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds, choice.play_recording_url))
+        return
       }
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -460,7 +478,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>Team voicemail is not available right now. Goodbye.</Say>` +
         `<Hangup/>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     if (choice.on_select === "dial" && forward) {
@@ -473,7 +492,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `<Say ${SAY}>We could not complete your call. Goodbye.</Say>` +
         `<Hangup/>` +
         `</Response>`
-      return sendTwiml(res, twiml)
+      sendTwiml(res, twiml)
+      return
     }
 
     const twiml =
@@ -483,7 +503,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `<Say ${SAY}>${xmlEscape(`Thank you for calling Tradesman. Goodbye.`)}</Say>` +
       `<Hangup/>` +
       `</Response>`
-    return sendTwiml(res, twiml)
+    sendTwiml(res, twiml)
+    return
   }
 
   // Initial answer (no gather callback).
@@ -506,7 +527,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
       `</Gather>` +
       `</Response>`
-    return sendTwiml(res, twiml)
+    sendTwiml(res, twiml)
+    return
   }
 
   const twiml =
@@ -516,5 +538,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `<Say ${SAY}>Goodbye.</Say>` +
     `<Hangup/>` +
     `</Response>`
-  return sendTwiml(res, twiml)
+  sendTwiml(res, twiml)
 }
