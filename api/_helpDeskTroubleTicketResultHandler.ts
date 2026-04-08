@@ -53,10 +53,11 @@ async function notifyTicketEmail(params: {
   }
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export async function helpDeskTroubleTicketResultHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST")
-    return res.status(405).send("Method not allowed")
+    res.status(405).send("Method not allowed")
+    return
   }
 
   const phase = pickFirstString(req.query?.phase).toLowerCase() || "record"
@@ -68,10 +69,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       supabase = createServiceSupabase()
     } catch (e) {
       console.error("[help-desk-trouble-ticket] record: Supabase not configured", e instanceof Error ? e.message : e)
-      return sendTwiml(
+      sendTwiml(
         res,
         `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not save your message in our system right now. Please try the website or call back later.</Say><Hangup/></Response>`,
       )
+      return
     }
     const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
     const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
@@ -79,10 +81,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const recordingUrl = pickFirstString(req.body?.RecordingUrl, req.query?.RecordingUrl)
 
     if (!recordingSid) {
-      return sendTwiml(
+      sendTwiml(
         res,
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not capture your message. Goodbye.</Say><Hangup/></Response>`
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>We could not capture your message. Goodbye.</Say><Hangup/></Response>`,
       )
+      return
     }
 
     const title = "Help desk trouble — voicemail received"
@@ -150,10 +153,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
-    return sendTwiml(
+    sendTwiml(
       res,
-      `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Thank you. We have your message and will get back to you as soon as possible. Goodbye.</Say><Hangup/></Response>`
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say ${SAY}>Thank you. We have your message and will get back to you as soon as possible. Goodbye.</Say><Hangup/></Response>`,
     )
+    return
   }
 
   if (phase === "transcribe") {
@@ -162,18 +166,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       supabaseT = createServiceSupabase()
     } catch (e) {
       console.error("[help-desk-trouble-ticket] transcribe: Supabase not configured", e instanceof Error ? e.message : e)
-      return res.status(200).send("OK")
+      res.status(200).send("OK")
+      return
     }
 
     const recordingSid = pickFirstString(req.body?.RecordingSid, req.query?.RecordingSid)
     const transcriptionText = pickFirstString(req.body?.TranscriptionText, req.query?.TranscriptionText)
     const statusRaw = pickFirstString(req.body?.TranscriptionStatus, req.query?.TranscriptionStatus)
-    const status = statusRaw.toLowerCase()
     const recordingDuration = pickFirstString(req.body?.RecordingDuration, req.query?.RecordingDuration)
     const transcriptionSid = pickFirstString(req.body?.TranscriptionSid, req.query?.TranscriptionSid)
 
     if (!recordingSid) {
-      return res.status(200).send("OK")
+      res.status(200).send("OK")
+      return
     }
 
     const { data: existing } = await supabaseT
@@ -185,11 +190,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!existing?.id) {
       console.warn("[help-desk-trouble-ticket] transcribe: no ticket for recording", recordingSid)
-      return res.status(200).send("OK")
+      res.status(200).send("OK")
+      return
     }
 
     const trimmedText = transcriptionText.trim()
-    /** No usable text from Twilio (failed, completed-but-empty, or missing). */
     const transcriptFailed = !trimmedText
 
     const summaryTitle = trimmedText
@@ -248,8 +253,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ],
     })
 
-    return res.status(200).send("OK")
+    res.status(200).send("OK")
+    return
   }
 
-  return res.status(400).send("Unknown phase")
+  res.status(400).send("Unknown phase")
 }

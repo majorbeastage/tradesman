@@ -1,10 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { helpDeskGreetingSaveHandler } from "./_helpDeskGreetingSaveHandler.js"
+import { helpDeskTroubleTicketResultHandler } from "./_helpDeskTroubleTicketResultHandler.js"
 import { helpDeskVoiceHandler } from "./_helpDeskVoiceHandler.js"
 
 /**
- * Single Vercel Serverless Function for Hobby plan limits (12 max).
- * Rewrites map /api/help-desk-voice and /api/help-desk-greeting-save here with ?__route=…
+ * Single Vercel entry for help-desk routes (Hobby plan: 12 serverless functions max).
+ * Rewrites: help-desk-voice, help-desk-greeting-save, help-desk-trouble-ticket-result → ?__route=…
  */
 function routeKey(req: VercelRequest): string {
   const q = req.query?.__route
@@ -17,6 +18,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const key = routeKey(req)
   if (key === "greeting-save") {
     await helpDeskGreetingSaveHandler(req, res)
+    return
+  }
+  if (key === "trouble-ticket-result") {
+    await helpDeskTroubleTicketResultHandler(req, res)
     return
   }
   await helpDeskVoiceHandler(req, res)

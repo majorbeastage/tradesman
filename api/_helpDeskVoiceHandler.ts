@@ -159,9 +159,9 @@ function buildHelpDeskVoicemailTwiml(origin: string, notifyIds: string[], prefix
 }
 
 function buildTroubleTicketRecordTwiml(origin: string, prefixPlay: string): string {
-  const base = `${origin}/api/help-desk-trouble-ticket-result`
-  const recordAction = `${base}?phase=record`
-  const transcribeCb = `${base}?phase=transcribe`
+  const base = `${origin}/api/help-desk?__route=trouble-ticket-result`
+  const recordAction = `${base}&phase=record`
+  const transcribeCb = `${base}&phase=transcribe`
   return (
     `<?xml version="1.0" encoding="UTF-8"?><Response>` +
     playVerbs(prefixPlay) +
