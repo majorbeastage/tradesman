@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react"
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
+import { revokeOtherAuthSessions } from "../lib/authSingleSession"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 
@@ -107,13 +108,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    return { error: error ?? null }
+    if (error) return { error }
+    await revokeOtherAuthSessions()
+    return { error: null }
   }, [])
 
   const signUp = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Supabase not configured") }
-    const { error } = await supabase.auth.signUp({ email, password })
-    return { error: error ?? null }
+    const { data, error } = await supabase.auth.signUp({ email, password })
+    if (error) return { error }
+    if (data.session) await revokeOtherAuthSessions()
+    return { error: null }
   }, [])
 
   const signOut = useCallback(async () => {

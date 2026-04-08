@@ -43,6 +43,12 @@ type ProfileForm = {
   forward_whisper_require_keypress: boolean
   /** profiles.voicemail_conversations_display — overrides Conversations UI only. */
   voicemail_conversations_display: "use_channel" | "summary" | "full_transcript"
+  embed_lead_enabled: boolean
+  embed_lead_slug: string
+  ai_thread_summary_enabled: boolean
+  ai_assistant_visible: boolean
+  document_template_quote: string
+  document_template_receipt: string
 }
 
 const DEFAULT_WHISPER_TEMPLATE_HINT =
@@ -217,6 +223,12 @@ export function AccountProfilePanel({
     forward_whisper_only_outside_business_hours: false,
     forward_whisper_require_keypress: false,
     voicemail_conversations_display: "use_channel",
+    embed_lead_enabled: false,
+    embed_lead_slug: "",
+    ai_thread_summary_enabled: false,
+    ai_assistant_visible: false,
+    document_template_quote: "",
+    document_template_receipt: "",
   })
 
   const emailForDisplay = useMemo(() => (loginEmail?.trim() || profileEmailFromDb).trim(), [loginEmail, profileEmailFromDb])
@@ -240,7 +252,7 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, embed_lead_enabled, embed_lead_slug, ai_thread_summary_enabled, ai_assistant_visible, document_template_quote, document_template_receipt")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
@@ -283,6 +295,12 @@ export function AccountProfilePanel({
             (data as { voicemail_conversations_display?: string }).voicemail_conversations_display === "full_transcript"
               ? ((data as { voicemail_conversations_display?: string }).voicemail_conversations_display as ProfileForm["voicemail_conversations_display"])
               : "use_channel",
+          embed_lead_enabled: (data as { embed_lead_enabled?: boolean }).embed_lead_enabled === true,
+          embed_lead_slug: String((data as { embed_lead_slug?: string | null }).embed_lead_slug ?? "").trim(),
+          ai_thread_summary_enabled: (data as { ai_thread_summary_enabled?: boolean }).ai_thread_summary_enabled === true,
+          ai_assistant_visible: (data as { ai_assistant_visible?: boolean }).ai_assistant_visible === true,
+          document_template_quote: String((data as { document_template_quote?: string | null }).document_template_quote ?? ""),
+          document_template_receipt: String((data as { document_template_receipt?: string | null }).document_template_receipt ?? ""),
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -331,6 +349,12 @@ export function AccountProfilePanel({
         forward_whisper_only_outside_business_hours: form.forward_whisper_only_outside_business_hours,
         forward_whisper_require_keypress: form.forward_whisper_require_keypress,
         voicemail_conversations_display: form.voicemail_conversations_display,
+        embed_lead_enabled: form.embed_lead_enabled,
+        embed_lead_slug: form.embed_lead_slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64) || null,
+        ai_thread_summary_enabled: form.ai_thread_summary_enabled,
+        ai_assistant_visible: form.ai_assistant_visible,
+        document_template_quote: form.document_template_quote.trim() || null,
+        document_template_receipt: form.document_template_receipt.trim() || null,
         updated_at: new Date().toISOString(),
       }
       let { error } = await supabase.from("profiles").update(payload).eq("id", profileUserId)
@@ -1001,6 +1025,83 @@ export function AccountProfilePanel({
               </div>
             </Fragment>
               )
+              if (sectionId === "capture_documents") {
+                const origin = typeof window !== "undefined" ? window.location.origin : ""
+                const slug = form.embed_lead_slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64)
+                const embedUrl = slug ? `${origin}/embed/lead/${encodeURIComponent(slug)}` : ""
+                return (
+                  <Fragment key={sectionId}>
+                    <div style={ACCOUNT_SECTION_CARD}>
+                      <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Web lead form, AI, and PDF templates</h2>
+                      <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
+                        Public embed posts to your app&apos;s API (no login). Enable only after you set a unique slug. Thread summary uses OpenAI on the server when{" "}
+                        <code style={{ fontSize: 11 }}>OPENAI_API_KEY</code> is set on Vercel.
+                      </p>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                        <input
+                          type="checkbox"
+                          checked={form.embed_lead_enabled}
+                          onChange={(e) => setForm((prev) => ({ ...prev, embed_lead_enabled: e.target.checked }))}
+                        />
+                        Enable embeddable lead form
+                      </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Embed slug (letters, numbers, hyphens; min 3)</span>
+                        <input
+                          value={form.embed_lead_slug}
+                          onChange={(e) => setForm((prev) => ({ ...prev, embed_lead_slug: e.target.value }))}
+                          style={theme.formInput}
+                          placeholder="e.g. joes-plumbing"
+                        />
+                      </label>
+                      {embedUrl ? (
+                        <p style={{ margin: 0, fontSize: 12, color: "#4b5563", wordBreak: "break-all" }}>
+                          <strong>Form URL:</strong>{" "}
+                          <a href={embedUrl} style={{ color: theme.primary }} target="_blank" rel="noopener noreferrer">
+                            {embedUrl}
+                          </a>
+                        </p>
+                      ) : null}
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                        <input
+                          type="checkbox"
+                          checked={form.ai_thread_summary_enabled}
+                          onChange={(e) => setForm((prev) => ({ ...prev, ai_thread_summary_enabled: e.target.checked }))}
+                        />
+                        Allow AI thread summary (Conversations)
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                        <input
+                          type="checkbox"
+                          checked={form.ai_assistant_visible}
+                          onChange={(e) => setForm((prev) => ({ ...prev, ai_assistant_visible: e.target.checked }))}
+                        />
+                        Show AI assistant entry points (reserved for future UI)
+                      </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Quote PDF — header/footer notes (plain text)</span>
+                        <textarea
+                          value={form.document_template_quote}
+                          onChange={(e) => setForm((prev) => ({ ...prev, document_template_quote: e.target.value }))}
+                          rows={4}
+                          style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                          placeholder="Shown on generated quote PDFs from the Quotes tab."
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Receipt PDF — footer note (plain text)</span>
+                        <textarea
+                          value={form.document_template_receipt}
+                          onChange={(e) => setForm((prev) => ({ ...prev, document_template_receipt: e.target.value }))}
+                          rows={3}
+                          style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                          placeholder="Shown on receipt PDFs from Calendar."
+                        />
+                      </label>
+                    </div>
+                  </Fragment>
+                )
+              }
               if (sectionId === "password_reset") {
                 if (!showPasswordReset) return null
                 return (

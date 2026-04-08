@@ -25,6 +25,10 @@ type OutboundPayload = {
   userId?: string
   conversationId?: string
   customerId?: string
+  /** Public HTTPS URLs (e.g. Supabase storage); fetched server-side and attached for Resend. */
+  attachmentPublicUrls?: unknown
+  /** Twilio MMS: public URLs of images/files (max ~10). */
+  mediaPublicUrls?: unknown
 }
 
 /** Vercel sometimes delivers `body` as a string; rewrites should still forward JSON. */
@@ -128,6 +132,57 @@ function pickFirstString(...values: unknown[]): string {
   return ""
 }
 
+function coercePublicUrlList(raw: unknown): string[] {
+  if (!raw) return []
+  if (Array.isArray(raw)) {
+    return raw
+      .map((x) => (typeof x === "string" ? x.trim() : ""))
+      .filter((u) => u.startsWith("https://") && u.length < 2048)
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter((u) => u.startsWith("https://"))
+  }
+  return []
+}
+
+function filenameFromUrl(u: string, index: number): string {
+  try {
+    const path = new URL(u).pathname.split("/").filter(Boolean).pop() || ""
+    const cleaned = path.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120)
+    if (cleaned) return cleaned
+  } catch {
+    /* ignore */
+  }
+  return `attachment-${index + 1}`
+}
+
+async function fetchUrlsAsResendAttachments(urls: string[]): Promise<Array<{ filename: string; content: string }>> {
+  const out: Array<{ filename: string; content: string }> = []
+  const maxBytes = 15 * 1024 * 1024
+  for (let i = 0; i < urls.length; i++) {
+    const u = urls[i]
+    try {
+      const ac = new AbortController()
+      const t = setTimeout(() => ac.abort(), 20_000)
+      const res = await fetch(u, { signal: ac.signal })
+      clearTimeout(t)
+      if (!res.ok) continue
+      const buf = Buffer.from(await res.arrayBuffer())
+      if (buf.length === 0 || buf.length > maxBytes) continue
+      out.push({
+        filename: filenameFromUrl(u, i),
+        content: buf.toString("base64"),
+      })
+    } catch {
+      /* skip */
+    }
+  }
+  return out
+}
+
 function resolveChannel(req: VercelRequest, payload: OutboundPayload): "email" | "sms" {
   const q = pickFirstString(req.query?.__channel, req.query?.channel).toLowerCase()
   if (q === "email" || q === "sms") return q
@@ -147,6 +202,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
   const customerId = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
+  const attachUrls = coercePublicUrlList(payload.attachmentPublicUrls).slice(0, 15)
 
   if (toList.length === 0 || !subject || !body || !userId) {
     return res.status(400).json({
@@ -216,6 +272,11 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   }
   if (ccList.length) resendPayload.cc = ccList
   if (bccMerged.length) resendPayload.bcc = bccMerged
+
+  if (attachUrls.length > 0) {
+    const attachments = await fetchUrlsAsResendAttachments(attachUrls)
+    if (attachments.length > 0) resendPayload.attachments = attachments
+  }
 
   let resendResponse: Response
   try {
@@ -307,29 +368,30 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
+  const mediaUrls = coercePublicUrlList(payload.mediaPublicUrls).slice(0, 10)
 
   if (!to || !body) return res.status(400).json({ error: "to and body are required" })
 
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
-  let supabase: ReturnType<typeof createServiceSupabase>
+  const outboundWebhookUrl = firstEnv("SMS_OUTBOUND_WEBHOOK_URL")
+
+  let supabase: ReturnType<typeof createServiceSupabase> | null = null
   try {
     supabase = createServiceSupabase()
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return res.status(500).json({
-      error: "Server SMS misconfiguration",
-      message: msg,
-      hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel for this project.",
-    })
+  } catch {
+    // Twilio can still send using TWILIO_FROM_NUMBER; DB channel + communication_events need Supabase.
   }
-  const dbChannel = userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
+
+  const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
   const fromNumber = normalizePhone(dbChannel?.public_address || firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
-  const outboundWebhookUrl = firstEnv("SMS_OUTBOUND_WEBHOOK_URL")
 
   if (accountSid && authToken && fromNumber) {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`
     const params = new URLSearchParams({ To: to, From: fromNumber, Body: body })
+    for (const u of mediaUrls) {
+      params.append("MediaUrl", u)
+    }
     const twilioRes = await fetch(url, {
       method: "POST",
       headers: {
@@ -340,7 +402,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
     })
     const text = await twilioRes.text()
     if (!twilioRes.ok) return res.status(twilioRes.status).send(text)
-    if (userId) {
+    if (userId && supabase) {
       try {
         await logCommunicationEvent(supabase, {
           user_id: userId,
@@ -366,6 +428,16 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
           logWarning: "SMS was sent but the conversation log could not be saved.",
         })
       }
+    } else if (userId && !supabase) {
+      return res.status(200).json({
+        ok: true,
+        provider: "twilio",
+        to,
+        from: fromNumber,
+        detail: text,
+        logWarning:
+          "SMS was sent but conversation logging and per-user SMS channel lookup were skipped. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel to log replies and use Admin → Communications SMS numbers.",
+      })
     }
     return res.status(200).json({ ok: true, provider: "twilio", to, from: fromNumber, detail: text })
   }

@@ -11,6 +11,8 @@ import {
   getPageActionVisible,
 } from "../../types/portal-builder"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
+import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
+import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
@@ -46,6 +48,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [selectedLead, setSelectedLead] = useState<any>(null)
   const [messages, setMessages] = useState<any[]>([])
   const [leadCommEvents, setLeadCommEvents] = useState<any[]>([])
+  const [leadAttachmentsByEvent, setLeadAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
@@ -217,6 +220,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setSelectedLead(null)
       setMessages([])
       setLeadCommEvents([])
+      setLeadAttachmentsByEvent({})
     } else {
       void openLead(leadId)
     }
@@ -265,6 +269,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setSelectedLeadId(null)
     setMessages([])
     setLeadCommEvents([])
+    setLeadAttachmentsByEvent({})
     if (setPage) setPage("conversations")
   }
 
@@ -331,7 +336,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       .order("created_at", { ascending: true })
       .limit(200)
 
-    setLeadCommEvents(evs || [])
+    const evRows = evs || []
+    setLeadCommEvents(evRows)
+    const eventIds = evRows.map((e: { id?: string }) => e.id).filter(Boolean) as string[]
+    const attMap = await loadAttachmentsByCommunicationEventIds(eventIds)
+    setLeadAttachmentsByEvent(attMap)
   }
 
   async function createLeadFlow() {
@@ -1125,6 +1134,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                     ) : (
                                       <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                                     )}
+                                    <AttachmentStrip items={leadAttachmentsByEvent[ev.id] ?? []} compact />
                                   </div>
                                 )
                               })
@@ -1166,6 +1176,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 setSelectedLeadId(null)
                                 setMessages([])
                                 setLeadCommEvents([])
+                                setLeadAttachmentsByEvent({})
                                 loadLeads()
                               }}
                               style={{

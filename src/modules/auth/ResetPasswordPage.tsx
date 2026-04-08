@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
+import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { consumeAuthHashErrorMessage, getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 
@@ -81,6 +82,7 @@ export default function ResetPasswordPage({ onDone }: Props) {
     try {
       const { error: err } = await supabase.auth.updateUser({ password })
       if (err) throw err
+      await revokeOtherAuthSessions()
       setMessage("Your password is updated. You can continue signed in, or go back to sign in anytime.")
       setPhase("done")
     } catch (err) {

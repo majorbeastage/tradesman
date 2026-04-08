@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
+import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
 import { TIMEZONE_OPTIONS } from "../../constants/timezones"
 import { getDefaultPortalConfigForNewUser } from "../../types/portal-builder"
 import {
@@ -278,6 +279,7 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
         setError(signErr.message)
         return
       }
+      if (data.session) await revokeOtherAuthSessions()
       const uid = data.user?.id
       if (!uid) {
         setError("Could not create account. This email may already be registered.")

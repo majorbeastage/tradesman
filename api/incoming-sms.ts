@@ -7,11 +7,13 @@ import {
   firstEnv,
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
-  logCommunicationEvent,
+  insertCommunicationAttachmentRow,
+  insertCommunicationEventReturningId,
   lookupChannelByPublicAddress,
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
+import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -139,16 +141,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const content = messageId ? `${body}\n\n[Inbound message ID: ${messageId}]` : body
-  if (conversationId) {
-    const { error: messageErr } = await supabase.from("messages").insert({
-      conversation_id: conversationId,
-      sender: "customer",
-      content,
-    })
-    if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
-  }
 
-  await logCommunicationEvent(supabase, {
+  const eventId = await insertCommunicationEventReturningId(supabase, {
     user_id: targetUserId,
     customer_id: customerId,
     conversation_id: conversationId,
@@ -160,8 +154,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body,
     unread: true,
     previous_customer: previousCustomer,
-    metadata: { from, to, provider: channel?.provider ?? "twilio-webhook" },
+    metadata: { from, to, provider: channel?.provider ?? "twilio-webhook", num_media: numMedia },
   })
+
+  if (eventId && numMedia > 0) {
+    for (let i = 0; i < numMedia; i++) {
+      const mediaUrl = pickFirstString(
+        (payload as JsonRecord)[`MediaUrl${i}`],
+        (payload as JsonRecord)[`media_url_${i}`],
+        (payload as JsonRecord)[`MediaUrl${i}`],
+      )
+      if (!mediaUrl) continue
+      try {
+        const { arrayBuffer, contentType } = await fetchTwilioMediaBuffer(String(mediaUrl), "incoming-sms-mms")
+        const ext =
+          contentType.includes("jpeg") || contentType.includes("jpg")
+            ? "jpg"
+            : contentType.includes("png")
+              ? "png"
+              : contentType.includes("gif")
+                ? "gif"
+                : contentType.includes("video")
+                  ? "mp4"
+                  : "bin"
+        const path = `inbound-mms/${targetUserId}/${eventId}/${i}.${ext}`
+        const publicUrl = await uploadBytesToCommAttachments({
+          storagePath: path,
+          body: arrayBuffer,
+          contentType,
+          logTag: "incoming-sms-mms",
+        })
+        if (publicUrl) {
+          await insertCommunicationAttachmentRow(supabase, {
+            user_id: targetUserId,
+            communication_event_id: eventId,
+            storage_path: path,
+            public_url: publicUrl,
+            content_type: contentType,
+            file_name: `mms-${i}.${ext}`,
+          })
+        }
+      } catch (e) {
+        console.error("[incoming-sms] mms mirror", i, e instanceof Error ? e.message : e)
+      }
+    }
+  }
+
+  if (conversationId) {
+    const { error: messageErr } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender: "customer",
+      content,
+    })
+    if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
+  }
 
   return res.status(200).json({
     ok: true,

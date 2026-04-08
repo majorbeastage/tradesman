@@ -13,6 +13,9 @@ import {
   VoicemailTranscriptBlock,
   voicemailPreviewLine,
 } from "../../components/VoicemailEventBlock"
+import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
+import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
+import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -286,6 +289,12 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [emailSignature, setEmailSignature] = useState("")
   const [emailComposeMountKey, setEmailComposeMountKey] = useState(0)
   const [communicationEvents, setCommunicationEvents] = useState<CommEventRow[]>([])
+  const [commAttachmentsByEvent, setCommAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
+  const [aiThreadSummaryEnabled, setAiThreadSummaryEnabled] = useState(false)
+  const [threadSummaryBusy, setThreadSummaryBusy] = useState(false)
+  const [threadSummaryText, setThreadSummaryText] = useState("")
+  const [emailComposeFiles, setEmailComposeFiles] = useState<File[]>([])
+  const [smsMediaFiles, setSmsMediaFiles] = useState<File[]>([])
   /** profiles.voicemail_conversations_display for the portal user (scoped). */
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
@@ -330,13 +339,14 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("voicemail_conversations_display")
+        .select("voicemail_conversations_display, ai_thread_summary_enabled")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled) return
       if (error || !data) return
       const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
       if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
+      setAiThreadSummaryEnabled((data as { ai_thread_summary_enabled?: boolean }).ai_thread_summary_enabled === true)
     })()
     return () => {
       cancelled = true
@@ -748,6 +758,9 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       ? ([...commDesc].reverse() as CommEventRow[])
       : []
     setCommunicationEvents(commChrono)
+    const eventIds = commChrono.map((e) => e.id).filter(Boolean)
+    const attMap = await loadAttachmentsByCommunicationEventIds(eventIds)
+    setCommAttachmentsByEvent(attMap)
     const outboundSubjects = commChrono.filter(
       (evt) => evt.event_type === "email" && evt.direction === "outbound" && evt.subject?.trim(),
     )
@@ -764,6 +777,9 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     setEmailBcc("")
     setEmailReplyToOverride("")
     setEmailComposeMountKey(0)
+    setEmailComposeFiles([])
+    setSmsMediaFiles([])
+    setThreadSummaryText("")
   }
 
   async function markChannelRead(channel: "sms" | "email" | "voicemail") {
@@ -854,6 +870,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       setSelectedConversationId(null)
       setMessages([])
       setCommunicationEvents([])
+      setCommAttachmentsByEvent({})
       return
     }
     await openConversation(convoId)
@@ -873,10 +890,21 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
     setReplySending(true)
     try {
+      let mediaPublicUrls: string[] | undefined
+      if (userId && smsMediaFiles.length > 0) {
+        const urls = await uploadFilesForOutbound(userId, smsMediaFiles, "sms-reply")
+        if (urls.length) mediaPublicUrls = urls
+      }
       const response = await fetch("/api/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, body: trimmed, userId, conversationId: selectedConversation.id }),
+        body: JSON.stringify({
+          to,
+          body: trimmed,
+          userId,
+          conversationId: selectedConversation.id,
+          ...(mediaPublicUrls?.length ? { mediaPublicUrls } : {}),
+        }),
       })
       const raw = await response.text()
       if (!response.ok) {
@@ -890,6 +918,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       if (error) throw error
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), sender: "user", content: trimmed, created_at: new Date().toISOString() }])
       setReplyBody("")
+      setSmsMediaFiles([])
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))
     } finally {
@@ -898,6 +927,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   }
 
   function beginReplyToEmail(evt: CommEventRow) {
+    setEmailComposeFiles([])
     setReplySubject(replySubjectLine(evt.subject))
     const when = evt.created_at ? new Date(evt.created_at).toLocaleString() : ""
     const role = evt.direction === "inbound" ? "Customer" : "You"
@@ -930,6 +960,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
     setEmailSending(true)
     try {
+      let attachmentPublicUrls: string[] | undefined
+      if (userId && emailComposeFiles.length > 0) {
+        const urls = await uploadFilesForOutbound(userId, emailComposeFiles, "email-reply")
+        if (urls.length) attachmentPublicUrls = urls
+      }
       const response = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -944,6 +979,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           userId,
           conversationId: selectedConversation.id,
           customerId: selectedConversation.customer_id,
+          ...(attachmentPublicUrls?.length ? { attachmentPublicUrls } : {}),
         }),
       })
       const raw = await response.text()
@@ -974,11 +1010,48 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       }
       setCommunicationEvents((prev) => [...prev, event])
       setEmailReplyBody("")
+      setEmailComposeFiles([])
       await loadConversations()
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))
     } finally {
       setEmailSending(false)
+    }
+  }
+
+  async function summarizeThread() {
+    if (!supabase || !selectedConversation?.id) return
+    setThreadSummaryBusy(true)
+    setThreadSummaryText("")
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) throw new Error("Not signed in.")
+      const res = await fetch("/api/platform-tools?__route=ai-summarize", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ conversationId: selectedConversation.id }),
+      })
+      const raw = await res.text()
+      if (!res.ok) {
+        let msg = raw.slice(0, 400)
+        try {
+          const j = JSON.parse(raw) as { error?: string }
+          if (j.error) msg = j.error
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg)
+      }
+      const j = JSON.parse(raw) as { summary?: string }
+      setThreadSummaryText((j.summary ?? "").trim())
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setThreadSummaryBusy(false)
     }
   }
 
@@ -1475,6 +1548,45 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
                   Text thread messages plus logged SMS/email (and other events) in chronological order. Expand a row for the full message.
                 </p>
+                {aiThreadSummaryEnabled && selectedConversation?.id ? (
+                  <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => void summarizeThread()}
+                      disabled={threadSummaryBusy}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        cursor: threadSummaryBusy ? "wait" : "pointer",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        color: theme.text,
+                      }}
+                    >
+                      {threadSummaryBusy ? "Summarizing…" : "Summarize thread (AI)"}
+                    </button>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>Uses server OpenAI when configured.</span>
+                  </div>
+                ) : null}
+                {threadSummaryText ? (
+                  <div
+                    style={{
+                      marginBottom: 10,
+                      padding: 10,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontSize: 13,
+                      color: theme.text,
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {threadSummaryText}
+                  </div>
+                ) : null}
                 <div
                   style={{
                     border: `1px solid ${theme.border}`,
@@ -1595,6 +1707,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                           ) : (
                             <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                           )}
+                          <AttachmentStrip items={commAttachmentsByEvent[ev.id] ?? []} compact />
                         </ExpandableTimelineRow>
                       )
                     })
@@ -1651,6 +1764,19 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       placeholder="Reply to this text conversation..."
                       style={{ ...theme.formInput, resize: "vertical" }}
                     />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                      MMS images (optional)
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(e) => setSmsMediaFiles(Array.from(e.target.files ?? []))}
+                        style={{ display: "block", marginTop: 6, fontSize: 13 }}
+                      />
+                    </label>
+                    {smsMediaFiles.length > 0 ? (
+                      <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{smsMediaFiles.length} file(s) selected</p>
+                    ) : null}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12, color: "#6b7280" }}>
                         Uses your Twilio SMS number from Admin → Communications (this user). Inbound texts appear here when that number&apos;s webhook targets <code style={{ fontSize: 11 }}>/api/incoming-sms</code> on your deployed app.
@@ -1783,6 +1909,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                         >
                           <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15 }}>{subj}</p>
                           <p style={{ margin: "0 0 10px", whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
+                          <AttachmentStrip items={commAttachmentsByEvent[evt.id] ?? []} compact />
                           <button
                             type="button"
                             onClick={() => beginReplyToEmail(evt)}
@@ -1858,6 +1985,18 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       placeholder="Write your message…"
                       style={{ ...theme.formInput, resize: "vertical" }}
                     />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                      Attachments (optional)
+                      <input
+                        type="file"
+                        multiple
+                        onChange={(e) => setEmailComposeFiles(Array.from(e.target.files ?? []))}
+                        style={{ display: "block", marginTop: 6, fontSize: 13 }}
+                      />
+                    </label>
+                    {emailComposeFiles.length > 0 ? (
+                      <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{emailComposeFiles.length} file(s) selected</p>
+                    ) : null}
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
                       Signature (optional, this browser only)
                     </label>

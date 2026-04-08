@@ -12,20 +12,40 @@ export function effectiveVoicemailTranscriptMode(
 }
 
 /**
+ * Portal item IDs for voicemail UI (Admin adds items; ids are slugified from labels — see AdminApp "Add" for control items).
+ * Primary: "Voicemail Transcription on" → voicemail-transcription-on, "Type of Transcription" → type-of-transcription.
+ * Legacy keys kept for conversations that already saved the old defaults in metadata.portalValues.
+ */
+const VOICEMAIL_TRANSCRIPTION_ON_IDS = ["voicemail-transcription-on", "voicemail_transcription_enabled"] as const
+const VOICEMAIL_TRANSCRIPTION_TYPE_IDS = ["type-of-transcription", "voicemail_transcription_display"] as const
+
+function firstPortalValue(values: Record<string, string> | null | undefined, keys: readonly string[]): string | undefined {
+  if (!values) return undefined
+  for (const k of keys) {
+    const v = values[k]
+    if (v !== undefined && v !== "") return v
+  }
+  return undefined
+}
+
+/**
  * Per-conversation portal values (metadata.portalValues) override profile/channel for display.
- * Checkbox `voicemail_transcription_enabled` unchecked hides transcript text (recording still shows).
+ * When the transcription checkbox is unchecked, transcript/summary text is hidden (recording still shows).
  */
 export function resolveVoicemailUiMode(
   profilePref: string | null | undefined,
   channelModeFromEvent: unknown,
   conversationPortalValues?: Record<string, string> | null,
 ): { showTranscript: boolean; mode: "summary" | "full_transcript" } {
-  const showTranscript = conversationPortalValues?.voicemail_transcription_enabled !== "unchecked"
-  const portalDisplay = conversationPortalValues?.voicemail_transcription_display
+  const onVal = firstPortalValue(conversationPortalValues, VOICEMAIL_TRANSCRIPTION_ON_IDS)
+  const showTranscript = onVal === "unchecked" ? false : true
+
+  const portalDisplay = firstPortalValue(conversationPortalValues, VOICEMAIL_TRANSCRIPTION_TYPE_IDS)
+  const typeNorm = (portalDisplay || "").trim().toLowerCase()
   let mode: "summary" | "full_transcript"
-  if (portalDisplay === "Full transcript") {
+  if (typeNorm === "full transcript" || typeNorm.includes("full transcript")) {
     mode = "full_transcript"
-  } else if (portalDisplay === "Summary") {
+  } else if (typeNorm === "summary") {
     mode = "summary"
   } else {
     mode = effectiveVoicemailTranscriptMode(profilePref, channelModeFromEvent)

@@ -21,6 +21,13 @@ import {
 } from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import {
+  loadEntityAttachmentsForCalendarEvent,
+  deleteEntityAttachmentRow,
+  type EntityAttachmentRow,
+} from "../../lib/communicationAttachments"
+import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
+import { buildReceiptPdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
 
 type JobType = {
   id: string
@@ -423,6 +430,11 @@ export default function CalendarPage() {
   const [calendarEventActionBusy, setCalendarEventActionBusy] = useState(false)
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
+  const [calendarEventEntityRows, setCalendarEventEntityRows] = useState<EntityAttachmentRow[]>([])
+  const [calendarEventEntityUploadBusy, setCalendarEventEntityUploadBusy] = useState(false)
+  const [calendarReceiptTemplate, setCalendarReceiptTemplate] = useState<string | null>(null)
+  const [calendarProfileDisplayName, setCalendarProfileDisplayName] = useState("")
+  const [receiptPdfBusy, setReceiptPdfBusy] = useState(false)
   const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
   const [autoResponsePortalValues, setAutoResponsePortalValues] = useState<Record<string, string>>({})
   const [jobTypesPortalValues, setJobTypesPortalValues] = useState<Record<string, string>>({})
@@ -536,6 +548,64 @@ export default function CalendarPage() {
     loadEvents()
   }
 
+  async function downloadReceiptPdfForEvent(ev: CalendarEvent) {
+    setReceiptPdfBusy(true)
+    try {
+      const customerName = ev.customers?.display_name ?? "Customer"
+      const amount =
+        ev.quote_total != null && ev.quote_total > 0 ? `Total: $${Number(ev.quote_total).toFixed(2)}` : null
+      const bytes = await buildReceiptPdfBytes({
+        businessLabel: calendarProfileDisplayName || "Receipt",
+        customerName,
+        jobTitle: ev.title,
+        completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
+        amountLabel: amount,
+        templateFooter: calendarReceiptTemplate,
+      })
+      downloadPdfBlob(bytes, `receipt-${ev.id.slice(0, 8)}.pdf`)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReceiptPdfBusy(false)
+    }
+  }
+
+  async function handleCalendarEntityFileChange(files: FileList | null) {
+    if (!files?.length || !supabase || !selectedEvent?.id) return
+    const owner = selectedEvent.user_id ?? userId
+    if (!owner) return
+    const file = files[0]
+    setCalendarEventEntityUploadBusy(true)
+    try {
+      const up = await uploadEntityAttachmentFile({ userId: owner, calendarEventId: selectedEvent.id, file })
+      if (!up) throw new Error("Upload failed")
+      const { error } = await supabase.from("entity_attachments").insert({
+        user_id: owner,
+        calendar_event_id: selectedEvent.id,
+        storage_path: up.storage_path,
+        public_url: up.public_url,
+        content_type: file.type || null,
+        file_name: file.name || null,
+      })
+      if (error) throw error
+      setCalendarEventEntityRows(await loadEntityAttachmentsForCalendarEvent(selectedEvent.id))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCalendarEventEntityUploadBusy(false)
+    }
+  }
+
+  async function removeCalendarEntityRowLocal(row: EntityAttachmentRow) {
+    if (!confirm("Remove this file from the event?")) return
+    const ok = await deleteEntityAttachmentRow(row)
+    if (!ok) {
+      alert("Could not remove attachment.")
+      return
+    }
+    if (selectedEvent?.id) setCalendarEventEntityRows(await loadEntityAttachmentsForCalendarEvent(selectedEvent.id))
+  }
+
   function getEventColor(ev: CalendarEvent): string {
     const jt = ev.job_types ?? jobTypes.find((j) => j.id === ev.job_type_id)
     return (jt as JobType)?.color_hex ?? theme.primary
@@ -603,6 +673,37 @@ export default function CalendarPage() {
       setAddTargetUserId(userId)
     })
   }, [userId])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("document_template_receipt, display_name")
+        .eq("id", userId)
+        .maybeSingle()
+      if (cancelled || error || !data) return
+      const row = data as { document_template_receipt?: string | null; display_name?: string | null }
+      setCalendarReceiptTemplate(
+        typeof row.document_template_receipt === "string" && row.document_template_receipt.trim()
+          ? row.document_template_receipt
+          : null,
+      )
+      setCalendarProfileDisplayName(typeof row.display_name === "string" ? row.display_name.trim() : "")
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!supabase || !selectedEvent?.id) {
+      setCalendarEventEntityRows([])
+      return
+    }
+    void loadEntityAttachmentsForCalendarEvent(selectedEvent.id).then(setCalendarEventEntityRows)
+  }, [selectedEvent?.id, supabase])
 
   useEffect(() => {
     if (!showCustomizeUser || !customizeTargetUserId) return
@@ -1619,6 +1720,25 @@ export default function CalendarPage() {
                 Send receipt to myself (email)
               </label>
             </div>
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                disabled={receiptPdfBusy}
+                onClick={() => completeFlowEvent && void downloadReceiptPdfForEvent(completeFlowEvent)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: receiptPdfBusy ? "wait" : "pointer",
+                }}
+              >
+                {receiptPdfBusy ? "PDF…" : "Download receipt PDF"}
+              </button>
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px", flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1725,6 +1845,69 @@ export default function CalendarPage() {
                 <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
               </p>
             )}
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Event files</p>
+              <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
+                Upload
+                <input
+                  type="file"
+                  disabled={calendarEventEntityUploadBusy}
+                  onChange={(e) => void handleCalendarEntityFileChange(e.target.files)}
+                  style={{ display: "block", marginTop: 6, fontSize: 12 }}
+                />
+              </label>
+              {calendarEventEntityUploadBusy ? (
+                <span style={{ fontSize: 11, color: "#6b7280", display: "block", marginTop: 4 }}>Uploading…</span>
+              ) : null}
+              {calendarEventEntityRows.length > 0 ? (
+                <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13, color: theme.text }}>
+                  {calendarEventEntityRows.map((row) => (
+                    <li key={row.id} style={{ marginBottom: 4 }}>
+                      <a href={row.public_url} target="_blank" rel="noopener noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
+                        {row.file_name || "File"}
+                      </a>
+                      {" · "}
+                      <button
+                        type="button"
+                        onClick={() => void removeCalendarEntityRowLocal(row)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#b91c1c",
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          padding: 0,
+                          fontSize: 12,
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>No files attached to this event yet.</p>
+              )}
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                disabled={receiptPdfBusy}
+                onClick={() => void downloadReceiptPdfForEvent(selectedEvent)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: receiptPdfBusy ? "wait" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {receiptPdfBusy ? "PDF…" : "Download receipt PDF"}
+              </button>
+            </div>
             {showRecurringRemoveChoices && (
               <div
                 style={{

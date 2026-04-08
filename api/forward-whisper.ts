@@ -157,10 +157,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let inner: string
   if (requireKeypress) {
-    // Short timeout so carriers see a quick decision; no input → action with empty Digits/SpeechResult → Hangup → inbound Dial completes → voicemail.
+    // No input → action with empty Digits → Hangup on callee leg; dial-result sends caller to voicemail when DialBridged=false.
     inner =
       say +
-      `<Gather input="speech dtmf" numDigits="1" timeout="5" speechTimeout="auto" language="en-US" hints="answer, decline" action="${xmlEscape(keypressUrl)}" method="POST">` +
+      `<Gather input="speech dtmf" numDigits="1" timeout="10" speechTimeout="auto" language="en-US" hints="answer, decline" action="${xmlEscape(keypressUrl)}" method="POST">` +
       `<Say ${sayAttrs}>Press 1 or say answer to accept. Press 2 or say decline to send the call to voicemail.</Say>` +
       `</Gather>` +
       `<Hangup/>`

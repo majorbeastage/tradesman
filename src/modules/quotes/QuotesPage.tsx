@@ -11,6 +11,15 @@ import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionV
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
+import {
+  loadAttachmentsByCommunicationEventIds,
+  loadEntityAttachmentsForQuote,
+  deleteEntityAttachmentRow,
+  type EntityAttachmentRow,
+} from "../../lib/communicationAttachments"
+import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
+import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -54,6 +63,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [selectedQuote, setSelectedQuote] = useState<any>(null)
   const [selectedQuoteItems, setSelectedQuoteItems] = useState<any[]>([])
   const [quoteCommEvents, setQuoteCommEvents] = useState<any[]>([])
+  const [quoteAttachmentsByEvent, setQuoteAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
+  const [quoteEntityRows, setQuoteEntityRows] = useState<EntityAttachmentRow[]>([])
+  const [quoteEntityUploadBusy, setQuoteEntityUploadBusy] = useState(false)
+  const [quotePdfBusy, setQuotePdfBusy] = useState(false)
+  const [quotePdfTemplate, setQuotePdfTemplate] = useState<string | null>(null)
+  const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
+  const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
+  const [quoteEmailBody, setQuoteEmailBody] = useState("")
+  const [quoteEmailSending, setQuoteEmailSending] = useState(false)
+  const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
+  const [showQuoteEmailPanel, setShowQuoteEmailPanel] = useState(false)
   const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -130,6 +150,32 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       cancelled = true
     }
   }, [userId])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("document_template_quote, display_name")
+        .eq("id", userId)
+        .maybeSingle()
+      if (cancelled || error || !data) return
+      const row = data as { document_template_quote?: string | null; display_name?: string | null }
+      setQuotePdfTemplate(typeof row.document_template_quote === "string" && row.document_template_quote.trim() ? row.document_template_quote : null)
+      setProfileDisplayNameForPdf(typeof row.display_name === "string" ? row.display_name.trim() : "")
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!selectedQuote?.id) return
+    const name = selectedQuote.customers?.display_name ?? "Customer"
+    setQuoteEmailSubject(`Quote for ${name}`)
+    setQuoteEmailBody("Please see the quote below and let us know if you have any questions.\n\nThank you,")
+  }, [selectedQuote?.id])
 
   useEffect(() => {
     if (!showSettings || quoteSettingsItems.length === 0) return
@@ -474,6 +520,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       setSelectedQuoteItems([])
       setQuoteCommEvents([])
       setQuoteThreadMessages([])
+      setQuoteAttachmentsByEvent({})
+      setQuoteEntityRows([])
     } else {
       void openQuote(quoteId)
     }
@@ -484,6 +532,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setSelectedQuoteItems([])
     setQuoteCommEvents([])
     setQuoteThreadMessages([])
+    setQuoteAttachmentsByEvent({})
+    setQuoteEntityRows([])
     if (!supabase) return
     const { data, error } = await supabase
       .from("quotes")
@@ -528,10 +578,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         .eq("customer_id", cid)
         .order("created_at", { ascending: true })
         .limit(200)
-      setQuoteCommEvents(evs || [])
+      const evRows = evs || []
+      setQuoteCommEvents(evRows)
+      const eventIds = evRows.map((e: { id?: string }) => e.id).filter(Boolean) as string[]
+      setQuoteAttachmentsByEvent(await loadAttachmentsByCommunicationEventIds(eventIds))
     } else {
       setQuoteCommEvents([])
+      setQuoteAttachmentsByEvent({})
     }
+
+    setQuoteEntityRows(await loadEntityAttachmentsForQuote(quoteId))
 
     const convId = data.conversation_id as string | null
     if (convId) {
@@ -580,6 +636,110 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     const up = item.unit_price ?? item.price ?? "—"
     const tot = item.total ?? (typeof item.quantity === "number" && typeof item.unit_price === "number" ? item.quantity * item.unit_price : null)
     return { desc, qty, up, tot }
+  }
+
+  async function handleQuoteEntityFileChange(files: FileList | null) {
+    if (!files?.length || !userId || !selectedQuoteId || !supabase) return
+    const file = files[0]
+    setQuoteEntityUploadBusy(true)
+    try {
+      const up = await uploadEntityAttachmentFile({ userId, quoteId: selectedQuoteId, file })
+      if (!up) throw new Error("Upload failed")
+      const { error } = await supabase.from("entity_attachments").insert({
+        user_id: userId,
+        quote_id: selectedQuoteId,
+        storage_path: up.storage_path,
+        public_url: up.public_url,
+        content_type: file.type || null,
+        file_name: file.name || null,
+      })
+      if (error) throw error
+      setQuoteEntityRows(await loadEntityAttachmentsForQuote(selectedQuoteId))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuoteEntityUploadBusy(false)
+    }
+  }
+
+  async function removeQuoteEntityRowLocal(row: EntityAttachmentRow) {
+    if (!confirm("Remove this file from the quote?")) return
+    const ok = await deleteEntityAttachmentRow(row)
+    if (!ok) {
+      alert("Could not remove attachment.")
+      return
+    }
+    if (selectedQuoteId) setQuoteEntityRows(await loadEntityAttachmentsForQuote(selectedQuoteId))
+  }
+
+  async function downloadQuotePdfClick() {
+    if (!selectedQuote) return
+    setQuotePdfBusy(true)
+    try {
+      const items = selectedQuoteItems.map((item) => {
+        const { desc, qty, up, tot } = getItemDisplay(item)
+        const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
+        const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
+        const total = typeof tot === "number" ? tot : quantity * unitPrice
+        return { description: String(desc), quantity, unitPrice, total }
+      })
+      const bytes = await buildQuotePdfBytes({
+        title: `Quote ${selectedQuote.id.slice(0, 8)}`,
+        businessLabel: profileDisplayNameForPdf || "Quote",
+        customerName: selectedQuote.customers?.display_name ?? "Customer",
+        items,
+        templateHeader: quotePdfTemplate,
+        templateFooter: null,
+      })
+      downloadPdfBlob(bytes, `quote-${selectedQuote.id.slice(0, 8)}.pdf`)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuotePdfBusy(false)
+    }
+  }
+
+  async function sendQuoteCustomerEmail() {
+    if (!supabase || !userId || !selectedQuote) return
+    const email = selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.()
+    if (!email) {
+      alert("This customer has no email on file. Add an email identifier on the customer record.")
+      return
+    }
+    const subject = quoteEmailSubject.trim()
+    const body = quoteEmailBody.trim()
+    if (!subject || !body) {
+      alert("Enter subject and body.")
+      return
+    }
+    let attachmentPublicUrls: string[] | undefined
+    if (quoteEmailAttachEntity && quoteEntityRows.length > 0) {
+      attachmentPublicUrls = quoteEntityRows.map((r) => r.public_url)
+    }
+    setQuoteEmailSending(true)
+    try {
+      const res = await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: email,
+          subject,
+          body,
+          userId,
+          conversationId: selectedQuote.conversation_id || undefined,
+          customerId: selectedQuote.customer_id,
+          ...(attachmentPublicUrls?.length ? { attachmentPublicUrls } : {}),
+        }),
+      })
+      const raw = await res.text()
+      if (!res.ok) throw new Error(raw.slice(0, 400))
+      alert("Email sent.")
+      setShowQuoteEmailPanel(false)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuoteEmailSending(false)
+    }
   }
 
   const filteredQuotes = quotes.filter((q: any) => {
@@ -972,11 +1132,135 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                     ) : (
                                       <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                                     )}
+                                    <AttachmentStrip items={quoteAttachmentsByEvent[ev.id] ?? []} compact />
                                   </div>
                                 )
                               })
                             )}
                           </div>
+
+                          <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => void downloadQuotePdfClick()}
+                              disabled={quotePdfBusy}
+                              style={{
+                                padding: "8px 14px",
+                                borderRadius: 6,
+                                border: "none",
+                                background: theme.primary,
+                                color: "#fff",
+                                fontWeight: 600,
+                                cursor: quotePdfBusy ? "wait" : "pointer",
+                                fontSize: 14,
+                              }}
+                            >
+                              {quotePdfBusy ? "PDF…" : "Download quote PDF"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowQuoteEmailPanel((v) => !v)}
+                              style={{
+                                padding: "8px 14px",
+                                borderRadius: 6,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                fontSize: 14,
+                                color: theme.text,
+                              }}
+                            >
+                              {showQuoteEmailPanel ? "Hide email" : "Email customer"}
+                            </button>
+                          </div>
+                          {showQuoteEmailPanel ? (
+                            <div
+                              style={{
+                                marginBottom: 16,
+                                padding: 12,
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                display: "grid",
+                                gap: 10,
+                              }}
+                            >
+                              <input
+                                value={quoteEmailSubject}
+                                onChange={(e) => setQuoteEmailSubject(e.target.value)}
+                                placeholder="Subject"
+                                style={theme.formInput}
+                              />
+                              <textarea
+                                value={quoteEmailBody}
+                                onChange={(e) => setQuoteEmailBody(e.target.value)}
+                                rows={4}
+                                placeholder="Message"
+                                style={{ ...theme.formInput, resize: "vertical" }}
+                              />
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                                <input
+                                  type="checkbox"
+                                  checked={quoteEmailAttachEntity}
+                                  onChange={(e) => setQuoteEmailAttachEntity(e.target.checked)}
+                                />
+                                Attach uploaded quote files ({quoteEntityRows.length})
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => void sendQuoteCustomerEmail()}
+                                disabled={quoteEmailSending}
+                                style={{
+                                  padding: "8px 14px",
+                                  borderRadius: 6,
+                                  border: "none",
+                                  background: theme.primary,
+                                  color: "#fff",
+                                  fontWeight: 600,
+                                  cursor: quoteEmailSending ? "wait" : "pointer",
+                                  justifySelf: "start",
+                                }}
+                              >
+                                {quoteEmailSending ? "Sending…" : "Send email"}
+                              </button>
+                            </div>
+                          ) : null}
+
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Quote files</h4>
+                          <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                            <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                              Upload file
+                              <input
+                                type="file"
+                                disabled={quoteEntityUploadBusy}
+                                onChange={(e) => void handleQuoteEntityFileChange(e.target.files)}
+                                style={{ display: "block", marginTop: 6, fontSize: 13 }}
+                              />
+                            </label>
+                            {quoteEntityUploadBusy ? <span style={{ fontSize: 12, color: "#6b7280" }}>Uploading…</span> : null}
+                          </div>
+                          {quoteEntityRows.length > 0 ? (
+                            <ul style={{ margin: "0 0 16px", paddingLeft: 18, fontSize: 13, color: theme.text }}>
+                              {quoteEntityRows.map((row) => (
+                                <li key={row.id} style={{ marginBottom: 6 }}>
+                                  <a href={row.public_url} target="_blank" rel="noopener noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
+                                    {row.file_name || "File"}
+                                  </a>
+                                  {" · "}
+                                  <button
+                                    type="button"
+                                    onClick={() => void removeQuoteEntityRowLocal(row)}
+                                    style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", textDecoration: "underline", padding: 0, fontSize: 13 }}
+                                  >
+                                    Remove
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>No files attached to this quote yet.</p>
+                          )}
 
             <h3 style={{ marginTop: "24px" }}>Quote items</h3>
             <table style={{ width: "100%", minWidth: isMobile ? "540px" : "100%", borderCollapse: "collapse", marginTop: "8px", border: "1px solid #ddd" }}>
@@ -1073,6 +1357,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   setSelectedQuoteId(null)
                   setQuoteCommEvents([])
                   setQuoteThreadMessages([])
+                  setQuoteAttachmentsByEvent({})
+                  setQuoteEntityRows([])
                   loadQuotes()
                 }}
                 style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}

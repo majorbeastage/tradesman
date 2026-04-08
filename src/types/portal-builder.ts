@@ -204,6 +204,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
   { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
   { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
+  { id: "capture_documents", label: "Web lead embed, AI, and PDF quote/receipt templates" },
   { id: "password_reset", label: "Password reset button" },
 ]
 
@@ -584,22 +585,9 @@ export const DEFAULT_RECURRENCE_PORTAL_ITEMS: PortalSettingItem[] = [
   },
 ]
 
-/** Default items for Conversation settings */
+/** Default items for Conversation settings (voicemail transcription controls are added per-client in Admin → portal builder). */
 export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'show_internal_conversations', type: 'checkbox', label: 'Show internal conversations', defaultChecked: true },
-  {
-    id: 'voicemail_transcription_enabled',
-    type: 'checkbox',
-    label: 'Show voicemail transcription',
-    defaultChecked: true,
-  },
-  {
-    id: 'voicemail_transcription_display',
-    type: 'dropdown',
-    label: 'Transcription display',
-    options: ['Summary', 'Full transcript'],
-    dependency: { dependsOnItemId: 'voicemail_transcription_enabled', showWhenValue: 'checked' },
-  },
 ]
 
 /** Default items for a control when none saved. Key: `${tabId}:${controlId}`. */

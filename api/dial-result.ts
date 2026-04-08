@@ -40,10 +40,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : typeof req.query?.DialCallStatus === "string"
         ? req.query.DialCallStatus
         : ""
+  const dialBridgedRaw = pickFirstString(req.body?.DialBridged, req.query?.DialBridged)
+  const dialNotBridged = dialBridgedRaw.toLowerCase() === "false"
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
   const dialCallSid = pickFirstString(req.body?.DialCallSid, req.query?.DialCallSid)
 
-  if (dialCallStatus === "no-answer" || dialCallStatus === "busy" || dialCallStatus === "failed") {
+  // Forward-whisper decline (or Gather timeout → Hangup) ends the callee leg before A–B bridge → DialCallStatus completed + DialBridged false. Send caller to voicemail.
+  const screeningDeclinedOrNeverBridged = dialCallStatus === "completed" && dialNotBridged
+
+  if (
+    dialCallStatus === "no-answer" ||
+    dialCallStatus === "busy" ||
+    dialCallStatus === "failed" ||
+    dialCallStatus === "canceled" ||
+    screeningDeclinedOrNeverBridged
+  ) {
     const origin = requestPublicOrigin(req)
     const params = new URLSearchParams()
     if (channelId) params.set("channelId", channelId)
@@ -94,5 +105,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
   }
 
+  // Normal hangup after callee and caller were connected (whisper accepted or no whisper).
   return sendTwiml(res, `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`)
 }

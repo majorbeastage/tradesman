@@ -121,10 +121,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
     : `<Number>${xmlEscape(forwardTo)}</Number>`
 
+  // answerOnBridge: caller stays on ringback until callee finishes whisper / accepts; required for screening + correct DialBridged on decline.
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
-    `<Dial timeout="20" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
+    `<Dial answerOnBridge="true" timeout="20" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
     dialInner +
     `</Dial>` +
     `</Response>`

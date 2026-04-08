@@ -21,6 +21,7 @@ import AdminApp from "./modules/admin/AdminApp"
 import SmsConsentPage from "./modules/public/SmsConsentPage"
 import PrivacyPage from "./modules/public/PrivacyPage"
 import TermsPage from "./modules/public/TermsPage"
+import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
@@ -183,6 +184,11 @@ function App() {
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
+
+  const embedLeadMatch = /^\/embed\/lead\/([^/]+)\/?$/i.exec(pathname)
+  if (embedLeadMatch) {
+    return <EmbedLeadPage slug={decodeURIComponent(embedLeadMatch[1] || "")} />
+  }
 
   if (pathname === "/reset-password") {
     return <ResetPasswordPage onDone={() => { window.history.replaceState(null, "", "/"); window.location.assign("/") }} />

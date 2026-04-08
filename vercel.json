@@ -10,7 +10,8 @@
     "api/voicemail-greeting.ts": { "maxDuration": 60 },
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
-    "api/twilio-recording.ts": { "maxDuration": 60 }
+    "api/twilio-recording.ts": { "maxDuration": 60 },
+    "api/platform-tools.ts": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/api/help-desk-voice", "destination": "/api/help-desk?__route=voice" },
@@ -21,6 +22,7 @@
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
     { "source": "/sms-consent", "destination": "/" },
-    { "source": "/about", "destination": "/" }
+    { "source": "/about", "destination": "/" },
+    { "source": "/embed/lead/:path*", "destination": "/index.html" }
   ]
 }

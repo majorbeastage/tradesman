@@ -592,6 +592,67 @@ export async function logCommunicationEvent(
   }
 }
 
+/** Same as logCommunicationEvent but returns the new row id for attachment linking. */
+export async function insertCommunicationEventReturningId(
+  supabase: SupabaseClient,
+  payload: {
+    user_id: string
+    customer_id?: string | null
+    conversation_id?: string | null
+    lead_id?: string | null
+    channel_id?: string | null
+    event_type: "sms" | "call" | "voicemail" | "email"
+    direction: "inbound" | "outbound"
+    external_id?: string | null
+    subject?: string | null
+    body?: string | null
+    recording_url?: string | null
+    transcript_text?: string | null
+    summary_text?: string | null
+    previous_customer?: boolean
+    unread?: boolean
+    metadata?: Record<string, unknown>
+  }
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("communication_events")
+    .insert({
+      ...payload,
+      metadata: payload.metadata ?? {},
+    })
+    .select("id")
+    .single()
+  if (error) {
+    if (!String(error.message || "").includes("communication_events")) throw error
+    return null
+  }
+  return data?.id ? String(data.id) : null
+}
+
+export async function insertCommunicationAttachmentRow(
+  supabase: SupabaseClient,
+  row: {
+    user_id: string
+    communication_event_id: string
+    storage_path: string
+    public_url: string
+    content_type?: string | null
+    file_name?: string | null
+  }
+): Promise<void> {
+  const { error } = await supabase.from("communication_attachments").insert({
+    user_id: row.user_id,
+    communication_event_id: row.communication_event_id,
+    storage_path: row.storage_path,
+    public_url: row.public_url,
+    content_type: row.content_type ?? null,
+    file_name: row.file_name ?? null,
+  })
+  if (error && !String(error.message || "").includes("communication_attachments")) {
+    throw error
+  }
+}
+
 export async function getOrCreateCustomerByPhone(
   supabase: SupabaseClient,
   userId: string,

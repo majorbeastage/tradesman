@@ -12,10 +12,12 @@ import {
   firstEnv,
   getOrCreateCustomerByEmail,
   getOrCreateConversation,
-  logCommunicationEvent,
+  insertCommunicationAttachmentRow,
+  insertCommunicationEventReturningId,
   pickFirstString,
   resolveInboundEmailChannel,
 } from "./_communications.js"
+import { uploadBytesToCommAttachments } from "./_commStorage.js"
 import {
   forwardHeadersForTradesmanCopy,
   normalizeResendHeaderMap,
@@ -392,18 +394,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? `${bodyForMessage}\n\n[Message-ID: ${received.message_id}]`
       : bodyForMessage
 
-  if (conversationId) {
-    const { error: messageErr } = await supabase.from("messages").insert({
-      conversation_id: conversationId,
-      sender: "customer",
-      content: messageContent,
-    })
-    if (messageErr) {
-      return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
-    }
-  }
-
-  await logCommunicationEvent(supabase, {
+  const eventId = await insertCommunicationEventReturningId(supabase, {
     user_id: channel.user_id,
     customer_id: customerId,
     conversation_id: conversationId,
@@ -423,6 +414,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       provider: "resend-inbound",
     },
   })
+
+  if (eventId) {
+    try {
+      const attRes = await fetch(
+        `https://api.resend.com/emails/receiving/${encodeURIComponent(received.id)}/attachments`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      )
+      if (attRes.ok) {
+        const attJson = (await attRes.json()) as { data?: Array<{ id?: string; filename?: string; content_type?: string; download_url?: string }> }
+        const items = Array.isArray(attJson.data) ? attJson.data : []
+        for (let i = 0; i < items.length; i++) {
+          const a = items[i]
+          const dl = typeof a.download_url === "string" ? a.download_url : ""
+          if (!dl) continue
+          const dlRes = await fetch(dl)
+          if (!dlRes.ok) continue
+          const arrayBuffer = await dlRes.arrayBuffer()
+          const contentType = dlRes.headers.get("content-type") || a.content_type || "application/octet-stream"
+          const safeName = (a.filename || `attachment-${i}`).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120)
+          const path = `inbound-email/${channel.user_id}/${eventId}/${i}-${safeName}`
+          const publicUrl = await uploadBytesToCommAttachments({
+            storagePath: path,
+            body: arrayBuffer,
+            contentType,
+            logTag: "incoming-email-att",
+          })
+          if (publicUrl) {
+            await insertCommunicationAttachmentRow(supabase, {
+              user_id: channel.user_id,
+              communication_event_id: eventId,
+              storage_path: path,
+              public_url: publicUrl,
+              content_type: contentType,
+              file_name: a.filename || safeName,
+            })
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[incoming-email] attachments", e instanceof Error ? e.message : e)
+    }
+  }
+
+  if (conversationId) {
+    const { error: messageErr } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender: "customer",
+      content: messageContent,
+    })
+    if (messageErr) {
+      return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
+    }
+  }
 
   const forwardTo = channel.forward_to_email?.trim()
   let forwardPayload: Record<string, unknown> = {}
