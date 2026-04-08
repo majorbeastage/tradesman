@@ -130,6 +130,7 @@ function formatFetchApiError(response: Response, raw: string): string {
       push(j.hint)
       push(j.logWarning)
       if (j.fixEither != null) push(j.fixEither)
+      if (j.deliveryHint != null) push(j.deliveryHint)
       if (j.serverSeesSupabaseEnv != null) {
         parts.push(`Server sees Supabase env (booleans only): ${formatApiJsonPart(j.serverSeesSupabaseEnv)}`)
       }
@@ -999,6 +1000,25 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       const raw = await response.text()
       if (!response.ok) {
         throw new Error(formatFetchApiError(response, raw))
+      }
+      try {
+        const ok = JSON.parse(raw) as {
+          logWarning?: string
+          twilioSid?: string
+          twilioStatus?: string
+          deliveryHint?: string
+        }
+        if (ok.logWarning) console.warn("[send-sms]", ok.logWarning)
+        if (ok.deliveryHint || ok.twilioSid) {
+          console.info(
+            "[send-sms] Twilio:",
+            ok.twilioSid ?? "(no sid)",
+            ok.twilioStatus ?? "",
+            ok.deliveryHint ? `\n${ok.deliveryHint}` : "",
+          )
+        }
+      } catch {
+        /* non-JSON success body */
       }
       const { error } = await supabase.from("messages").insert({
         conversation_id: selectedConversation.id,

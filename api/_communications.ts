@@ -74,6 +74,21 @@ export function normalizePhone(value: unknown): string {
   return `${keepPlus ? "+" : ""}${digits}`
 }
 
+/**
+ * Twilio expects E.164. US numbers are often stored as 10 digits without +1; without this, delivery can fail or behave oddly.
+ */
+export function toTwilioE164(phone: unknown): string {
+  if (typeof phone !== "string") return ""
+  const trimmed = phone.trim()
+  if (!trimmed) return ""
+  const digits = trimmed.replace(/\D/g, "")
+  if (!digits) return ""
+  if (trimmed.startsWith("+")) return `+${digits}`
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
+  return `+${digits}`
+}
+
 /** ILIKE pattern for exact match (escapes %, _, \\). */
 function escapeIlikeExact(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")

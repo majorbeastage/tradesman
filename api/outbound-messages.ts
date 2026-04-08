@@ -6,6 +6,7 @@ import {
   getPrimarySmsChannelForUser,
   logCommunicationEvent,
   normalizePhone,
+  toTwilioE164,
 } from "./_communications.js"
 
 /**
@@ -390,12 +391,12 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
     // Per-user From needs DB; see fallback below using TWILIO_FROM_NUMBER.
   }
 
-  const envFallbackFrom = normalizePhone(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
+  const envFallbackFrom = toTwilioE164(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
   /** Prefer this user's Communications public number when Supabase is configured. */
   let fromNumber =
     userId && supabase
-      ? normalizePhone(dbChannel?.public_address ?? "")
+      ? toTwilioE164(dbChannel?.public_address ?? "")
       : envFallbackFrom
 
   if (userId && supabase && !fromNumber) {
@@ -432,11 +433,30 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       headers: {
         Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
       },
       body: params.toString(),
     })
     const text = await twilioRes.text()
-    if (!twilioRes.ok) return res.status(twilioRes.status).send(text)
+    const twilioParsed = parseTwilioMessageResponse(text)
+    if (!twilioRes.ok) {
+      const detail =
+        twilioParsed.errorMessage ||
+        (text.length < 800 ? text : `${text.slice(0, 800)}…`)
+      return res.status(twilioRes.status).json({
+        error: "Twilio rejected the SMS request.",
+        message: detail,
+        twilioErrorCode: twilioParsed.errorCode,
+        to,
+        from: fromNumber,
+      })
+    }
+    const twilioPayload = {
+      twilioSid: twilioParsed.sid,
+      twilioStatus: twilioParsed.status,
+      deliveryHint:
+        "If the phone never receives the text: (1) Twilio trial accounts can only SMS verified numbers—add the destination in Twilio Console → Phone Numbers → Verified Caller IDs. (2) US long codes need A2P 10DLC registration for many carriers. (3) Check Twilio Monitor → Logs → Errors for this Message SID.",
+    }
     if (userId && supabase) {
       try {
         await logCommunicationEvent(supabase, {
@@ -447,7 +467,13 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
           direction: "outbound",
           body,
           unread: false,
-          metadata: { to, from: fromNumber, provider: "twilio" },
+          metadata: {
+            to,
+            from: fromNumber,
+            provider: "twilio",
+            twilio_sid: twilioParsed.sid ?? null,
+            twilio_status: twilioParsed.status ?? null,
+          },
         })
       } catch (logErr) {
         console.error(
@@ -460,6 +486,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
           to,
           from: fromNumber,
           detail: text,
+          ...twilioPayload,
           logWarning: "SMS was sent but the conversation log could not be saved.",
         })
       }
@@ -470,11 +497,19 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
         to,
         from: fromNumber,
         detail: text,
+        ...twilioPayload,
         logWarning:
           "SMS sent using TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) because Supabase service env is missing. Add SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Vercel and redeploy to use Admin → Communications per-user numbers and to log outbound SMS.",
       })
     }
-    return res.status(200).json({ ok: true, provider: "twilio", to, from: fromNumber, detail: text })
+    return res.status(200).json({
+      ok: true,
+      provider: "twilio",
+      to,
+      from: fromNumber,
+      detail: text,
+      ...twilioPayload,
+    })
   }
 
   if (outboundWebhookUrl) {
