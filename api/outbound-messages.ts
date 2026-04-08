@@ -379,7 +379,11 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   let supabase: ReturnType<typeof createServiceSupabase> | null = null
   try {
     supabase = createServiceSupabase()
-  } catch {
+  } catch (e) {
+    console.error(
+      "[outbound-messages/sms] createServiceSupabase failed (same env as voicemail-greeting / incoming-sms):",
+      e instanceof Error ? e.message : e,
+    )
     // Per-user From needs DB; see fallback below using TWILIO_FROM_NUMBER.
   }
 
