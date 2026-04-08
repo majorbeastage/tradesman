@@ -7,6 +7,8 @@ import { Resend } from "resend"
 import { Webhook } from "svix"
 import {
   createServiceSupabase,
+  customerHasOpenConversation,
+  ensureOpenLeadForInbound,
   firstEnv,
   getOrCreateCustomerByEmail,
   getOrCreateConversation,
@@ -358,13 +360,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   let customerId = ""
-  let conversationId = ""
+  let conversationId: string | null = null
+  let leadId: string | null = null
   let previousCustomer = false
   try {
     const customer = await getOrCreateCustomerByEmail(supabase, channel.user_id, fromEmail)
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
-    conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+    const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customerId)
+    if (inConversations) {
+      conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+    } else {
+      const title = subject && subject !== "(no subject)" ? `Email: ${subject.slice(0, 80)}` : `Inbound email from ${fromEmail}`
+      leadId = await ensureOpenLeadForInbound(
+        supabase,
+        channel.user_id,
+        customerId,
+        title,
+        "Auto-created from inbound email."
+      )
+    }
   } catch (err) {
     return res.status(500).json({
       error: err instanceof Error ? err.message : String(err),
@@ -377,19 +392,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? `${bodyForMessage}\n\n[Message-ID: ${received.message_id}]`
       : bodyForMessage
 
-  const { error: messageErr } = await supabase.from("messages").insert({
-    conversation_id: conversationId,
-    sender: "customer",
-    content: messageContent,
-  })
-  if (messageErr) {
-    return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
+  if (conversationId) {
+    const { error: messageErr } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender: "customer",
+      content: messageContent,
+    })
+    if (messageErr) {
+      return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
+    }
   }
 
   await logCommunicationEvent(supabase, {
     user_id: channel.user_id,
     customer_id: customerId,
     conversation_id: conversationId,
+    lead_id: leadId,
     channel_id: channel.id,
     event_type: "email",
     direction: "inbound",

@@ -717,8 +717,11 @@ export function AccountProfilePanel({
                       }))
                     }
                   />
-                  <span>
-                    Play a short announcement (whisper) on my phone when I answer a forwarded call. Uses the caller&apos;s name from saved customers when matched, plus their number. This is audio on the call leg only.
+                  <span style={{ display: "grid", gap: 4 }}>
+                    <span style={{ fontWeight: 700 }}>Announce caller before I connect</span>
+                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                      Short audio on your phone when you pick up a forwarded call: name (from your CRM when known) and number. Does not play if the call is not forwarded to you.
+                    </span>
                   </span>
                 </label>
                 {form.forward_whisper_on_answer && (
@@ -729,8 +732,11 @@ export function AccountProfilePanel({
                         checked={form.forward_whisper_only_outside_business_hours}
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
                       />
-                      <span>
-                        Only play the whisper outside of business hours (same schedule as above). During open hours, the call connects without the whisper.
+                      <span style={{ display: "grid", gap: 4 }}>
+                        <span style={{ fontWeight: 700 }}>Whisper only after hours</span>
+                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                          Uses the same business-hours schedule as above. When checked, open hours connect without the announcement.
+                        </span>
                       </span>
                     </label>
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
@@ -739,8 +745,11 @@ export function AccountProfilePanel({
                         checked={form.forward_whisper_require_keypress}
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
                       />
-                      <span>
-                        After the announcement, you must accept or decline: press 1 or say answer to connect; press 2 or say decline to end the forward (caller typically goes to Tradesman voicemail). If you do nothing for a few seconds, it is treated like decline.
+                      <span style={{ display: "grid", gap: 4 }}>
+                        <span style={{ fontWeight: 700 }}>Require accept or decline</span>
+                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                          After the announcement: press 1 (or say answer) to connect, 2 (or decline) to send the caller to Tradesman voicemail. Silence times out as decline.
+                        </span>
                       </span>
                     </label>
                     <label style={{ display: "grid", gap: 6 }}>
@@ -758,7 +767,7 @@ export function AccountProfilePanel({
                       </span>
                     </label>
                     <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>
-                      Without this screening step, hanging up during or after the whisper can behave inconsistently by carrier. With screening, timeout or an unclear response defaults to voicemail like declining.
+                      <strong>Fine print:</strong> Screening avoids odd carrier behavior if you hang up during the whisper. Unclear or timed-out responses are treated like decline (voicemail).
                     </p>
                   </div>
                 )}

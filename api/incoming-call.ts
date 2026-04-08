@@ -3,6 +3,7 @@ import {
   buildVoicemailTwiml,
   createLeadForInboundCall,
   createServiceSupabase,
+  customerHasOpenConversation,
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
   getUserRoutingProfile,
@@ -51,8 +52,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const forwardTo = channel?.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
   if (channel?.user_id) {
     const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
-    const conversationId = customer ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone") : null
-    const leadId = customer ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
+    const inConversations =
+      customer ? await customerHasOpenConversation(supabase, channel.user_id, customer.customerId) : false
+    const conversationId =
+      customer && inConversations
+        ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
+        : null
+    const leadId =
+      customer && !inConversations ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
     await logCommunicationEvent(supabase, {
       user_id: channel.user_id,
       customer_id: customer?.customerId ?? null,

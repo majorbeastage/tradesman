@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
   createLeadForInboundCall,
   createServiceSupabase,
+  customerHasOpenConversation,
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
   logCommunicationEvent,
@@ -111,18 +112,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       for (const userId of notifyUserIds) {
         let conversationId: string | null = null
+        let leadId: string | null = null
         let customerId: string | null = null
         let previousCustomer = false
         if (from) {
           const customer = await getOrCreateCustomerByPhone(supabase, userId, from)
           customerId = customer.customerId
           previousCustomer = customer.previousCustomer
-          conversationId = await getOrCreateConversation(supabase, userId, customer.customerId, "phone")
+          const inConversations = await customerHasOpenConversation(supabase, userId, customer.customerId)
+          if (inConversations) {
+            conversationId = await getOrCreateConversation(supabase, userId, customer.customerId, "phone")
+          } else {
+            leadId = await createLeadForInboundCall(supabase, userId, customer.customerId, from)
+          }
         }
         await logCommunicationEvent(supabase, {
           user_id: userId,
           customer_id: customerId,
           conversation_id: conversationId,
+          lead_id: leadId,
           channel_id: null,
           event_type: "voicemail",
           direction: "inbound",
@@ -156,8 +164,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const channel = channelId ? await lookupChannelById(supabase, channelId) : null
     if (channel?.user_id && from) {
       const customer = await getOrCreateCustomerByPhone(supabase, channel.user_id, from)
-      const conversationId = await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
-      const leadId = await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from)
+      const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customer.customerId)
+      const conversationId = inConversations
+        ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
+        : null
+      const leadId = inConversations
+        ? null
+        : await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from)
       const mode: VoicemailStorageMode = channel.voicemail_mode === "full_transcript" ? "full_transcript" : "summary"
       const fieldsInitial = voicemailStorageFields(transcriptionText, mode)
 

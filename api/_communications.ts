@@ -673,6 +673,30 @@ export async function getOrCreateCustomerByEmail(
   return { customerId, previousCustomer: false }
 }
 
+/** True if this customer already has an active conversation row (user promoted a lead or added one manually). */
+export async function customerHasOpenConversation(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string
+): Promise<boolean> {
+  if (!userId || !customerId) return false
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+    .is("removed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error && !String(error.message || "").includes("removed_at")) throw error
+  return Boolean(data?.id)
+}
+
+/**
+ * One open row per customer (any channel). Reuses the latest open conversation so phone/SMS/email do not stack duplicate rows.
+ * New rows use the requested `channel` when none exist yet.
+ */
 export async function getOrCreateConversation(
   supabase: SupabaseClient,
   userId: string,
@@ -684,7 +708,6 @@ export async function getOrCreateConversation(
     .select("id")
     .eq("user_id", userId)
     .eq("customer_id", customerId)
-    .eq("channel", channel)
     .is("removed_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -701,6 +724,31 @@ export async function getOrCreateConversation(
     .single()
   if (conversationErr) throw conversationErr
   return String(conversation.id)
+}
+
+/** Open lead for inbound touchpoints when the customer is not yet in Conversations (no open conversation row). */
+export async function ensureOpenLeadForInbound(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  title: string,
+  description: string
+): Promise<string> {
+  const existingLeadId = await findOpenLeadForCustomer(supabase, userId, customerId)
+  if (existingLeadId) return existingLeadId
+
+  const { data, error } = await supabase
+    .from("leads")
+    .insert({
+      user_id: userId,
+      customer_id: customerId,
+      title,
+      description,
+    })
+    .select("id")
+    .single()
+  if (error) throw error
+  return String(data.id)
 }
 
 export async function findOpenLeadForCustomer(
@@ -730,20 +778,6 @@ export async function createLeadForInboundCall(
   phone: string
 ): Promise<string> {
   const normalizedPhone = normalizePhone(phone)
-  const existingLeadId = await findOpenLeadForCustomer(supabase, userId, customerId)
-  if (existingLeadId) return existingLeadId
-
   const title = normalizedPhone ? `Inbound call from ${normalizedPhone}` : "Inbound call"
-  const { data, error } = await supabase
-    .from("leads")
-    .insert({
-      user_id: userId,
-      customer_id: customerId,
-      title,
-      description: "Auto-created from inbound phone call.",
-    })
-    .select("id")
-    .single()
-  if (error) throw error
-  return String(data.id)
+  return ensureOpenLeadForInbound(supabase, userId, customerId, title, "Auto-created from inbound phone call.")
 }

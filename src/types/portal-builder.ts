@@ -269,6 +269,7 @@ const CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY = new Set([
   "calendar:add_item_to_calendar",
   "calendar:job_types",
   "quotes:add_quote_to_calendar",
+  "conversations:conversation_settings",
 ])
 
 function mergeMissingRecurrencePortalItems(
@@ -585,7 +586,20 @@ export const DEFAULT_RECURRENCE_PORTAL_ITEMS: PortalSettingItem[] = [
 
 /** Default items for Conversation settings */
 export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
-  { id: 'show_internal_conversations', type: 'checkbox', label: 'Show Internal Conversations', defaultChecked: true },
+  { id: 'show_internal_conversations', type: 'checkbox', label: 'Show internal conversations', defaultChecked: true },
+  {
+    id: 'voicemail_transcription_enabled',
+    type: 'checkbox',
+    label: 'Show voicemail transcription',
+    defaultChecked: true,
+  },
+  {
+    id: 'voicemail_transcription_display',
+    type: 'dropdown',
+    label: 'Transcription display',
+    options: ['Summary', 'Full transcript'],
+    dependency: { dependsOnItemId: 'voicemail_transcription_enabled', showWhenValue: 'checked' },
+  },
 ]
 
 /** Default items for a control when none saved. Key: `${tabId}:${controlId}`. */

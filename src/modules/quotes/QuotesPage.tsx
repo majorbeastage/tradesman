@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, Fragment } from "react"
 import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -8,6 +8,7 @@ import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible, getPageActionVisible } from "../../types/portal-builder"
+import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import {
@@ -52,6 +53,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
   const [selectedQuote, setSelectedQuote] = useState<any>(null)
   const [selectedQuoteItems, setSelectedQuoteItems] = useState<any[]>([])
+  const [quoteCommEvents, setQuoteCommEvents] = useState<any[]>([])
+  const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
+  const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [showAddCustomer, setShowAddCustomer] = useState(false)
@@ -97,6 +101,35 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
   const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
+
+  const conversationPortalDefaults = useMemo(() => {
+    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings")
+    const out: Record<string, string> = {}
+    for (const item of items) {
+      if (item.type === "checkbox") out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      else if (item.type === "dropdown" && item.options?.length) out[item.id] = item.options[0]
+    }
+    return out
+  }, [portalConfig])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("voicemail_conversations_display")
+        .eq("id", userId)
+        .maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
+      if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   useEffect(() => {
     if (!showSettings || quoteSettingsItems.length === 0) return
@@ -434,9 +467,23 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
   }
 
+  function toggleQuoteRow(quoteId: string) {
+    if (selectedQuoteId === quoteId) {
+      setSelectedQuoteId(null)
+      setSelectedQuote(null)
+      setSelectedQuoteItems([])
+      setQuoteCommEvents([])
+      setQuoteThreadMessages([])
+    } else {
+      void openQuote(quoteId)
+    }
+  }
+
   async function openQuote(quoteId: string) {
     setSelectedQuoteId(quoteId)
     setSelectedQuoteItems([])
+    setQuoteCommEvents([])
+    setQuoteThreadMessages([])
     if (!supabase) return
     const { data, error } = await supabase
       .from("quotes")
@@ -469,6 +516,34 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       .eq("quote_id", quoteId)
       .order("created_at", { ascending: true })
     setSelectedQuoteItems(items || [])
+
+    const cid = data.customer_id as string
+    if (userId && cid) {
+      const { data: evs } = await supabase
+        .from("communication_events")
+        .select(
+          "id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text, summary_text",
+        )
+        .eq("user_id", userId)
+        .eq("customer_id", cid)
+        .order("created_at", { ascending: true })
+        .limit(200)
+      setQuoteCommEvents(evs || [])
+    } else {
+      setQuoteCommEvents([])
+    }
+
+    const convId = data.conversation_id as string | null
+    if (convId) {
+      const { data: msgs } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", convId)
+        .order("created_at", { ascending: true })
+      setQuoteThreadMessages(msgs || [])
+    } else {
+      setQuoteThreadMessages([])
+    }
   }
 
   async function addQuoteItem() {
@@ -540,6 +615,22 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     const sorted = [...msgs].sort((x, y) => (y.created_at || "").localeCompare(x.created_at || ""))
     return sorted[0]?.content ?? null
   }
+
+  const quoteActivityItems = useMemo(() => {
+    const items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[] = []
+    for (const m of quoteThreadMessages) {
+      const t = m.created_at ? Date.parse(m.created_at) : 0
+      items.push({ sortMs: t, key: `m-${m.id}`, kind: "msg", payload: m })
+    }
+    for (const e of quoteCommEvents) {
+      const t = e.created_at ? Date.parse(e.created_at) : 0
+      items.push({ sortMs: t, key: `e-${e.id}`, kind: "ev", payload: e })
+    }
+    items.sort((a, b) => a.sortMs - b.sortMs)
+    return items
+  }, [quoteThreadMessages, quoteCommEvents])
+
+  const selectedQuoteRowText = theme.text
 
   return (
     <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
@@ -699,7 +790,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         </div>
 
         <div style={{ width: "100%", overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "16%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "12%" }} />
+            <col />
+          </colgroup>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
               <th onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Name</th>
@@ -716,58 +815,168 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               const lastMsg = getLastMessage(q)
               const lastMsgText = lastMsg?.trim() ? (lastMsg.length > 50 ? lastMsg.slice(0, 50) + "…" : lastMsg) : "—"
               const source = q.conversation_id ? "Conversation" : "Manual"
+              const isRowSelected = selectedQuoteId === q.id
+              const cellBase = {
+                padding: "8px" as const,
+                color: isRowSelected ? selectedQuoteRowText : undefined,
+                fontWeight: isRowSelected ? (600 as const) : (400 as const),
+              }
               return (
-                <tr
-                  key={q.id}
-                  onClick={() => openQuote(q.id)}
-                  style={{
-                    cursor: "pointer",
-                    borderBottom: "1px solid #eee",
-                    background: selectedQuoteId === q.id ? "#f3f4f6" : "transparent"
-                  }}
-                >
-                  <td style={{ padding: "8px" }}>{q.customers?.display_name ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>{phone || "—"}</td>
-                  <td style={{ padding: "8px" }}>{source}</td>
-                  <td style={{ padding: "8px" }}>{q.status ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>
-                    {(q.updated_at || q.created_at) ? new Date(q.updated_at || q.created_at!).toLocaleDateString() : "—"}
-                  </td>
-                  <td style={{ padding: "8px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg ?? undefined}>{lastMsgText}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        </div>
+                <Fragment key={q.id}>
+                  <tr
+                    onClick={() => toggleQuoteRow(q.id)}
+                    style={{
+                      cursor: "pointer",
+                      borderBottom: "1px solid #eee",
+                      background: isRowSelected ? "#bae6fd" : "transparent",
+                    }}
+                  >
+                    <td style={cellBase}>{q.customers?.display_name ?? "—"}</td>
+                    <td style={cellBase}>{phone || "—"}</td>
+                    <td style={cellBase}>{source}</td>
+                    <td style={cellBase}>{q.status ?? "—"}</td>
+                    <td style={cellBase}>
+                      {(q.updated_at || q.created_at) ? new Date(q.updated_at || q.created_at!).toLocaleDateString() : "—"}
+                    </td>
+                    <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg ?? undefined}>{lastMsgText}</td>
+                  </tr>
+                  {isRowSelected && selectedQuote?.id === q.id ? (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid #e5e7eb", background: "#f8fafc", verticalAlign: "top" }}>
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ padding: "16px 18px 20px", maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>Quote</h3>
+                              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+                                {selectedQuote.customers?.display_name ?? "Customer"} · Click the row again to collapse.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              aria-label="Close quote detail"
+                              onClick={() => toggleQuoteRow(q.id)}
+                              style={{
+                                flexShrink: 0,
+                                width: 36,
+                                height: 36,
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                cursor: "pointer",
+                                fontSize: 18,
+                                lineHeight: 1,
+                                color: theme.text,
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                              <div style={{ fontWeight: 700 }}>Customer</div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setNotesCustomerId(selectedQuote.customer_id ?? null)
+                                  setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
+                                }}
+                                style={{ padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
+                              >
+                                Notes
+                              </button>
+                            </div>
+                            <p style={{ margin: 0 }}><strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}</p>
+                            <p style={{ margin: 0 }}><strong>Status:</strong> {selectedQuote.status ?? "—"}</p>
+                            <p style={{ margin: 0 }}><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
+                          </div>
 
-        {selectedQuote && (
-          <div style={{ marginTop: "20px", padding: isMobile ? "16px" : "20px", border: "1px solid #ddd", borderRadius: "6px", overflowX: "auto" }}>
-            <button
-              onClick={() => { setSelectedQuote(null); setSelectedQuoteId(null) }}
-              style={{ marginBottom: "16px" }}
-            >
-              ← Back to Quotes
-            </button>
-            <h3>Quote Details</h3>
-            <p>
-              <strong>Customer:</strong> {selectedQuote.customers?.display_name ?? "—"}
-              {" "}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setNotesCustomerId(selectedQuote.customer_id ?? null)
-                  setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
-                }}
-                style={{ marginLeft: "8px", padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-              >
-                Notes
-              </button>
-            </p>
-            <p><strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}</p>
-            <p><strong>Status:</strong> {selectedQuote.status ?? "—"}</p>
-            <p><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Activity</h4>
+                          <div
+                            style={{
+                              border: `1px solid ${theme.border}`,
+                              padding: 12,
+                              borderRadius: 8,
+                              background: "#fff",
+                              minHeight: 72,
+                              maxHeight: "min(36vh, 320px)",
+                              overflow: "auto",
+                              boxSizing: "border-box",
+                              marginBottom: 20,
+                            }}
+                          >
+                            {quoteActivityItems.length === 0 ? (
+                              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                                No messages or communication events for this customer yet. Voicemails and inbound messages appear here when logged for this contact.
+                              </p>
+                            ) : (
+                              quoteActivityItems.map((item) => {
+                                if (item.kind === "msg") {
+                                  const msg = item.payload
+                                  return (
+                                    <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                                        {msg.sender === "customer" ? "Customer" : "You"}
+                                        {msg.created_at ? (
+                                          <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                            {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{msg.content}</p>
+                                    </div>
+                                  )
+                                }
+                                const ev = item.payload
+                                const label =
+                                  ev.event_type === "email"
+                                    ? "Email"
+                                    : ev.event_type === "sms"
+                                      ? "SMS"
+                                      : ev.event_type === "call"
+                                        ? "Call"
+                                        : ev.event_type === "voicemail"
+                                          ? "Voicemail"
+                                          : String(ev.event_type || "Event")
+                                return (
+                                  <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                                      {label}
+                                      {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
+                                      {ev.created_at ? (
+                                        <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                          {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {ev.event_type === "voicemail" ? (
+                                      <>
+                                        <VoicemailRecordingBlock recordingUrl={ev.recording_url} />
+                                        <VoicemailTranscriptBlock
+                                          ev={ev}
+                                          profileVoicemailDisplay={voicemailProfileDisplay}
+                                          conversationPortalValues={conversationPortalDefaults}
+                                        />
+                                        {ev.body ? (
+                                          <p style={{ margin: "8px 0 0", fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                        ) : null}
+                                      </>
+                                    ) : ev.event_type === "email" ? (
+                                      <>
+                                        {ev.subject?.trim() ? <p style={{ margin: "0 0 6px", fontWeight: 700 }}>{ev.subject.trim()}</p> : null}
+                                        <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                                      </>
+                                    ) : (
+                                      <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
 
             <h3 style={{ marginTop: "24px" }}>Quote items</h3>
             <table style={{ width: "100%", minWidth: isMobile ? "540px" : "100%", borderCollapse: "collapse", marginTop: "8px", border: "1px solid #ddd" }}>
@@ -862,6 +1071,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   if (error) { alert(error.message); return }
                   setSelectedQuote(null)
                   setSelectedQuoteId(null)
+                  setQuoteCommEvents([])
+                  setQuoteThreadMessages([])
                   loadQuotes()
                 }}
                 style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
@@ -869,8 +1080,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 Remove
               </button>
             </div>
-          </div>
-        )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+        </div>
 
         {showAddToCalendar && selectedQuote && supabase && (
           <>

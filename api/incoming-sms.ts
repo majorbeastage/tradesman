@@ -2,6 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
   asObject,
   createServiceSupabase,
+  customerHasOpenConversation,
+  ensureOpenLeadForInbound,
   firstEnv,
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
@@ -112,29 +114,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   let customerId = ""
-  let conversationId = ""
+  let conversationId: string | null = null
+  let leadId: string | null = null
   let previousCustomer = false
   try {
     const customer = await getOrCreateCustomerByPhone(supabase, targetUserId, from)
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
-    conversationId = await getOrCreateConversation(supabase, targetUserId, customerId, "sms")
+    const inConversations = await customerHasOpenConversation(supabase, targetUserId, customerId)
+    if (inConversations) {
+      conversationId = await getOrCreateConversation(supabase, targetUserId, customerId, "sms")
+    } else {
+      const title = from ? `Inbound text from ${from}` : "Inbound SMS"
+      leadId = await ensureOpenLeadForInbound(
+        supabase,
+        targetUserId,
+        customerId,
+        title,
+        "Auto-created from inbound SMS."
+      )
+    }
   } catch (err) {
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err), step: "resolve_customer_or_conversation" })
   }
 
   const content = messageId ? `${body}\n\n[Inbound message ID: ${messageId}]` : body
-  const { error: messageErr } = await supabase.from("messages").insert({
-    conversation_id: conversationId,
-    sender: "customer",
-    content,
-  })
-  if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
+  if (conversationId) {
+    const { error: messageErr } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender: "customer",
+      content,
+    })
+    if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
+  }
 
   await logCommunicationEvent(supabase, {
     user_id: targetUserId,
     customer_id: customerId,
     conversation_id: conversationId,
+    lead_id: leadId,
     channel_id: channel?.id ?? null,
     event_type: "sms",
     direction: "inbound",
@@ -150,6 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     targetUserId,
     customerId,
     conversationId,
+    leadId,
     channelId: channel?.id ?? null,
     normalizedFrom: from,
     normalizedTo: to || null,

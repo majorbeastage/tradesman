@@ -1,10 +1,16 @@
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, Fragment } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
-import { getLeadsSettingsItemsForUser, getCustomActionButtonsForUser, getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
+import {
+  getLeadsSettingsItemsForUser,
+  getCustomActionButtonsForUser,
+  getControlItemsForUser,
+  getPageActionVisible,
+} from "../../types/portal-builder"
+import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
@@ -39,10 +45,21 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
   const [selectedLead, setSelectedLead] = useState<any>(null)
   const [messages, setMessages] = useState<any[]>([])
+  const [leadCommEvents, setLeadCommEvents] = useState<any[]>([])
+  const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
 
   const leadsSettingsItems = useMemo(() => getLeadsSettingsItemsForUser(portalConfig), [portalConfig])
+  const conversationPortalDefaults = useMemo(() => {
+    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings")
+    const out: Record<string, string> = {}
+    for (const item of items) {
+      if (item.type === "checkbox") out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      else if (item.type === "dropdown" && item.options?.length) out[item.id] = item.options[0]
+    }
+    return out
+  }, [portalConfig])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "leads"), [portalConfig])
   const createLeadPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "leads", "create_lead"), [portalConfig])
   const [createLeadPortalValues, setCreateLeadPortalValues] = useState<Record<string, string>>({})
@@ -175,6 +192,36 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     loadLeads()
   }, [userId])
 
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("voicemail_conversations_display")
+        .eq("id", userId)
+        .maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
+      if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  function toggleLeadRow(leadId: string) {
+    if (selectedLeadId === leadId) {
+      setSelectedLeadId(null)
+      setSelectedLead(null)
+      setMessages([])
+      setLeadCommEvents([])
+    } else {
+      void openLead(leadId)
+    }
+  }
+
   async function moveLeadToConversations() {
     if (!supabase || !selectedLead?.id) return
     const customerId = selectedLead.customer_id ?? selectedLead.customers?.id
@@ -182,17 +229,28 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       alert("No customer linked to this lead.")
       return
     }
-    const { error: convoErr } = await supabase
+    const { data: existingConvo } = await supabase
       .from("conversations")
-      .insert({
-        user_id: userId,
-        customer_id: customerId,
-        channel: "sms",
-        status: "open",
-      })
-    if (convoErr) {
-      alert("Could not create conversation: " + convoErr.message)
-      return
+      .select("id")
+      .eq("user_id", userId)
+      .eq("customer_id", customerId)
+      .is("removed_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!existingConvo?.id) {
+      const { error: convoErr } = await supabase
+        .from("conversations")
+        .insert({
+          user_id: userId,
+          customer_id: customerId,
+          channel: "sms",
+          status: "open",
+        })
+      if (convoErr) {
+        alert("Could not create conversation: " + convoErr.message)
+        return
+      }
     }
     const { error } = await supabase
       .from("leads")
@@ -206,12 +264,13 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setSelectedLead(null)
     setSelectedLeadId(null)
     setMessages([])
+    setLeadCommEvents([])
     if (setPage) setPage("conversations")
   }
 
   async function openLead(leadId: string) {
     setSelectedLeadId(leadId)
-    if (!supabase) return
+    if (!supabase || !userId) return
 
     const { data, error } = await supabase
       .from("leads")
@@ -241,10 +300,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     const { data: convo } = await supabase
       .from("conversations")
       .select("id")
+      .eq("user_id", userId)
       .eq("customer_id", data.customer_id)
-      .single()
+      .is("removed_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    if (convo) {
+    if (convo?.id) {
       const { data: msgs } = await supabase
         .from("messages")
         .select("*")
@@ -255,6 +318,20 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     } else {
       setMessages([])
     }
+
+    const cid = data.customer_id as string
+    const orFilter = `lead_id.eq.${leadId},and(customer_id.eq.${cid},conversation_id.is.null)`
+    const { data: evs } = await supabase
+      .from("communication_events")
+      .select(
+        "id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text, summary_text, lead_id, conversation_id",
+      )
+      .eq("user_id", userId)
+      .or(orFilter)
+      .order("created_at", { ascending: true })
+      .limit(200)
+
+    setLeadCommEvents(evs || [])
   }
 
   async function createLeadFlow() {
@@ -417,6 +494,22 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       return aVal < bVal ? 1 : -1
     }
   })
+
+  const leadActivityItems = useMemo(() => {
+    const items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[] = []
+    for (const m of messages) {
+      const t = m.created_at ? Date.parse(m.created_at) : 0
+      items.push({ sortMs: t, key: `m-${m.id}`, kind: "msg", payload: m })
+    }
+    for (const e of leadCommEvents) {
+      const t = e.created_at ? Date.parse(e.created_at) : 0
+      items.push({ sortMs: t, key: `e-${e.id}`, kind: "ev", payload: e })
+    }
+    items.sort((a, b) => a.sortMs - b.sortMs)
+    return items
+  }, [messages, leadCommEvents])
+
+  const selectedRowText = theme.text
 
   return (
     <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
@@ -789,198 +882,315 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       </div>
 
       <div style={{ width: "100%", overflowX: "auto" }}>
-      <table style={{
-        width: "100%",
-        minWidth: isMobile ? "640px" : "100%",
-        borderCollapse: "collapse"
-      }}>
-
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-            <th
-              onClick={() => {
-                setSortField("name")
-                setSortAsc(!sortAsc)
-              }}
-              style={{ padding: "8px", cursor: "pointer" }}
-            >
-              Name
-            </th>
-            <th style={{ padding: "8px" }}>Phone</th>
-            <th
-              onClick={() => {
-                setSortField("title")
-                setSortAsc(!sortAsc)
-              }}
-              style={{ padding: "8px", cursor: "pointer" }}
-            >
-              Job Description
-            </th>
-            <th style={{ padding: "8px" }}>Last Message</th>
-            <th
-              onClick={() => {
-                setSortField("created_at")
-                setSortAsc(!sortAsc)
-              }}
-              style={{ padding: "8px", cursor: "pointer" }}
-            >
-              Last Update
-            </th>
-          </tr>
-        </thead>
-
-        <tbody>
-
-          {sortedLeads.map((lead) => {
-            const phone = lead.customers?.customer_identifiers
-              ?.find((i: any) => i.type === "phone")?.value || ""
-            return (
-              <tr
-                key={lead.id}
-                onClick={() => openLead(lead.id)}
-                style={{
-                  cursor: "pointer",
-                  borderBottom: "1px solid #eee",
-                  background:
-                    selectedLeadId === lead.id ? "#f3f4f6" : "transparent"
-                }}
-              >
-                <td style={{ padding: "8px" }}>{lead.customers?.display_name}</td>
-                <td style={{ padding: "8px" }}>{phone}</td>
-                <td style={{ padding: "8px" }}>{lead.title ?? "—"}</td>
-                <td style={{ padding: "8px" }}>
-                  {(lead.last_message ?? lead.description ?? "").slice(0, 15) || "—"}
-                </td>
-                <td style={{ padding: "8px" }}>
-                  {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "—"}
-                </td>
-              </tr>
-            )
-          })}
-
-        </tbody>
-
-      </table>
-      </div>
-
-      {selectedLead && (
-
-        <div
+        <table
           style={{
-            marginTop: "20px",
-            padding: "20px",
-            border: "1px solid #ddd",
-            borderRadius: "6px"
+            width: "100%",
+            minWidth: isMobile ? "640px" : "100%",
+            borderCollapse: "collapse",
+            tableLayout: "fixed",
           }}
         >
+          <colgroup>
+            <col style={{ width: "18%" }} />
+            <col style={{ width: "18%" }} />
+            <col style={{ width: "18%" }} />
+            <col style={{ width: "14%" }} />
+            <col />
+          </colgroup>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+              <th
+                onClick={() => {
+                  setSortField("name")
+                  setSortAsc(!sortAsc)
+                }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Name
+              </th>
+              <th style={{ padding: "8px" }}>Phone</th>
+              <th
+                onClick={() => {
+                  setSortField("title")
+                  setSortAsc(!sortAsc)
+                }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Job Description
+              </th>
+              <th style={{ padding: "8px" }}>Last Message</th>
+              <th
+                onClick={() => {
+                  setSortField("created_at")
+                  setSortAsc(!sortAsc)
+                }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Last Update
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedLeads.map((lead) => {
+              const phone = lead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || ""
+              const isRowSelected = selectedLeadId === lead.id
+              const cellBase = {
+                padding: "8px" as const,
+                color: isRowSelected ? selectedRowText : undefined,
+                fontWeight: isRowSelected ? (600 as const) : (400 as const),
+              }
+              return (
+                <Fragment key={lead.id}>
+                  <tr
+                    onClick={() => toggleLeadRow(lead.id)}
+                    style={{
+                      cursor: "pointer",
+                      borderBottom: "1px solid #eee",
+                      background: isRowSelected ? "#bae6fd" : "transparent",
+                    }}
+                  >
+                    <td style={cellBase}>{lead.customers?.display_name}</td>
+                    <td style={cellBase}>{phone}</td>
+                    <td style={cellBase}>{lead.title ?? "—"}</td>
+                    <td style={cellBase}>
+                      {(lead.last_message ?? lead.description ?? "").slice(0, 15) || "—"}
+                    </td>
+                    <td style={cellBase}>
+                      {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "—"}
+                    </td>
+                  </tr>
+                  {isRowSelected && selectedLead?.id === lead.id ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          padding: 0,
+                          borderBottom: "1px solid #e5e7eb",
+                          background: "#f8fafc",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            padding: "16px 18px 20px",
+                            maxWidth: "min(960px, 100%)",
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>
+                                {selectedLead.customers?.display_name ?? "Lead"}
+                              </h3>
+                              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+                                Click the same list row again to collapse. Job: {selectedLead.title ?? "—"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              aria-label="Close lead detail"
+                              onClick={() => toggleLeadRow(lead.id)}
+                              style={{
+                                flexShrink: 0,
+                                width: 36,
+                                height: 36,
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                cursor: "pointer",
+                                fontSize: 18,
+                                lineHeight: 1,
+                                color: theme.text,
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
 
-          <button
-            onClick={() => {
-              setSelectedLead(null)
-              setSelectedLeadId(null)
-            }}
-            style={{ marginBottom: "16px" }}
-          >
-            ← Back to Leads
-          </button>
+                          <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                              <div style={{ fontWeight: 700, color: theme.text }}>Lead details</div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setNotesCustomerId(selectedLead.customer_id ?? null)
+                                  setNotesCustomerName(selectedLead.customers?.display_name ?? "")
+                                }}
+                                style={{
+                                  padding: "4px 10px",
+                                  fontSize: "12px",
+                                  background: theme.primary,
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "6px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Notes
+                              </button>
+                            </div>
+                            <p style={{ margin: 0 }}>
+                              <strong>Phone:</strong>{" "}
+                              {selectedLead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || "—"}
+                            </p>
+                            <p style={{ margin: 0 }}>
+                              <strong>Message:</strong> {selectedLead.description || "—"}
+                            </p>
+                          </div>
 
-          <h3>Lead Details</h3>
+                          <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Activity</h4>
+                          <div
+                            style={{
+                              border: `1px solid ${theme.border}`,
+                              padding: 12,
+                              borderRadius: 8,
+                              background: "#fff",
+                              minHeight: 72,
+                              maxHeight: "min(42vh, 380px)",
+                              overflow: "auto",
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            {leadActivityItems.length === 0 ? (
+                              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                                No thread messages or logged events yet. Inbound SMS, calls, and voicemails appear here while this contact is still in Leads (before you add them to Conversations).
+                              </p>
+                            ) : (
+                              leadActivityItems.map((item) => {
+                                if (item.kind === "msg") {
+                                  const msg = item.payload
+                                  return (
+                                    <div
+                                      key={item.key}
+                                      style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}
+                                    >
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                                        {msg.sender === "customer" ? "Customer" : "You"}
+                                        {msg.created_at ? (
+                                          <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                            {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{msg.content}</p>
+                                    </div>
+                                  )
+                                }
+                                const ev = item.payload
+                                const label =
+                                  ev.event_type === "email"
+                                    ? "Email"
+                                    : ev.event_type === "sms"
+                                      ? "SMS"
+                                      : ev.event_type === "call"
+                                        ? "Call"
+                                        : ev.event_type === "voicemail"
+                                          ? "Voicemail"
+                                          : String(ev.event_type || "Event")
+                                return (
+                                  <div
+                                    key={item.key}
+                                    style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}
+                                  >
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                                      {label}
+                                      {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
+                                      {ev.created_at ? (
+                                        <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                          {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {ev.event_type === "voicemail" ? (
+                                      <>
+                                        <VoicemailRecordingBlock recordingUrl={ev.recording_url} />
+                                        <VoicemailTranscriptBlock
+                                          ev={ev}
+                                          profileVoicemailDisplay={voicemailProfileDisplay}
+                                          conversationPortalValues={conversationPortalDefaults}
+                                        />
+                                        {ev.body ? (
+                                          <p style={{ margin: "8px 0 0", fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                        ) : null}
+                                      </>
+                                    ) : ev.event_type === "email" ? (
+                                      <>
+                                        {ev.subject?.trim() ? (
+                                          <p style={{ margin: "0 0 6px", fontWeight: 700 }}>{ev.subject.trim()}</p>
+                                        ) : null}
+                                        <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                                      </>
+                                    ) : (
+                                      <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
 
-          <p>
-            <strong>Customer:</strong>{" "}
-            {selectedLead.customers?.display_name}
-            {" "}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                setNotesCustomerId(selectedLead.customer_id ?? null)
-                setNotesCustomerName(selectedLead.customers?.display_name ?? "")
-              }}
-              style={{ marginLeft: "8px", padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-            >
-              Notes
-            </button>
-          </p>
+                          <button
+                            type="button"
+                            onClick={moveLeadToConversations}
+                            style={{
+                              marginTop: 20,
+                              padding: "10px 16px",
+                              background: theme.primary,
+                              color: "white",
+                              border: "none",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Add Lead to my Conversations
+                          </button>
 
-          <p>
-            <strong>Phone:</strong>{" "}
-            {selectedLead.customers?.customer_identifiers
-              ?.find((i:any)=>i.type==="phone")?.value || "—"}
-          </p>
-
-          <p>
-            <strong>Job Description:</strong> {selectedLead.title}
-          </p>
-
-          <p>
-            <strong>Message:</strong>{" "}
-            {selectedLead.description || "—"}
-          </p>
-
-          <h3 style={{ marginTop: "24px" }}>Conversation</h3>
-
-          <div style={{
-            border: "1px solid #ddd",
-            padding: "12px",
-            borderRadius: "6px"
-          }}>
-
-            {messages.map((msg) => (
-
-              <div key={msg.id} style={{ marginBottom: "10px" }}>
-
-                <strong>
-                  {msg.sender === "customer" ? "Customer" : "Contractor"}
-                </strong>
-
-                <p style={{ margin: 0 }}>
-                  {msg.content}
-                </p>
-
-              </div>
-
-            ))}
-
-          </div>
-
-          <button
-            onClick={moveLeadToConversations}
-            style={{
-              marginTop: "24px",
-              padding: "10px 16px",
-              background: theme.primary,
-              color: "white",
-              border: "none",
-              borderRadius: "6px",
-              cursor: "pointer",
-              fontWeight: 600
-            }}
-          >
-            Add Lead to my Conversations
-          </button>
-
-          <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!supabase || !selectedLead?.id) return
-                if (!confirm("Remove this lead? It can be recalled from Customers later.")) return
-                const { error } = await supabase.from("leads").update({ removed_at: new Date().toISOString() }).eq("id", selectedLead.id)
-                if (error) { alert(error.message); return }
-                setSelectedLead(null)
-                setSelectedLeadId(null)
-                loadLeads()
-              }}
-              style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
-            >
-              Remove
-            </button>
-          </div>
-
-        </div>
-
-      )}
+                          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!supabase || !selectedLead?.id) return
+                                if (!confirm("Remove this lead? It can be recalled from Customers later.")) return
+                                const { error } = await supabase
+                                  .from("leads")
+                                  .update({ removed_at: new Date().toISOString() })
+                                  .eq("id", selectedLead.id)
+                                if (error) {
+                                  alert(error.message)
+                                  return
+                                }
+                                setSelectedLead(null)
+                                setSelectedLeadId(null)
+                                setMessages([])
+                                setLeadCommEvents([])
+                                loadLeads()
+                              }}
+                              style={{
+                                padding: "8px 14px",
+                                borderRadius: "6px",
+                                background: "#b91c1c",
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "14px",
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
 
         {notesCustomerId && (
           <CustomerNotesPanel

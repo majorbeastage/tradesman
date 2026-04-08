@@ -8,7 +8,11 @@ import PortalSettingsModal from "../../components/PortalSettingsModal"
 import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
-import { effectiveVoicemailTranscriptMode, voicemailTranscriptForDisplay } from "../../lib/voicemailDisplay"
+import {
+  VoicemailRecordingBlock,
+  VoicemailTranscriptBlock,
+  voicemailPreviewLine,
+} from "../../components/VoicemailEventBlock"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -47,41 +51,6 @@ type ConversationRow = {
 }
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
-
-function voicemailPreviewText(ev: CommEventRow, profileVoicemailDisplay: string): string {
-  const mode = effectiveVoicemailTranscriptMode(profileVoicemailDisplay, ev.metadata?.voicemail_mode)
-  const parts = voicemailTranscriptForDisplay(ev, mode)
-  const line = (parts.primary || ev.body || "Voicemail").replace(/\s+/g, " ").trim()
-  return line.slice(0, 140)
-}
-
-function VoicemailTranscriptUi({ ev, profileVoicemailDisplay }: { ev: CommEventRow; profileVoicemailDisplay: string }) {
-  const mode = effectiveVoicemailTranscriptMode(profileVoicemailDisplay, ev.metadata?.voicemail_mode)
-  const parts = voicemailTranscriptForDisplay(ev, mode)
-  if (!parts.primary && !parts.secondary) return null
-  return (
-    <>
-      {parts.primary ? (
-        <p style={{ margin: "0 0 8px", whiteSpace: "pre-wrap", fontSize: 14 }}>
-          <strong style={{ color: theme.text }}>{parts.primaryLabel}</strong> {parts.primary}
-        </p>
-      ) : null}
-      {parts.secondary ? (
-        <p style={{ margin: "0 0 8px", whiteSpace: "pre-wrap", fontSize: 13, color: "#4b5563" }}>
-          <strong style={{ color: theme.text }}>{parts.secondaryLabel}</strong> {parts.secondary}
-        </p>
-      ) : null}
-    </>
-  )
-}
-
-/** Supabase public URLs work in an audio element; raw Twilio URLs need server auth. */
-function isBrowserPlayableRecordingUrl(url: string | null | undefined): boolean {
-  const t = (url ?? "").trim().toLowerCase()
-  if (!t.startsWith("http")) return false
-  if (t.includes("api.twilio.com")) return false
-  return true
-}
 
 /** Supabase PostgrestError and other objects stringify to [object Object] in alerts */
 /** Prefer JSON `message` / `hint` from API routes; explain opaque Vercel failures. */
@@ -770,7 +739,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
     const { data: commDesc } = await supabase
       .from("communication_events")
-      .select("id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text")
+      .select("id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text, summary_text")
       .eq("conversation_id", convoId)
       .order("created_at", { ascending: false })
       .limit(120)
@@ -1575,7 +1544,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                         ev.event_type === "email"
                           ? (ev.subject?.trim() || "(No subject)")
                           : ev.event_type === "voicemail"
-                            ? voicemailPreviewText(ev, voicemailProfileDisplay)
+                            ? voicemailPreviewLine(ev, voicemailProfileDisplay, detailForm.portalValues)
                             : (ev.body || "—").replace(/\s+/g, " ").trim().slice(0, 140)
                       return (
                         <ExpandableTimelineRow
@@ -1615,18 +1584,12 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                             </>
                           ) : ev.event_type === "voicemail" ? (
                             <div>
-                              {ev.recording_url && isBrowserPlayableRecordingUrl(ev.recording_url) ? (
-                                <audio
-                                  controls
-                                  src={ev.recording_url}
-                                  style={{ width: "100%", maxWidth: 440, marginBottom: 10 }}
-                                />
-                              ) : ev.recording_url ? (
-                                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
-                                  This entry has a Twilio-only recording link (not playable here). New voicemails are copied to storage and will play in the browser.
-                                </p>
-                              ) : null}
-                              <VoicemailTranscriptUi ev={ev} profileVoicemailDisplay={voicemailProfileDisplay} />
+                              <VoicemailRecordingBlock recordingUrl={ev.recording_url} compactNote />
+                              <VoicemailTranscriptBlock
+                                ev={ev}
+                                profileVoicemailDisplay={voicemailProfileDisplay}
+                                conversationPortalValues={detailForm.portalValues}
+                              />
                               <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
                             </div>
                           ) : (
@@ -1748,14 +1711,12 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                             </span>
                           ) : null}
                         </div>
-                        {ev.recording_url && isBrowserPlayableRecordingUrl(ev.recording_url) ? (
-                          <audio controls src={ev.recording_url} style={{ width: "100%", maxWidth: 440, marginBottom: 8 }} />
-                        ) : ev.recording_url ? (
-                          <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
-                            Legacy Twilio recording URL only — not playable in the portal. New messages are saved to Supabase storage automatically.
-                          </p>
-                        ) : null}
-                        <VoicemailTranscriptUi ev={ev} profileVoicemailDisplay={voicemailProfileDisplay} />
+                        <VoicemailRecordingBlock recordingUrl={ev.recording_url} />
+                        <VoicemailTranscriptBlock
+                          ev={ev}
+                          profileVoicemailDisplay={voicemailProfileDisplay}
+                          conversationPortalValues={detailForm.portalValues}
+                        />
                         <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{ev.body || "Voicemail"}</p>
                       </div>
                     ))
