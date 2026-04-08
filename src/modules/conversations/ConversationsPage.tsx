@@ -87,7 +87,27 @@ function displayLastUpdateIso(convo: ConversationRow): string | null {
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
 
-/** Supabase PostgrestError and other objects stringify to [object Object] in alerts */
+/** Turn API JSON fields into display text (nested objects/arrays → JSON, never "[object Object]"). */
+function formatApiJsonPart(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatApiJsonPart(item))
+      .filter(Boolean)
+      .join("\n")
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
 /** Prefer JSON `message` / `hint` from API routes; explain opaque Vercel failures. */
 function formatFetchApiError(response: Response, raw: string): string {
   const trimmed = raw.trim()
@@ -99,13 +119,21 @@ function formatFetchApiError(response: Response, raw: string): string {
   }
   if (trimmed.startsWith("{")) {
     try {
-      const j = JSON.parse(trimmed) as {
-        error?: string
-        message?: string
-        hint?: string
-        logWarning?: string
+      const j = JSON.parse(trimmed) as Record<string, unknown>
+      const parts: string[] = []
+      const push = (v: unknown) => {
+        const s = formatApiJsonPart(v)
+        if (s) parts.push(s)
       }
-      const parts = [j.error, j.message, j.hint, j.logWarning].filter(Boolean)
+      push(j.error)
+      push(j.message)
+      push(j.hint)
+      push(j.logWarning)
+      if (j.fixEither != null) push(j.fixEither)
+      if (j.serverSeesSupabaseEnv != null) {
+        parts.push(`Server sees Supabase env (booleans only): ${formatApiJsonPart(j.serverSeesSupabaseEnv)}`)
+      }
+      if (j.supabaseClientInitError != null) push(`Init: ${formatApiJsonPart(j.supabaseClientInitError)}`)
       if (parts.length) return parts.join("\n\n")
     } catch {
       /* ignore */
