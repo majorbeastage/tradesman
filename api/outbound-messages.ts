@@ -380,15 +380,16 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   try {
     supabase = createServiceSupabase()
   } catch {
-    // Twilio can still send using TWILIO_FROM_NUMBER; DB channel + communication_events need Supabase.
+    // Per-user From needs DB; see fallback below using TWILIO_FROM_NUMBER.
   }
 
+  const envFallbackFrom = normalizePhone(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
-  /** User portal sends always use this user's Twilio public number from Communications — not TWILIO_FROM_NUMBER. */
-  const fromNumber =
+  /** Prefer this user's Communications public number when Supabase is configured. */
+  let fromNumber =
     userId && supabase
       ? normalizePhone(dbChannel?.public_address ?? "")
-      : normalizePhone(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
+      : envFallbackFrom
 
   if (userId && supabase && !fromNumber) {
     return res.status(400).json({
@@ -396,10 +397,16 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       hint: "Add an active channel with SMS enabled and set Public number to that Twilio phone (Admin → Communications). Inbound SMS must use the same number.",
     })
   }
-  if (userId && !supabase) {
+  /** No service role on Vercel: cannot read communication_channels; allow send if a default From is set. */
+  if (userId && !supabase && !fromNumber) {
     return res.status(503).json({
       error: "Cannot load your Twilio SMS number.",
-      message: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the server so the user's Communications channel (public Twilio number) can be used as From.",
+      message:
+        "The server needs Supabase credentials to read Admin → Communications, or a default outbound number.",
+      fixEither: [
+        "Vercel → Project → Settings → Environment Variables: add SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY (service role, not anon). Apply to Production, save, then Redeploy.",
+        "Or set TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) so replies can send from that number until Supabase is configured (logging to communication_events will be skipped).",
+      ],
     })
   }
 
@@ -453,7 +460,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
         from: fromNumber,
         detail: text,
         logWarning:
-          "SMS was sent but conversation logging and per-user SMS channel lookup were skipped. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel to log replies and use Admin → Communications SMS numbers.",
+          "SMS sent using TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) because Supabase service env is missing. Add SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Vercel and redeploy to use Admin → Communications per-user numbers and to log outbound SMS.",
       })
     }
     return res.status(200).json({ ok: true, provider: "twilio", to, from: fromNumber, detail: text })
