@@ -384,7 +384,24 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   }
 
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
-  const fromNumber = normalizePhone(dbChannel?.public_address || firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
+  /** User portal sends always use this user's Twilio public number from Communications — not TWILIO_FROM_NUMBER. */
+  const fromNumber =
+    userId && supabase
+      ? normalizePhone(dbChannel?.public_address ?? "")
+      : normalizePhone(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
+
+  if (userId && supabase && !fromNumber) {
+    return res.status(400).json({
+      error: "No Twilio SMS number on file for this user.",
+      hint: "Add an active channel with SMS enabled and set Public number to that Twilio phone (Admin → Communications). Inbound SMS must use the same number.",
+    })
+  }
+  if (userId && !supabase) {
+    return res.status(503).json({
+      error: "Cannot load your Twilio SMS number.",
+      message: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the server so the user's Communications channel (public Twilio number) can be used as From.",
+    })
+  }
 
   if (accountSid && authToken && fromNumber) {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`
@@ -455,7 +472,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
 
   return res.status(500).json({
     error: "No outbound SMS provider configured.",
-    hint: "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER or SMS_OUTBOUND_WEBHOOK_URL.",
+    hint: "Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN. For portal replies, configure each user's Twilio public number on their SMS channel (Admin → Communications); optional TWILIO_FROM_NUMBER only for non-user requests without userId.",
   })
 }
 

@@ -593,6 +593,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       if (!supabase) console.error("Supabase not configured.")
       return
     }
+    const sb = supabase
+    const uid = userId
     const customersBlock = `
       customers (
         display_name,
@@ -625,10 +627,10 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
 
     async function runQuery(removedAt: boolean, embedCommEvents: boolean) {
-      let q = supabase
+      let q = sb
         .from("conversations")
         .select(buildSelect({ removedAt, embedCommEvents }))
-        .eq("user_id", userId)
+        .eq("user_id", uid)
         .order("created_at", { ascending: false })
       if (removedAt) q = q.is("removed_at", null)
       return q

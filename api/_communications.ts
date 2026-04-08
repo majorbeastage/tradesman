@@ -533,11 +533,14 @@ export async function getPrimarySmsChannelForUser(
     .eq("user_id", userId)
     .eq("active", true)
     .eq("sms_enabled", true)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    .order("updated_at", { ascending: false })
+    .limit(25)
   if (error) throw error
-  return (data as CommunicationChannel | null) ?? null
+  const rows = (data as CommunicationChannel[] | null) ?? []
+  if (rows.length === 0) return null
+  /** Prefer a row with the Twilio public number set (matches inbound webhook number). */
+  const withPublic = rows.find((r) => typeof r.public_address === "string" && r.public_address.trim() !== "")
+  return (withPublic ?? rows[0]) ?? null
 }
 
 export async function getPrimaryEmailChannelForUser(
