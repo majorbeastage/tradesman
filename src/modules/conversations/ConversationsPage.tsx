@@ -19,7 +19,8 @@ import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
-type MessageRow = { content: string | null; created_at: string | null }
+type MessageRow = { content: string | null; created_at: string | null; sender?: string | null }
+type CommEventListRow = { created_at: string | null; direction: string | null; event_type: string | null }
 type CommEventRow = {
   id: string
   event_type: string
@@ -36,6 +37,10 @@ type CommEventRow = {
 type ActivityTimelineItem =
   | { key: string; sortMs: number; kind: "sms_thread"; message: Record<string, unknown> }
   | { key: string; sortMs: number; kind: "comm_event"; event: CommEventRow }
+
+type SmsPanelTimelineItem =
+  | { key: string; sortMs: number; kind: "sms_thread"; message: Record<string, unknown> }
+  | { key: string; sortMs: number; kind: "sms_log"; event: CommEventRow }
 type DetailIdentifier = { id: string; type: "phone" | "email"; value: string }
 type ConversationDetailForm = {
   customerName: string
@@ -51,6 +56,33 @@ type ConversationRow = {
   created_at?: string
   customers: CustomerRow | null
   messages?: MessageRow[] | null
+  communication_events?: CommEventListRow[] | null
+}
+
+function lastReceivedAtIso(convo: ConversationRow): string | null {
+  const msgs = convo.messages ?? []
+  const inboundMsgTimes = msgs
+    .filter((m) => m.sender === "customer" && m.created_at)
+    .map((m) => m.created_at as string)
+  const evs = convo.communication_events ?? []
+  const inboundEvTimes = evs
+    .filter((e) => e.direction === "inbound" && e.created_at)
+    .map((e) => e.created_at as string)
+  const all = [...inboundMsgTimes, ...inboundEvTimes]
+  if (all.length === 0) return null
+  return all.reduce((best, t) => (t > best ? t : best), all[0])
+}
+
+function latestMessageCreatedIso(convo: ConversationRow): string | null {
+  const msgs = convo.messages ?? []
+  if (!msgs.length) return null
+  const sorted = [...msgs].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+  return sorted[0]?.created_at ?? null
+}
+
+/** Shown in list / used for date sort: prefer last inbound, else any latest thread message, else conversation created. */
+function displayLastUpdateIso(convo: ConversationRow): string | null {
+  return lastReceivedAtIso(convo) ?? latestMessageCreatedIso(convo) ?? convo.created_at ?? null
 }
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
@@ -376,7 +408,35 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         event: e,
       })
     }
-    items.sort((a, b) => a.sortMs - b.sortMs)
+    items.sort((a, b) => b.sortMs - a.sortMs)
+    return items
+  }, [messages, communicationEvents])
+
+  const smsTextTimeline = useMemo((): SmsPanelTimelineItem[] => {
+    const items: SmsPanelTimelineItem[] = []
+    for (const m of messages) {
+      const raw = m as Record<string, unknown>
+      const id = String(raw.id ?? "")
+      const ca = raw.created_at
+      const at = typeof ca === "string" ? Date.parse(ca) : NaN
+      items.push({
+        key: `sms-${id}`,
+        sortMs: Number.isFinite(at) ? at : 0,
+        kind: "sms_thread",
+        message: raw,
+      })
+    }
+    for (const e of communicationEvents) {
+      if (e.event_type !== "sms") continue
+      const at = e.created_at ? Date.parse(e.created_at) : NaN
+      items.push({
+        key: `ev-${e.id}`,
+        sortMs: Number.isFinite(at) ? at : 0,
+        kind: "sms_log",
+        event: e,
+      })
+    }
+    items.sort((a, b) => b.sortMs - a.sortMs)
     return items
   }, [messages, communicationEvents])
 
@@ -533,12 +593,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       if (!supabase) console.error("Supabase not configured.")
       return
     }
-    const selectWithRemoved = `
-      id,
-      channel,
-      status,
-      created_at,
-      removed_at,
+    const customersBlock = `
       customers (
         display_name,
         customer_identifiers (
@@ -548,50 +603,55 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       ),
       messages (
         content,
-        created_at
-      )
-    `
-    const selectWithoutRemoved = `
+        created_at,
+        sender
+      )`
+    const commEventsBlock = `,
+      communication_events (
+        created_at,
+        direction,
+        event_type
+      )`
+    function buildSelect(opts: { removedAt: boolean; embedCommEvents: boolean }): string {
+      const ra = opts.removedAt ? ",\n      removed_at" : ""
+      const ev = opts.embedCommEvents ? commEventsBlock : ""
+      return `
       id,
       channel,
       status,
-      created_at,
-      customers (
-        display_name,
-        customer_identifiers (
-          type,
-          value
-        )
-      ),
-      messages (
-        content,
-        created_at
-      )
+      created_at${ra},
+      ${customersBlock.trim()}${ev}
     `
-    let { data, error } = await supabase
-      .from("conversations")
-      .select(selectWithRemoved)
-      .eq("user_id", userId)
-      .is("removed_at", null)
-      .order("created_at", { ascending: false })
-
-    if (error && error.message?.includes("removed_at")) {
-      const res = await supabase
-        .from("conversations")
-        .select(selectWithoutRemoved)
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-      if (res.error) {
-        console.error(res.error)
-        return
-      }
-      data = (res.data || []).map((c: any) => ({ ...c, removed_at: c.removed_at ?? null }))
-    } else if (error) {
-      console.error(error)
-      return
     }
 
-    setConversations((data as any[]) || [])
+    async function runQuery(removedAt: boolean, embedCommEvents: boolean) {
+      let q = supabase
+        .from("conversations")
+        .select(buildSelect({ removedAt, embedCommEvents }))
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+      if (removedAt) q = q.is("removed_at", null)
+      return q
+    }
+
+    const attempts: { removedAt: boolean; embedCommEvents: boolean }[] = [
+      { removedAt: true, embedCommEvents: true },
+      { removedAt: false, embedCommEvents: true },
+      { removedAt: true, embedCommEvents: false },
+      { removedAt: false, embedCommEvents: false },
+    ]
+    let lastError: unknown
+    for (const opts of attempts) {
+      const res = await runQuery(opts.removedAt, opts.embedCommEvents)
+      if (!res.error) {
+        let rows = (res.data || []) as any[]
+        if (!opts.removedAt) rows = rows.map((c: any) => ({ ...c, removed_at: c.removed_at ?? null }))
+        setConversations(rows)
+        return
+      }
+      lastError = res.error
+    }
+    console.error(lastError)
   }
 
   useEffect(() => {
@@ -1077,8 +1137,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       bVal = (b.customers?.display_name || "").toLowerCase()
     }
     if (sortField === "created_at") {
-      aVal = a.created_at || ""
-      bVal = b.created_at || ""
+      aVal = displayLastUpdateIso(a as ConversationRow) || ""
+      bVal = displayLastUpdateIso(b as ConversationRow) || ""
     }
     if (sortAsc) return aVal > bVal ? 1 : -1
     return aVal < bVal ? 1 : -1
@@ -1089,9 +1149,14 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       return { sms: false, email: false, voicemail: false }
     }
     const smsRa = getChannelReadAtIso(selectedConversation.metadata, "sms")
-    const inboundSms = messages.filter((m: any) => m.sender === "customer" && m.created_at)
-    const smsSorted = [...inboundSms].sort((a: any, b: any) => (a.created_at || "").localeCompare(b.created_at || ""))
-    const lastSms = smsSorted.length ? smsSorted[smsSorted.length - 1]?.created_at : undefined
+    const inboundSmsMsgs = messages.filter((m: any) => m.sender === "customer" && m.created_at)
+    const inboundSmsEv = communicationEvents.filter((e) => e.event_type === "sms" && e.direction === "inbound" && e.created_at)
+    const smsInboundTimes = [
+      ...inboundSmsMsgs.map((m: any) => m.created_at as string),
+      ...inboundSmsEv.map((e) => e.created_at as string),
+    ]
+    const lastSms =
+      smsInboundTimes.length > 0 ? smsInboundTimes.reduce((best, t) => (t > best ? t : best), smsInboundTimes[0]) : undefined
     const smsUnread = isAfterReadAt(lastSms, smsRa)
 
     const emailRa = getChannelReadAtIso(selectedConversation.metadata, "email")
@@ -1340,7 +1405,10 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       <td style={cellBase}>{convo.channel ?? "—"}</td>
                       <td style={cellBase}>{convo.status ?? "—"}</td>
                       <td style={cellBase}>
-                        {convo.created_at ? new Date(convo.created_at).toLocaleDateString() : "—"}
+                        {(() => {
+                          const iso = displayLastUpdateIso(convo as ConversationRow)
+                          return iso ? new Date(iso).toLocaleDateString() : "—"
+                        })()}
                       </td>
                       <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg?.content ?? undefined}>{lastMsgText}</td>
                     </tr>
@@ -1542,11 +1610,10 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-activity`}
                 title="All activity"
-                defaultOpen
                 countBadge={activityTimeline.length}
               >
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
-                  Text thread messages plus logged SMS/email (and other events) in chronological order. Expand a row for the full message.
+                  Text thread messages plus logged SMS/email (and other events), newest first. Expand a row for the full message.
                 </p>
                 {aiThreadSummaryEnabled && selectedConversation?.id ? (
                   <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -1718,12 +1785,12 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
               <ConvoCollapsible
                 key={`${selectedConversation.id}-sms`}
                 title="Text messages"
-                countBadge={messages.length}
+                countBadge={smsTextTimeline.length}
                 showUnreadDot={unreadChannels.sms}
                 onOpen={() => void markChannelRead("sms")}
               >
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
-                  Latest messages appear at the bottom. Scroll for older (up to 80 stored per thread).
+                  Thread texts and logged SMS (inbound webhook / sends), newest first. Up to 80 thread messages and 120 log events loaded.
                 </p>
                 <div
                   style={{
@@ -1737,22 +1804,69 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     boxSizing: "border-box",
                   }}
                 >
-                  {messages.length === 0 ? (
+                  {smsTextTimeline.length === 0 ? (
                     <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>No messages in this thread yet.</p>
                   ) : (
-                    messages.map((msg) => (
-                      <div key={msg.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                          {msg.sender === "customer" ? "Customer" : "You"}
-                          {msg.created_at ? (
-                            <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
-                              {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                            </span>
-                          ) : null}
-                        </div>
-                        <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{msg.content}</p>
-                      </div>
-                    ))
+                    smsTextTimeline.map((item) => {
+                      if (item.kind === "sms_thread") {
+                        const m = item.message
+                        const sender = m.sender === "customer" ? "Customer" : "You"
+                        const content = typeof m.content === "string" ? m.content : ""
+                        const created = typeof m.created_at === "string" ? m.created_at : ""
+                        return (
+                          <div
+                            key={item.key}
+                            style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}
+                          >
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                              SMS (thread) · {sender}
+                              {created ? (
+                                <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                  {new Date(created).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                </span>
+                              ) : null}
+                            </div>
+                            <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{content || "—"}</p>
+                          </div>
+                        )
+                      }
+                      const ev = item.event
+                      const dir = ev.direction === "inbound" ? "In" : ev.direction === "outbound" ? "Out" : ""
+                      const preview = (ev.body || "—").replace(/\s+/g, " ").trim().slice(0, 140)
+                      return (
+                        <ExpandableTimelineRow
+                          key={item.key}
+                          titleContent={
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                                SMS (log)
+                                {dir ? ` · ${dir}` : ""}
+                                {ev.created_at ? (
+                                  <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
+                                    {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 13,
+                                  color: "#6b7280",
+                                  marginTop: 4,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {preview.length > 160 ? `${preview.slice(0, 160)}…` : preview}
+                              </div>
+                            </div>
+                          }
+                        >
+                          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
+                          <AttachmentStrip items={commAttachmentsByEvent[ev.id] ?? []} compact />
+                        </ExpandableTimelineRow>
+                      )
+                    })
                   )}
                 </div>
                 <ConvoCollapsible title="Compose reply" defaultOpen={false}>
