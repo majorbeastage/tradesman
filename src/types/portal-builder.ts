@@ -91,6 +91,11 @@ export type PortalSettingDependency = {
   dependsOnItemId: string
   /** For dropdown: option value. For checkbox: 'checked' | 'unchecked'. */
   showWhenValue: string
+  /**
+   * When the parent control is a dropdown, show if the current value is any of these (OR).
+   * If set and non-empty, this takes precedence over `showWhenValue` for dropdown parents.
+   */
+  showWhenValues?: string[]
 }
 
 /** One item inside a settings panel or custom action button (checkbox, dropdown, or custom field) */
@@ -109,6 +114,13 @@ export type PortalSettingItem = {
   hideFromAdmin?: boolean
   /** Optional: show this item only when another item matches (e.g. checkbox visible when dropdown = X). */
   dependency?: PortalSettingDependency
+  /**
+   * Multiple dependency rules (two or more). When set, `dependency` should be omitted.
+   * Use with `dependencyMode`: `all` = every rule must match (AND), `any` = at least one (OR).
+   */
+  dependencies?: PortalSettingDependency[]
+  /** How to combine `dependencies` when there are two or more. Ignored for a single rule or legacy `dependency` only. */
+  dependencyMode?: "all" | "any"
 }
 
 /** Custom action button (next to Settings); can have its own list of checkboxes, dropdowns, custom fields */
@@ -131,6 +143,11 @@ export type PortalConfig = {
   optionValues?: Record<string, string[]>
   /** Override labels for buttons and controls (e.g. create_lead: '+ Create Lead', settings: 'Settings') */
   controlLabels?: Record<string, string>
+  /**
+   * Override display labels for individual items inside a control’s item list.
+   * Key: `${tabId}:${controlId}:${itemId}` (same tab/control as controlItems).
+   */
+  controlItemLabels?: Record<string, string>
   /** Custom buttons next to Settings (action row); each can have items: checkboxes, dropdowns, custom fields */
   customActionButtons?: CustomActionButton[]
   /** @deprecated Use customActionButtons. Kept for migration. */
@@ -150,6 +167,7 @@ export type PortalConfig = {
   om_page_actions?: {
     calendar?: Record<string, boolean>
     quotes?: Record<string, boolean>
+    conversations?: Record<string, boolean>
   }
   /**
    * My T (Account) tab: hide whole blocks from the user. Missing key or true = visible; false = hidden.
@@ -184,10 +202,12 @@ export function getPageActionVisible(
   return section[actionId] !== false
 }
 
+export type OmToolbarPageId = "calendar" | "quotes" | "conversations"
+
 /** True if an office-manager toolbar action should show (default visible). */
 export function getOmPageActionVisible(
   portalConfig: PortalConfig | null,
-  page: "calendar" | "quotes",
+  page: OmToolbarPageId,
   actionId: string
 ): boolean {
   const section = portalConfig?.om_page_actions?.[page]
@@ -204,7 +224,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
   { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
   { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
-  { id: "capture_documents", label: "Web lead embed, AI, and PDF quote/receipt templates" },
+  { id: "ai_automations", label: "AI automations (master toggle for AI options on other tabs)" },
   { id: "password_reset", label: "Password reset button" },
 ]
 
@@ -254,23 +274,162 @@ export function getOfficePortalTabListForConfig(portalConfig: PortalConfig): Arr
 /** Account portal section definitions in admin/user order. */
 export function getOrderedAccountPortalSections(portalConfig: PortalConfig | null): { id: string; label: string }[] {
   const canonical = ACCOUNT_PORTAL_SECTIONS.map((s) => s.id)
-  const order = mergeCanonicalOrder(portalConfig?.accountSectionOrder, canonical)
+  const savedRaw = portalConfig?.accountSectionOrder
+  const saved = Array.isArray(savedRaw) ? savedRaw.map((id) => (id === "capture_documents" ? "ai_automations" : id)) : undefined
+  const order = mergeCanonicalOrder(saved, canonical)
   const byId = new Map(ACCOUNT_PORTAL_SECTIONS.map((s) => [s.id, s]))
   return order.map((id) => byId.get(id)).filter((x): x is { id: string; label: string } => Boolean(x))
 }
 
 export function getAccountSectionVisible(portalConfig: PortalConfig | null, sectionId: string): boolean {
   const s = portalConfig?.accountSections
-  if (!s || typeof s !== "object" || s[sectionId] === undefined) return true
+  if (!s || typeof s !== "object") return true
+  if (sectionId === "ai_automations" && s.ai_automations === undefined && s.capture_documents !== undefined) {
+    return s.capture_documents !== false
+  }
+  if (s[sectionId] === undefined) return true
   return s[sectionId] !== false
+}
+
+/** Portal item ids hidden when profiles.ai_assistant_visible is false (embed / non-AI items stay visible). */
+export const PORTAL_ITEM_IDS_HIDDEN_WHEN_AI_DISABLED = new Set([
+  "auto_response_use_ai",
+  "auto_response_use_ai_require_approval",
+  "auto_update_lead_status_ai",
+  "ai_thread_summary_enabled",
+  "estimate_template_use_ai",
+  "receipt_template_use_ai",
+  "conv_auto_reply_ai",
+  "conv_auto_reply_ai_brief",
+  "conv_auto_reply_ai_require_approval",
+  "conv_auto_phone_tts_script",
+  "conv_auto_phone_tts_require_approval",
+  "conv_auto_ai_infer_status",
+  "ar_use_ai_customer_message",
+  "ar_use_ai_customer_message_require_approval",
+  "ar_customer_reminder_use_ai",
+  "ar_customer_reminder_use_ai_require_approval",
+])
+
+export function stripAiPortalItems(items: PortalSettingItem[], aiAutomationsEnabled: boolean): PortalSettingItem[] {
+  if (aiAutomationsEnabled) return items
+  return items.filter((i) => !PORTAL_ITEM_IDS_HIDDEN_WHEN_AI_DISABLED.has(i.id))
+}
+
+/** `${tabId}:${controlId}:${itemId}` — override label for this portal item in admin. */
+export function controlItemLabelKey(tabId: string, controlId: string, itemId: string): string {
+  return `${tabId}:${controlId}:${itemId}`
+}
+
+export function getControlItemDisplayLabel(
+  portalConfig: PortalConfig | null,
+  tabId: string,
+  controlId: string,
+  item: PortalSettingItem,
+): string {
+  const k = controlItemLabelKey(tabId, controlId, item.id)
+  const o = portalConfig?.controlItemLabels?.[k]?.trim()
+  return o || item.label
+}
+
+/** Resolved list of dependency rules (legacy `dependency` or `dependencies`). */
+export function getPortalItemDependencyList(item: PortalSettingItem): PortalSettingDependency[] {
+  if (Array.isArray(item.dependencies) && item.dependencies.length > 0) return item.dependencies
+  if (item.dependency) return [item.dependency]
+  return []
+}
+
+function isSinglePortalDependencySatisfied(
+  dep: PortalSettingDependency,
+  allItems: PortalSettingItem[],
+  formValues: Record<string, string>,
+): boolean {
+  const depId = dep.dependsOnItemId
+  const depItem = allItems.find((i) => i.id === depId)
+  let depValue = formValues[depId] ?? ""
+  if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
+  const { showWhenValue, showWhenValues } = dep
+  if (depItem?.type === "dropdown" && Array.isArray(showWhenValues) && showWhenValues.length > 0) {
+    return showWhenValues.includes(depValue)
+  }
+  return depValue === showWhenValue
+}
+
+/** True when all dependency rules pass (AND) or any pass (OR), per `dependencyMode`. */
+export function isPortalSettingDependencyVisible(
+  item: PortalSettingItem,
+  allItems: PortalSettingItem[],
+  formValues: Record<string, string>,
+): boolean {
+  const deps = getPortalItemDependencyList(item)
+  if (deps.length === 0) return true
+  const mode = item.dependencyMode === "any" ? "any" : "all"
+  const results = deps.map((d) => isSinglePortalDependencySatisfied(d, allItems, formValues))
+  return mode === "any" ? results.some(Boolean) : results.every(Boolean)
+}
+
+/** One-line summary for admin builder rows (sibling items = same control, exclude self). */
+export function formatPortalItemDependenciesSummary(item: PortalSettingItem, siblingItems: PortalSettingItem[]): string {
+  const deps = getPortalItemDependencyList(item)
+  if (deps.length === 0) return "No dependency"
+  const labelOf = (id: string) => siblingItems.find((o) => o.id === id)?.label ?? id
+  const parts = deps.map((d) => {
+    const valueStr = d.showWhenValues?.length ? `any of: ${d.showWhenValues.join(", ")}` : d.showWhenValue
+    return `${labelOf(d.dependsOnItemId)} = ${valueStr}`
+  })
+  if (deps.length === 1) return `When ${parts[0]}`
+  const joiner = item.dependencyMode === "any" ? " OR " : " AND "
+  return (item.dependencyMode === "any" ? "Any: " : "All: ") + parts.join(joiner)
+}
+
+const CONV_AUTO_PHONE_TTS_OPTION = "AI text to speech"
+
+function adjustConversationAutomaticRepliesForAi(items: PortalSettingItem[], aiOn: boolean): PortalSettingItem[] {
+  if (aiOn) return items
+  return items.map((it) => {
+    if (it.id === "conv_auto_phone_delivery" && it.options?.length) {
+      return {
+        ...it,
+        options: it.options.filter((o) => o !== CONV_AUTO_PHONE_TTS_OPTION),
+      }
+    }
+    return it
+  })
+}
+
+/** Canonical conversation statuses (edit UI + automations). Legacy free text maps to these where possible. */
+export const CONVERSATION_STATUS_OPTIONS = ["Open", "Contacted", "Pending info", "Qualified", "Lost"] as const
+
+export function normalizeConversationStatus(raw: string | null | undefined): string {
+  const t = (raw ?? "").trim()
+  if (!t) return "Open"
+  const lower = t.toLowerCase()
+  const legacy: Record<string, string> = {
+    open: "Open",
+    contacted: "Contacted",
+    "pending info": "Pending info",
+    "information required": "Pending info",
+    "info required": "Pending info",
+    qualified: "Qualified",
+    lost: "Lost",
+  }
+  if (legacy[lower]) return legacy[lower]
+  if ((CONVERSATION_STATUS_OPTIONS as readonly string[]).includes(t)) return t
+  return "Open"
 }
 
 /** If admin saved an empty list for these keys, merge app defaults (recurrence UI) instead of showing nothing. */
 const CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY = new Set([
+  "leads:settings",
+  "quotes:auto_response_options",
+  "calendar:auto_response_options",
   "calendar:add_item_to_calendar",
   "calendar:job_types",
   "quotes:add_quote_to_calendar",
   "conversations:conversation_settings",
+  "conversations:automatic_replies",
+  "quotes:estimate_template",
+  "calendar:receipt_template",
 ])
 
 function mergeMissingRecurrencePortalItems(
@@ -296,13 +455,26 @@ export function isRemoveRecurrencePortalItem(item: PortalSettingItem): boolean {
 export function getControlItemsForUser(
   portalConfig: PortalConfig | null,
   tabId: string,
-  controlId: string
+  controlId: string,
+  opts?: { aiAutomationsEnabled?: boolean },
 ): PortalSettingItem[] {
   const key = `${tabId}:${controlId}`
   const defaults = getDefaultControlItems(tabId, controlId)
   let raw: PortalSettingItem[]
   if (key === "leads:settings") {
-    raw = (portalConfig?.controlItems?.[key] ?? portalConfig?.leadsSettingsItems ?? DEFAULT_LEADS_SETTINGS_ITEMS) as PortalSettingItem[]
+    const stored = portalConfig?.controlItems?.[key] ?? portalConfig?.leadsSettingsItems
+    if (stored === undefined) {
+      raw = [...defaults]
+    } else {
+      const arr = Array.isArray(stored) ? stored : []
+      if (arr.length === 0 && CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY.has(key)) {
+        raw = [...defaults]
+      } else if (arr.length > 0 && CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY.has(key)) {
+        raw = mergeMissingRecurrencePortalItems(arr, defaults)
+      } else {
+        raw = arr
+      }
+    }
   } else {
     const stored = portalConfig?.controlItems?.[key]
     if (stored !== undefined) {
@@ -318,12 +490,24 @@ export function getControlItemsForUser(
       raw = [...defaults]
     }
   }
-  return (Array.isArray(raw) ? raw : []).filter((item) => item.visibleToUser !== false)
+  const visible = (Array.isArray(raw) ? raw : []).filter((item) => item.visibleToUser !== false)
+  const aiOn = opts?.aiAutomationsEnabled !== false
+  let out = stripAiPortalItems(visible, aiOn)
+  if (key === "conversations:automatic_replies") {
+    out = adjustConversationAutomaticRepliesForAi(out, aiOn)
+  }
+  return out.map((item) => ({
+    ...item,
+    label: getControlItemDisplayLabel(portalConfig, tabId, controlId, item),
+  }))
 }
 
 /** Get Leads Settings items for the user portal (convenience). */
-export function getLeadsSettingsItemsForUser(portalConfig: PortalConfig | null): PortalSettingItem[] {
-  return getControlItemsForUser(portalConfig, "leads", "settings")
+export function getLeadsSettingsItemsForUser(
+  portalConfig: PortalConfig | null,
+  opts?: { aiAutomationsEnabled?: boolean },
+): PortalSettingItem[] {
+  return getControlItemsForUser(portalConfig, "leads", "settings", opts)
 }
 
 /** Get custom action buttons for a tab (user portal). For leads uses customActionButtons; else customActionButtonsByTab. Returns buttons with items filtered by visibleToUser. */
@@ -347,6 +531,19 @@ export function getCustomActionButtonsForUser(
 
 /** Default items shown in Leads Settings modal (admin can add/remove/edit) */
 export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
+  {
+    id: "embed_lead_enabled",
+    type: "checkbox",
+    label: "Enable embeddable web lead form (public URL posts to your API)",
+    defaultChecked: false,
+  },
+  {
+    id: "embed_lead_slug",
+    type: "custom_field",
+    label: "Embed form URL slug (letters, numbers, hyphens; min 3)",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "embed_lead_enabled", showWhenValue: "checked" },
+  },
   { id: 'default_lead_status', type: 'dropdown', label: 'Default lead status', options: ['New', 'Contacted', 'Qualified', 'Lost'] },
   { id: 'lead_source_settings', type: 'dropdown', label: 'Lead source', options: ['Email', 'Text', 'Phone call', 'Other'] },
   { id: 'send_auto_response', type: 'checkbox', label: 'Send auto response when a campaign/embed lead is new', defaultChecked: false },
@@ -363,6 +560,13 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
     label: 'Utilize AI assistant to tailor the auto response from the lead details',
     defaultChecked: false,
     dependency: { dependsOnItemId: 'send_auto_response', showWhenValue: 'checked' },
+  },
+  {
+    id: "auto_response_use_ai_require_approval",
+    type: "checkbox",
+    label: "Require user approval before sending AI auto-response to the customer",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "auto_response_use_ai", showWhenValue: "checked" },
   },
   { id: 'notify_new_lead', type: 'checkbox', label: 'Notify when new lead is captured', defaultChecked: false },
   {
@@ -442,6 +646,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
     { id: 'add_conversation', label: 'Add conversation', type: 'button' },
     { id: 'conversation_settings', label: 'Conversation settings', type: 'button' },
+    { id: 'automatic_replies', label: 'Automatic replies', type: 'button' },
   ],
   quotes: [
     { id: 'page_title', label: 'Page title', type: 'page_title' },
@@ -450,6 +655,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'add_quote_to_calendar', label: 'Add quote to calendar (modal)', type: 'button' },
     { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'quote_settings', label: 'Quote settings', type: 'button' },
+    { id: 'estimate_template', label: 'Estimate template', type: 'button' },
     { id: 'status', label: 'Status', type: 'dropdown' },
   ],
   calendar: [
@@ -459,6 +665,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'job_types', label: 'Job Types', type: 'button' },
     { id: 'working_hours', label: 'Settings (working hours)', type: 'button' },
+    { id: 'receipt_template', label: 'Receipt template', type: 'button' },
     { id: 'customize_user', label: 'Customize user (ribbon / auto-assign)', type: 'button' },
     { id: 'job_type', label: 'Job type', type: 'dropdown' },
   ],
@@ -519,9 +726,9 @@ export const PORTAL_DROPDOWN_LABELS: Record<string, string> = {
 /** Control ids that use the full items editor (checkboxes, dropdowns, custom fields, dependency, visible to user). */
 export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
   leads: ['create_lead', 'settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
-  conversations: ['add_conversation', 'conversation_settings'],
-  quotes: ['add_customer_to_quotes', 'add_quote_to_calendar', 'auto_response_options', 'quote_settings', 'status'],
-  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'customize_user', 'job_type'],
+  conversations: ['add_conversation', 'conversation_settings', 'automatic_replies'],
+  quotes: ['add_customer_to_quotes', 'add_quote_to_calendar', 'auto_response_options', 'quote_settings', 'estimate_template', 'status'],
+  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'receipt_template', 'customize_user', 'job_type'],
   settings: ['custom_fields'],
   dashboard: [],
   customers: [],
@@ -534,17 +741,81 @@ export const DEFAULT_QUOTE_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'quote_default_status', type: 'dropdown', label: 'Default quote status for new quotes', options: ['Draft', 'Sent', 'Viewed', 'Accepted', 'Declined'] },
 ]
 
+/** Estimate PDF template (Quotes tab); notes map to profiles.document_template_quote */
+export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
+  {
+    id: "estimate_template_notes",
+    type: "custom_field",
+    label: "Notes on estimate PDF (plain text, header/footer area)",
+    customFieldSubtype: "textarea",
+  },
+  {
+    id: "estimate_template_use_ai",
+    type: "checkbox",
+    label: "Use AI assistant to help refine estimate wording when generating PDFs",
+    defaultChecked: false,
+  },
+]
+
+/** Receipt PDF template (Calendar); notes map to profiles.document_template_receipt */
+export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
+  {
+    id: "receipt_template_notes",
+    type: "custom_field",
+    label: "Footer note on receipt PDF (plain text)",
+    customFieldSubtype: "textarea",
+  },
+  {
+    id: "receipt_template_use_ai",
+    type: "checkbox",
+    label: "Use AI assistant to help refine receipt wording when generating PDFs",
+    defaultChecked: false,
+  },
+]
+
 /** Default items for Quotes Auto Response Options (matches user portal built-in options) */
 export const DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
   { id: 'ar_on_quote_created', type: 'checkbox', label: 'When a quote is created — send an auto response to the customer', defaultChecked: false },
   { id: 'ar_on_quote_sent', type: 'checkbox', label: 'When a quote is sent — send an auto response', defaultChecked: false },
   { id: 'ar_on_quote_viewed', type: 'checkbox', label: 'When a quote is viewed (by customer) — send an auto response', defaultChecked: false },
   { id: 'ar_delay_minutes', type: 'custom_field', label: 'Delay before sending (minutes)', customFieldSubtype: 'text' },
+  {
+    id: "ar_use_ai_customer_message",
+    type: "checkbox",
+    label: "Use AI to draft customer auto-response messages (when quote auto-response sending is enabled in product)",
+    defaultChecked: false,
+    dependencyMode: "any",
+    dependencies: [
+      { dependsOnItemId: "ar_on_quote_created", showWhenValue: "checked" },
+      { dependsOnItemId: "ar_on_quote_sent", showWhenValue: "checked" },
+      { dependsOnItemId: "ar_on_quote_viewed", showWhenValue: "checked" },
+    ],
+  },
+  {
+    id: "ar_use_ai_customer_message_require_approval",
+    type: "checkbox",
+    label: "Require user approval before sending AI-drafted auto-response to the customer",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "ar_use_ai_customer_message", showWhenValue: "checked" },
+  },
 ]
 
 /** Default items for Calendar Auto Response Options */
 export const DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
   { id: 'ar_remind_before_mins', type: 'custom_field', label: 'Remind before event (minutes)', customFieldSubtype: 'text' },
+  {
+    id: "ar_customer_reminder_use_ai",
+    type: "checkbox",
+    label: "Use AI to draft customer reminder messages (when calendar reminder sending is enabled in product)",
+    defaultChecked: false,
+  },
+  {
+    id: "ar_customer_reminder_use_ai_require_approval",
+    type: "checkbox",
+    label: "Require user approval before sending AI-drafted reminder to the customer",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "ar_customer_reminder_use_ai", showWhenValue: "checked" },
+  },
 ]
 
 /** Default items for Calendar Settings (working hours / general settings) */
@@ -626,6 +897,122 @@ export const DEFAULT_RECURRENCE_PORTAL_ITEMS: PortalSettingItem[] = [
 /** Default items for Conversation settings (voicemail transcription controls are added per-client in Admin → portal builder). */
 export const DEFAULT_CONVERSATION_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'show_internal_conversations', type: 'checkbox', label: 'Show internal conversations', defaultChecked: true },
+  {
+    id: "ai_thread_summary_enabled",
+    type: "checkbox",
+    label: "Allow AI thread summary (Summarize thread button)",
+    defaultChecked: false,
+  },
+]
+
+/** Automatic replies (Conversations toolbar): email/SMS AI paths, phone recording/TTS, quote-on-qualified, AI status (server wiring separate). */
+export const DEFAULT_CONVERSATION_AUTOMATIC_REPLIES_ITEMS: PortalSettingItem[] = [
+  {
+    id: "conv_auto_reply_enabled",
+    type: "checkbox",
+    label: "Allow automatic replies",
+    defaultChecked: false,
+  },
+  {
+    id: "conv_auto_reply_method",
+    type: "dropdown",
+    label: "Contact method",
+    options: ["Email", "Text message", "Phone call"],
+    dependency: { dependsOnItemId: "conv_auto_reply_enabled", showWhenValue: "checked" },
+  },
+  {
+    id: "conv_auto_reply_message",
+    type: "custom_field",
+    label: "Message (email or SMS)",
+    customFieldSubtype: "textarea",
+    dependency: {
+      dependsOnItemId: "conv_auto_reply_method",
+      showWhenValue: "Email",
+      showWhenValues: ["Email", "Text message"],
+    },
+  },
+  {
+    id: "conv_auto_reply_ai",
+    type: "checkbox",
+    label: "Allow AI automation (uses thread + customer data + your summary)",
+    defaultChecked: false,
+    dependency: {
+      dependsOnItemId: "conv_auto_reply_method",
+      showWhenValue: "Email",
+      showWhenValues: ["Email", "Text message"],
+    },
+  },
+  {
+    id: "conv_auto_reply_ai_require_approval",
+    type: "checkbox",
+    label: "Require user approval before sending AI-drafted email or SMS",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "conv_auto_reply_ai", showWhenValue: "checked" },
+  },
+  {
+    id: "conv_auto_reply_ai_brief",
+    type: "custom_field",
+    label: "Summary for AI (what you want communicated)",
+    customFieldSubtype: "textarea",
+    dependency: { dependsOnItemId: "conv_auto_reply_ai", showWhenValue: "checked" },
+  },
+  {
+    id: "conv_auto_phone_allow_automation",
+    type: "checkbox",
+    label: "Allow automated voice message",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "conv_auto_reply_method", showWhenValue: "Phone call" },
+  },
+  {
+    id: "conv_auto_phone_delivery",
+    type: "dropdown",
+    label: "Voice delivery",
+    options: ["Record in app", "Recording URL", CONV_AUTO_PHONE_TTS_OPTION],
+    dependency: { dependsOnItemId: "conv_auto_phone_allow_automation", showWhenValue: "checked" },
+  },
+  {
+    id: "conv_auto_phone_recording_url",
+    type: "custom_field",
+    label: "Recording URL (or filled after in-app record)",
+    customFieldSubtype: "text",
+    dependency: {
+      dependsOnItemId: "conv_auto_phone_delivery",
+      showWhenValue: "Recording URL",
+      showWhenValues: ["Recording URL", "Record in app"],
+    },
+  },
+  {
+    id: "conv_auto_phone_tts_script",
+    type: "custom_field",
+    label: "Script for AI text-to-speech call",
+    customFieldSubtype: "textarea",
+    dependency: { dependsOnItemId: "conv_auto_phone_delivery", showWhenValue: CONV_AUTO_PHONE_TTS_OPTION },
+  },
+  {
+    id: "conv_auto_phone_tts_require_approval",
+    type: "checkbox",
+    label: "Require user approval before placing AI text-to-speech call",
+    defaultChecked: false,
+    dependencyMode: "all",
+    dependencies: [
+      { dependsOnItemId: "conv_auto_phone_allow_automation", showWhenValue: "checked" },
+      { dependsOnItemId: "conv_auto_phone_delivery", showWhenValue: CONV_AUTO_PHONE_TTS_OPTION },
+    ],
+  },
+  {
+    id: "conv_auto_quote_when_qualified",
+    type: "checkbox",
+    label: "When status is Qualified — auto-send to Quotes",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "conv_auto_reply_enabled", showWhenValue: "checked" },
+  },
+  {
+    id: "conv_auto_ai_infer_status",
+    type: "checkbox",
+    label: "Allow AI to set status from conversation (estimate-ready vs not)",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "conv_auto_quote_when_qualified", showWhenValue: "checked" },
+  },
 ]
 
 /** Default items for a control when none saved. Key: `${tabId}:${controlId}`. */
@@ -634,14 +1021,17 @@ export function getDefaultControlItems(tabId: string, controlId: string): Portal
   if (key === 'leads:create_lead') return []
   if (key === 'leads:settings') return [...DEFAULT_LEADS_SETTINGS_ITEMS]
   if (key === 'quotes:quote_settings') return [...DEFAULT_QUOTE_SETTINGS_ITEMS]
+  if (key === "quotes:estimate_template") return [...DEFAULT_ESTIMATE_TEMPLATE_ITEMS]
   if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]
+  if (key === "calendar:receipt_template") return [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
   if (key === 'calendar:add_item_to_calendar') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'calendar:job_types') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'calendar:customize_user') return []
   if (key === 'quotes:add_quote_to_calendar') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'conversations:conversation_settings') return [...DEFAULT_CONVERSATION_SETTINGS_ITEMS]
+  if (key === "conversations:automatic_replies") return [...DEFAULT_CONVERSATION_AUTOMATIC_REPLIES_ITEMS]
   const opts = DEFAULT_OPTIONS[controlId]
   if (opts?.length) {
     return [{ id: controlId + '_options', type: 'dropdown', label: PAGE_CONTROLS[tabId]?.find((c) => c.id === controlId)?.label ?? controlId, options: [...opts] }]

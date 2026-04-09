@@ -23,7 +23,7 @@ function publicAppBaseUrl(): string {
   return ""
 }
 
-async function openAiText(system: string, user: string): Promise<string | null> {
+export async function openAiText(system: string, user: string): Promise<string | null> {
   const key = firstEnv("OPENAI_API_KEY")
   if (!key) return null
   try {
@@ -50,6 +50,42 @@ async function openAiText(system: string, user: string): Promise<string | null> 
   }
 }
 
+const PENDING_AI_KEY = "pending_ai_consumer_reply"
+
+/** Build consumer-facing auto-reply text (template ± AI). */
+export async function buildLeadConsumerAutoReplyText(
+  settings: LeadsSettingsValues,
+  aiAutomationsOn: boolean,
+  snapshot: { description: string; name: string },
+): Promise<string> {
+  let replyText = (settings.auto_response_message ?? "").trim()
+  const useAi = settings.auto_response_use_ai === "checked" && aiAutomationsOn
+  if (useAi) {
+    const inbound = [snapshot.description, snapshot.name && `From: ${snapshot.name}`].filter(Boolean).join("\n")
+    const aiReply = await openAiText(
+      "You write short, professional SMS/email replies for a home-services contractor. Match the consumer's stated need (e.g. roof repair vs replacement). Under 300 characters if possible. No markdown, no signature line.",
+      `Template or tone to respect (may be empty): ${replyText}\n\nConsumer message / lead details:\n${inbound.slice(0, 4000)}`,
+    )
+    if (aiReply) replyText = aiReply
+  }
+  return replyText.trim()
+}
+
+async function mergeLeadMetadataJson(
+  supabase: SupabaseClient,
+  leadId: string,
+  mutator: (prev: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  const { data } = await supabase.from("leads").select("metadata").eq("id", leadId).maybeSingle()
+  const row = data as { metadata?: unknown } | null
+  const prev =
+    row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? { ...(row.metadata as Record<string, unknown>) }
+      : {}
+  const next = mutator(prev)
+  await supabase.from("leads").update({ metadata: next }).eq("id", leadId)
+}
+
 /** After embed/campaign lead is stored: notify business user and optional auto-reply to consumer. */
 export async function runLeadCaptureSideEffects(
   supabase: SupabaseClient,
@@ -58,8 +94,10 @@ export async function runLeadCaptureSideEffects(
   customerId: string,
   snapshot: { title: string; description: string; phone: string; email: string; name: string },
 ): Promise<void> {
-  const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  const { data: prof } = await supabase.from("profiles").select("metadata, ai_assistant_visible").eq("id", userId).maybeSingle()
   const settings = parseLeadsSettingsFromMetadata(prof?.metadata)
+  const aiAutomationsOn = (prof as { ai_assistant_visible?: boolean } | null)?.ai_assistant_visible !== false
+  const base = publicAppBaseUrl()
 
   const lines = [
     `Lead: ${snapshot.title}`,
@@ -72,7 +110,7 @@ export async function runLeadCaptureSideEffects(
   let summaryBody = lines.join("\n\n")
   const wantAiSummary =
     settings.notify_new_lead === "checked" || settings.email_new_lead === "checked"
-  if (wantAiSummary) {
+  if (wantAiSummary && aiAutomationsOn) {
     const ai = await openAiText(
       "Summarize this new sales lead in 2–4 short sentences for the business owner. No markdown.",
       summaryBody.slice(0, 6000),
@@ -83,7 +121,6 @@ export async function runLeadCaptureSideEffects(
   const notifyOn = settings.notify_new_lead === "checked" || settings.email_new_lead === "checked"
   if (notifyOn) {
     const channel = settings.notify_new_lead_channel || (settings.email_new_lead === "checked" ? "Email" : "Email")
-    const base = publicAppBaseUrl()
     if (channel === "Text Message" && base) {
       const ch = await getPrimarySmsChannelForUser(supabase, userId)
       const rawTo = (ch?.forward_to_phone ?? "").trim()
@@ -123,16 +160,45 @@ export async function runLeadCaptureSideEffects(
   }
 
   if (settings.send_auto_response !== "checked") return
-  let replyText = (settings.auto_response_message ?? "").trim()
-  if (settings.auto_response_use_ai === "checked") {
-    const inbound = [snapshot.description, snapshot.name && `From: ${snapshot.name}`].filter(Boolean).join("\n")
-    const aiReply = await openAiText(
-      "You write short, professional SMS/email replies for a home-services contractor. Match the consumer's stated need (e.g. roof repair vs replacement). Under 300 characters if possible. No markdown, no signature line.",
-      `Template or tone to respect (may be empty): ${replyText}\n\nConsumer message / lead details:\n${inbound.slice(0, 4000)}`,
-    )
-    if (aiReply) replyText = aiReply
-  }
+
+  const replyText = await buildLeadConsumerAutoReplyText(settings, aiAutomationsOn, {
+    description: snapshot.description,
+    name: snapshot.name,
+  })
   if (!replyText || !base) return
+
+  const useAi = settings.auto_response_use_ai === "checked" && aiAutomationsOn
+  const requireApproval = settings.auto_response_use_ai_require_approval === "checked"
+  if (useAi && requireApproval) {
+    const created_at = new Date().toISOString()
+    if (snapshot.phone) {
+      await mergeLeadMetadataJson(supabase, leadId, (prev) => ({
+        ...prev,
+        [PENDING_AI_KEY]: {
+          v: 1,
+          body: replyText.slice(0, 1500),
+          channel: "sms",
+          to: snapshot.phone,
+          created_at,
+          source: "lead_auto_response",
+        },
+      }))
+    } else if (snapshot.email) {
+      await mergeLeadMetadataJson(supabase, leadId, (prev) => ({
+        ...prev,
+        [PENDING_AI_KEY]: {
+          v: 1,
+          body: replyText.slice(0, 12000),
+          channel: "email",
+          to: snapshot.email,
+          subject: "Thanks for contacting us",
+          created_at,
+          source: "lead_auto_response",
+        },
+      }))
+    }
+    return
+  }
 
   if (snapshot.phone) {
     await fetch(`${base}/api/send-sms`, {

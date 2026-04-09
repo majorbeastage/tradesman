@@ -14,6 +14,7 @@ import {
   pickFirstString,
 } from "./_communications.js"
 import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
+import { runConversationInboundSmsAutoReply } from "./_conversationAutoReply.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -207,6 +208,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       content,
     })
     if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
+    try {
+      await runConversationInboundSmsAutoReply(supabase, {
+        userId: targetUserId,
+        conversationId,
+        customerId,
+        customerPhone: from,
+        inboundBody: body,
+      })
+    } catch (e) {
+      console.warn("[incoming-sms] conversation auto-reply", e instanceof Error ? e.message : e)
+    }
   }
 
   return res.status(200).json({

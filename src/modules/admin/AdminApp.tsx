@@ -13,6 +13,7 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import AdminUsersSection from "./AdminUsersSection"
 import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
 import AdminPortalAssistant from "./AdminPortalAssistant"
+import PortalItemDependencyEditor from "../../components/admin/PortalItemDependencyEditor"
 import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import AdminAboutUsSection from "./AdminAboutUsSection"
 import AdminSignupRequirementsSection from "./AdminSignupRequirementsSection"
@@ -28,6 +29,8 @@ import {
   getAccountSectionVisible,
   getPortalTabListForConfig,
   getOrderedAccountPortalSections,
+  controlItemLabelKey,
+  formatPortalItemDependenciesSummary,
 } from "../../types/portal-builder"
 import {
   ALL_USERS_ID,
@@ -365,6 +368,7 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
             <button type="button" onClick={() => onSelect("add_quote_to_calendar")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "add_quote_to_calendar" ? theme.primary : theme.border}`, background: selectedId === "add_quote_to_calendar" ? theme.primary : theme.background, color: selectedId === "add_quote_to_calendar" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Add quote to calendar</button>
             <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
             <button type="button" onClick={() => onSelect("quote_settings")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "quote_settings" ? theme.primary : theme.border}`, background: selectedId === "quote_settings" ? theme.primary : theme.background, color: selectedId === "quote_settings" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Quote settings</button>
+            <button type="button" onClick={() => onSelect("estimate_template")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "estimate_template" ? theme.primary : theme.border}`, background: selectedId === "estimate_template" ? theme.primary : theme.background, color: selectedId === "estimate_template" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Estimate template</button>
             <button type="button" onClick={() => onSelect("status")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "status" ? theme.primary : theme.border}`, background: selectedId === "status" ? theme.primary : theme.background, color: selectedId === "status" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Status</button>
           </div>
         </div>
@@ -392,6 +396,7 @@ const TAB_PREVIEW: Record<string, { title: string; description: string; mock: Re
             <button type="button" onClick={() => onSelect("auto_response_options")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "auto_response_options" ? theme.primary : theme.border}`, background: selectedId === "auto_response_options" ? theme.primary : theme.background, color: selectedId === "auto_response_options" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Auto Response Options</button>
             <button type="button" onClick={() => onSelect("job_types")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_types" ? theme.primary : theme.border}`, background: selectedId === "job_types" ? theme.primary : theme.background, color: selectedId === "job_types" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job Types</button>
             <button type="button" onClick={() => onSelect("working_hours")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "working_hours" ? theme.primary : theme.border}`, background: selectedId === "working_hours" ? theme.primary : theme.background, color: selectedId === "working_hours" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Settings</button>
+            <button type="button" onClick={() => onSelect("receipt_template")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "receipt_template" ? theme.primary : theme.border}`, background: selectedId === "receipt_template" ? theme.primary : theme.background, color: selectedId === "receipt_template" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Receipt template</button>
             <button type="button" onClick={() => onSelect("customize_user")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "customize_user" ? theme.primary : theme.border}`, background: selectedId === "customize_user" ? theme.primary : theme.background, color: selectedId === "customize_user" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Customize user</button>
             <button type="button" onClick={() => onSelect("job_type")} style={{ padding: "6px 12px", borderRadius: 6, border: `2px solid ${selectedId === "job_type" ? theme.primary : theme.border}`, background: selectedId === "job_type" ? theme.primary : theme.background, color: selectedId === "job_type" ? "white" : theme.text, fontSize: 12, cursor: "pointer" }}>Job type</button>
           </div>
@@ -785,6 +790,15 @@ function AdminAppInner() {
 
   function setControlLabel(controlId: string, label: string) {
     setConfig({ ...config, controlLabels: { ...config.controlLabels, [controlId]: label } })
+  }
+
+  function setControlItemLabel(tabId: string, controlId: string, itemId: string, label: string) {
+    const k = controlItemLabelKey(tabId, controlId, itemId)
+    const trimmed = label.trim()
+    const next = { ...(config.controlItemLabels ?? {}) }
+    if (!trimmed) delete next[k]
+    else next[k] = trimmed
+    setConfig({ ...config, controlItemLabels: Object.keys(next).length ? next : undefined })
   }
 
   function setPageActionVisible(tabId: string, actionId: string, visible: boolean) {
@@ -1566,14 +1580,14 @@ function AdminAppInner() {
                                             Options ({(item.options ?? []).length}) ▾
                                           </button>
                                         )}
-                                        {(item.type === "checkbox" || item.type === "custom_field") && (
+                                        {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
                                           <button type="button" onClick={() => setSelectedCustomButtonItemId(selectedCustomButtonItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
                                             Dependency ▾
                                           </button>
                                         )}
                                         {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
                                           <span style={{ fontSize: 10, color: theme.text, opacity: 0.8 }}>
-                                            {item.dependency ? `When ${otherItems.find((o) => o.id === item.dependency!.dependsOnItemId)?.label ?? item.dependency.dependsOnItemId} = ${item.dependency.showWhenValue}` : "No dependency"}
+                                            {formatPortalItemDependenciesSummary(item, otherItems)}
                                           </span>
                                         )}
                                         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
@@ -1605,50 +1619,11 @@ function AdminAppInner() {
                                               </div>
                                             </div>
                                           )}
-                                          <div style={{ marginBottom: 8 }}>
-                                            <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dependency (show when)</p>
-                                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                              <select
-                                                value={item.dependency?.dependsOnItemId ?? ""}
-                                                onChange={(e) => { const id = e.target.value; if (!id) { updateCustomActionButtonItem(buttonId, item.id, { dependency: undefined }); return }; const dep = allBtnItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateCustomActionButtonItem(buttonId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
-                                                style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
-                                              >
-                                                <option value="">— None —</option>
-                                                {otherItems.map((o) => (
-                                                  <option key={o.id} value={o.id}>{o.label}</option>
-                                                ))}
-                                              </select>
-                                              {item.dependency?.dependsOnItemId && (() => {
-                                                const depItem = allBtnItems.find((x) => x.id === item.dependency!.dependsOnItemId)
-                                                if (depItem?.type === "checkbox") {
-                                                  return (
-                                                    <select value={item.dependency.showWhenValue} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                      <option value="checked">Checked</option>
-                                                      <option value="unchecked">Unchecked</option>
-                                                    </select>
-                                                  )
-                                                }
-                                                if (depItem?.type === "dropdown" && depItem.options?.length) {
-                                                  return (
-                                                    <select value={item.dependency.showWhenValue} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                      {depItem.options.map((opt) => (
-                                                        <option key={opt} value={opt}>{opt}</option>
-                                                      ))}
-                                                    </select>
-                                                  )
-                                                }
-                                                if (depItem?.type === "custom_field") {
-                                                  return (
-                                                    <select value={item.dependency.showWhenValue || "filled"} onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                      <option value="filled">Has value</option>
-                                                      <option value="empty">Empty</option>
-                                                    </select>
-                                                  )
-                                                }
-                                                return null
-                                              })()}
-                                            </div>
-                                          </div>
+                                          <PortalItemDependencyEditor
+                                            item={item}
+                                            siblingItems={otherItems}
+                                            onApply={(patch) => updateCustomActionButtonItem(buttonId, item.id, patch)}
+                                          />
                                           <button type="button" onClick={() => setSelectedCustomButtonItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                         </div>
                                       )}
@@ -1739,6 +1714,21 @@ function AdminAppInner() {
                                   <div style={{ padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
                                       <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                      <input
+                                        type="text"
+                                        title="Override label shown to users (empty = use item label above)"
+                                        placeholder="User-facing label override"
+                                        value={config.controlItemLabels?.[controlItemLabelKey(tabId, controlId, item.id)] ?? ""}
+                                        onChange={(e) => setControlItemLabel(tabId, controlId, item.id, e.target.value)}
+                                        style={{
+                                          minWidth: 160,
+                                          flex: "1 1 160px",
+                                          padding: "4px 8px",
+                                          borderRadius: 6,
+                                          border: `1px solid ${theme.border}`,
+                                          fontSize: 11,
+                                        }}
+                                      />
                                       <select
                                         value={item.type}
                                         onChange={(e) => updateControlItem(tabId, controlId, item.id, { type: e.target.value as PortalSettingItem["type"], options: e.target.value === "dropdown" ? (item.options ?? []) : undefined })}
@@ -1753,14 +1743,14 @@ function AdminAppInner() {
                                           Options ({(item.options ?? []).length}) ▾
                                         </button>
                                       )}
-                                      {(item.type === "checkbox" || item.type === "custom_field") && (
+                                      {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
                                         <button type="button" onClick={() => setSelectedControlItemId(selectedControlItemId === item.id ? null : item.id)} style={{ padding: "4px 8px", fontSize: 11, borderRadius: 6, border: "1px solid #d1d5db", background: "#e5e7eb", color: "#1f2937", cursor: "pointer" }}>
                                           Dependency ▾
                                         </button>
                                       )}
                                       {(item.type === "checkbox" || item.type === "dropdown" || item.type === "custom_field") && (
                                         <span style={{ fontSize: 10, color: theme.text, opacity: 0.8 }}>
-                                          {item.dependency ? `When ${otherItems.find((o) => o.id === item.dependency!.dependsOnItemId)?.label ?? item.dependency.dependsOnItemId} = ${item.dependency.showWhenValue}` : "No dependency"}
+                                          {formatPortalItemDependenciesSummary(item, otherItems)}
                                         </span>
                                       )}
                                       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
@@ -1792,50 +1782,11 @@ function AdminAppInner() {
                                             </div>
                                           </div>
                                         )}
-                                        <div style={{ marginBottom: 8 }}>
-                                          <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dependency (show when)</p>
-                                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                            <select
-                                              value={item.dependency?.dependsOnItemId ?? ""}
-                                              onChange={(e) => { const id = e.target.value; if (!id) { updateControlItem(tabId, controlId, item.id, { dependency: undefined }); return }; const dep = allItems.find((x) => x.id === id); const showWhen = dep?.type === "checkbox" ? "checked" : dep?.type === "custom_field" ? "filled" : (dep?.options?.[0] ?? ""); updateControlItem(tabId, controlId, item.id, { dependency: { dependsOnItemId: id, showWhenValue: showWhen } }); }}
-                                              style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12, minWidth: 140 }}
-                                            >
-                                              <option value="">— None —</option>
-                                              {otherItems.map((o) => (
-                                                <option key={o.id} value={o.id}>{o.label}</option>
-                                              ))}
-                                            </select>
-                                            {item.dependency?.dependsOnItemId && (() => {
-                                              const depItem = allItems.find((x) => x.id === item.dependency!.dependsOnItemId)
-                                              if (depItem?.type === "checkbox") {
-                                                return (
-                                                  <select value={item.dependency.showWhenValue} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                    <option value="checked">Checked</option>
-                                                    <option value="unchecked">Unchecked</option>
-                                                  </select>
-                                                )
-                                              }
-                                              if (depItem?.type === "dropdown" && depItem.options?.length) {
-                                                return (
-                                                  <select value={item.dependency.showWhenValue} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                    {depItem.options.map((opt) => (
-                                                      <option key={opt} value={opt}>{opt}</option>
-                                                    ))}
-                                                  </select>
-                                                )
-                                              }
-                                              if (depItem?.type === "custom_field") {
-                                                return (
-                                                  <select value={item.dependency.showWhenValue || "filled"} onChange={(e) => updateControlItem(tabId, controlId, item.id, { dependency: { ...item.dependency!, showWhenValue: e.target.value } })} style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 12 }}>
-                                                    <option value="filled">Has value</option>
-                                                    <option value="empty">Empty</option>
-                                                  </select>
-                                                )
-                                              }
-                                              return null
-                                            })()}
-                                          </div>
-                                        </div>
+                                        <PortalItemDependencyEditor
+                                          item={item}
+                                          siblingItems={otherItems}
+                                          onApply={(patch) => updateControlItem(tabId, controlId, item.id, patch)}
+                                        />
                                         <button type="button" onClick={() => setSelectedControlItemId(null)} style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
                                       </div>
                                     )}

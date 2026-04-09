@@ -9,6 +9,7 @@ import {
   getCustomActionButtonsForUser,
   getControlItemsForUser,
   getPageActionVisible,
+  isPortalSettingDependencyVisible,
 } from "../../types/portal-builder"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
@@ -16,6 +17,9 @@ import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationA
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useAuth } from "../../contexts/AuthContext"
+import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
+import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
+import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -109,6 +113,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [leadsProfileSettings, setLeadsProfileSettings] = useState<Record<string, string>>({})
+  /** Profile columns for embed form (not stored in metadata.leadsSettingsValues). */
+  const [leadEmbedProfile, setLeadEmbedProfile] = useState<{ enabled: boolean; slug: string } | null>(null)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
   const [detailForm, setDetailForm] = useState({
@@ -127,19 +133,27 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [leadEmailSending, setLeadEmailSending] = useState(false)
   const [leadAiBusy, setLeadAiBusy] = useState(false)
   const [leadSoftWarnings, setLeadSoftWarnings] = useState<string[]>([])
+  const [leadPendingAiBusy, setLeadPendingAiBusy] = useState(false)
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
 
-  const leadsSettingsItems = useMemo(() => getLeadsSettingsItemsForUser(portalConfig), [portalConfig])
+  const leadsSettingsItems = useMemo(
+    () => getLeadsSettingsItemsForUser(portalConfig, { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const conversationPortalDefaults = useMemo(() => {
-    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings")
+    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
     const out: Record<string, string> = {}
     for (const item of items) {
       if (item.type === "checkbox") out[item.id] = item.defaultChecked ? "checked" : "unchecked"
       else if (item.type === "dropdown" && item.options?.length) out[item.id] = item.options[0]
     }
     return out
-  }, [portalConfig])
+  }, [portalConfig, aiAutomationsEnabled])
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "leads"), [portalConfig])
-  const createLeadPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "leads", "create_lead"), [portalConfig])
+  const createLeadPortalItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "leads", "create_lead", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const [createLeadPortalValues, setCreateLeadPortalValues] = useState<Record<string, string>>({})
   const showCreateLead = getPageActionVisible(portalConfig, "leads", "create_lead")
 
@@ -173,10 +187,19 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     if (!supabase || !userId) return
     let cancelled = false
     void (async () => {
-      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("metadata, embed_lead_enabled, embed_lead_slug")
+        .eq("id", userId)
+        .maybeSingle()
       if (cancelled) return
       if (error || !data) return
-      const meta = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? (data.metadata as Record<string, unknown>) : {}
+      const row = data as { embed_lead_enabled?: boolean; embed_lead_slug?: string | null; metadata?: unknown }
+      setLeadEmbedProfile({
+        enabled: row.embed_lead_enabled === true,
+        slug: String(row.embed_lead_slug ?? "").trim(),
+      })
+      const meta = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as Record<string, unknown>) : {}
       const raw = meta.leadsSettingsValues
       const saved =
         raw && typeof raw === "object" && !Array.isArray(raw)
@@ -184,6 +207,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
             )
           : {}
+      delete saved.embed_lead_enabled
+      delete saved.embed_lead_slug
       setLeadsProfileSettings(saved)
     })()
     return () => {
@@ -193,20 +218,20 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   useEffect(() => {
     if (!showSettings || leadsSettingsItems.length === 0) return
-    setSettingsFormValues(mergeLeadsSettingsFormDefaults(leadsSettingsItems, leadsProfileSettings))
-  }, [showSettings, leadsSettingsItems, leadsProfileSettings])
+    const base = mergeLeadsSettingsFormDefaults(leadsSettingsItems, leadsProfileSettings)
+    if (leadEmbedProfile) {
+      base.embed_lead_enabled = leadEmbedProfile.enabled ? "checked" : "unchecked"
+      base.embed_lead_slug = leadEmbedProfile.slug
+    }
+    setSettingsFormValues(base)
+  }, [showSettings, leadsSettingsItems, leadsProfileSettings, leadEmbedProfile])
 
   function setSettingValue(itemId: string, value: string) {
     setSettingsFormValues((prev) => ({ ...prev, [itemId]: value }))
   }
 
   function isSettingItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = items.find((i) => i.id === depId)
-    let depValue = formValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
   useEffect(() => {
@@ -334,13 +359,31 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
-    prevMeta.leadsSettingsValues = { ...settingsFormValues }
-    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    const { embed_lead_enabled: _ee, embed_lead_slug: _es, ...valuesForMeta } = settingsFormValues
+    prevMeta.leadsSettingsValues = { ...valuesForMeta }
+    const slugClean = String(settingsFormValues.embed_lead_slug ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .slice(0, 64)
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        metadata: prevMeta,
+        embed_lead_enabled: settingsFormValues.embed_lead_enabled === "checked",
+        embed_lead_slug: slugClean || null,
+      })
+      .eq("id", userId)
     if (error) {
       alert(error.message)
       return
     }
-    setLeadsProfileSettings({ ...settingsFormValues })
+    const nextMeta = { ...valuesForMeta }
+    setLeadsProfileSettings(nextMeta)
+    setLeadEmbedProfile({
+      enabled: settingsFormValues.embed_lead_enabled === "checked",
+      slug: slugClean,
+    })
     setShowSettings(false)
   }
 
@@ -518,9 +561,133 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     }
   }
 
+  const pendingLeadAiReply = useMemo(
+    () => parsePendingAiConsumerReply(selectedLead?.metadata?.[PENDING_AI_CONSUMER_REPLY_KEY]),
+    [selectedLead?.metadata, selectedLead?.id],
+  )
+
+  async function mergeLeadMetadata(
+    leadId: string,
+    mutator: (prev: Record<string, unknown>) => Record<string, unknown>,
+  ) {
+    if (!supabase || !userId) return
+    const { data: row } = await supabase.from("leads").select("metadata").eq("id", leadId).eq("user_id", userId).maybeSingle()
+    const prev =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    const next = mutator(prev)
+    const { error } = await supabase.from("leads").update({ metadata: next }).eq("id", leadId).eq("user_id", userId)
+    if (error) throw error
+    setSelectedLead((L: any) => (L && L.id === leadId ? { ...L, metadata: next } : L))
+  }
+
+  async function approveLeadPendingAi(finalBody: string) {
+    if (!userId || !selectedLead?.id || !selectedLead.customer_id || !pendingLeadAiReply) return
+    setLeadPendingAiBusy(true)
+    try {
+      if (pendingLeadAiReply.channel === "sms") {
+        const response = await fetch("/api/send-sms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: pendingLeadAiReply.to,
+            body: finalBody,
+            userId,
+            leadId: selectedLead.id,
+            customerId: selectedLead.customer_id,
+          }),
+        })
+        const raw = await response.text()
+        if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      } else {
+        const subj = pendingLeadAiReply.subject?.trim() || "Message from us"
+        const response = await fetch("/api/outbound-messages?__channel=email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: pendingLeadAiReply.to,
+            subject: subj,
+            body: finalBody,
+            userId,
+            leadId: selectedLead.id,
+            customerId: selectedLead.customer_id,
+          }),
+        })
+        const raw = await response.text()
+        if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      }
+      await mergeLeadMetadata(selectedLead.id, (prev) => {
+        const n = { ...prev }
+        delete n[PENDING_AI_CONSUMER_REPLY_KEY]
+        return n
+      })
+      await openLead(selectedLead.id)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadPendingAiBusy(false)
+    }
+  }
+
+  async function retryLeadPendingAi() {
+    if (!selectedLead?.id || !session?.access_token) {
+      alert("Sign in to regenerate this draft.")
+      return
+    }
+    setLeadPendingAiBusy(true)
+    try {
+      const response = await fetch("/api/platform-tools?__route=ai-regenerate-lead-consumer-reply", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ leadId: selectedLead.id }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      const j = JSON.parse(raw) as { body?: string }
+      const newBody = typeof j.body === "string" ? j.body.trim() : ""
+      if (!newBody) throw new Error("No draft text returned.")
+      await mergeLeadMetadata(selectedLead.id, (prev) => {
+        const cur = parsePendingAiConsumerReply(prev[PENDING_AI_CONSUMER_REPLY_KEY])
+        if (!cur) return prev
+        return {
+          ...prev,
+          [PENDING_AI_CONSUMER_REPLY_KEY]: {
+            ...cur,
+            body: newBody.slice(0, cur.channel === "email" ? 12000 : 1500),
+          },
+        }
+      })
+      await openLead(selectedLead.id)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadPendingAiBusy(false)
+    }
+  }
+
+  async function dismissLeadPendingAi() {
+    if (!selectedLead?.id) return
+    setLeadPendingAiBusy(true)
+    try {
+      await mergeLeadMetadata(selectedLead.id, (prev) => {
+        const n = { ...prev }
+        delete n[PENDING_AI_CONSUMER_REPLY_KEY]
+        return n
+      })
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadPendingAiBusy(false)
+    }
+  }
+
   async function runLeadAiAssist() {
     if (!selectedLead?.id || !session?.access_token) {
-      alert("Sign in and enable AI in Account settings to use Fill with AI.")
+      alert("Sign in and enable Allow AI automations under My T (Account).")
       return
     }
     setLeadAiBusy(true)
@@ -625,6 +792,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         status,
         updated_at,
         customer_id,
+        metadata,
         customers (
           display_name,
           customer_identifiers (
@@ -1132,6 +1300,24 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 }
                 return null
               })}
+              {(() => {
+                const origin = typeof window !== "undefined" ? window.location.origin : ""
+                const slug = String(settingsFormValues.embed_lead_slug ?? "")
+                  .trim()
+                  .toLowerCase()
+                  .replace(/[^a-z0-9-]/g, "")
+                  .slice(0, 64)
+                if (!slug || settingsFormValues.embed_lead_enabled !== "checked") return null
+                const url = `${origin}/embed/lead/${encodeURIComponent(slug)}`
+                return (
+                  <p style={{ margin: 0, fontSize: 12, color: "#4b5563", wordBreak: "break-all" }}>
+                    <strong>Form URL:</strong>{" "}
+                    <a href={url} style={{ color: theme.primary }} target="_blank" rel="noreferrer">
+                      {url}
+                    </a>
+                  </p>
+                )
+              })()}
             </div>
             <button
               type="button"
@@ -1450,25 +1636,27 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 >
                                   Notes
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    void runLeadAiAssist()
-                                  }}
-                                  disabled={leadAiBusy}
-                                  style={{
-                                    padding: "4px 10px",
-                                    fontSize: "12px",
-                                    border: `1px solid ${theme.border}`,
-                                    borderRadius: "6px",
-                                    background: "#fff",
-                                    cursor: leadAiBusy ? "wait" : "pointer",
-                                    color: theme.text,
-                                  }}
-                                >
-                                  {leadAiBusy ? "AI…" : "Fill with AI"}
-                                </button>
+                                {aiAutomationsEnabled ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void runLeadAiAssist()
+                                    }}
+                                    disabled={leadAiBusy}
+                                    style={{
+                                      padding: "4px 10px",
+                                      fontSize: "12px",
+                                      border: `1px solid ${theme.border}`,
+                                      borderRadius: "6px",
+                                      background: "#fff",
+                                      cursor: leadAiBusy ? "wait" : "pointer",
+                                      color: theme.text,
+                                    }}
+                                  >
+                                    {leadAiBusy ? "AI…" : "Fill with AI"}
+                                  </button>
+                                ) : null}
                                 {detailEditMode ? (
                                   <>
                                     <button
@@ -1551,6 +1739,18 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   ))}
                                 </ul>
                               </div>
+                            ) : null}
+
+                            {pendingLeadAiReply ? (
+                              <AiConsumerReplyApprovalCard
+                                key={`${selectedLead.id}-${pendingLeadAiReply.created_at}-${pendingLeadAiReply.body.length}`}
+                                pending={pendingLeadAiReply}
+                                contextLabel="Lead auto-reply"
+                                busy={leadPendingAiBusy}
+                                onApprove={(text) => void approveLeadPendingAi(text)}
+                                onRetry={() => void retryLeadPendingAi()}
+                                onDiscard={() => void dismissLeadPendingAi()}
+                              />
                             ) : null}
 
                             {detailEditMode ? (

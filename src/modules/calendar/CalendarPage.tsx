@@ -11,6 +11,7 @@ import {
   getCustomActionButtonsForUser,
   getOmPageActionVisible,
   getPageActionVisible,
+  isPortalSettingDependencyVisible,
   isRemoveRecurrencePortalItem,
 } from "../../types/portal-builder"
 import {
@@ -21,6 +22,7 @@ import {
 } from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -171,6 +173,7 @@ export default function CalendarPage() {
   const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
@@ -188,6 +191,8 @@ export default function CalendarPage() {
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
+  const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
+  const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
@@ -227,13 +232,26 @@ export default function CalendarPage() {
   const [jtSaving, setJtSaving] = useState(false)
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
 
-  const calendarSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "working_hours"), [portalConfig])
+  const calendarSettingsItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const addItemPortalItems = useMemo(() => {
-    const all = getControlItemsForUser(portalConfig, "calendar", "add_item_to_calendar")
+    const all = getControlItemsForUser(portalConfig, "calendar", "add_item_to_calendar", { aiAutomationsEnabled })
     return all.filter((i) => !isRemoveRecurrencePortalItem(i))
-  }, [portalConfig])
-  const calendarAutoResponseItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "auto_response_options"), [portalConfig])
-  const jobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
+  }, [portalConfig, aiAutomationsEnabled])
+  const calendarAutoResponseItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "auto_response_options", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const jobTypesPortalItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "job_types", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const receiptTemplateItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "receipt_template", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const calendarSettingsItemsWithOrg = useMemo(() => {
     const orgToggle: PortalSettingItem = {
       id: "__org_all_events",
@@ -261,6 +279,9 @@ export default function CalendarPage() {
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
   const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
+  const showCalReceiptTemplate =
+    getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
+  const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
 
   const [arReminderMins, setArReminderMins] = useState(() => {
     try {
@@ -284,12 +305,7 @@ export default function CalendarPage() {
   }, [showSettings, calendarSettingsItemsWithOrg])
 
   function isCalendarSettingItemVisible(item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = calendarSettingsItems.find((i) => i.id === depId)
-    let depValue = settingsFormValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, calendarSettingsItems, settingsFormValues)
   }
 
   useEffect(() => {
@@ -306,21 +322,11 @@ export default function CalendarPage() {
   }, [openCustomButtonId, customActionButtons])
 
   function isCustomButtonItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = items.find((i) => i.id === depId)
-    let depValue = formValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
   function isPortalItemVisible(items: PortalSettingItem[], formValues: Record<string, string>, item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = items.find((i) => i.id === depId)
-    let depValue = formValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
   useEffect(() => {
@@ -438,6 +444,69 @@ export default function CalendarPage() {
   const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
   const [autoResponsePortalValues, setAutoResponsePortalValues] = useState<Record<string, string>>({})
   const [jobTypesPortalValues, setJobTypesPortalValues] = useState<Record<string, string>>({})
+
+  function isReceiptTemplateItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, receiptTemplateItems, receiptTemplateFormValues)
+  }
+
+  useEffect(() => {
+    if (!showReceiptTemplateModal || !supabase || !userId || receiptTemplateItems.length === 0) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("document_template_receipt, metadata").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const useAi = meta.receipt_template_use_ai === true
+      const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
+      const next: Record<string, string> = {}
+      for (const item of receiptTemplateItems) {
+        if (item.id === "receipt_template_notes") next[item.id] = notes
+        else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
+        else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+      setReceiptTemplateFormValues(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showReceiptTemplateModal, userId, receiptTemplateItems])
+
+  async function closeReceiptTemplateModal() {
+    if (!supabase || !userId) {
+      setShowReceiptTemplateModal(false)
+      return
+    }
+    const notes = (receiptTemplateFormValues.receipt_template_notes ?? "").trim()
+    const useAi = receiptTemplateFormValues.receipt_template_use_ai === "checked"
+    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (fetchErr) {
+      alert(fetchErr.message)
+      return
+    }
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.receipt_template_use_ai = useAi
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        document_template_receipt: notes || null,
+        metadata: prevMeta,
+      })
+      .eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setCalendarReceiptTemplate(notes || null)
+    setShowReceiptTemplateModal(false)
+  }
 
   async function loadEvents() {
     if (!userId || !supabase) return
@@ -973,6 +1042,15 @@ export default function CalendarPage() {
             Settings
           </button>
         )}
+        {showCalReceiptTemplate && (
+          <button
+            type="button"
+            onClick={() => setShowReceiptTemplateModal(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            {receiptTemplateButtonLabel}
+          </button>
+        )}
         {showCalCustomizeUser && (
           <button
             onClick={() => { setPrefMessage(""); setShowCustomizeUser(true) }}
@@ -1490,6 +1568,16 @@ export default function CalendarPage() {
           }}
           isItemVisible={isCalendarSettingItemVisible}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showReceiptTemplateModal && (
+        <PortalSettingsModal
+          title={receiptTemplateButtonLabel}
+          items={receiptTemplateItems}
+          formValues={receiptTemplateFormValues}
+          setFormValue={(id, value) => setReceiptTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
+          isItemVisible={isReceiptTemplateItemVisible}
+          onClose={() => void closeReceiptTemplateModal()}
         />
       )}
       {showCustomizeUser && (

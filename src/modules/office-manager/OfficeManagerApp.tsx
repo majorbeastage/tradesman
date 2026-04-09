@@ -30,6 +30,7 @@ const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "auto_response", label: "Auto Response Options" },
   { id: "job_types", label: "Job Types" },
   { id: "settings", label: "Settings" },
+  { id: "receipt_template", label: "Receipt template" },
   { id: "customize_user", label: "Customize user" },
 ]
 
@@ -46,6 +47,13 @@ const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_customer", label: "Add Customer to quotes" },
   { id: "auto_response", label: "Auto Response Options" },
   { id: "settings", label: "Settings" },
+  { id: "estimate_template", label: "Estimate template" },
+]
+
+const OM_CONVERSATIONS_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
+  { id: "add_conversation", label: "Add conversation" },
+  { id: "settings", label: "Conversation settings" },
+  { id: "automatic_replies", label: "Automatic replies" },
 ]
 
 function ManagedUserTabEditor() {
@@ -174,6 +182,7 @@ function ManagedUserOmToolbarEditor() {
   const [msg, setMsg] = useState("")
   const [calendarVisible, setCalendarVisible] = useState<Record<string, boolean>>({})
   const [quotesVisible, setQuotesVisible] = useState<Record<string, boolean>>({})
+  const [conversationsVisible, setConversationsVisible] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const om = ctx?.scopedPortalConfig?.om_page_actions
@@ -181,8 +190,11 @@ function ManagedUserOmToolbarEditor() {
     for (const { id } of OM_CALENDAR_TOOLBAR_ACTIONS) cal[id] = om?.calendar?.[id] !== false
     const qu: Record<string, boolean> = {}
     for (const { id } of OM_QUOTES_TOOLBAR_ACTIONS) qu[id] = om?.quotes?.[id] !== false
+    const conv: Record<string, boolean> = {}
+    for (const { id } of OM_CONVERSATIONS_TOOLBAR_ACTIONS) conv[id] = om?.conversations?.[id] !== false
     setCalendarVisible(cal)
     setQuotesVisible(qu)
+    setConversationsVisible(conv)
   }, [ctx?.scopedPortalConfig, uid])
 
   const save = useCallback(async () => {
@@ -203,12 +215,15 @@ function ManagedUserOmToolbarEditor() {
     for (const { id } of OM_CALENDAR_TOOLBAR_ACTIONS) calendar[id] = calendarVisible[id] !== false
     const quotes: Record<string, boolean> = {}
     for (const { id } of OM_QUOTES_TOOLBAR_ACTIONS) quotes[id] = quotesVisible[id] !== false
+    const conversations: Record<string, boolean> = {}
+    for (const { id } of OM_CONVERSATIONS_TOOLBAR_ACTIONS) conversations[id] = conversationsVisible[id] !== false
     const portal_config: PortalConfig = {
       ...prev,
       om_page_actions: {
         ...(prev.om_page_actions ?? {}),
         calendar,
         quotes,
+        conversations,
       },
     }
     const { error } = await supabase
@@ -220,9 +235,9 @@ function ManagedUserOmToolbarEditor() {
       setMsg(error.message)
       return
     }
-    setMsg("Saved toolbar visibility for Calendar and Quotes (when you manage this user).")
+    setMsg("Saved toolbar visibility for Calendar, Quotes, and Conversations (when you manage this user).")
     await ctx.refreshScopedPortalConfig()
-  }, [ctx, calendarVisible, quotesVisible, uid])
+  }, [ctx, calendarVisible, quotesVisible, conversationsVisible, uid])
 
   if (!ctx || !uid || selected?.isSelf) return null
 
@@ -241,7 +256,7 @@ function ManagedUserOmToolbarEditor() {
           fontSize: 13,
         }}
       >
-        {open ? "Hide" : "OM toolbar (Calendar / Quotes)"}
+        {open ? "Hide" : "OM toolbar (Calendar / Quotes / Conversations)"}
       </button>
       {open && (
         <div
@@ -255,8 +270,8 @@ function ManagedUserOmToolbarEditor() {
           }}
         >
           <p style={{ margin: "0 0 8px", fontSize: 12, color: theme.text, opacity: 0.85 }}>
-            When you work as this user in the office manager portal, unchecked items are hidden on <strong>Calendar</strong> and{" "}
-            <strong>Quotes</strong> (standard toolbar buttons only).
+            When you work as this user in the office manager portal, unchecked items are hidden on <strong>Calendar</strong>, <strong>Quotes</strong>, and{" "}
+            <strong>Conversations</strong> (standard toolbar buttons only).
           </p>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: theme.text }}>Calendar</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
@@ -279,6 +294,19 @@ function ManagedUserOmToolbarEditor() {
                   type="checkbox"
                   checked={quotesVisible[id] !== false}
                   onChange={(e) => setQuotesVisible((prev) => ({ ...prev, [id]: e.target.checked }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: theme.text }}>Conversations</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {OM_CONVERSATIONS_TOOLBAR_ACTIONS.map(({ id, label }) => (
+              <label key={`c-${id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                <input
+                  type="checkbox"
+                  checked={conversationsVisible[id] !== false}
+                  onChange={(e) => setConversationsVisible((prev) => ({ ...prev, [id]: e.target.checked }))}
                 />
                 {label}
               </label>

@@ -99,9 +99,17 @@ function isPortalSettingItem(x: unknown): x is PortalSettingItem {
   if (typeof o.label !== "string") return false
   if (o.options !== undefined && !Array.isArray(o.options)) return false
   if (Array.isArray(o.options) && !o.options.every((v) => typeof v === "string")) return false
+  if (o.dependencyMode !== undefined && o.dependencyMode !== "all" && o.dependencyMode !== "any") return false
   if (o.dependency !== undefined) {
     const d = o.dependency as Record<string, unknown>
     if (typeof d.dependsOnItemId !== "string" || typeof d.showWhenValue !== "string") return false
+  }
+  if (o.dependencies !== undefined) {
+    if (!Array.isArray(o.dependencies)) return false
+    for (const row of o.dependencies) {
+      const d = row as Record<string, unknown>
+      if (typeof d.dependsOnItemId !== "string" || typeof d.showWhenValue !== "string") return false
+    }
   }
   return true
 }

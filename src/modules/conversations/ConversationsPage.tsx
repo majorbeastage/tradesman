@@ -1,11 +1,20 @@
-import { useEffect, useState, useMemo, Fragment, type ReactNode } from "react"
+import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
-import { getControlItemsForUser, getCustomActionButtonsForUser, getPageActionVisible } from "../../types/portal-builder"
+import {
+  CONVERSATION_STATUS_OPTIONS,
+  getControlItemsForUser,
+  getCustomActionButtonsForUser,
+  getOmPageActionVisible,
+  getPageActionVisible,
+  isPortalSettingDependencyVisible,
+  normalizeConversationStatus,
+} from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import {
@@ -16,6 +25,8 @@ import {
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
+import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
+import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -86,6 +97,8 @@ function displayLastUpdateIso(convo: ConversationRow): string | null {
 }
 
 type ConversationsPageProps = { setPage?: (page: string) => void }
+
+const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
 /** Turn API JSON fields into display text (nested objects/arrays → JSON, never "[object Object]"). */
 function formatApiJsonPart(value: unknown): string {
@@ -313,12 +326,22 @@ function ExpandableTimelineRow({
 
 export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const userId = useScopedUserId()
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const isMobile = useIsMobile()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
+  const [showAutomaticReplies, setShowAutomaticReplies] = useState(false)
+  const [autoRepliesFormValues, setAutoRepliesFormValues] = useState<Record<string, string>>({})
+  const [conversationsAutoRepliesProfile, setConversationsAutoRepliesProfile] = useState<Record<string, string>>({})
+  const [autoRepliesRecordingBusy, setAutoRepliesRecordingBusy] = useState(false)
+  const [autoRepliesUploading, setAutoRepliesUploading] = useState(false)
+  const [autoRepliesRecordingSupported, setAutoRepliesRecordingSupported] = useState(false)
+  const autoRepliesMediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const autoRepliesRecordedChunksRef = useRef<Blob[]>([])
+  const autoRepliesMediaStreamRef = useRef<MediaStream | null>(null)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
   const [sortField, setSortField] = useState<string>("name")
@@ -362,18 +385,37 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
+  const [convoPendingAiBusy, setConvoPendingAiBusy] = useState(false)
   const [detailForm, setDetailForm] = useState<ConversationDetailForm>({
     customerName: "",
     channel: "sms",
-    status: "open",
+    status: "Open",
     identifiers: [],
     portalValues: {},
   })
-  const conversationSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "conversation_settings"), [portalConfig])
-  const addConversationPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "conversations", "add_conversation"), [portalConfig])
+  const conversationSettingsItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const automaticRepliesItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "conversations", "automatic_replies", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const addConversationPortalItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "conversations", "add_conversation", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const [addConversationPortalValues, setAddConversationPortalValues] = useState<Record<string, string>>({})
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "conversations"), [portalConfig])
-  const showAddConversationAction = getPageActionVisible(portalConfig, "conversations", "add_conversation")
+  const showAddConversationAction =
+    getPageActionVisible(portalConfig, "conversations", "add_conversation") &&
+    getOmPageActionVisible(portalConfig, "conversations", "add_conversation")
+  const showConversationSettingsButton =
+    getPageActionVisible(portalConfig, "conversations", "conversation_settings") &&
+    getOmPageActionVisible(portalConfig, "conversations", "settings")
+  const showAutomaticRepliesButton =
+    getPageActionVisible(portalConfig, "conversations", "automatic_replies") &&
+    getOmPageActionVisible(portalConfig, "conversations", "automatic_replies")
 
   const emailOnlyEvents = useMemo(
     () => communicationEvents.filter((e) => e.event_type === "email"),
@@ -413,6 +455,53 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       cancelled = true
     }
   }, [userId])
+
+  useEffect(() => {
+    setAutoRepliesRecordingSupported(
+      typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia,
+    )
+  }, [])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const meta =
+        data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const raw = meta.conversationsAutomaticRepliesValues
+      const saved =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? Object.fromEntries(
+              Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+            )
+          : {}
+      setConversationsAutoRepliesProfile(saved)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!showAutomaticReplies || automaticRepliesItems.length === 0) return
+    const base: Record<string, string> = {}
+    for (const item of automaticRepliesItems) {
+      const saved = conversationsAutoRepliesProfile[item.id]
+      if (item.type === "checkbox") {
+        base[item.id] = saved === "checked" || saved === "unchecked" ? saved : item.defaultChecked ? "checked" : "unchecked"
+      } else if (item.type === "dropdown" && item.options?.length) {
+        base[item.id] = saved && item.options.includes(saved) ? saved : item.options[0]
+      } else {
+        base[item.id] = saved ?? ""
+      }
+    }
+    setAutoRepliesFormValues(base)
+  }, [showAutomaticReplies, automaticRepliesItems, conversationsAutoRepliesProfile])
 
   const activityTimeline = useMemo((): ActivityTimelineItem[] => {
     const items: ActivityTimelineItem[] = []
@@ -496,39 +585,48 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   }, [showAddConversation, addConversationPortalItems])
 
   useEffect(() => {
-    if (!showSettings || conversationSettingsItems.length === 0) return
-    setSettingsFormValues((prev) => {
-      const out = { ...prev }
-      let changed = false
-      for (const item of conversationSettingsItems) {
-        if (out[item.id] !== undefined) continue
-        changed = true
-        if (item.id === "show_internal_conversations") {
-          try {
-            const stored = JSON.parse(localStorage.getItem("convo_showInternalConversations") ?? "true")
-            out[item.id] = stored ? "checked" : "unchecked"
-          } catch {
-            out[item.id] = item.defaultChecked ? "checked" : "unchecked"
-          }
-        } else if (item.type === "checkbox") {
-          out[item.id] = item.defaultChecked ? "checked" : "unchecked"
-        } else if (item.type === "dropdown" && item.options?.length) {
-          out[item.id] = item.options[0]
-        } else {
-          out[item.id] = ""
+    if (!showSettings || conversationSettingsItems.length === 0 || !supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("ai_thread_summary_enabled").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      const aiOn = (data as { ai_thread_summary_enabled?: boolean } | null)?.ai_thread_summary_enabled === true
+      setSettingsFormValues(() => {
+        const out: Record<string, string> = {}
+        if (conversationSettingsItems.some((i) => i.id === "ai_thread_summary_enabled")) {
+          out.ai_thread_summary_enabled = aiOn ? "checked" : "unchecked"
         }
-      }
-      return changed ? out : prev
-    })
-  }, [showSettings, conversationSettingsItems])
+        for (const item of conversationSettingsItems) {
+          if (out[item.id] !== undefined) continue
+          if (item.id === "show_internal_conversations") {
+            try {
+              const stored = JSON.parse(localStorage.getItem("convo_showInternalConversations") ?? "true")
+              out[item.id] = stored ? "checked" : "unchecked"
+            } catch {
+              out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+            }
+          } else if (item.type === "checkbox") {
+            out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+          } else if (item.type === "dropdown" && item.options?.length) {
+            out[item.id] = item.options[0]
+          } else {
+            out[item.id] = ""
+          }
+        }
+        return out
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showSettings, conversationSettingsItems, userId])
 
   function isSettingItemVisible(item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = conversationSettingsItems.find((i) => i.id === depId)
-    let depValue = settingsFormValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, conversationSettingsItems, settingsFormValues)
+  }
+
+  function isAutomaticRepliesItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, automaticRepliesItems, autoRepliesFormValues)
   }
 
   function buildDetailFormFromConversation(convo: any): ConversationDetailForm {
@@ -545,7 +643,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     const savedPortalValues = metadata.portalValues && typeof metadata.portalValues === "object" ? metadata.portalValues as Record<string, string> : {}
     const portalValues: Record<string, string> = {}
     conversationSettingsItems.forEach((item) => {
-      if (item.id === "show_internal_conversations") return
+      if (item.id === "show_internal_conversations" || item.id === "ai_thread_summary_enabled") return
       if (item.type === "checkbox") portalValues[item.id] = savedPortalValues[item.id] ?? (item.defaultChecked ? "checked" : "unchecked")
       else if (item.type === "dropdown" && item.options?.length) portalValues[item.id] = savedPortalValues[item.id] ?? item.options[0]
       else portalValues[item.id] = savedPortalValues[item.id] ?? ""
@@ -553,19 +651,14 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     return {
       customerName: convo?.customers?.display_name ?? "",
       channel: convo?.channel ?? "sms",
-      status: convo?.status ?? "open",
+      status: normalizeConversationStatus(convo?.status),
       identifiers,
       portalValues,
     }
   }
 
   function isDetailPortalItemVisible(item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = conversationSettingsItems.find((i) => i.id === depId)
-    let depValue = detailForm.portalValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, conversationSettingsItems, detailForm.portalValues)
   }
 
   useEffect(() => {
@@ -582,12 +675,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
   }, [openCustomButtonId, customActionButtons])
 
   function isCustomButtonItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = items.find((i) => i.id === depId)
-    let depValue = formValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
   const [showInternalConversations, setShowInternalConversations] = useState(() => {
@@ -598,7 +686,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
   })
 
-  function closeConversationSettingsModal() {
+  async function closeConversationSettingsModal() {
     const v = settingsFormValues["show_internal_conversations"]
     if (v === "checked" || v === "unchecked") {
       const on = v === "checked"
@@ -609,8 +697,97 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
       }
       setShowInternalConversations(on)
     }
+    const aiVal = settingsFormValues["ai_thread_summary_enabled"]
+    if ((aiVal === "checked" || aiVal === "unchecked") && supabase && userId) {
+      const aiOn = aiVal === "checked"
+      const { error } = await supabase.from("profiles").update({ ai_thread_summary_enabled: aiOn }).eq("id", userId)
+      if (error) console.error(error)
+      else setAiThreadSummaryEnabled(aiOn)
+    }
     setShowSettings(false)
   }
+
+  async function closeAutomaticRepliesModal() {
+    if (!supabase || !userId) {
+      setShowAutomaticReplies(false)
+      return
+    }
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.conversationsAutomaticRepliesValues = { ...autoRepliesFormValues }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setConversationsAutoRepliesProfile({ ...autoRepliesFormValues })
+    setShowAutomaticReplies(false)
+  }
+
+  async function uploadConversationsAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
+    if (!supabase || !userId) return
+    setAutoRepliesUploading(true)
+    try {
+      const filePath = `${userId}/conv-auto-${Date.now()}.${extension}`
+      const { error: uploadError } = await supabase.storage.from(VOICEMAIL_GREETING_BUCKET).upload(filePath, blob, { upsert: true, contentType })
+      if (uploadError) throw uploadError
+      const { data } = supabase.storage.from(VOICEMAIL_GREETING_BUCKET).getPublicUrl(filePath)
+      const publicUrl = data.publicUrl
+      setAutoRepliesFormValues((prev) => ({ ...prev, conv_auto_phone_recording_url: publicUrl }))
+    } catch (err) {
+      alert(formatAppError(err))
+    } finally {
+      setAutoRepliesUploading(false)
+    }
+  }
+
+  async function startAutoRepliesRecording() {
+    if (!autoRepliesRecordingSupported) {
+      alert("This browser does not support microphone recording.")
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
+      const recorder = new MediaRecorder(stream, { mimeType })
+      autoRepliesRecordedChunksRef.current = []
+      autoRepliesMediaStreamRef.current = stream
+      autoRepliesMediaRecorderRef.current = recorder
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) autoRepliesRecordedChunksRef.current.push(event.data)
+      }
+      recorder.onstop = async () => {
+        const blob = new Blob(autoRepliesRecordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        autoRepliesMediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+        autoRepliesMediaStreamRef.current = null
+        autoRepliesMediaRecorderRef.current = null
+        setAutoRepliesRecordingBusy(false)
+        if (blob.size) await uploadConversationsAutoVoiceBlob(blob, "webm", blob.type || "audio/webm")
+      }
+      recorder.start()
+      setAutoRepliesRecordingBusy(true)
+    } catch (err) {
+      autoRepliesMediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      autoRepliesMediaStreamRef.current = null
+      autoRepliesMediaRecorderRef.current = null
+      setAutoRepliesRecordingBusy(false)
+      alert(formatAppError(err))
+    }
+  }
+
+  function stopAutoRepliesRecording() {
+    if (autoRepliesMediaRecorderRef.current && autoRepliesMediaRecorderRef.current.state !== "inactive") {
+      autoRepliesMediaRecorderRef.current.stop()
+    }
+  }
+
   // Internal conversations (in-memory for now; can wire to Supabase later)
   const [internalConversations, setInternalConversations] = useState<{ id: string; title: string; created_at: string }[]>([])
   const [showAddInternalConvo, setShowAddInternalConvo] = useState(false)
@@ -1129,6 +1306,150 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
   }
 
+  const pendingConvoAiReply = useMemo(
+    () => parsePendingAiConsumerReply(selectedConversation?.metadata?.[PENDING_AI_CONSUMER_REPLY_KEY]),
+    [selectedConversation?.metadata, selectedConversation?.id],
+  )
+
+  async function mergeConversationMetadata(
+    convoId: string,
+    mutator: (prev: Record<string, unknown>) => Record<string, unknown>,
+  ) {
+    if (!supabase) return
+    const { data: row } = await supabase.from("conversations").select("metadata").eq("id", convoId).maybeSingle()
+    const prev =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    const next = mutator(prev)
+    const { error } = await supabase.from("conversations").update({ metadata: next }).eq("id", convoId)
+    if (error) throw error
+    setSelectedConversation((c: any) => (c && c.id === convoId ? { ...c, metadata: next } : c))
+  }
+
+  async function approveConvoPendingAi(finalBody: string) {
+    if (!supabase || !userId || !selectedConversation?.id || !selectedConversation.customer_id || !pendingConvoAiReply) return
+    setConvoPendingAiBusy(true)
+    try {
+      if (pendingConvoAiReply.channel === "sms") {
+        const response = await fetch("/api/send-sms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: pendingConvoAiReply.to,
+            body: finalBody,
+            userId,
+            conversationId: selectedConversation.id,
+            customerId: selectedConversation.customer_id,
+          }),
+        })
+        const raw = await response.text()
+        if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+        const { error } = await supabase.from("messages").insert({
+          conversation_id: selectedConversation.id,
+          sender: "user",
+          content: finalBody,
+        })
+        if (error) throw error
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), sender: "user", content: finalBody, created_at: new Date().toISOString() },
+        ])
+      } else {
+        const subj = pendingConvoAiReply.subject?.trim() || "Message from us"
+        const response = await fetch("/api/outbound-messages?__channel=email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: pendingConvoAiReply.to,
+            subject: subj,
+            body: finalBody,
+            userId,
+            conversationId: selectedConversation.id,
+            customerId: selectedConversation.customer_id,
+          }),
+        })
+        const raw = await response.text()
+        if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+        const toMeta = pendingConvoAiReply.to
+        const event: CommEventRow = {
+          id: crypto.randomUUID(),
+          event_type: "email",
+          subject: subj,
+          body: finalBody,
+          direction: "outbound",
+          created_at: new Date().toISOString(),
+          metadata: { to: toMeta },
+        }
+        setCommunicationEvents((prev) => [...prev, event])
+      }
+      await mergeConversationMetadata(selectedConversation.id, (prev) => {
+        const n = { ...prev }
+        delete n[PENDING_AI_CONSUMER_REPLY_KEY]
+        return n
+      })
+      await loadConversations()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setConvoPendingAiBusy(false)
+    }
+  }
+
+  async function retryConvoPendingAi() {
+    if (!selectedConversation?.id || !supabase) return
+    setConvoPendingAiBusy(true)
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) throw new Error("Not signed in.")
+      const response = await fetch("/api/platform-tools?__route=ai-regenerate-conversation-consumer-reply", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ conversationId: selectedConversation.id }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      const j = JSON.parse(raw) as { body?: string }
+      const newBody = typeof j.body === "string" ? j.body.trim() : ""
+      if (!newBody) throw new Error("No draft text returned.")
+      await mergeConversationMetadata(selectedConversation.id, (prev) => {
+        const cur = parsePendingAiConsumerReply(prev[PENDING_AI_CONSUMER_REPLY_KEY])
+        if (!cur) return prev
+        return {
+          ...prev,
+          [PENDING_AI_CONSUMER_REPLY_KEY]: {
+            ...cur,
+            body: newBody.slice(0, cur.channel === "email" ? 12000 : 1500),
+          },
+        }
+      })
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setConvoPendingAiBusy(false)
+    }
+  }
+
+  async function dismissConvoPendingAi() {
+    if (!selectedConversation?.id) return
+    setConvoPendingAiBusy(true)
+    try {
+      await mergeConversationMetadata(selectedConversation.id, (prev) => {
+        const n = { ...prev }
+        delete n[PENDING_AI_CONSUMER_REPLY_KEY]
+        return n
+      })
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setConvoPendingAiBusy(false)
+    }
+  }
+
   async function summarizeThread() {
     if (!supabase || !selectedConversation?.id) return
     setThreadSummaryBusy(true)
@@ -1255,19 +1576,37 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 Add Conversation
               </button>
             )}
-            <button
-              onClick={() => setShowSettings(true)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: "1px solid #d1d5db",
-                background: "white",
-                cursor: "pointer",
-                color: theme.text
-              }}
-            >
-              Settings
-            </button>
+            {showConversationSettingsButton && (
+              <button
+                onClick={() => setShowSettings(true)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  cursor: "pointer",
+                  color: theme.text,
+                }}
+              >
+                {portalConfig?.controlLabels?.conversation_settings ?? "Settings"}
+              </button>
+            )}
+            {showAutomaticRepliesButton && (
+              <button
+                type="button"
+                onClick={() => setShowAutomaticReplies(true)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  cursor: "pointer",
+                  color: theme.text,
+                }}
+              >
+                {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
+              </button>
+            )}
             {customActionButtons.map((btn) => (
               <button
                 key={btn.id}
@@ -1289,6 +1628,140 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
             isItemVisible={isSettingItemVisible}
             onClose={closeConversationSettingsModal}
           />
+        )}
+
+        {showAutomaticReplies && (
+          <>
+            <div
+              role="presentation"
+              onClick={() => void closeAutomaticRepliesModal()}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: "90%",
+                maxWidth: "520px",
+                maxHeight: "90vh",
+                overflow: "auto",
+                background: "white",
+                borderRadius: "8px",
+                padding: "24px",
+                boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+                zIndex: 9999,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
+                  {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => void closeAutomaticRepliesModal()}
+                  style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}
+                >
+                  ✕
+                </button>
+              </div>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.
+              </p>
+              <PortalSettingItemsForm
+                items={automaticRepliesItems}
+                formValues={autoRepliesFormValues}
+                setFormValue={(id, value) => setAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
+                isItemVisible={isAutomaticRepliesItemVisible}
+              />
+              {autoRepliesFormValues.conv_auto_reply_method === "Phone call" &&
+                autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      padding: 12,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#f9fafb",
+                      fontSize: 12,
+                      color: "#374151",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
+                    such as &quot;This is a prerecorded message&quot; before your content (required for automated outreach; exact wording may follow your counsel and carrier
+                    rules).
+                  </div>
+                )}
+              {autoRepliesFormValues.conv_auto_phone_delivery === "Record in app" &&
+                autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" &&
+                autoRepliesFormValues.conv_auto_reply_method === "Phone call" && (
+                  <div style={{ marginTop: 14 }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: theme.text }}>Record in browser</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                      {!autoRepliesRecordingBusy ? (
+                        <button
+                          type="button"
+                          disabled={!autoRepliesRecordingSupported || autoRepliesUploading}
+                          onClick={() => void startAutoRepliesRecording()}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                            cursor: autoRepliesRecordingSupported && !autoRepliesUploading ? "pointer" : "not-allowed",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                          }}
+                        >
+                          {autoRepliesUploading ? "Uploading…" : "Start recording"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => stopAutoRepliesRecording()}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            border: "1px solid #fca5a5",
+                            background: "#fef2f2",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: "#b91c1c",
+                          }}
+                        >
+                          Stop &amp; upload
+                        </button>
+                      )}
+                    </div>
+                    {autoRepliesFormValues.conv_auto_phone_recording_url?.trim() ? (
+                      <p style={{ margin: "10px 0 0", fontSize: 12, color: "#059669" }}>Recording URL saved in the field above.</p>
+                    ) : null}
+                  </div>
+                )}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+                <button
+                  type="button"
+                  onClick={() => void closeAutomaticRepliesModal()}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 14,
+                  }}
+                >
+                  Save &amp; close
+                </button>
+              </div>
+            </div>
+          </>
         )}
 
         {openCustomButtonId && (() => {
@@ -1453,7 +1926,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       <td style={cellBase}>{convo.customers?.display_name ?? "—"}</td>
                       <td style={cellBase}>{convo.channel === "email" ? (email || "—") : (phone || "—")}</td>
                       <td style={cellBase}>{convo.channel ?? "—"}</td>
-                      <td style={cellBase}>{convo.status ?? "—"}</td>
+                      <td style={cellBase}>{normalizeConversationStatus(convo.status)}</td>
                       <td style={cellBase}>
                         {(() => {
                           const iso = displayLastUpdateIso(convo as ConversationRow)
@@ -1567,6 +2040,18 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   </div>
                 </div>
 
+                {pendingConvoAiReply ? (
+                  <AiConsumerReplyApprovalCard
+                    key={`${selectedConversation.id}-${pendingConvoAiReply.created_at}-${pendingConvoAiReply.body.length}`}
+                    pending={pendingConvoAiReply}
+                    contextLabel="Automatic reply"
+                    busy={convoPendingAiBusy}
+                    onApprove={(text) => void approveConvoPendingAi(text)}
+                    onRetry={() => void retryConvoPendingAi()}
+                    onDiscard={() => void dismissConvoPendingAi()}
+                  />
+                ) : null}
+
                 {detailEditMode ? (
                   <div style={{ display: "grid", gap: 12, padding: 12, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}>
                     <label style={{ display: "grid", gap: 6 }}>
@@ -1584,7 +2069,17 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       </label>
                       <label style={{ display: "grid", gap: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 700 }}>Status</span>
-                        <input value={detailForm.status} onChange={(e) => setDetailForm((prev) => ({ ...prev, status: e.target.value }))} style={theme.formInput} />
+                        <select
+                          value={detailForm.status}
+                          onChange={(e) => setDetailForm((prev) => ({ ...prev, status: e.target.value }))}
+                          style={theme.formInput}
+                        >
+                          {CONVERSATION_STATUS_OPTIONS.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                     </div>
                     <div style={{ display: "grid", gap: 10 }}>
@@ -1610,11 +2105,15 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                         ))
                       )}
                     </div>
-                    {conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations").length > 0 && (
+                    {conversationSettingsItems.filter(
+                      (item) => item.id !== "show_internal_conversations" && item.id !== "ai_thread_summary_enabled",
+                    ).length > 0 && (
                       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
                         <PortalSettingItemsForm
                           title="Admin-configured detail fields"
-                          items={conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations")}
+                          items={conversationSettingsItems.filter(
+                            (item) => item.id !== "show_internal_conversations" && item.id !== "ai_thread_summary_enabled",
+                          )}
                           formValues={detailForm.portalValues}
                           setFormValue={(id, value) => setDetailForm((prev) => ({ ...prev, portalValues: { ...prev.portalValues, [id]: value } }))}
                           isItemVisible={isDetailPortalItemVisible}
@@ -1641,9 +2140,11 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                       <strong>Channel:</strong> {selectedConversation.channel ?? "—"}
                     </p>
                     <p style={{ margin: 0 }}>
-                      <strong>Status:</strong> {selectedConversation.status ?? "—"}
+                      <strong>Status:</strong> {normalizeConversationStatus(selectedConversation.status)}
                     </p>
-                    {conversationSettingsItems.filter((item) => item.id !== "show_internal_conversations").map((item) => {
+                    {conversationSettingsItems
+                      .filter((item) => item.id !== "show_internal_conversations" && item.id !== "ai_thread_summary_enabled")
+                      .map((item) => {
                       const saved = selectedConversation?.metadata?.portalValues?.[item.id]
                       if (!saved || !isDetailPortalItemVisible(item)) return null
                       return (
@@ -1665,7 +2166,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280" }}>
                   Text thread messages plus logged SMS/email (and other events), newest first. Expand a row for the full message.
                 </p>
-                {aiThreadSummaryEnabled && selectedConversation?.id ? (
+                {aiAutomationsEnabled && aiThreadSummaryEnabled && selectedConversation?.id ? (
                   <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                     <button
                       type="button"

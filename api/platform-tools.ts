@@ -14,7 +14,12 @@ import {
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
-import { parseLeadsSettingsFromMetadata, runLeadCaptureSideEffects } from "./_leadAutomation.js"
+import {
+  buildLeadConsumerAutoReplyText,
+  openAiText,
+  parseLeadsSettingsFromMetadata,
+  runLeadCaptureSideEffects,
+} from "./_leadAutomation.js"
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   const raw = req.body
@@ -187,12 +192,17 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
 
   const { data: profile } = await service
     .from("profiles")
-    .select("ai_thread_summary_enabled")
+    .select("ai_thread_summary_enabled, ai_assistant_visible")
     .eq("id", userId)
     .maybeSingle()
-  const aiOk = (profile as { ai_thread_summary_enabled?: boolean } | null)?.ai_thread_summary_enabled === true
+  const row = profile as { ai_thread_summary_enabled?: boolean; ai_assistant_visible?: boolean } | null
+  if (row?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
+    return
+  }
+  const aiOk = row?.ai_thread_summary_enabled === true
   if (!aiOk) {
-    res.status(403).json({ error: "AI thread summary is not enabled for your account." })
+    res.status(403).json({ error: "AI thread summary is not enabled. Turn it on under Conversations → Settings." })
     return
   }
 
@@ -332,14 +342,10 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
     return
   }
 
-  const { data: profile } = await service
-    .from("profiles")
-    .select("ai_thread_summary_enabled")
-    .eq("id", userId)
-    .maybeSingle()
-  const aiOk = (profile as { ai_thread_summary_enabled?: boolean } | null)?.ai_thread_summary_enabled === true
-  if (!aiOk) {
-    res.status(403).json({ error: "Enable AI in Account settings to use lead assistant." })
+  const { data: profile } = await service.from("profiles").select("ai_assistant_visible").eq("id", userId).maybeSingle()
+  const prof = profile as { ai_assistant_visible?: boolean } | null
+  if (prof?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
     return
   }
 
@@ -451,6 +457,195 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
   }
 }
 
+/** Regenerate AI/template consumer auto-reply text for a lead (approval flow). */
+async function handleAiRegenerateLeadConsumerReply(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing authorization" })
+    return
+  }
+  const token = authHeader.slice("Bearer ".length).trim()
+  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
+  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  if (!supabaseUrl || !anonKey) {
+    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    return
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
+  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  if (userErr || !userData.user) {
+    res.status(401).json({ error: "Invalid session" })
+    return
+  }
+  const userId = userData.user.id
+
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+
+  const { data: profile } = await service
+    .from("profiles")
+    .select("metadata, ai_assistant_visible")
+    .eq("id", userId)
+    .maybeSingle()
+  const prof = profile as { metadata?: unknown; ai_assistant_visible?: boolean } | null
+  if (prof?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
+    return
+  }
+
+  const body = jsonBody(req)
+  const leadId = pickFirstString(body.leadId).trim()
+  if (!leadId) {
+    res.status(400).json({ error: "leadId required" })
+    return
+  }
+
+  const { data: lead, error: leadErr } = await service
+    .from("leads")
+    .select("id, description, user_id, customer_id, customers(display_name)")
+    .eq("id", leadId)
+    .maybeSingle()
+  const row = lead as {
+    id: string
+    user_id: string
+    description?: string | null
+    customers?: { display_name?: string | null } | null
+  } | null
+  if (leadErr || !row || row.user_id !== userId) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+
+  const settings = parseLeadsSettingsFromMetadata(prof?.metadata)
+  const aiOn = prof?.ai_assistant_visible !== false
+  const text = await buildLeadConsumerAutoReplyText(settings, aiOn, {
+    description: String(row.description ?? ""),
+    name: String(row.customers?.display_name ?? "").trim(),
+  })
+
+  res.status(200).json({ ok: true, body: text })
+}
+
+function parseStringMapFromUnknown(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v
+  }
+  return out
+}
+
+/** Regenerate AI draft for conversation outbound (approval flow; uses Automatic replies settings + thread). */
+async function handleAiRegenerateConversationConsumerReply(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing authorization" })
+    return
+  }
+  const token = authHeader.slice("Bearer ".length).trim()
+  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
+  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  if (!supabaseUrl || !anonKey) {
+    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    return
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
+  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  if (userErr || !userData.user) {
+    res.status(401).json({ error: "Invalid session" })
+    return
+  }
+  const userId = userData.user.id
+
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+
+  const { data: profile } = await service
+    .from("profiles")
+    .select("metadata, ai_assistant_visible")
+    .eq("id", userId)
+    .maybeSingle()
+  const prof = profile as { metadata?: unknown; ai_assistant_visible?: boolean } | null
+  if (prof?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
+    return
+  }
+
+  const body = jsonBody(req)
+  const conversationId = pickFirstString(body.conversationId).trim()
+  if (!conversationId) {
+    res.status(400).json({ error: "conversationId required" })
+    return
+  }
+
+  const { data: convo, error: convoErr } = await service
+    .from("conversations")
+    .select("id, user_id")
+    .eq("id", conversationId)
+    .maybeSingle()
+  const crow = convo as { id: string; user_id: string } | null
+  if (convoErr || !crow || crow.user_id !== userId) {
+    res.status(404).json({ error: "Conversation not found" })
+    return
+  }
+
+  const meta = prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata) ? prof.metadata : {}
+  const auto = parseStringMapFromUnknown((meta as Record<string, unknown>).conversationsAutomaticRepliesValues)
+  const template = (auto.conv_auto_reply_message ?? "").trim()
+  const brief = (auto.conv_auto_reply_ai_brief ?? "").trim()
+
+  const { data: msgs } = await service
+    .from("messages")
+    .select("content, sender, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+    .limit(60)
+
+  const lines = (msgs || [])
+    .map((m: { sender?: string | null; content?: string | null }) => {
+      const s = (m.sender ?? "thread").trim()
+      const c = (m.content ?? "").trim()
+      return `${s}: ${c}`
+    })
+    .filter((t: string) => t.length > 2)
+  const thread = lines.join("\n").slice(0, 8000)
+
+  const userPrompt = `Business owner brief (what to communicate):\n${brief || "(none)"}\n\nTemplate or tone to respect:\n${template || "(none)"}\n\nConversation thread:\n${thread || "(no messages yet)"}`
+
+  const generated =
+    (await openAiText(
+      "You write short, professional SMS or email replies for a home-services contractor. Match the thread context. Under 400 words. No markdown unless email needs simple paragraphs.",
+      userPrompt,
+    ))?.trim() ?? ""
+
+  const text = generated || template || "Thanks for reaching out — we'll get back to you shortly."
+  res.status(200).json({ ok: true, body: text })
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -467,7 +662,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(200).json({
       ok: true,
       route: "platform-tools",
-      post: ["public-lead", "ai-summarize", "ai-lead-assist"],
+      post: [
+        "public-lead",
+        "ai-summarize",
+        "ai-lead-assist",
+        "ai-regenerate-lead-consumer-reply",
+        "ai-regenerate-conversation-consumer-reply",
+      ],
     })
     return
   }
@@ -485,7 +686,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       await handleAiLeadAssist(req, res)
       return
     }
-    res.status(400).json({ error: "Unknown __route", hint: "Use public-lead, ai-summarize, or ai-lead-assist" })
+    if (route === "ai-regenerate-lead-consumer-reply") {
+      await handleAiRegenerateLeadConsumerReply(req, res)
+      return
+    }
+    if (route === "ai-regenerate-conversation-consumer-reply") {
+      await handleAiRegenerateConversationConsumerReply(req, res)
+      return
+    }
+    res.status(400).json({
+      error: "Unknown __route",
+      hint: "Use public-lead, ai-summarize, ai-lead-assist, ai-regenerate-lead-consumer-reply, or ai-regenerate-conversation-consumer-reply",
+    })
   } catch (e) {
     console.error("[platform-tools]", e instanceof Error ? e.message : e)
     res.status(500).json({ error: e instanceof Error ? e.message : "platform-tools failed" })

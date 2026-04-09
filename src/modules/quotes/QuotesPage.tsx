@@ -7,7 +7,14 @@ import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
-import { getControlItemsForUser, getCustomActionButtonsForUser, getOmPageActionVisible, getPageActionVisible } from "../../types/portal-builder"
+import {
+  getControlItemsForUser,
+  getCustomActionButtonsForUser,
+  getOmPageActionVisible,
+  getPageActionVisible,
+  isPortalSettingDependencyVisible,
+} from "../../types/portal-builder"
+import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -47,9 +54,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const { userId: authUserId } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
+  const [showEstimateTemplateModal, setShowEstimateTemplateModal] = useState(false)
+  const [estimateTemplateFormValues, setEstimateTemplateFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponseOptions, setShowAutoResponseOptions] = useState(false)
@@ -112,25 +122,44 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
 
-  const quoteSettingsItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "quote_settings"), [portalConfig])
-  const quoteCalendarItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "add_quote_to_calendar"), [portalConfig])
-  const calendarJobTypesPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "calendar", "job_types"), [portalConfig])
+  const quoteSettingsItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "quote_settings", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const quoteCalendarItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "add_quote_to_calendar", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const calendarJobTypesPortalItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "job_types", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const estimateTemplateItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "estimate_template", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
   const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
-  const quoteAddCustomerPortalItems = useMemo(() => getControlItemsForUser(portalConfig, "quotes", "add_customer_to_quotes"), [portalConfig])
+  const quoteAddCustomerPortalItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "add_customer_to_quotes", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
   const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
+  const showQuotesEstimateTemplate =
+    getPageActionVisible(portalConfig, "quotes", "estimate_template") && getOmPageActionVisible(portalConfig, "quotes", "estimate_template")
+  const estimateTemplateButtonLabel = portalConfig?.controlLabels?.estimate_template ?? "Estimate template"
 
   const conversationPortalDefaults = useMemo(() => {
-    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings")
+    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
     const out: Record<string, string> = {}
     for (const item of items) {
       if (item.type === "checkbox") out[item.id] = item.defaultChecked ? "checked" : "unchecked"
       else if (item.type === "dropdown" && item.options?.length) out[item.id] = item.options[0]
     }
     return out
-  }, [portalConfig])
+  }, [portalConfig, aiAutomationsEnabled])
 
   useEffect(() => {
     if (!supabase || !userId) return
@@ -189,21 +218,74 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }, [showSettings, quoteSettingsItems])
 
   function isQuoteCalendarPortalItemVisible(item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = quoteCalendarItems.find((i) => i.id === depId)
-    let depValue = quoteCalPortalValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, quoteCalendarItems, quoteCalPortalValues)
   }
 
   function isQuoteSettingItemVisible(item: PortalSettingItem): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = quoteSettingsItems.find((i) => i.id === depId)
-    let depValue = settingsFormValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, quoteSettingsItems, settingsFormValues)
+  }
+
+  function isEstimateTemplateItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, estimateTemplateItems, estimateTemplateFormValues)
+  }
+
+  useEffect(() => {
+    if (!showEstimateTemplateModal || !supabase || !userId || estimateTemplateItems.length === 0) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("document_template_quote, metadata").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const useAi = meta.estimate_template_use_ai === true
+      const notes = String((data as { document_template_quote?: string | null })?.document_template_quote ?? "")
+      const next: Record<string, string> = {}
+      for (const item of estimateTemplateItems) {
+        if (item.id === "estimate_template_notes") next[item.id] = notes
+        else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
+        else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+      setEstimateTemplateFormValues(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showEstimateTemplateModal, userId, estimateTemplateItems])
+
+  async function closeEstimateTemplateModal() {
+    if (!supabase || !userId) {
+      setShowEstimateTemplateModal(false)
+      return
+    }
+    const notes = (estimateTemplateFormValues.estimate_template_notes ?? "").trim()
+    const useAi = estimateTemplateFormValues.estimate_template_use_ai === "checked"
+    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (fetchErr) {
+      alert(fetchErr.message)
+      return
+    }
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.estimate_template_use_ai = useAi
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        document_template_quote: notes || null,
+        metadata: prevMeta,
+      })
+      .eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setQuotePdfTemplate(notes || null)
+    setShowEstimateTemplateModal(false)
   }
 
   useEffect(() => {
@@ -220,12 +302,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }, [openCustomButtonId, customActionButtons])
 
   function isCustomButtonItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
-    if (!item.dependency) return true
-    const depId = item.dependency.dependsOnItemId
-    const depItem = items.find((i) => i.id === depId)
-    let depValue = formValues[depId] ?? ""
-    if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
-    return depValue === item.dependency.showWhenValue
+    return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
   // Settings (localStorage)
@@ -823,6 +900,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 Settings
               </button>
             )}
+            {showQuotesEstimateTemplate && (
+              <button
+                type="button"
+                onClick={() => setShowEstimateTemplateModal(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {estimateTemplateButtonLabel}
+              </button>
+            )}
             {customActionButtons.map((btn) => (
               <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
             ))}
@@ -837,6 +923,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             setFormValue={(id, value) => setSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
             isItemVisible={isQuoteSettingItemVisible}
             onClose={() => setShowSettings(false)}
+          />
+        )}
+
+        {showEstimateTemplateModal && (
+          <PortalSettingsModal
+            title={estimateTemplateButtonLabel}
+            items={estimateTemplateItems}
+            formValues={estimateTemplateFormValues}
+            setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
+            isItemVisible={isEstimateTemplateItemVisible}
+            onClose={() => void closeEstimateTemplateModal()}
           />
         )}
 

@@ -1,4 +1,4 @@
-import type { PortalSettingItem } from "../types/portal-builder"
+import { getPortalItemDependencyList, type PortalSettingItem } from "../types/portal-builder"
 
 /** One recurring submission (materialized as multiple DB rows). */
 export type RecurrenceSeries = {
@@ -68,8 +68,7 @@ export function resolveRecurrenceFromPortal(
     items.find(
       (i) =>
         i.type === "dropdown" &&
-        i.dependency?.dependsOnItemId === checkbox.id &&
-        i.dependency.showWhenValue === "checked"
+        getPortalItemDependencyList(i).some((d) => d.dependsOnItemId === checkbox.id && d.showWhenValue === "checked"),
     ) ??
     items.find((i) => i.type === "dropdown" && (/frequency|recur|interval/i.test(i.id) || /frequency|recur|interval/i.test(i.label)))
 
