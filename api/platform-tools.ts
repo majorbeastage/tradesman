@@ -14,6 +14,7 @@ import {
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
+import { parseLeadsSettingsFromMetadata, runLeadCaptureSideEffects } from "./_leadAutomation.js"
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   const raw = req.body
@@ -66,7 +67,7 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
 
   const { data: profile, error: profErr } = await supabase
     .from("profiles")
-    .select("id, embed_lead_enabled, embed_lead_slug")
+    .select("id, embed_lead_enabled, embed_lead_slug, metadata")
     .eq("embed_lead_slug", slug)
     .maybeSingle()
 
@@ -74,9 +75,22 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
     res.status(404).json({ error: "Form not found" })
     return
   }
-  const row = profile as { id: string; embed_lead_enabled?: boolean; embed_lead_slug?: string }
+  const row = profile as { id: string; embed_lead_enabled?: boolean; embed_lead_slug?: string; metadata?: unknown }
   if (!row.embed_lead_enabled) {
     res.status(404).json({ error: "Form not available" })
+    return
+  }
+
+  const embedSettings = parseLeadsSettingsFromMetadata(row.metadata)
+  if (
+    embedSettings.pause_lead_capture_campaigns === "checked" ||
+    embedSettings.pause_lead_captures === "checked"
+  ) {
+    res.status(403).json({
+      error: "Lead capture campaigns are paused.",
+      message:
+        "This web embed is not accepting new submissions. Direct calls, SMS, and voicemail to your business numbers still create leads as usual.",
+    })
     return
   }
 
@@ -116,14 +130,23 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
     .filter(Boolean)
     .join("\n\n")
 
+  let leadId: string
   try {
-    await ensureOpenLeadForInbound(supabase, userId, customerId, title, description || "Submitted from embed form.")
+    leadId = await ensureOpenLeadForInbound(supabase, userId, customerId, title, description || "Submitted from embed form.")
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Could not create lead" })
     return
   }
 
-  res.status(200).json({ ok: true })
+  void runLeadCaptureSideEffects(supabase, userId, leadId, customerId, {
+    title,
+    description: description || "",
+    phone,
+    email,
+    name,
+  }).catch((err) => console.error("[public-lead] side effects", err instanceof Error ? err.message : err))
+
+  res.status(200).json({ ok: true, leadId })
 }
 
 async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -273,6 +296,161 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
   res.status(200).json({ ok: true, summary })
 }
 
+async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing authorization" })
+    return
+  }
+  const token = authHeader.slice("Bearer ".length).trim()
+  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
+  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  if (!supabaseUrl || !anonKey) {
+    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    return
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
+  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  if (userErr || !userData.user) {
+    res.status(401).json({ error: "Invalid session" })
+    return
+  }
+  const userId = userData.user.id
+
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+
+  const { data: profile } = await service
+    .from("profiles")
+    .select("ai_thread_summary_enabled")
+    .eq("id", userId)
+    .maybeSingle()
+  const aiOk = (profile as { ai_thread_summary_enabled?: boolean } | null)?.ai_thread_summary_enabled === true
+  if (!aiOk) {
+    res.status(403).json({ error: "Enable AI in Account settings to use lead assistant." })
+    return
+  }
+
+  const body = jsonBody(req)
+  const leadId = pickFirstString(body.leadId).trim()
+  if (!leadId) {
+    res.status(400).json({ error: "leadId required" })
+    return
+  }
+
+  const { data: lead, error: leadErr } = await service
+    .from("leads")
+    .select("id, title, description, status, customer_id, user_id")
+    .eq("id", leadId)
+    .maybeSingle()
+  const row = lead as { id: string; user_id: string; customer_id: string; title?: string; description?: string; status?: string } | null
+  if (leadErr || !row || row.user_id !== userId) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+
+  const { data: cust } = await service
+    .from("customers")
+    .select("display_name, customer_identifiers(type, value)")
+    .eq("id", row.customer_id)
+    .maybeSingle()
+
+  const { data: evs } = await service
+    .from("communication_events")
+    .select("event_type, direction, body, subject, created_at")
+    .eq("user_id", userId)
+    .or(`lead_id.eq.${leadId},and(customer_id.eq.${row.customer_id},conversation_id.is.null)`)
+    .order("created_at", { ascending: false })
+    .limit(50)
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(503).json({
+      error: "OpenAI is not configured on the server.",
+      hint: "Set OPENAI_API_KEY on Vercel.",
+    })
+    return
+  }
+
+  const pack = {
+    currentTitle: row.title ?? "",
+    currentDescription: row.description ?? "",
+    currentStatus: row.status ?? "New",
+    customer: cust,
+    recentEvents: (evs || []).slice(0, 20),
+  }
+  const userPrompt = JSON.stringify(pack).slice(0, 12000)
+
+  const oa = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: firstEnv("OPENAI_MODEL") || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            'You help a contractor organize leads. Return a single JSON object only, no markdown, keys: suggestedTitle (string, short job headline), suggestedDescription (string, multi-sentence job details from context), suggestedStatus (exactly one of: New, Contacted, Qualified, Lost), suggestedCustomerName (string, contact name if inferable else empty), suggestedPhone (string, E.164 or raw digits if inferable else empty), suggestedEmail (string, valid email if inferable else empty), softWarnings (array of short strings, e.g. compliance reminders, empty array if none). Base suggestions on the consumer need (e.g. repair vs replace). Do not invent phone/email; only fill if clearly present in the data.',
+        },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: 700,
+      temperature: 0.35,
+      response_format: { type: "json_object" },
+    }),
+  })
+
+  const raw = await oa.text()
+  if (!oa.ok) {
+    res.status(502).json({ error: "OpenAI request failed", detail: raw.slice(0, 800) })
+    return
+  }
+  try {
+    const j = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> }
+    const content = j.choices?.[0]?.message?.content?.trim() || "{}"
+    const parsed = JSON.parse(content) as {
+      suggestedTitle?: string
+      suggestedDescription?: string
+      suggestedStatus?: string
+      suggestedCustomerName?: string
+      suggestedPhone?: string
+      suggestedEmail?: string
+      softWarnings?: string[]
+    }
+    const allowed = new Set(["New", "Contacted", "Qualified", "Lost"])
+    const st = typeof parsed.suggestedStatus === "string" && allowed.has(parsed.suggestedStatus) ? parsed.suggestedStatus : row.status ?? "New"
+    const emailRaw = String(parsed.suggestedEmail ?? "").trim().toLowerCase().slice(0, 320)
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw : ""
+    res.status(200).json({
+      ok: true,
+      suggestedTitle: String(parsed.suggestedTitle ?? row.title ?? "").slice(0, 500),
+      suggestedDescription: String(parsed.suggestedDescription ?? row.description ?? "").slice(0, 8000),
+      suggestedStatus: st,
+      suggestedCustomerName: String(parsed.suggestedCustomerName ?? "").slice(0, 200),
+      suggestedPhone: String(parsed.suggestedPhone ?? "").replace(/\s+/g, " ").trim().slice(0, 40),
+      suggestedEmail: emailOk,
+      softWarnings: Array.isArray(parsed.softWarnings) ? parsed.softWarnings.map((s) => String(s).slice(0, 300)).slice(0, 8) : [],
+    })
+  } catch {
+    res.status(502).json({ error: "Could not parse OpenAI JSON", detail: raw.slice(0, 400) })
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -289,7 +467,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(200).json({
       ok: true,
       route: "platform-tools",
-      post: ["public-lead", "ai-summarize"],
+      post: ["public-lead", "ai-summarize", "ai-lead-assist"],
     })
     return
   }
@@ -303,7 +481,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       await handleAiSummarize(req, res)
       return
     }
-    res.status(400).json({ error: "Unknown __route", hint: "Use public-lead or ai-summarize" })
+    if (route === "ai-lead-assist") {
+      await handleAiLeadAssist(req, res)
+      return
+    }
+    res.status(400).json({ error: "Unknown __route", hint: "Use public-lead, ai-summarize, or ai-lead-assist" })
   } catch (e) {
     console.error("[platform-tools]", e instanceof Error ? e.message : e)
     res.status(500).json({ error: e instanceof Error ? e.message : "platform-tools failed" })

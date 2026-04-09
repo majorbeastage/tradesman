@@ -15,22 +15,78 @@ import AttachmentStrip, { type AttachmentStripItem } from "../../components/Atta
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { useAuth } from "../../contexts/AuthContext"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
+const LEAD_STATUS_OPTIONS = ["New", "Contacted", "Qualified", "Lost"] as const
+
 type LeadRow = {
   id: string
   title: string | null
   created_at?: string
+  updated_at?: string | null
   description?: string | null
-  last_message?: string | null
+  status?: string | null
   customers: CustomerRow | null
 }
 
 type LeadsPageProps = { setPage?: (page: string) => void }
 
+function formatFetchApiError(response: Response, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
+    return (
+      "The server function crashed or timed out. Check deployment logs for /api/outbound-messages or /api/send-sms. " +
+      "Common causes: missing env keys, Resend/Twilio errors."
+    )
+  }
+  if (trimmed.startsWith("{")) {
+    try {
+      const j = JSON.parse(trimmed) as Record<string, unknown>
+      const parts = [j.error, j.message, j.hint, j.logWarning].filter((x) => typeof x === "string" && String(x).trim()) as string[]
+      if (parts.length) return parts.join("\n\n")
+    } catch {
+      /* ignore */
+    }
+  }
+  return trimmed || `Request failed (HTTP ${response.status})`
+}
+
+function formatAppError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>
+    const msg = typeof o.message === "string" ? o.message : ""
+    const details = typeof o.details === "string" ? o.details : ""
+    const hint = typeof o.hint === "string" ? o.hint : ""
+    const parts = [msg, details, hint].filter(Boolean)
+    if (parts.length) return parts.join(" — ")
+  }
+  return String(err)
+}
+
+function mergeLeadsSettingsFormDefaults(
+  items: PortalSettingItem[],
+  saved: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of items) {
+    const s = saved[item.id]
+    if (item.type === "checkbox") {
+      out[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+    } else if (item.type === "dropdown" && item.options?.length) {
+      out[item.id] = s && item.options.includes(s) ? s : item.options[0]
+    } else {
+      out[item.id] = s ?? ""
+    }
+  }
+  return out
+}
+
 export default function LeadsPage({ setPage }: LeadsPageProps) {
   const userId = useScopedUserId()
+  const { session } = useAuth()
   const portalConfig = usePortalConfigForPage()
   const isMobile = useIsMobile()
   const [showForm, setShowForm] = useState(false)
@@ -52,6 +108,25 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
+  const [leadsProfileSettings, setLeadsProfileSettings] = useState<Record<string, string>>({})
+  const [detailEditMode, setDetailEditMode] = useState(false)
+  const [detailSaving, setDetailSaving] = useState(false)
+  const [detailForm, setDetailForm] = useState({
+    customerName: "",
+    phone: "",
+    email: "",
+    title: "",
+    description: "",
+    status: "New",
+  })
+  const [leadReplySms, setLeadReplySms] = useState("")
+  const [leadSmsSending, setLeadSmsSending] = useState(false)
+  const [leadEmailTo, setLeadEmailTo] = useState("")
+  const [leadEmailSubject, setLeadEmailSubject] = useState("")
+  const [leadEmailBody, setLeadEmailBody] = useState("")
+  const [leadEmailSending, setLeadEmailSending] = useState(false)
+  const [leadAiBusy, setLeadAiBusy] = useState(false)
+  const [leadSoftWarnings, setLeadSoftWarnings] = useState<string[]>([])
 
   const leadsSettingsItems = useMemo(() => getLeadsSettingsItemsForUser(portalConfig), [portalConfig])
   const conversationPortalDefaults = useMemo(() => {
@@ -95,15 +170,31 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   }, [showForm, createLeadPortalItems])
 
   useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const meta = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? (data.metadata as Record<string, unknown>) : {}
+      const raw = meta.leadsSettingsValues
+      const saved =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? Object.fromEntries(
+              Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+            )
+          : {}
+      setLeadsProfileSettings(saved)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
     if (!showSettings || leadsSettingsItems.length === 0) return
-    const next: Record<string, string> = {}
-    leadsSettingsItems.forEach((item) => {
-      if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
-      else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
-      else next[item.id] = ""
-    })
-    setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
-  }, [showSettings, leadsSettingsItems])
+    setSettingsFormValues(mergeLeadsSettingsFormDefaults(leadsSettingsItems, leadsProfileSettings))
+  }, [showSettings, leadsSettingsItems, leadsProfileSettings])
 
   function setSettingValue(itemId: string, value: string) {
     setSettingsFormValues((prev) => ({ ...prev, [itemId]: value }))
@@ -144,7 +235,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       if (!supabase) console.error("Supabase not configured. Add .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.")
       return
     }
-    const selectFull = "id, title, description, created_at, customer_id, user_id, converted_at, removed_at"
+    const selectFull =
+      "id, title, description, status, created_at, updated_at, customer_id, user_id, converted_at, removed_at"
     const selectMinimal = "id, title, description, created_at, customer_id"
     const resFull = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
     let rawData: any[] = []
@@ -221,8 +313,255 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setMessages([])
       setLeadCommEvents([])
       setLeadAttachmentsByEvent({})
+      setDetailEditMode(false)
+      setLeadSoftWarnings([])
     } else {
       void openLead(leadId)
+    }
+  }
+
+  async function persistLeadsSettingsAndClose() {
+    if (!supabase || !userId) {
+      setShowSettings(false)
+      return
+    }
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.leadsSettingsValues = { ...settingsFormValues }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setLeadsProfileSettings({ ...settingsFormValues })
+    setShowSettings(false)
+  }
+
+  function applyDetailFormFromLeadRow(data: any) {
+    const idents: CustomerIdentifier[] = Array.isArray(data.customers?.customer_identifiers) ? data.customers.customer_identifiers : []
+    const phone = idents.find((i) => i.type === "phone")?.value ?? ""
+    const email = idents.find((i) => i.type === "email")?.value ?? ""
+    const st = String(data.status ?? "").trim() || "New"
+    setDetailForm({
+      customerName: data.customers?.display_name ?? "",
+      phone,
+      email,
+      title: data.title ?? "",
+      description: data.description ?? "",
+      status: st,
+    })
+    setLeadEmailTo(email)
+    setLeadEmailSubject(data.title?.trim() ? `Re: ${String(data.title).trim()}` : "Re: Your request")
+    setLeadEmailBody("")
+    setLeadReplySms("")
+    setDetailEditMode(false)
+    setLeadSoftWarnings([])
+  }
+
+  async function saveLeadDetail() {
+    if (!supabase || !userId || !selectedLead?.id || !selectedLead.customer_id) return
+    setDetailSaving(true)
+    try {
+      const cid = selectedLead.customer_id as string
+      const phoneT = detailForm.phone.trim()
+      const emailT = detailForm.email.trim().toLowerCase()
+      const nameT = detailForm.customerName.trim()
+
+      const { error: custErr } = await supabase
+        .from("customers")
+        .update({ display_name: nameT || null })
+        .eq("id", cid)
+      if (custErr) throw custErr
+
+      const { error: delErr } = await supabase.from("customer_identifiers").delete().eq("customer_id", cid).in("type", ["phone", "email", "name"])
+      if (delErr) throw delErr
+
+      const identRows: Array<{ user_id: string; customer_id: string; type: string; value: string; is_primary: boolean; verified: boolean }> = []
+      if (phoneT) identRows.push({ user_id: userId, customer_id: cid, type: "phone", value: phoneT, is_primary: true, verified: false })
+      if (emailT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "email",
+          value: emailT,
+          is_primary: identRows.length === 0,
+          verified: false,
+        })
+      if (nameT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "name",
+          value: nameT,
+          is_primary: identRows.length === 0,
+          verified: false,
+        })
+      if (identRows.length > 0) {
+        const { error: insErr } = await supabase.from("customer_identifiers").insert(identRows)
+        if (insErr) throw insErr
+      }
+
+      const nowIso = new Date().toISOString()
+      const leadUp: Record<string, unknown> = {
+        title: detailForm.title.trim() || "New Lead",
+        description: detailForm.description.trim() || null,
+        status: detailForm.status,
+        updated_at: nowIso,
+      }
+      const { error: leadErr } = await supabase.from("leads").update(leadUp).eq("id", selectedLead.id).eq("user_id", userId)
+      if (leadErr) {
+        const { error: fbErr } = await supabase
+          .from("leads")
+          .update({
+            title: detailForm.title.trim() || "New Lead",
+            description: detailForm.description.trim() || null,
+          })
+          .eq("id", selectedLead.id)
+          .eq("user_id", userId)
+        if (fbErr) throw leadErr
+      }
+
+      await openLead(selectedLead.id)
+      await loadLeads()
+      setDetailEditMode(false)
+    } catch (err) {
+      alert(formatAppError(err))
+    } finally {
+      setDetailSaving(false)
+    }
+  }
+
+  async function sendLeadSms() {
+    if (!userId || !selectedLead?.id || !selectedLead.customer_id) return
+    const trimmed = leadReplySms.trim()
+    const to =
+      detailForm.phone.trim() ||
+      (selectedLead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ?? "")
+    if (!trimmed) {
+      alert("Enter a message to send.")
+      return
+    }
+    if (!to) {
+      alert("Add a phone number on this lead before sending SMS.")
+      return
+    }
+    setLeadSmsSending(true)
+    try {
+      const response = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          body: trimmed,
+          userId,
+          leadId: selectedLead.id,
+          customerId: selectedLead.customer_id,
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      setLeadReplySms("")
+      await openLead(selectedLead.id)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadSmsSending(false)
+    }
+  }
+
+  async function sendLeadEmail() {
+    if (!userId || !selectedLead?.id || !selectedLead.customer_id) return
+    const to = leadEmailTo.trim()
+    const subject = leadEmailSubject.trim()
+    const body = leadEmailBody.trim()
+    if (!to) {
+      alert("Enter an email address.")
+      return
+    }
+    if (!subject) {
+      alert("Enter a subject.")
+      return
+    }
+    if (!body) {
+      alert("Enter message body.")
+      return
+    }
+    setLeadEmailSending(true)
+    try {
+      const response = await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          subject,
+          body,
+          userId,
+          leadId: selectedLead.id,
+          customerId: selectedLead.customer_id,
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      setLeadEmailBody("")
+      await openLead(selectedLead.id)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadEmailSending(false)
+    }
+  }
+
+  async function runLeadAiAssist() {
+    if (!selectedLead?.id || !session?.access_token) {
+      alert("Sign in and enable AI in Account settings to use Fill with AI.")
+      return
+    }
+    setLeadAiBusy(true)
+    setLeadSoftWarnings([])
+    try {
+      const response = await fetch("/api/platform-tools?__route=ai-lead-assist", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ leadId: selectedLead.id }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      const j = JSON.parse(raw) as {
+        suggestedTitle?: string
+        suggestedDescription?: string
+        suggestedStatus?: string
+        suggestedCustomerName?: string
+        suggestedPhone?: string
+        suggestedEmail?: string
+        softWarnings?: string[]
+      }
+      setDetailForm((prev) => ({
+        ...prev,
+        title: j.suggestedTitle ?? prev.title,
+        description: j.suggestedDescription ?? prev.description,
+        status:
+          j.suggestedStatus && (LEAD_STATUS_OPTIONS as readonly string[]).includes(j.suggestedStatus)
+            ? j.suggestedStatus
+            : prev.status,
+        customerName: j.suggestedCustomerName?.trim() ? j.suggestedCustomerName : prev.customerName,
+        phone: j.suggestedPhone?.trim() ? j.suggestedPhone : prev.phone,
+        email: j.suggestedEmail?.trim() ? j.suggestedEmail : prev.email,
+      }))
+      if (Array.isArray(j.softWarnings) && j.softWarnings.length) setLeadSoftWarnings(j.softWarnings.map((s) => String(s)))
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLeadAiBusy(false)
     }
   }
 
@@ -283,6 +622,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         id,
         title,
         description,
+        status,
+        updated_at,
         customer_id,
         customers (
           display_name,
@@ -301,6 +642,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     }
 
     setSelectedLead(data)
+    applyDetailFormFromLeadRow(data)
 
     const { data: convo } = await supabase
       .from("conversations")
@@ -411,20 +753,45 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       if (!customerId) throw new Error("Could not resolve or create customer.")
 
       // 3) Create Lead (sends to Leads box only; no conversation)
-      const { data: lead, error: leadErr } = await supabase
+      const defaultStatus = (leadsProfileSettings.default_lead_status as string) || "New"
+      const nowIso = new Date().toISOString()
+      let lead: { id: string } | null = null
+      let leadErr: { message: string } | null = null
+      const insFull = await supabase
         .from("leads")
         .insert({
           user_id: userId,
           customer_id: customerId,
-          status_id: null, // we'll set this once we seed lead_status per user in-app
+          status_id: null,
           title: leadTitle.trim() || "New Lead",
           description: leadDescription.trim() || null,
           estimated_value: null,
+          status: defaultStatus,
+          updated_at: nowIso,
         })
         .select("id")
         .single()
+      if (insFull.error) {
+        const insMin = await supabase
+          .from("leads")
+          .insert({
+            user_id: userId,
+            customer_id: customerId,
+            status_id: null,
+            title: leadTitle.trim() || "New Lead",
+            description: leadDescription.trim() || null,
+            estimated_value: null,
+          })
+          .select("id")
+          .single()
+        lead = insMin.data as { id: string } | null
+        leadErr = insMin.error
+      } else {
+        lead = insFull.data as { id: string }
+        leadErr = insFull.error
+      }
 
-      if (leadErr) throw leadErr
+      if (leadErr || !lead) throw leadErr || new Error("Could not create lead")
 
       // 4) Log activity (non-blocking)
       void supabase.from("activities").insert({
@@ -442,7 +809,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         id: lead.id,
         title: leadTitle.trim() || "New Lead",
         description: leadDescription.trim() || null,
+        status: insFull.error ? "New" : defaultStatus,
         created_at: new Date().toISOString(),
+        updated_at: insFull.error ? null : nowIso,
         customer_id: customerId,
         converted_at: null,
         removed_at: null,
@@ -471,9 +840,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     const name = (lead.customers?.display_name || "").toLowerCase()
     const phone = lead.customers?.customer_identifiers
       ?.find((i: any) => i.type === "phone")?.value || ""
+    const desc = String(lead.description || "").toLowerCase()
+    const titleS = String(lead.title || "").toLowerCase()
     const searchLower = search.toLowerCase().trim()
     const phoneFilter = filterPhone.trim()
-    const matchesName = !searchLower || name.includes(searchLower)
+    const matchesName = !searchLower || name.includes(searchLower) || desc.includes(searchLower) || titleS.includes(searchLower)
     const matchesPhone = !phoneFilter || phone.includes(phoneFilter)
     return matchesName && matchesPhone
   })
@@ -495,6 +866,21 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     if (sortField === "created_at") {
       aVal = a.created_at || ""
       bVal = b.created_at || ""
+    }
+
+    if (sortField === "updated_at") {
+      aVal = a.updated_at || a.created_at || ""
+      bVal = b.updated_at || b.created_at || ""
+    }
+
+    if (sortField === "status") {
+      aVal = (a.status || "").toLowerCase()
+      bVal = (b.status || "").toLowerCase()
+    }
+
+    if (sortField === "description") {
+      aVal = (a.description || "").toLowerCase()
+      bVal = (b.description || "").toLowerCase()
     }
 
     if (sortAsc) {
@@ -748,7 +1134,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               })}
             </div>
             <button
-              onClick={() => setShowSettings(false)}
+              type="button"
+              onClick={() => void persistLeadsSettingsAndClose()}
               style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}
             >
               Done
@@ -876,8 +1263,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               style={{ ...theme.formInput, padding: "6px 10px", cursor: "pointer" }}
             >
               <option value="name">Name</option>
-              <option value="title">Job Description</option>
-              <option value="created_at">Date</option>
+              <option value="title">Title</option>
+              <option value="description">Job description</option>
+              <option value="status">Status</option>
+              <option value="updated_at">Last update</option>
+              <option value="created_at">Created</option>
             </select>
             <button
               type="button"
@@ -894,16 +1284,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         <table
           style={{
             width: "100%",
-            minWidth: isMobile ? "640px" : "100%",
+            minWidth: isMobile ? "920px" : "100%",
             borderCollapse: "collapse",
             tableLayout: "fixed",
           }}
         >
           <colgroup>
-            <col style={{ width: "18%" }} />
-            <col style={{ width: "18%" }} />
-            <col style={{ width: "18%" }} />
+            <col style={{ width: "16%" }} />
             <col style={{ width: "14%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "10%" }} />
             <col />
           </colgroup>
           <thead>
@@ -925,23 +1316,41 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 }}
                 style={{ padding: "8px", cursor: "pointer" }}
               >
-                Job Description
+                Title
               </th>
-              <th style={{ padding: "8px" }}>Last Message</th>
               <th
                 onClick={() => {
-                  setSortField("created_at")
+                  setSortField("description")
                   setSortAsc(!sortAsc)
                 }}
                 style={{ padding: "8px", cursor: "pointer" }}
               >
-                Last Update
+                Job description
+              </th>
+              <th
+                onClick={() => {
+                  setSortField("status")
+                  setSortAsc(!sortAsc)
+                }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Status
+              </th>
+              <th
+                onClick={() => {
+                  setSortField("updated_at")
+                  setSortAsc(!sortAsc)
+                }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Last update
               </th>
             </tr>
           </thead>
           <tbody>
             {sortedLeads.map((lead) => {
               const phone = lead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || ""
+              const lastUp = lead.updated_at || lead.created_at
               const isRowSelected = selectedLeadId === lead.id
               const cellBase = {
                 padding: "8px" as const,
@@ -961,17 +1370,18 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                     <td style={cellBase}>{lead.customers?.display_name}</td>
                     <td style={cellBase}>{phone}</td>
                     <td style={cellBase}>{lead.title ?? "—"}</td>
-                    <td style={cellBase}>
-                      {(lead.last_message ?? lead.description ?? "").slice(0, 15) || "—"}
+                    <td style={{ ...cellBase, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={lead.description ?? ""}>
+                      {(lead.description ?? "").trim() ? `${String(lead.description).slice(0, 80)}${String(lead.description).length > 80 ? "…" : ""}` : "—"}
                     </td>
+                    <td style={cellBase}>{lead.status ?? "—"}</td>
                     <td style={cellBase}>
-                      {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "—"}
+                      {lastUp ? new Date(lastUp).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"}
                     </td>
                   </tr>
                   {isRowSelected && selectedLead?.id === lead.id ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={6}
                         style={{
                           padding: 0,
                           borderBottom: "1px solid #e5e7eb",
@@ -1017,36 +1427,298 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                             </button>
                           </div>
 
-                          <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                               <div style={{ fontWeight: 700, color: theme.text }}>Lead details</div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setNotesCustomerId(selectedLead.customer_id ?? null)
+                                    setNotesCustomerName(detailForm.customerName || (selectedLead.customers?.display_name ?? ""))
+                                  }}
+                                  style={{
+                                    padding: "4px 10px",
+                                    fontSize: "12px",
+                                    background: theme.primary,
+                                    color: "white",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Notes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void runLeadAiAssist()
+                                  }}
+                                  disabled={leadAiBusy}
+                                  style={{
+                                    padding: "4px 10px",
+                                    fontSize: "12px",
+                                    border: `1px solid ${theme.border}`,
+                                    borderRadius: "6px",
+                                    background: "#fff",
+                                    cursor: leadAiBusy ? "wait" : "pointer",
+                                    color: theme.text,
+                                  }}
+                                >
+                                  {leadAiBusy ? "AI…" : "Fill with AI"}
+                                </button>
+                                {detailEditMode ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        void saveLeadDetail()
+                                      }}
+                                      disabled={detailSaving}
+                                      style={{
+                                        padding: "4px 10px",
+                                        fontSize: "12px",
+                                        background: theme.primary,
+                                        color: "white",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        cursor: detailSaving ? "wait" : "pointer",
+                                      }}
+                                    >
+                                      {detailSaving ? "Saving…" : "Save"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        applyDetailFormFromLeadRow(selectedLead)
+                                      }}
+                                      style={{
+                                        padding: "4px 10px",
+                                        fontSize: "12px",
+                                        border: `1px solid ${theme.border}`,
+                                        borderRadius: "6px",
+                                        background: "#fff",
+                                        cursor: "pointer",
+                                        color: theme.text,
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setDetailEditMode(true)
+                                    }}
+                                    style={{
+                                      padding: "4px 10px",
+                                      fontSize: "12px",
+                                      border: `1px solid ${theme.border}`,
+                                      borderRadius: "6px",
+                                      background: "#fff",
+                                      cursor: "pointer",
+                                      color: theme.text,
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {leadSoftWarnings.length > 0 ? (
+                              <div
+                                role="status"
+                                style={{
+                                  padding: "10px 12px",
+                                  borderRadius: 8,
+                                  background: "#fffbeb",
+                                  border: "1px solid #fcd34d",
+                                  fontSize: 13,
+                                  color: "#92400e",
+                                }}
+                              >
+                                <strong>Heads up:</strong>
+                                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                                  {leadSoftWarnings.map((w, i) => (
+                                    <li key={i}>{w}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {detailEditMode ? (
+                              <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 560 }}>
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Customer name</label>
+                                <input
+                                  value={detailForm.customerName}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, customerName: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Phone</label>
+                                <input
+                                  value={detailForm.phone}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, phone: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Email</label>
+                                <input
+                                  value={detailForm.email}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, email: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Title</label>
+                                <input
+                                  value={detailForm.title}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, title: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Job description</label>
+                                <textarea
+                                  value={detailForm.description}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, description: e.target.value }))}
+                                  rows={4}
+                                  style={{ ...theme.formInput, resize: "vertical" }}
+                                />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Status</label>
+                                <select
+                                  value={detailForm.status}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, status: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                >
+                                  {(() => {
+                                    const opts: string[] = [...LEAD_STATUS_OPTIONS]
+                                    if (!opts.includes(detailForm.status)) opts.push(detailForm.status)
+                                    return opts.map((opt) => (
+                                      <option key={opt} value={opt}>
+                                        {opt}
+                                      </option>
+                                    ))
+                                  })()}
+                                </select>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Name:</strong> {detailForm.customerName || "—"}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Phone:</strong> {detailForm.phone || "—"}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Email:</strong> {detailForm.email || "—"}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Title:</strong> {detailForm.title || "—"}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Job description:</strong> {detailForm.description || "—"}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Status:</strong> {detailForm.status || "—"}
+                                </p>
+                              </div>
+                            )}
+
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                borderTop: `1px solid ${theme.border}`,
+                                paddingTop: 14,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 12,
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, color: theme.text }}>Reach out</div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: "#6b7280" }}>SMS</span>
+                              </div>
+                              <textarea
+                                placeholder="Text message to customer…"
+                                value={leadReplySms}
+                                onChange={(e) => setLeadReplySms(e.target.value)}
+                                rows={2}
+                                style={{ ...theme.formInput, resize: "vertical", maxWidth: 560 }}
+                              />
                               <button
                                 type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setNotesCustomerId(selectedLead.customer_id ?? null)
-                                  setNotesCustomerName(selectedLead.customers?.display_name ?? "")
-                                }}
+                                onClick={() => void sendLeadSms()}
+                                disabled={leadSmsSending}
                                 style={{
-                                  padding: "4px 10px",
-                                  fontSize: "12px",
+                                  alignSelf: "flex-start",
+                                  padding: "8px 14px",
                                   background: theme.primary,
                                   color: "white",
                                   border: "none",
                                   borderRadius: "6px",
-                                  cursor: "pointer",
+                                  cursor: leadSmsSending ? "wait" : "pointer",
+                                  fontWeight: 600,
                                 }}
                               >
-                                Notes
+                                {leadSmsSending ? "Sending…" : "Send text"}
+                              </button>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", marginTop: 4 }}>Email</div>
+                              <input
+                                placeholder="To"
+                                value={leadEmailTo}
+                                onChange={(e) => setLeadEmailTo(e.target.value)}
+                                style={{ ...theme.formInput, maxWidth: 560 }}
+                              />
+                              <input
+                                placeholder="Subject"
+                                value={leadEmailSubject}
+                                onChange={(e) => setLeadEmailSubject(e.target.value)}
+                                style={{ ...theme.formInput, maxWidth: 560 }}
+                              />
+                              <textarea
+                                placeholder="Email body…"
+                                value={leadEmailBody}
+                                onChange={(e) => setLeadEmailBody(e.target.value)}
+                                rows={4}
+                                style={{ ...theme.formInput, resize: "vertical", maxWidth: 560 }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void sendLeadEmail()}
+                                disabled={leadEmailSending}
+                                style={{
+                                  alignSelf: "flex-start",
+                                  padding: "8px 14px",
+                                  background: theme.primary,
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "6px",
+                                  cursor: leadEmailSending ? "wait" : "pointer",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {leadEmailSending ? "Sending…" : "Send email"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled
+                                title="Call from app — coming soon"
+                                style={{
+                                  alignSelf: "flex-start",
+                                  padding: "8px 14px",
+                                  border: `1px solid ${theme.border}`,
+                                  borderRadius: "6px",
+                                  background: "#f3f4f6",
+                                  color: "#9ca3af",
+                                  cursor: "not-allowed",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Call from app (soon)
                               </button>
                             </div>
-                            <p style={{ margin: 0 }}>
-                              <strong>Phone:</strong>{" "}
-                              {selectedLead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || "—"}
-                            </p>
-                            <p style={{ margin: 0 }}>
-                              <strong>Message:</strong> {selectedLead.description || "—"}
-                            </p>
                           </div>
 
                           <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Activity</h4>

@@ -26,6 +26,7 @@ type OutboundPayload = {
   body?: string
   userId?: string
   conversationId?: string
+  leadId?: string
   customerId?: string
   /** Public HTTPS URLs (e.g. Supabase storage); fetched server-side and attached for Resend. */
   attachmentPublicUrls?: unknown
@@ -203,6 +204,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
+  const leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : ""
   const customerId = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
   const attachUrls = coercePublicUrlList(payload.attachmentPublicUrls).slice(0, 15)
 
@@ -323,6 +325,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       user_id: userId,
       customer_id: customerId || null,
       conversation_id: conversationId || null,
+      lead_id: leadId || null,
       channel_id: dbChannel?.id ?? null,
       event_type: "email",
       direction: "outbound",
@@ -366,10 +369,11 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
 
 async function handleSms(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
   const payload = parseJsonBody(req)
-  const to = normalizePhone(payload.to)
+  const to = toTwilioE164(typeof payload.to === "string" ? payload.to : "")
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
+  const leadIdSms = typeof payload.leadId === "string" ? payload.leadId.trim() : ""
   const mediaUrls = coercePublicUrlList(payload.mediaPublicUrls).slice(0, 10)
 
   if (!to || !body) return res.status(400).json({ error: "to and body are required" })
@@ -461,7 +465,9 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       try {
         await logCommunicationEvent(supabase, {
           user_id: userId,
+          customer_id: typeof payload.customerId === "string" ? payload.customerId.trim() || null : null,
           conversation_id: conversationId || null,
+          lead_id: leadIdSms || null,
           channel_id: dbChannel?.id ?? null,
           event_type: "sms",
           direction: "outbound",

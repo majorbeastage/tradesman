@@ -834,6 +834,7 @@ export async function ensureOpenLeadForInbound(
       customer_id: customerId,
       title,
       description,
+      status: "New",
     })
     .select("id")
     .single()

@@ -349,23 +349,61 @@ export function getCustomActionButtonsForUser(
 export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'default_lead_status', type: 'dropdown', label: 'Default lead status', options: ['New', 'Contacted', 'Qualified', 'Lost'] },
   { id: 'lead_source_settings', type: 'dropdown', label: 'Lead source', options: ['Email', 'Text', 'Phone call', 'Other'] },
-  { id: 'send_auto_response', type: 'checkbox', label: 'Send Auto Response if Lead is New', defaultChecked: false },
-  { id: 'email_new_lead', type: 'checkbox', label: 'Email when new lead is created', defaultChecked: false },
-  { id: 'notify_assigned', type: 'checkbox', label: 'Notify when lead is assigned to me', defaultChecked: false },
-  { id: 'pause_lead_captures', type: 'checkbox', label: 'Pause Lead Captures', defaultChecked: false },
+  { id: 'send_auto_response', type: 'checkbox', label: 'Send auto response when a campaign/embed lead is new', defaultChecked: false },
+  {
+    id: 'auto_response_message',
+    type: 'custom_field',
+    label: 'Auto response message (template)',
+    customFieldSubtype: 'textarea',
+    dependency: { dependsOnItemId: 'send_auto_response', showWhenValue: 'checked' },
+  },
+  {
+    id: 'auto_response_use_ai',
+    type: 'checkbox',
+    label: 'Utilize AI assistant to tailor the auto response from the lead details',
+    defaultChecked: false,
+    dependency: { dependsOnItemId: 'send_auto_response', showWhenValue: 'checked' },
+  },
+  { id: 'notify_new_lead', type: 'checkbox', label: 'Notify when new lead is captured', defaultChecked: false },
+  {
+    id: 'notify_new_lead_channel',
+    type: 'dropdown',
+    label: 'Notification channel',
+    options: ['Email', 'Text Message', 'App notification if registered'],
+    dependency: { dependsOnItemId: 'notify_new_lead', showWhenValue: 'checked' },
+  },
+  /** @deprecated use notify_new_lead; kept so existing portal JSON still maps behavior in server */
+  { id: 'email_new_lead', type: 'checkbox', label: '(Legacy) Email when new lead is created', defaultChecked: false },
+  {
+    id: 'pause_lead_capture_campaigns',
+    type: 'checkbox',
+    label: 'Pause lead capture campaigns (web embed only; phone, SMS, and voicemail to your numbers still create leads)',
+    defaultChecked: false,
+  },
+  /** @deprecated prefer pause_lead_capture_campaigns */
+  { id: 'pause_lead_captures', type: 'checkbox', label: '(Legacy) Pause lead captures', defaultChecked: false },
+  {
+    id: 'auto_update_lead_status_ai',
+    type: 'checkbox',
+    label: 'Automatically update lead status from outreach and replies (AI — configure in AI settings)',
+    defaultChecked: false,
+  },
 ]
 
 /** Controls that have options per page (for admin preview) */
 export type PageControl = { id: string; label: string; type: 'dropdown' | 'button' | 'page_title' | 'header_button' | 'table_column' }
 
 /** Default table column ids for Leads (order and visibility driven by optionValues.leads_table_columns) */
-export const LEADS_TABLE_COLUMN_IDS = ['name', 'phone', 'title', 'last_message', 'created_at'] as const
+export const LEADS_TABLE_COLUMN_IDS = ['name', 'phone', 'title', 'status', 'description', 'created_at'] as const
 export const LEADS_TABLE_COLUMN_LABELS: Record<string, string> = {
   name: 'Name',
   phone: 'Phone',
-  title: 'Job Description',
-  last_message: 'Last Message',
-  created_at: 'Last Update',
+  title: 'Job title',
+  status: 'Status',
+  description: 'Job description',
+  created_at: 'Last update',
+  /** @deprecated removed from default table */
+  last_message: 'Last message',
 }
 
 /** Default sort-by options for Leads */
