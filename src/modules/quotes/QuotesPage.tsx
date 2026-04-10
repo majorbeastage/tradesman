@@ -27,6 +27,21 @@ import {
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
 import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
+
+const ESTIMATE_FMT_PDF = "PDF"
+const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
+
+function metaToExportFormat(v: unknown): "pdf" | "docx" {
+  return v === "docx" ? "docx" : "pdf"
+}
+
+function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
+  return fmt === "docx" ? ESTIMATE_FMT_DOCX : ESTIMATE_FMT_PDF
+}
+
+function dropdownToExportFormat(label: string): "pdf" | "docx" {
+  return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
+}
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -78,6 +93,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteEntityUploadBusy, setQuoteEntityUploadBusy] = useState(false)
   const [quotePdfBusy, setQuotePdfBusy] = useState(false)
   const [quotePdfTemplate, setQuotePdfTemplate] = useState<string | null>(null)
+  const [quoteTemplateFooter, setQuoteTemplateFooter] = useState("")
+  const [quoteExportFormat, setQuoteExportFormat] = useState<"pdf" | "docx">("pdf")
+  const [quoteIncludePreparedDate, setQuoteIncludePreparedDate] = useState(true)
+  const [quoteShowLineNumbers, setQuoteShowLineNumbers] = useState(false)
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
   const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
@@ -186,13 +205,21 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("document_template_quote, display_name")
+        .select("document_template_quote, display_name, metadata")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled || error || !data) return
-      const row = data as { document_template_quote?: string | null; display_name?: string | null }
+      const row = data as { document_template_quote?: string | null; display_name?: string | null; metadata?: unknown }
       setQuotePdfTemplate(typeof row.document_template_quote === "string" && row.document_template_quote.trim() ? row.document_template_quote : null)
       setProfileDisplayNameForPdf(typeof row.display_name === "string" ? row.display_name.trim() : "")
+      const meta =
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      setQuoteExportFormat(metaToExportFormat(meta.estimate_template_output_format))
+      setQuoteTemplateFooter(typeof meta.estimate_template_footer === "string" ? meta.estimate_template_footer : "")
+      setQuoteIncludePreparedDate(meta.estimate_template_include_prepared_date !== false)
+      setQuoteShowLineNumbers(meta.estimate_template_show_line_numbers === true)
     })()
     return () => {
       cancelled = true
@@ -241,9 +268,19 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           : {}
       const useAi = meta.estimate_template_use_ai === true
       const notes = String((data as { document_template_quote?: string | null })?.document_template_quote ?? "")
+      const footer = typeof meta.estimate_template_footer === "string" ? meta.estimate_template_footer : ""
+      const fmt = exportFormatToDropdown(metaToExportFormat(meta.estimate_template_output_format))
+      const includeDate = meta.estimate_template_include_prepared_date !== false
+      const lineNums = meta.estimate_template_show_line_numbers === true
       const next: Record<string, string> = {}
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
+        else if (item.id === "estimate_template_footer") next[item.id] = footer
+        else if (item.id === "estimate_template_output_format")
+          next[item.id] = item.options?.includes(fmt) ? fmt : item.options?.[0] ?? ESTIMATE_FMT_PDF
+        else if (item.id === "estimate_template_include_prepared_date")
+          next[item.id] = includeDate ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_show_line_numbers") next[item.id] = lineNums ? "checked" : "unchecked"
         else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
@@ -272,7 +309,26 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
         ? { ...(data.metadata as Record<string, unknown>) }
         : {}
+    const hasItem = (id: string) => estimateTemplateItems.some((i) => i.id === id)
+
     prevMeta.estimate_template_use_ai = useAi
+    if (hasItem("estimate_template_output_format")) {
+      const fmt = dropdownToExportFormat(estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF)
+      prevMeta.estimate_template_output_format = fmt
+    }
+    if (hasItem("estimate_template_footer")) {
+      const footerRaw = (estimateTemplateFormValues.estimate_template_footer ?? "").trim()
+      if (footerRaw) prevMeta.estimate_template_footer = footerRaw
+      else delete prevMeta.estimate_template_footer
+    }
+    if (hasItem("estimate_template_include_prepared_date")) {
+      prevMeta.estimate_template_include_prepared_date =
+        estimateTemplateFormValues.estimate_template_include_prepared_date === "checked"
+    }
+    if (hasItem("estimate_template_show_line_numbers")) {
+      prevMeta.estimate_template_show_line_numbers =
+        estimateTemplateFormValues.estimate_template_show_line_numbers === "checked"
+    }
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -285,6 +341,18 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       return
     }
     setQuotePdfTemplate(notes || null)
+    if (hasItem("estimate_template_footer")) {
+      setQuoteTemplateFooter((estimateTemplateFormValues.estimate_template_footer ?? "").trim())
+    }
+    if (hasItem("estimate_template_output_format")) {
+      setQuoteExportFormat(dropdownToExportFormat(estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF))
+    }
+    if (hasItem("estimate_template_include_prepared_date")) {
+      setQuoteIncludePreparedDate(estimateTemplateFormValues.estimate_template_include_prepared_date === "checked")
+    }
+    if (hasItem("estimate_template_show_line_numbers")) {
+      setQuoteShowLineNumbers(estimateTemplateFormValues.estimate_template_show_line_numbers === "checked")
+    }
     setShowEstimateTemplateModal(false)
   }
 
@@ -749,7 +817,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (selectedQuoteId) setQuoteEntityRows(await loadEntityAttachmentsForQuote(selectedQuoteId))
   }
 
-  async function downloadQuotePdfClick() {
+  async function downloadQuoteDocumentClick() {
     if (!selectedQuote) return
     setQuotePdfBusy(true)
     try {
@@ -760,15 +828,25 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         const total = typeof tot === "number" ? tot : quantity * unitPrice
         return { description: String(desc), quantity, unitPrice, total }
       })
-      const bytes = await buildQuotePdfBytes({
+      const base = {
         title: `Quote ${selectedQuote.id.slice(0, 8)}`,
         businessLabel: profileDisplayNameForPdf || "Quote",
         customerName: selectedQuote.customers?.display_name ?? "Customer",
         items,
         templateHeader: quotePdfTemplate,
-        templateFooter: null,
-      })
-      downloadPdfBlob(bytes, `quote-${selectedQuote.id.slice(0, 8)}.pdf`)
+        templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
+        includePreparedDate: quoteIncludePreparedDate,
+        showLineNumbers: quoteShowLineNumbers,
+      }
+      const shortId = selectedQuote.id.slice(0, 8)
+      if (quoteExportFormat === "docx") {
+        const { buildQuoteDocxBlob, downloadDocxBlob } = await import("../../lib/documentQuoteDocx")
+        const blob = await buildQuoteDocxBlob(base)
+        downloadDocxBlob(blob, `quote-${shortId}.docx`)
+      } else {
+        const bytes = await buildQuotePdfBytes(base)
+        downloadPdfBlob(bytes, `quote-${shortId}.pdf`)
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
@@ -929,6 +1007,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         {showEstimateTemplateModal && (
           <PortalSettingsModal
             title={estimateTemplateButtonLabel}
+            maxWidthPx={560}
+            closeButtonLabel="Save & close"
+            intro={
+              <p style={{ margin: 0 }}>
+                These options control how the <strong>Download quote</strong> file is built (PDF or Word). Intro and footer are plain text;
+                use line breaks for paragraphs. Your admin can rename this button (for example, Advanced Estimate Options) in the portal builder.
+              </p>
+            }
             items={estimateTemplateItems}
             formValues={estimateTemplateFormValues}
             setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
@@ -1239,7 +1325,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                             <button
                               type="button"
-                              onClick={() => void downloadQuotePdfClick()}
+                              onClick={() => void downloadQuoteDocumentClick()}
                               disabled={quotePdfBusy}
                               style={{
                                 padding: "8px 14px",
@@ -1252,7 +1338,13 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                 fontSize: 14,
                               }}
                             >
-                              {quotePdfBusy ? "PDF…" : "Download quote PDF"}
+                              {quotePdfBusy
+                                ? quoteExportFormat === "docx"
+                                  ? "Word…"
+                                  : "PDF…"
+                                : quoteExportFormat === "docx"
+                                  ? "Download quote (Word)"
+                                  : "Download quote PDF"}
                             </button>
                             <button
                               type="button"

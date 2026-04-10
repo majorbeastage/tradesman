@@ -11,6 +11,10 @@ export async function buildQuotePdfBytes(params: {
   templateHeader?: string | null
   /** Optional footer note from profile template (plain text). */
   templateFooter?: string | null
+  /** Default true: show "Prepared: &lt;date&gt;" under the title. */
+  includePreparedDate?: boolean
+  /** Number line items in the left margin of each row. */
+  showLineNumbers?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
@@ -32,10 +36,17 @@ export async function buildQuotePdfBytes(params: {
     y -= lineH + (size > 11 ? 4 : 0)
   }
 
+  const includeDate = params.includePreparedDate !== false
+  const showNums = params.showLineNumbers === true
+
   draw(params.businessLabel || "Quote", 16, true, 0.15)
   y -= 6
   draw(`Customer: ${params.customerName}`, 11, false, 0.25)
   draw(params.title, 12, true, 0.2)
+  if (includeDate) {
+    const d = new Date().toLocaleDateString(undefined, { dateStyle: "medium" })
+    draw(`Prepared: ${d}`, 10, false, 0.4)
+  }
   y -= 8
 
   if (params.templateHeader?.trim()) {
@@ -47,10 +58,11 @@ export async function buildQuotePdfBytes(params: {
 
   draw("Line items", 11, true, 0.2)
   y -= 4
-  for (const row of params.items) {
-    const line = `${row.description.slice(0, 80)}  ×${row.quantity}  @ $${row.unitPrice.toFixed(2)}  = $${row.total.toFixed(2)}`
+  params.items.forEach((row, idx) => {
+    const prefix = showNums ? `${idx + 1}. ` : ""
+    const line = `${prefix}${row.description.slice(0, 72)}  ×${row.quantity}  @ $${row.unitPrice.toFixed(2)}  = $${row.total.toFixed(2)}`
     draw(line, 10, false, 0.3)
-  }
+  })
   const grand = params.items.reduce((s, r) => s + r.total, 0)
   y -= 6
   draw(`Total: $${grand.toFixed(2)}`, 13, true, 0.1)

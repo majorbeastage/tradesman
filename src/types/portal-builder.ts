@@ -826,18 +826,42 @@ export const DEFAULT_QUOTE_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'quote_default_status', type: 'dropdown', label: 'Default quote status for new quotes', options: ['Draft', 'Sent', 'Viewed', 'Accepted', 'Declined'] },
 ]
 
-/** Estimate PDF template (Quotes tab); notes map to profiles.document_template_quote */
+/** Estimate export template (Quotes tab). Notes → profiles.document_template_quote; other options → profiles.metadata */
 export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
+  {
+    id: "estimate_template_output_format",
+    type: "dropdown",
+    label: "Download format",
+    options: ["PDF", "Microsoft Word (.docx)"],
+  },
   {
     id: "estimate_template_notes",
     type: "custom_field",
-    label: "Notes on estimate PDF (plain text, header/footer area)",
+    label: "Intro / header text (plain text, below the title — both PDF and Word)",
     customFieldSubtype: "textarea",
+  },
+  {
+    id: "estimate_template_footer",
+    type: "custom_field",
+    label: "Footer text (totals context, terms, payment — plain text, after line items)",
+    customFieldSubtype: "textarea",
+  },
+  {
+    id: "estimate_template_include_prepared_date",
+    type: "checkbox",
+    label: "Include “Prepared” date on the document",
+    defaultChecked: true,
+  },
+  {
+    id: "estimate_template_show_line_numbers",
+    type: "checkbox",
+    label: "Number line items (1, 2, 3…)",
+    defaultChecked: false,
   },
   {
     id: "estimate_template_use_ai",
     type: "checkbox",
-    label: "Use AI assistant to help refine estimate wording when generating PDFs",
+    label: "Use AI assistant to help refine estimate wording (when AI is enabled for your account)",
     defaultChecked: false,
   },
 ]
