@@ -15,6 +15,8 @@ export async function buildQuotePdfBytes(params: {
   includePreparedDate?: boolean
   /** Number line items in the left margin of each row. */
   showLineNumbers?: boolean
+  /** Optional logo above the business name (PNG or JPEG bytes). */
+  logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
@@ -38,6 +40,25 @@ export async function buildQuotePdfBytes(params: {
 
   const includeDate = params.includePreparedDate !== false
   const showNums = params.showLineNumbers === true
+
+  if (params.logo?.bytes?.length) {
+    try {
+      const embedded =
+        params.logo.kind === "png" ? await doc.embedPng(params.logo.bytes) : await doc.embedJpg(params.logo.bytes)
+      const maxW = 220
+      const maxH = 72
+      const scale = Math.min(maxW / embedded.width, maxH / embedded.height, 1)
+      const w = embedded.width * scale
+      const h = embedded.height * scale
+      const marginFromTop = 40
+      const targetUpperY = height - marginFromTop
+      const lowerLeftY = targetUpperY - h
+      page.drawImage(embedded, { x: left, y: lowerLeftY, width: w, height: h })
+      y = lowerLeftY - 18
+    } catch {
+      /* ignore bad image data */
+    }
+  }
 
   draw(params.businessLabel || "Quote", 16, true, 0.15)
   y -= 6

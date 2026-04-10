@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Fragment } from "react"
+import { useEffect, useState, useMemo, Fragment, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -25,8 +25,15 @@ import {
   deleteEntityAttachmentRow,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
-import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
+import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
+import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
+import {
+  resolveRecurrenceFromPortal,
+  applyRecurrenceEndLimitsFromPortal,
+  computeOccurrenceStarts,
+  intervalsOverlap,
+} from "../../lib/calendarRecurrence"
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -42,12 +49,6 @@ function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
 function dropdownToExportFormat(label: string): "pdf" | "docx" {
   return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
 }
-import {
-  resolveRecurrenceFromPortal,
-  applyRecurrenceEndLimitsFromPortal,
-  computeOccurrenceStarts,
-  intervalsOverlap,
-} from "../../lib/calendarRecurrence"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -97,6 +98,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteExportFormat, setQuoteExportFormat] = useState<"pdf" | "docx">("pdf")
   const [quoteIncludePreparedDate, setQuoteIncludePreparedDate] = useState(true)
   const [quoteShowLineNumbers, setQuoteShowLineNumbers] = useState(false)
+  const [quoteShowLogo, setQuoteShowLogo] = useState(false)
+  const [quoteLogoUrl, setQuoteLogoUrl] = useState("")
+  const [estimateLogoUploadBusy, setEstimateLogoUploadBusy] = useState(false)
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
   const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
@@ -220,6 +224,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       setQuoteTemplateFooter(typeof meta.estimate_template_footer === "string" ? meta.estimate_template_footer : "")
       setQuoteIncludePreparedDate(meta.estimate_template_include_prepared_date !== false)
       setQuoteShowLineNumbers(meta.estimate_template_show_line_numbers === true)
+      setQuoteShowLogo(meta.estimate_template_show_logo === true)
+      setQuoteLogoUrl(typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : "")
     })()
     return () => {
       cancelled = true
@@ -272,6 +278,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       const fmt = exportFormatToDropdown(metaToExportFormat(meta.estimate_template_output_format))
       const includeDate = meta.estimate_template_include_prepared_date !== false
       const lineNums = meta.estimate_template_show_line_numbers === true
+      const showLogo = meta.estimate_template_show_logo === true
+      const logoUrl = typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : ""
       const next: Record<string, string> = {}
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
@@ -281,6 +289,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         else if (item.id === "estimate_template_include_prepared_date")
           next[item.id] = includeDate ? "checked" : "unchecked"
         else if (item.id === "estimate_template_show_line_numbers") next[item.id] = lineNums ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_show_logo") next[item.id] = showLogo ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_logo_url") next[item.id] = logoUrl
         else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
@@ -329,6 +339,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       prevMeta.estimate_template_show_line_numbers =
         estimateTemplateFormValues.estimate_template_show_line_numbers === "checked"
     }
+    if (hasItem("estimate_template_show_logo")) {
+      prevMeta.estimate_template_show_logo = estimateTemplateFormValues.estimate_template_show_logo === "checked"
+    }
+    if (hasItem("estimate_template_logo_url")) {
+      const logoRaw = (estimateTemplateFormValues.estimate_template_logo_url ?? "").trim()
+      if (logoRaw) prevMeta.estimate_template_logo_url = logoRaw
+      else delete prevMeta.estimate_template_logo_url
+    }
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -353,7 +371,27 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (hasItem("estimate_template_show_line_numbers")) {
       setQuoteShowLineNumbers(estimateTemplateFormValues.estimate_template_show_line_numbers === "checked")
     }
+    if (hasItem("estimate_template_show_logo")) {
+      setQuoteShowLogo(estimateTemplateFormValues.estimate_template_show_logo === "checked")
+    }
+    if (hasItem("estimate_template_logo_url")) {
+      setQuoteLogoUrl((estimateTemplateFormValues.estimate_template_logo_url ?? "").trim())
+    }
     setShowEstimateTemplateModal(false)
+  }
+
+  async function onEstimateLogoFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !userId) return
+    setEstimateLogoUploadBusy(true)
+    try {
+      const urls = await uploadFilesForOutbound(userId, [file], "quote-estimate-logo")
+      if (urls[0]) setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_template_logo_url: urls[0] }))
+      else alert("Logo upload failed. Check storage permissions for comm-attachments.")
+    } finally {
+      setEstimateLogoUploadBusy(false)
+      e.target.value = ""
+    }
   }
 
   useEffect(() => {
@@ -828,6 +866,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         const total = typeof tot === "number" ? tot : quantity * unitPrice
         return { description: String(desc), quantity, unitPrice, total }
       })
+      let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
+      if (quoteShowLogo && quoteLogoUrl.trim()) {
+        logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
+        if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
+      }
       const base = {
         title: `Quote ${selectedQuote.id.slice(0, 8)}`,
         businessLabel: profileDisplayNameForPdf || "Quote",
@@ -837,6 +880,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
         includePreparedDate: quoteIncludePreparedDate,
         showLineNumbers: quoteShowLineNumbers,
+        logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
       }
       const shortId = selectedQuote.id.slice(0, 8)
       if (quoteExportFormat === "docx") {
@@ -1012,7 +1056,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             intro={
               <p style={{ margin: 0 }}>
                 These options control how the <strong>Download quote</strong> file is built (PDF or Word). Intro and footer are plain text;
-                use line breaks for paragraphs. Your admin can rename this button (for example, Advanced Estimate Options) in the portal builder.
+                use line breaks for paragraphs. Optional logo appears at the top of both formats. Your admin can rename this button (for example,
+                Advanced Estimate Options) in the portal builder.
               </p>
             }
             items={estimateTemplateItems}
@@ -1020,6 +1065,48 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
             isItemVisible={isEstimateTemplateItemVisible}
             onClose={() => void closeEstimateTemplateModal()}
+            belowForm={
+              estimateTemplateItems.some((i) => i.id === "estimate_template_logo_url") ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: theme.text }}>Upload company logo</p>
+                  <p style={{ margin: 0, fontSize: 12, color: theme.text, opacity: 0.82, lineHeight: 1.45 }}>
+                    PNG or JPEG. Stored in your comm-attachments bucket with a public URL (same pattern as other outbound attachments).
+                  </p>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,.jpg,.png"
+                    disabled={!userId || estimateLogoUploadBusy}
+                    onChange={(e) => void onEstimateLogoFileChange(e)}
+                    style={{ fontSize: 13 }}
+                  />
+                  {estimateLogoUploadBusy ? <span style={{ fontSize: 12, color: theme.text }}>Uploading…</span> : null}
+                  {(estimateTemplateFormValues.estimate_template_logo_url ?? "").trim() ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+                      <img
+                        src={(estimateTemplateFormValues.estimate_template_logo_url ?? "").trim()}
+                        alt="Logo preview"
+                        style={{ maxHeight: 56, maxWidth: 220, objectFit: "contain", border: `1px solid ${theme.border}`, borderRadius: 6 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_template_logo_url: "" }))}
+                        style={{
+                          fontSize: 12,
+                          padding: "6px 10px",
+                          cursor: "pointer",
+                          borderRadius: 6,
+                          border: `1px solid ${theme.border}`,
+                          background: "#fff",
+                          color: theme.text,
+                        }}
+                      >
+                        Clear logo URL
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null
+            }
           />
         )}
 
@@ -1388,13 +1475,19 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                 placeholder="Message"
                                 style={{ ...theme.formInput, resize: "vertical" }}
                               />
-                              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: theme.text }}>
                                 <input
                                   type="checkbox"
+                                  style={{ marginTop: 3 }}
                                   checked={quoteEmailAttachEntity}
                                   onChange={(e) => setQuoteEmailAttachEntity(e.target.checked)}
                                 />
-                                Attach uploaded quote files ({quoteEntityRows.length})
+                                <span>
+                                  Attach files from <strong>Quote files</strong> below ({quoteEntityRows.length} on this quote)
+                                  <span style={{ display: "block", fontSize: 12, opacity: 0.75, marginTop: 4, fontWeight: 400 }}>
+                                    This uses what you uploaded on the quote, not the generated PDF/Word unless you add that file here.
+                                  </span>
+                                </span>
                               </label>
                               <button
                                 type="button"

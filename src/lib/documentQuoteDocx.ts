@@ -2,6 +2,7 @@ import {
   AlignmentType,
   Document,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   Table,
@@ -14,6 +15,29 @@ import type { QuotePdfLineItem } from "./documentPdf"
 
 function money(n: number): string {
   return `$${n.toFixed(2)}`
+}
+
+function readPngDimensions(bytes: Uint8Array): { w: number; h: number } | null {
+  if (bytes.byteLength < 24) return null
+  if (bytes[0] !== 0x89 || bytes[1] !== 0x50) return null
+  const dv = new DataView(bytes.buffer, bytes.byteOffset + 16, 8)
+  const w = dv.getUint32(0, false)
+  const h = dv.getUint32(4, false)
+  if (!w || !h) return null
+  return { w, h }
+}
+
+function logoDocxDimensions(bytes: Uint8Array, kind: "png" | "jpeg"): { width: number; height: number } {
+  const maxW = 220
+  const maxH = 72
+  if (kind === "png") {
+    const dim = readPngDimensions(bytes)
+    if (dim) {
+      const scale = Math.min(maxW / dim.w, maxH / dim.h, 1)
+      return { width: Math.round(dim.w * scale), height: Math.round(dim.h * scale) }
+    }
+  }
+  return { width: maxW, height: 48 }
 }
 
 /**
@@ -29,10 +53,32 @@ export async function buildQuoteDocxBlob(params: {
   templateFooter?: string | null
   includePreparedDate?: boolean
   showLineNumbers?: boolean
+  logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
 }): Promise<Blob> {
   const includeDate = params.includePreparedDate !== false
   const showNums = params.showLineNumbers === true
   const children: (Paragraph | Table)[] = []
+
+  if (params.logo?.bytes?.length) {
+    const docxType = params.logo.kind === "png" ? "png" : "jpg"
+    const { width, height } = logoDocxDimensions(params.logo.bytes, params.logo.kind)
+    try {
+      children.push(
+        new Paragraph({
+          spacing: { after: 160 },
+          children: [
+            new ImageRun({
+              type: docxType,
+              data: params.logo.bytes,
+              transformation: { width, height },
+            }),
+          ],
+        }),
+      )
+    } catch {
+      /* skip invalid image */
+    }
+  }
 
   children.push(
     new Paragraph({

@@ -16,6 +16,8 @@ type Props = {
   closeButtonLabel?: string
   /** Wider modals for dense option sets (default 480px). */
   maxWidthPx?: number
+  /** Rendered after the form, before the footer button (e.g. logo upload). */
+  belowForm?: ReactNode
 }
 
 export default function PortalSettingsModal({
@@ -28,6 +30,7 @@ export default function PortalSettingsModal({
   onClose,
   closeButtonLabel = "Done",
   maxWidthPx = 480,
+  belowForm,
 }: Props) {
   return (
     <>
@@ -63,6 +66,7 @@ export default function PortalSettingsModal({
             <PortalSettingItemsForm items={items} formValues={formValues} setFormValue={setFormValue} isItemVisible={isItemVisible} />
           )}
         </div>
+        {belowForm ? <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>{belowForm}</div> : null}
         <button type="button" onClick={onClose} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}>{closeButtonLabel}</button>
       </div>
     </>

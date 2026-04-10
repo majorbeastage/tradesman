@@ -859,6 +859,18 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     defaultChecked: false,
   },
   {
+    id: "estimate_template_show_logo",
+    type: "checkbox",
+    label: "Show company logo at the top of PDF and Word exports",
+    defaultChecked: false,
+  },
+  {
+    id: "estimate_template_logo_url",
+    type: "custom_field",
+    label: "Logo image URL (HTTPS). Upload below or paste a public PNG/JPEG link.",
+    customFieldSubtype: "text",
+  },
+  {
     id: "estimate_template_use_ai",
     type: "checkbox",
     label: "Use AI assistant to help refine estimate wording (when AI is enabled for your account)",
