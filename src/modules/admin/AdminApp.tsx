@@ -33,6 +33,7 @@ import {
   sanitizePortalSettingItemDependencies,
 } from "../../types/portal-builder"
 import {
+  ALL_PROFILES_ID,
   ALL_USERS_ID,
   ALL_OFFICE_MANAGERS_ID,
   ALL_NEW_USERS_ID,
@@ -515,7 +516,7 @@ function AdminAppInner() {
   const { user, signOut } = useAuth()
   const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(ALL_USERS_ID)
+  const [selectedId, setSelectedId] = useState<string | null>(ALL_PROFILES_ID)
   const [config, setConfig] = useState<PortalConfig>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -582,7 +583,7 @@ function AdminAppInner() {
           : ""
 
   const communicationsMode: "all_users_insights" | "select_user_first" | "single_client" =
-    selectedId === ALL_USERS_ID
+    selectedId === ALL_PROFILES_ID
       ? "all_users_insights"
       : Boolean(selectedId) && isBulkPortalAudienceId(selectedId as string)
         ? "select_user_first"
@@ -1110,7 +1111,7 @@ function AdminAppInner() {
         {(adminPanel === "portal" || adminPanel === "communications") && (
         <AdminSettingBlock id="admin:sidebar:portal_intro" variant="dark">
         <p style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>
-          Pick a person or an audience row (all users, all office managers, etc.) for portal defaults. Routing &amp; Access still needs one specific user.
+          Pick a person or an audience row (all profiles, all users with role user, all office managers, etc.) for portal defaults. Routing &amp; Access still needs one specific user.
         </p>
         </AdminSettingBlock>
         )}
@@ -1156,6 +1157,23 @@ function AdminAppInner() {
                 boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
               }}
             >
+              <button
+                type="button"
+                onClick={() => { setSelectedId(ALL_PROFILES_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: selectedId === ALL_PROFILES_ID ? "rgba(249,115,22,0.3)" : "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                {labelForPortalAudience(ALL_PROFILES_ID)}
+              </button>
               <button
                 type="button"
                 onClick={() => { setSelectedId(ALL_USERS_ID); setUserDropdownOpen(false); setUserSearchQuery("") }}
