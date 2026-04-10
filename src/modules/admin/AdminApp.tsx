@@ -29,7 +29,6 @@ import {
   getAccountSectionVisible,
   getPortalTabListForConfig,
   getOrderedAccountPortalSections,
-  controlItemLabelKey,
   formatPortalItemDependenciesSummary,
   sanitizePortalSettingItemDependencies,
 } from "../../types/portal-builder"
@@ -791,15 +790,6 @@ function AdminAppInner() {
 
   function setControlLabel(controlId: string, label: string) {
     setConfig({ ...config, controlLabels: { ...config.controlLabels, [controlId]: label } })
-  }
-
-  function setControlItemLabel(tabId: string, controlId: string, itemId: string, label: string) {
-    const k = controlItemLabelKey(tabId, controlId, itemId)
-    const trimmed = label.trim()
-    const next = { ...(config.controlItemLabels ?? {}) }
-    if (!trimmed) delete next[k]
-    else next[k] = trimmed
-    setConfig({ ...config, controlItemLabels: Object.keys(next).length ? next : undefined })
   }
 
   function setPageActionVisible(tabId: string, actionId: string, visible: boolean) {
@@ -1722,7 +1712,7 @@ function AdminAppInner() {
                           return (
                           <>
                             <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>
-                              Drag ⋮⋮ to reorder. <strong>Label</strong> is the default text in the user portal. <strong>User-facing label override</strong> replaces it when filled (item <code style={{ fontSize: 10 }}>id</code> stays the same for automations). Options, Dependency, visibility — same on every tab.
+                              Drag ⋮⋮ to reorder. <strong>Label</strong> is what users see in the portal (and here). Item <code style={{ fontSize: 10 }}>id</code> is fixed for automations — only change the label text to summarize settings. Options, Dependency, visibility — same on every tab.
                             </p>
                             {hiddenPortalItemCount > 0 && (
                               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
@@ -1741,33 +1731,18 @@ function AdminAppInner() {
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
                                       <input
                                         type="text"
-                                        title="Default label in user portal (unless override is set)"
-                                        aria-label="Item default label"
+                                        title="Label shown to users in the portal and in this admin list"
+                                        aria-label="Item label"
                                         value={item.label}
                                         onChange={(e) => updateControlItem(tabId, controlId, item.id, { label: e.target.value })}
                                         style={{
-                                          minWidth: 120,
-                                          flex: "1 1 120px",
+                                          minWidth: 200,
+                                          flex: "1 1 200px",
                                           padding: "4px 8px",
                                           borderRadius: 6,
                                           border: `1px solid ${theme.border}`,
                                           fontSize: 12,
                                           fontWeight: 500,
-                                        }}
-                                      />
-                                      <input
-                                        type="text"
-                                        title="Override label shown to users (empty = use item label above)"
-                                        placeholder="User-facing label override"
-                                        value={config.controlItemLabels?.[controlItemLabelKey(tabId, controlId, item.id)] ?? ""}
-                                        onChange={(e) => setControlItemLabel(tabId, controlId, item.id, e.target.value)}
-                                        style={{
-                                          minWidth: 160,
-                                          flex: "1 1 160px",
-                                          padding: "4px 8px",
-                                          borderRadius: 6,
-                                          border: `1px solid ${theme.border}`,
-                                          fontSize: 11,
                                         }}
                                       />
                                       <select

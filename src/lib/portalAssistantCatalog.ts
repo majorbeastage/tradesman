@@ -100,15 +100,24 @@ function isPortalSettingItem(x: unknown): x is PortalSettingItem {
   if (o.options !== undefined && !Array.isArray(o.options)) return false
   if (Array.isArray(o.options) && !o.options.every((v) => typeof v === "string")) return false
   if (o.dependencyMode !== undefined && o.dependencyMode !== "all" && o.dependencyMode !== "any") return false
-  if (o.dependency !== undefined) {
-    const d = o.dependency as Record<string, unknown>
-    if (typeof d.dependsOnItemId !== "string" || typeof d.showWhenValue !== "string") return false
+  function depRowValid(row: unknown): boolean {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false
+    const d = row as Record<string, unknown>
+    if (typeof d.dependsOnItemId !== "string" || !d.dependsOnItemId.trim()) return false
+    if (typeof d.showWhenValue === "string" && d.showWhenValue.trim() !== "") return true
+    if (
+      Array.isArray(d.showWhenValues) &&
+      d.showWhenValues.length > 0 &&
+      d.showWhenValues.every((x) => typeof x === "string" && String(x).trim() !== "")
+    )
+      return true
+    return false
   }
+  if (o.dependency !== undefined && !depRowValid(o.dependency)) return false
   if (o.dependencies !== undefined) {
     if (!Array.isArray(o.dependencies)) return false
     for (const row of o.dependencies) {
-      const d = row as Record<string, unknown>
-      if (typeof d.dependsOnItemId !== "string" || typeof d.showWhenValue !== "string") return false
+      if (!depRowValid(row)) return false
     }
   }
   return true

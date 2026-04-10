@@ -321,21 +321,29 @@ export function controlItemLabelKey(tabId: string, controlId: string, itemId: st
   return `${tabId}:${controlId}:${itemId}`
 }
 
+/** User-facing label: the item’s `label` from portal config (editable in admin). Legacy `controlItemLabels` is ignored. */
 export function getControlItemDisplayLabel(
-  portalConfig: PortalConfig | null,
-  tabId: string,
-  controlId: string,
+  _portalConfig: PortalConfig | null,
+  _tabId: string,
+  _controlId: string,
   item: PortalSettingItem,
 ): string {
-  const k = controlItemLabelKey(tabId, controlId, item.id)
-  const o = portalConfig?.controlItemLabels?.[k]?.trim()
-  return o || item.label
+  return item.label
 }
 
+/** Row is usable for evaluation (checkbox/text value or dropdown multi-option). */
 function isValidPortalDependencyRow(d: unknown): d is PortalSettingDependency {
   if (!d || typeof d !== "object" || Array.isArray(d)) return false
   const o = d as Record<string, unknown>
-  return typeof o.dependsOnItemId === "string" && o.dependsOnItemId.trim().length > 0 && typeof o.showWhenValue === "string"
+  if (typeof o.dependsOnItemId !== "string" || !o.dependsOnItemId.trim()) return false
+  if (typeof o.showWhenValue === "string" && o.showWhenValue.trim() !== "") return true
+  if (
+    Array.isArray(o.showWhenValues) &&
+    o.showWhenValues.length > 0 &&
+    o.showWhenValues.every((x) => typeof x === "string" && String(x).trim() !== "")
+  )
+    return true
+  return false
 }
 
 /** Normalize stored checkbox-like values for dependency comparison (legacy profiles / imports). */
@@ -346,13 +354,28 @@ export function normalizePortalCheckboxDependencyValue(raw: string): "checked" |
   return (raw ?? "").trim()
 }
 
+function rawDependencyRuleCount(item: PortalSettingItem): number {
+  const rawList = Array.isArray(item.dependencies) ? item.dependencies : []
+  return rawList.length
+}
+
+/**
+ * Admin saved a `dependencies` array but every row failed validation — do not treat as “no rules” (which would show the field always).
+ */
+export function portalItemHasBrokenDependencyRules(item: PortalSettingItem): boolean {
+  const n = rawDependencyRuleCount(item)
+  if (n === 0) return false
+  const filtered = (Array.isArray(item.dependencies) ? item.dependencies : []).filter(isValidPortalDependencyRow)
+  return filtered.length === 0 && !item.dependency
+}
+
 /**
  * Resolved list of dependency rules (legacy `dependency` or `dependencies`).
  * Empty `dependencies: []` falls back to `dependency` so AND/OR is not lost to a bad save.
  */
 export function getPortalItemDependencyList(item: PortalSettingItem): PortalSettingDependency[] {
   const rawList = Array.isArray(item.dependencies) ? item.dependencies : []
-  const filtered = rawList.filter(isValidPortalDependencyRow)
+  const filtered = rawList.filter(isValidPortalDependencyRow) as PortalSettingDependency[]
   if (filtered.length > 0) return filtered
   if (item.dependency && isValidPortalDependencyRow(item.dependency)) return [item.dependency]
   return []
@@ -406,10 +429,13 @@ function isSinglePortalDependencySatisfied(
   }
   if (depItem?.type === "checkbox") {
     const left = normalizePortalCheckboxDependencyValue(depValue)
-    const right = normalizePortalCheckboxDependencyValue(showWhenValue)
+    if (Array.isArray(showWhenValues) && showWhenValues.length > 0) {
+      return showWhenValues.some((v) => left === normalizePortalCheckboxDependencyValue(v))
+    }
+    const right = normalizePortalCheckboxDependencyValue(typeof showWhenValue === "string" ? showWhenValue : "")
     return left === right
   }
-  return depValue === showWhenValue
+  return depValue === (typeof showWhenValue === "string" ? showWhenValue : "")
 }
 
 /** True when all dependency rules pass (AND) or any pass (OR), per `dependencyMode`. */
@@ -418,6 +444,7 @@ export function isPortalSettingDependencyVisible(
   allItems: PortalSettingItem[],
   formValues: Record<string, string>,
 ): boolean {
+  if (portalItemHasBrokenDependencyRules(item)) return false
   const deps = getPortalItemDependencyList(item)
   if (deps.length === 0) return true
   const mode = getPortalItemDependencyJoinMode(item)

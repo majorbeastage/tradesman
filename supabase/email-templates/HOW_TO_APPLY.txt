@@ -32,3 +32,18 @@ If reset links open tradesman-us.com (or similar) and you only see the marketing
 either point VITE_SITE_URL at the Vercel app URL, or host the same build at a path on the custom domain so /reset-password loads ResetPasswordPage.
 
 After that, new reset emails use your theme. Old emails still contain old links.
+
+
+complete-signup Edge function (new user + admin notify)
+========================================================
+
+Deploy: supabase functions deploy complete-signup
+
+Secrets on the function (Supabase Dashboard → Edge Functions → complete-signup → Secrets):
+
+- RESEND_API_KEY — required for admin notification email
+- RESEND_FROM_EMAIL — verified sender in Resend, e.g. onboarding@tradesman-us.com
+- ADMIN_SIGNUP_NOTIFY_EMAIL — optional; defaults to admin@tradesman-us.com
+
+The function enforces required signup fields using platform_settings key tradesman_signup_requirements
+(same rules as the public Signup page). Without RESEND_* secrets, signup still works; only the admin email is skipped.

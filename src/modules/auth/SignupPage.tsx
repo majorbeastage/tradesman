@@ -64,6 +64,9 @@ async function tryCompleteSignupViaEdge(body: {
   business_address: string | null
   timezone: string
   signup_extras?: Record<string, string | null>
+  ack_terms?: boolean
+  ack_privacy?: boolean
+  ack_sms?: boolean
 }): Promise<"success" | "not_deployed"> {
   if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) return "not_deployed"
   const base = supabaseUrlEnv.replace(/\/$/, "")
@@ -250,6 +253,9 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
       business_address,
       timezone: tz,
       signup_extras: Object.keys(signup_extras).length ? signup_extras : undefined,
+      ack_terms: ackTerms,
+      ack_privacy: ackPrivacy,
+      ack_sms: ackSms,
     }
 
     setSubmitting(true)
