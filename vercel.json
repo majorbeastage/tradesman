@@ -13,6 +13,10 @@
     "api/platform-tools.ts": { "maxDuration": 60 }
   },
   "rewrites": [
+    {
+      "source": "/api/notify-admin-verified-signup",
+      "destination": "/api/platform-tools?__route=notify-admin-verified-signup"
+    },
     { "source": "/api/help-desk-voice", "destination": "/api/help-desk?__route=voice" },
     { "source": "/api/help-desk-greeting-save", "destination": "/api/help-desk?__route=greeting-save" },
     {

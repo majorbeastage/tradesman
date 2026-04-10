@@ -45,7 +45,8 @@ verifies their email and has an active session (first load / sign-in).
 
 Admin notification (Vercel API route)
 
-- Route: POST /api/notify-admin-verified-signup (called by the app when a verified user gets INITIAL_SESSION or SIGNED_IN).
+- Route: POST /api/notify-admin-verified-signup (Vercel rewrite → platform-tools?__route=notify-admin-verified-signup;
+  same as POST /api/platform-tools?__route=notify-admin-verified-signup). Called when a verified user gets INITIAL_SESSION or SIGNED_IN.
 - Vercel → Environment Variables:
   - RESEND_API_KEY
   - RESEND_FROM_EMAIL — verified sender in Resend, e.g. onboarding@tradesman-us.com

@@ -2,6 +2,7 @@
  * Merged serverless routes (Hobby-friendly): public lead capture, AI thread summary.
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
+ * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
@@ -20,6 +21,7 @@ import {
   parseLeadsSettingsFromMetadata,
   runLeadCaptureSideEffects,
 } from "./_leadAutomation.js"
+import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   const raw = req.body
@@ -668,6 +670,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "ai-lead-assist",
         "ai-regenerate-lead-consumer-reply",
         "ai-regenerate-conversation-consumer-reply",
+        "notify-admin-verified-signup",
       ],
     })
     return
@@ -694,9 +697,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       await handleAiRegenerateConversationConsumerReply(req, res)
       return
     }
+    if (route === "notify-admin-verified-signup") {
+      await handleNotifyAdminVerifiedSignup(req, res)
+      return
+    }
     res.status(400).json({
       error: "Unknown __route",
-      hint: "Use public-lead, ai-summarize, ai-lead-assist, ai-regenerate-lead-consumer-reply, or ai-regenerate-conversation-consumer-reply",
+      hint: "Use public-lead, ai-summarize, ai-lead-assist, ai-regenerate-lead-consumer-reply, ai-regenerate-conversation-consumer-reply, or notify-admin-verified-signup",
     })
   } catch (e) {
     console.error("[platform-tools]", e instanceof Error ? e.message : e)

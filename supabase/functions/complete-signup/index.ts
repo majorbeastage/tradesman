@@ -1,7 +1,7 @@
 // Public signup: create auth user + full profiles row (works when email confirmation leaves client without a session).
 // Deploy: supabase functions deploy complete-signup
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto in hosted Supabase)
-// Admin notification after email verification runs from the Vercel app: POST /api/notify-admin-verified-signup (first sign-in).
+// Admin notification after email verification: Vercel POST /api/notify-admin-verified-signup → platform-tools merged route (first sign-in).
 //
 // Validates required fields using platform_settings key tradesman_signup_requirements (same as SignupPage).
 

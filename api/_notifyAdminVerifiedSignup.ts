@@ -1,33 +1,14 @@
 /**
- * After a user verifies their email and signs in (password flow), notify Tradesman admin once.
- * Idempotent via profiles.metadata.verified_signup_admin_notified_at.
- *
- * Env: SUPABASE_URL, SUPABASE_ANON_KEY (or VITE_*), SUPABASE_SERVICE_ROLE_KEY,
- * RESEND_API_KEY, RESEND_FROM_EMAIL, optional ADMIN_SIGNUP_NOTIFY_EMAIL (default admin@mail.tradesman-us.com).
+ * POST /api/platform-tools?__route=notify-admin-verified-signup
+ * (Also reachable at /api/notify-admin-verified-signup via vercel.json rewrite.)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
-import { createServiceSupabase } from "./_communications.js"
-
-function firstEnv(...names: string[]): string {
-  for (const name of names) {
-    const value = process.env[name]
-    if (value != null && String(value).trim() !== "") return String(value).trim()
-  }
-  return ""
-}
+import { createServiceSupabase, firstEnv } from "./_communications.js"
 
 const META_KEY = "verified_signup_admin_notified_at"
 
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
-  res.setHeader("Access-Control-Allow-Headers", "authorization, content-type")
-
-  if (req.method === "OPTIONS") {
-    res.status(204).end()
-    return
-  }
+export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" })
     return
