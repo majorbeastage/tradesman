@@ -82,7 +82,10 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
       } else {
         const { error: err } = await signUp(email.trim(), password)
         if (err) setError(err.message)
-        else setMessage("If your project requires email confirmation, check your inbox (and spam). Otherwise try signing in now.")
+        else
+          setMessage(
+            "If email confirmation is enabled for this site, check your inbox and spam — you must verify before you can sign in. Otherwise you can try signing in now."
+          )
       }
     } finally {
       setSubmitting(false)

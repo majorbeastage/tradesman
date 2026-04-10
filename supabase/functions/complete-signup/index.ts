@@ -1,8 +1,7 @@
 // Public signup: create auth user + full profiles row (works when email confirmation leaves client without a session).
 // Deploy: supabase functions deploy complete-signup
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto in hosted Supabase)
-// Optional: RESEND_API_KEY + RESEND_FROM_EMAIL (verified domain) → email admin@tradesman-us.com on each signup
-// Optional: ADMIN_SIGNUP_NOTIFY_EMAIL (default admin@tradesman-us.com)
+// Admin notification after email verification runs from the Vercel app: POST /api/notify-admin-verified-signup (first sign-in).
 //
 // Validates required fields using platform_settings key tradesman_signup_requirements (same as SignupPage).
 
@@ -117,49 +116,6 @@ function reqField(rules: SignupRules, key: string): boolean {
 async function loadSignupRules(adminClient: ReturnType<typeof createClient>): Promise<SignupRules> {
   const { data } = await adminClient.from("platform_settings").select("value").eq("key", SIGNUP_REQ_KEY).maybeSingle()
   return parseSignupRules(data?.value)
-}
-
-async function notifyAdminNewSignup(params: {
-  newEmail: string
-  displayName: string
-  userId: string
-  primaryPhone: string | null
-  addressLine1: string | null
-  city: string | null
-  state: string | null
-  zip: string | null
-}) {
-  const apiKey = Deno.env.get("RESEND_API_KEY")
-  const from = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
-  const to = (Deno.env.get("ADMIN_SIGNUP_NOTIFY_EMAIL") || "admin@tradesman-us.com").trim().toLowerCase()
-  if (!apiKey || !from) {
-    console.info("[complete-signup] skip admin email: set RESEND_API_KEY and RESEND_FROM_EMAIL on the function")
-    return
-  }
-  const text = [
-    "A new user signed up on Tradesman.",
-    "",
-    `Email: ${params.newEmail}`,
-    `Display name: ${params.displayName}`,
-    `User id: ${params.userId}`,
-    `Primary phone: ${params.primaryPhone ?? "(none)"}`,
-    `Address: ${params.addressLine1 ?? ""}, ${params.city ?? ""}, ${params.state ?? ""} ${params.zip ?? ""}`.trim(),
-  ].join("\n")
-  try {
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject: `New signup: ${params.displayName} (${params.newEmail})`,
-        text,
-      }),
-    })
-    if (!r.ok) console.error("[complete-signup] Resend notify failed", r.status, await r.text())
-  } catch (e) {
-    console.error("[complete-signup] Resend notify error", e instanceof Error ? e.message : e)
-  }
 }
 
 Deno.serve(async (req) => {
@@ -361,17 +317,6 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
-
-  void notifyAdminNewSignup({
-    newEmail: email,
-    displayName: display_name,
-    userId: uid,
-    primaryPhone: primary_phone,
-    addressLine1: address_line_1,
-    city: address_city,
-    state: address_state,
-    zip: address_zip,
-  })
 
   return new Response(JSON.stringify({ ok: true, userId: uid, profileSaved: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },

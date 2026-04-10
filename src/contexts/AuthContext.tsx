@@ -51,11 +51,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
       return
     }
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       setRole(null)
       setLoading(false)
+      if (
+        (event === "SIGNED_IN" || event === "INITIAL_SESSION") &&
+        session?.user?.email_confirmed_at &&
+        session.access_token
+      ) {
+        void fetch("/api/notify-admin-verified-signup", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        }).catch(() => {
+          /* best-effort; server is idempotent */
+        })
+      }
     })
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)

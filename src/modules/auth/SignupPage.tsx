@@ -270,7 +270,7 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
 
       if (edgeOutcome === "success") {
         setMessage(
-          "Check your email to verify your address, then sign in with User Login. Your profile details were saved."
+          "Account created. Your login is not active until you verify your email — check your inbox and spam folder for a confirmation link, then sign in with User Login. Your profile details were saved."
         )
         onSuccessNeedVerify()
         return
@@ -321,7 +321,7 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
         setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
       } else {
         setMessage(
-          "Check your email to verify your address before first sign-in. After you confirm, open User Login. If your profile is incomplete, use Account (My T) or ask your admin to deploy the complete-signup edge function for full signup without a session."
+          "Account created. Your login is not active until you verify your email — check your inbox and spam folder, then open User Login. If your profile is incomplete after you confirm, use Account (My T) or ask your admin to deploy the complete-signup edge function for full signup without a session."
         )
         onSuccessNeedVerify()
       }
