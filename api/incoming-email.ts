@@ -18,6 +18,7 @@ import {
   resolveInboundEmailChannel,
 } from "./_communications.js"
 import { uploadBytesToCommAttachments } from "./_commStorage.js"
+import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import {
   forwardHeadersForTradesmanCopy,
   normalizeResendHeaderMap,
@@ -499,11 +500,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  if (leadId && bodyForMessage.trim()) {
+    void evaluateAndPersistLeadFit(supabase, leadId, {
+      supplementalText: `${subject}\n${bodyForMessage}`.slice(0, 8000),
+    }).catch((e) => console.warn("[incoming-email] lead fit", e instanceof Error ? e.message : e))
+  }
+
   return res.status(200).json({
     ok: true,
     routed: true,
     userId: channel.user_id,
     conversationId,
+    leadId,
     customerId,
     matchedTo,
     forwardToConfigured: Boolean(forwardTo),

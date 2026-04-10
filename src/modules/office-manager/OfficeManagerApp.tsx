@@ -48,6 +48,8 @@ const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "auto_response", label: "Auto Response Options" },
   { id: "settings", label: "Settings" },
   { id: "estimate_template", label: "Estimate template" },
+  { id: "estimate_line_items", label: "Estimate line items" },
+  { id: "job_types", label: "Job types" },
 ]
 
 const OM_CONVERSATIONS_TOOLBAR_ACTIONS: { id: string; label: string }[] = [

@@ -25,6 +25,8 @@ type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
 const LEAD_STATUS_OPTIONS = ["New", "Contacted", "Qualified", "Lost"] as const
 
+type LeadFit = "hot" | "maybe" | "bad" | null
+
 type LeadRow = {
   id: string
   title: string | null
@@ -33,6 +35,12 @@ type LeadRow = {
   description?: string | null
   status?: string | null
   customers: CustomerRow | null
+  fit_classification?: LeadFit
+  fit_confidence?: number | null
+  fit_reason?: string | null
+  fit_source?: string | null
+  fit_manually_overridden?: boolean | null
+  fit_evaluated_at?: string | null
 }
 
 type LeadsPageProps = { setPage?: (page: string) => void }
@@ -134,6 +142,23 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [leadAiBusy, setLeadAiBusy] = useState(false)
   const [leadSoftWarnings, setLeadSoftWarnings] = useState<string[]>([])
   const [leadPendingAiBusy, setLeadPendingAiBusy] = useState(false)
+  const [showLeadFilterPrefs, setShowLeadFilterPrefs] = useState(false)
+  const [leadFilterSaveBusy, setLeadFilterSaveBusy] = useState(false)
+  const [leadFilterPrefs, setLeadFilterPrefs] = useState({
+    accepted_job_types: "",
+    minimum_job_size: "",
+    service_radius_miles: "",
+    use_account_service_radius: true,
+    availability: "flexible" as "asap" | "flexible",
+    enable_auto_filter: false,
+    use_ai_for_unclear: true,
+  })
+  const [leadFitLogs, setLeadFitLogs] = useState<
+    { id: string; action_type: string; action_summary: string | null; metadata: unknown; created_at: string }[]
+  >([])
+  const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
+  const [fitReRunBusy, setFitReRunBusy] = useState(false)
+  const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
 
   const leadsSettingsItems = useMemo(
@@ -210,6 +235,32 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       delete saved.embed_lead_enabled
       delete saved.embed_lead_slug
       setLeadsProfileSettings(saved)
+
+      const lf = meta.lead_filter_preferences
+      if (lf && typeof lf === "object" && !Array.isArray(lf)) {
+        const p = lf as Record<string, unknown>
+        const minRaw = p.minimum_job_size
+        const radRaw = p.service_radius_miles
+        setLeadFilterPrefs({
+          accepted_job_types: typeof p.accepted_job_types === "string" ? p.accepted_job_types : "",
+          minimum_job_size:
+            typeof minRaw === "number" && Number.isFinite(minRaw)
+              ? String(minRaw)
+              : typeof minRaw === "string"
+                ? minRaw
+                : "",
+          service_radius_miles:
+            typeof radRaw === "number" && Number.isFinite(radRaw)
+              ? String(radRaw)
+              : typeof radRaw === "string"
+                ? radRaw
+                : "",
+          use_account_service_radius: p.use_account_service_radius !== false,
+          availability: p.availability === "asap" ? "asap" : "flexible",
+          enable_auto_filter: p.enable_auto_filter === true,
+          use_ai_for_unclear: p.use_ai_for_unclear !== false,
+        })
+      }
     })()
     return () => {
       cancelled = true
@@ -261,8 +312,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       return
     }
     const selectFull =
-      "id, title, description, status, created_at, updated_at, customer_id, user_id, converted_at, removed_at"
-    const selectMinimal = "id, title, description, created_at, customer_id"
+      "id, title, description, status, created_at, updated_at, customer_id, user_id, converted_at, removed_at, fit_classification, fit_confidence, fit_reason, fit_source, fit_manually_overridden, fit_evaluated_at"
+    const selectMinimal =
+      "id, title, description, created_at, customer_id, fit_classification, fit_confidence, fit_reason, fit_source, fit_manually_overridden, fit_evaluated_at"
     const resFull = await supabase.from("leads").select(selectFull).order("created_at", { ascending: false })
     let rawData: any[] = []
     if (resFull.error) {
@@ -308,6 +360,138 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setLeads(rows)
   }
 
+  function leadFitBadgeEl(fit: LeadFit) {
+    if (!fit) return <span style={{ color: "#6b7280", fontSize: 12 }}>—</span>
+    const colors: Record<string, { bg: string; fg: string; b: string }> = {
+      hot: { bg: "#fef2f2", fg: "#b91c1c", b: "#fecaca" },
+      maybe: { bg: "#fffbeb", fg: "#b45309", b: "#fde68a" },
+      bad: { bg: "#f3f4f6", fg: "#374151", b: "#d1d5db" },
+    }
+    const c = colors[fit] ?? colors.bad
+    return (
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          padding: "3px 8px",
+          borderRadius: 999,
+          background: c.bg,
+          color: c.fg,
+          border: `1px solid ${c.b}`,
+          textTransform: "capitalize",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {fit}
+      </span>
+    )
+  }
+
+  async function saveLeadFilterPreferences() {
+    if (!supabase || !userId) return
+    setLeadFilterSaveBusy(true)
+    try {
+      const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) {
+        alert(fetchErr.message)
+        return
+      }
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      const minN = Number.parseFloat(leadFilterPrefs.minimum_job_size.replace(/[^0-9.]/g, ""))
+      const radN = Number.parseFloat(leadFilterPrefs.service_radius_miles.replace(/[^0-9.]/g, ""))
+      prevMeta.lead_filter_preferences = {
+        v: 1,
+        accepted_job_types: leadFilterPrefs.accepted_job_types.slice(0, 4000),
+        minimum_job_size: Number.isFinite(minN) && minN >= 0 ? minN : null,
+        service_radius_miles: Number.isFinite(radN) && radN > 0 ? radN : null,
+        use_account_service_radius: leadFilterPrefs.use_account_service_radius,
+        availability: leadFilterPrefs.availability,
+        enable_auto_filter: leadFilterPrefs.enable_auto_filter,
+        use_ai_for_unclear: leadFilterPrefs.use_ai_for_unclear,
+      }
+      const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setShowLeadFilterPrefs(false)
+    } finally {
+      setLeadFilterSaveBusy(false)
+    }
+  }
+
+  async function applyManualFitOverride() {
+    if (!supabase || !userId || !selectedLead?.id || !manualFitChoice) return
+    setFitOverrideBusy(true)
+    try {
+      const now = new Date().toISOString()
+      const { error: uErr } = await supabase
+        .from("leads")
+        .update({
+          fit_classification: manualFitChoice,
+          fit_confidence: null,
+          fit_reason: "Updated manually from the Leads screen.",
+          fit_source: "manual",
+          fit_manually_overridden: true,
+          fit_evaluated_at: now,
+        })
+        .eq("id", selectedLead.id)
+        .eq("user_id", userId)
+      if (uErr) {
+        alert(uErr.message)
+        return
+      }
+      const { error: lErr } = await supabase.from("lead_automation_logs").insert({
+        lead_id: selectedLead.id,
+        user_id: userId,
+        action_type: "lead_fit_manual_override",
+        action_summary: `Set fit to ${manualFitChoice}`,
+        metadata: {},
+      })
+      if (lErr) console.warn(lErr)
+      setSelectedLead((prev: any) =>
+        prev
+          ? {
+              ...prev,
+              fit_classification: manualFitChoice,
+              fit_reason: "Updated manually from the Leads screen.",
+              fit_source: "manual",
+              fit_manually_overridden: true,
+              fit_evaluated_at: now,
+            }
+          : null,
+      )
+      loadLeads()
+      void openLead(selectedLead.id)
+    } finally {
+      setFitOverrideBusy(false)
+    }
+  }
+
+  async function reRunLeadFit() {
+    if (!session?.access_token || !selectedLead?.id) return
+    setFitReRunBusy(true)
+    try {
+      const res = await fetch("/api/platform-tools?__route=lead-evaluate-fit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ leadId: selectedLead.id, force: true }),
+      })
+      const raw = await res.text()
+      if (!res.ok) {
+        alert(formatFetchApiError(res, raw))
+        return
+      }
+      void openLead(selectedLead.id)
+      loadLeads()
+    } finally {
+      setFitReRunBusy(false)
+    }
+  }
+
   useEffect(() => {
     loadLeads()
   }, [userId])
@@ -340,6 +524,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setLeadAttachmentsByEvent({})
       setDetailEditMode(false)
       setLeadSoftWarnings([])
+      setLeadFitLogs([])
+      setManualFitChoice("")
     } else {
       void openLead(leadId)
     }
@@ -793,6 +979,12 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         updated_at,
         customer_id,
         metadata,
+        fit_classification,
+        fit_confidence,
+        fit_reason,
+        fit_source,
+        fit_manually_overridden,
+        fit_evaluated_at,
         customers (
           display_name,
           customer_identifiers (
@@ -811,6 +1003,16 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
     setSelectedLead(data)
     applyDetailFormFromLeadRow(data)
+    const fc = (data as { fit_classification?: string | null }).fit_classification
+    setManualFitChoice(fc === "hot" || fc === "maybe" || fc === "bad" ? fc : "")
+
+    const { data: logRows } = await supabase
+      .from("lead_automation_logs")
+      .select("id, action_type, action_summary, metadata, created_at")
+      .eq("lead_id", leadId)
+      .order("created_at", { ascending: false })
+      .limit(25)
+    setLeadFitLogs((logRows ?? []) as typeof leadFitLogs)
 
     const { data: convo } = await supabase
       .from("conversations")
@@ -995,6 +1197,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setInitialMessage("")
       setShowForm(false)
       if (setPage) setPage("leads")
+      if (session?.access_token) {
+        void fetch("/api/platform-tools?__route=lead-evaluate-fit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ leadId: lead.id, force: false }),
+        })
+          .then(() => loadLeads())
+          .catch(() => loadLeads())
+      } else {
+        loadLeads()
+      }
     } catch (err: any) {
       console.error(err)
       const msg = err?.message ?? err?.error_description ?? String(err)
@@ -1119,6 +1332,20 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
           >
             Settings
           </button>
+          <button
+            type="button"
+            onClick={() => setShowLeadFilterPrefs(true)}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "6px",
+              border: "1px solid #d1d5db",
+              background: "white",
+              cursor: "pointer",
+              color: theme.text,
+            }}
+          >
+            Lead Filter Preferences
+          </button>
           {customActionButtons.map((btn) => (
             <button
               key={btn.id}
@@ -1139,6 +1366,156 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         </div>
 
       </div>
+
+      {showLeadFilterPrefs && (
+        <>
+          <div
+            onClick={() => setShowLeadFilterPrefs(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "92%",
+              maxWidth: 520,
+              maxHeight: "90vh",
+              overflow: "auto",
+              background: "white",
+              borderRadius: 8,
+              padding: 24,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 9999,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>Lead Filter Preferences</h3>
+              <button
+                type="button"
+                onClick={() => setShowLeadFilterPrefs(false)}
+                style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+              >
+                ✕
+              </button>
+            </div>
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
+              Optional automation scores new leads as <strong>Hot</strong>, <strong>Maybe</strong>, or <strong>Bad</strong> using your rules first.
+              Uncertain leads stay <strong>Maybe</strong> — nothing is deleted or auto-rejected.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                Job types you want (one per line or commas)
+                <textarea
+                  value={leadFilterPrefs.accepted_job_types}
+                  onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, accepted_job_types: e.target.value }))}
+                  rows={3}
+                  placeholder="e.g. roofing, plumbing, HVAC"
+                  style={{ ...theme.formInput, marginTop: 6, resize: "vertical", width: "100%", boxSizing: "border-box" }}
+                />
+              </label>
+              <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                Minimum job size (USD, optional)
+                <input
+                  value={leadFilterPrefs.minimum_job_size}
+                  onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, minimum_job_size: e.target.value }))}
+                  placeholder="e.g. 500"
+                  style={{ ...theme.formInput, marginTop: 6, maxWidth: 200 }}
+                />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={leadFilterPrefs.use_account_service_radius}
+                  onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, use_account_service_radius: e.target.checked }))}
+                />
+                Use service radius from Account (when set)
+              </label>
+              {!leadFilterPrefs.use_account_service_radius ? (
+                <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                  Service radius (miles) for filtering
+                  <input
+                    value={leadFilterPrefs.service_radius_miles}
+                    onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, service_radius_miles: e.target.value }))}
+                    style={{ ...theme.formInput, marginTop: 6, maxWidth: 200 }}
+                  />
+                </label>
+              ) : null}
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, display: "block", marginBottom: 6 }}>Timing preference</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: "pointer", fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="lf_avail"
+                    checked={leadFilterPrefs.availability === "asap"}
+                    onChange={() => setLeadFilterPrefs((p) => ({ ...p, availability: "asap" }))}
+                  />
+                  ASAP (prefer urgent / same-day language for Hot)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="lf_avail"
+                    checked={leadFilterPrefs.availability === "flexible"}
+                    onChange={() => setLeadFilterPrefs((p) => ({ ...p, availability: "flexible" }))}
+                  />
+                  Flexible
+                </label>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={leadFilterPrefs.enable_auto_filter}
+                  onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, enable_auto_filter: e.target.checked }))}
+                />
+                Enable auto filter on new leads
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={leadFilterPrefs.use_ai_for_unclear}
+                  onChange={(e) => setLeadFilterPrefs((p) => ({ ...p, use_ai_for_unclear: e.target.checked }))}
+                  disabled={!aiAutomationsEnabled}
+                />
+                Use interpretation for unclear leads (never auto-rejects alone; requires OPENAI on server)
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={leadFilterSaveBusy}
+                onClick={() => void saveLeadFilterPreferences()}
+                style={{
+                  padding: "10px 16px",
+                  background: theme.primary,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: leadFilterSaveBusy ? "wait" : "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                {leadFilterSaveBusy ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLeadFilterPrefs(false)}
+                style={{
+                  padding: "10px 16px",
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: theme.text,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {showForm && (
         <>
@@ -1483,16 +1860,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         <table
           style={{
             width: "100%",
-            minWidth: isMobile ? "920px" : "100%",
+            minWidth: isMobile ? "1000px" : "100%",
             borderCollapse: "collapse",
             tableLayout: "fixed",
           }}
         >
           <colgroup>
-            <col style={{ width: "16%" }} />
-            <col style={{ width: "14%" }} />
-            <col style={{ width: "14%" }} />
-            <col style={{ width: "22%" }} />
+            <col style={{ width: "15%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "13%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "9%" }} />
             <col style={{ width: "10%" }} />
             <col />
           </colgroup>
@@ -1535,6 +1913,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               >
                 Status
               </th>
+              <th style={{ padding: "8px" }}>Fit</th>
               <th
                 onClick={() => {
                   setSortField("updated_at")
@@ -1573,6 +1952,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                       {(lead.description ?? "").trim() ? `${String(lead.description).slice(0, 80)}${String(lead.description).length > 80 ? "…" : ""}` : "—"}
                     </td>
                     <td style={cellBase}>{lead.status ?? "—"}</td>
+                    <td style={{ ...cellBase, verticalAlign: "middle" }}>
+                      {leadFitBadgeEl((lead.fit_classification as LeadFit) ?? null)}
+                    </td>
                     <td style={cellBase}>
                       {lastUp ? new Date(lastUp).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"}
                     </td>
@@ -1580,7 +1962,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                   {isRowSelected && selectedLead?.id === lead.id ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         style={{
                           padding: 0,
                           borderBottom: "1px solid #e5e7eb",
@@ -1753,6 +2135,102 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 </ul>
                               </div>
                             ) : null}
+
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                marginBottom: 12,
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead fit</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                {leadFitBadgeEl((selectedLead.fit_classification as LeadFit) ?? null)}
+                                {selectedLead.fit_confidence != null && typeof selectedLead.fit_confidence === "number" ? (
+                                  <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                    Confidence: {Math.round(selectedLead.fit_confidence * 100)}%
+                                  </span>
+                                ) : null}
+                                {selectedLead.fit_source ? (
+                                  <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {selectedLead.fit_source}</span>
+                                ) : null}
+                                {selectedLead.fit_manually_overridden ? (
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: "#7c3aed" }}>Manual override</span>
+                                ) : null}
+                              </div>
+                              {selectedLead.fit_reason ? (
+                                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{selectedLead.fit_reason}</p>
+                              ) : (
+                                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                                  No score yet. Turn on <strong>Enable auto filter</strong> in Lead Filter Preferences, or run a check below.
+                                </p>
+                              )}
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                <select
+                                  value={manualFitChoice}
+                                  onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                                  style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
+                                >
+                                  <option value="">Set manually…</option>
+                                  <option value="hot">Hot</option>
+                                  <option value="maybe">Maybe</option>
+                                  <option value="bad">Bad</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={!manualFitChoice || fitOverrideBusy}
+                                  onClick={() => void applyManualFitOverride()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    borderRadius: 6,
+                                    border: "none",
+                                    background: theme.primary,
+                                    color: "#fff",
+                                    cursor: fitOverrideBusy ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {fitOverrideBusy ? "Saving…" : "Apply"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={fitReRunBusy || !session?.access_token}
+                                  onClick={() => void reRunLeadFit()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    borderRadius: 6,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    color: theme.text,
+                                    cursor: fitReRunBusy ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                                </button>
+                              </div>
+                              {leadFitLogs.length > 0 ? (
+                                <div style={{ marginTop: 12 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 6 }}>Activity</div>
+                                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#4b5563" }}>
+                                    {leadFitLogs.map((log) => (
+                                      <li key={log.id} style={{ marginBottom: 6 }}>
+                                        <span style={{ color: "#9ca3af" }}>
+                                          {log.created_at ? new Date(log.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : ""}
+                                        </span>
+                                        {" · "}
+                                        {log.action_summary || log.action_type}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </div>
 
                             {pendingLeadAiReply ? (
                               <AiConsumerReplyApprovalCard

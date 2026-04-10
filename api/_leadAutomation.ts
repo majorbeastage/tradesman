@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv, getPrimaryEmailChannelForUser, getPrimarySmsChannelForUser } from "./_communications.js"
+import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 
 export type LeadsSettingsValues = Record<string, string>
 
@@ -226,4 +227,8 @@ export async function runLeadCaptureSideEffects(
       }),
     }).catch((e) => console.warn("[leadAutomation] auto email", e))
   }
+
+  void evaluateAndPersistLeadFit(supabase, leadId, {}).catch((e) =>
+    console.warn("[leadAutomation] lead fit", e instanceof Error ? e.message : e),
+  )
 }

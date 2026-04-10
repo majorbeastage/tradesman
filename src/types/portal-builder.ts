@@ -514,6 +514,8 @@ const CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY = new Set([
   "conversations:conversation_settings",
   "conversations:automatic_replies",
   "quotes:estimate_template",
+  "quotes:estimate_line_items",
+  "quotes:job_types",
   "calendar:receipt_template",
 ])
 
@@ -741,6 +743,8 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'quote_settings', label: 'Quote settings', type: 'button' },
     { id: 'estimate_template', label: 'Estimate template', type: 'button' },
+    { id: 'estimate_line_items', label: 'Estimate line items', type: 'button' },
+    { id: 'job_types', label: 'Job types (Calendar)', type: 'button' },
     { id: 'status', label: 'Status', type: 'dropdown' },
   ],
   calendar: [
@@ -812,7 +816,16 @@ export const PORTAL_DROPDOWN_LABELS: Record<string, string> = {
 export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
   leads: ['create_lead', 'settings', 'filter', 'sort_by', 'lead_source', 'status', 'priority'],
   conversations: ['add_conversation', 'conversation_settings', 'automatic_replies'],
-  quotes: ['add_customer_to_quotes', 'add_quote_to_calendar', 'auto_response_options', 'quote_settings', 'estimate_template', 'status'],
+  quotes: [
+    'add_customer_to_quotes',
+    'add_quote_to_calendar',
+    'auto_response_options',
+    'quote_settings',
+    'estimate_template',
+    'estimate_line_items',
+    'job_types',
+    'status',
+  ],
   calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'receipt_template', 'customize_user', 'job_type'],
   settings: ['custom_fields'],
   dashboard: [],
@@ -824,6 +837,36 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
 /** Default items for Quote settings (user portal) */
 export const DEFAULT_QUOTE_SETTINGS_ITEMS: PortalSettingItem[] = [
   { id: 'quote_default_status', type: 'dropdown', label: 'Default quote status for new quotes', options: ['Draft', 'Sent', 'Viewed', 'Accepted', 'Declined'] },
+]
+
+/** Quotes → Estimate line items: admin configures which quick templates appear; user saves presets in profile metadata. */
+export const DEFAULT_QUOTE_ESTIMATE_LINE_ITEMS: PortalSettingItem[] = [
+  { id: "eli_show_labor", type: "checkbox", label: "Offer Labor / hours line template", defaultChecked: true },
+  { id: "eli_show_materials", type: "checkbox", label: "Offer Materials line template", defaultChecked: true },
+  { id: "eli_show_travel", type: "checkbox", label: "Offer Travel / trip line template", defaultChecked: true },
+  { id: "eli_show_misc", type: "checkbox", label: "Offer Miscellaneous line template", defaultChecked: true },
+  {
+    id: "eli_default_labor_rate",
+    type: "custom_field",
+    customFieldSubtype: "text",
+    label: "Suggested default labor rate ($/hr) for quick-add (number only)",
+  },
+  {
+    id: "eli_sheet_note",
+    type: "custom_field",
+    customFieldSubtype: "textarea",
+    label: "Note shown at top of Estimate Line Items (optional)",
+  },
+]
+
+/** Quotes → Job types: reference same job_types rows as Calendar (read-only sheet + optional note). */
+export const DEFAULT_QUOTE_JOB_TYPES_ITEMS: PortalSettingItem[] = [
+  {
+    id: "quote_job_types_note",
+    type: "custom_field",
+    customFieldSubtype: "textarea",
+    label: "Optional note above the job type list (shared with Calendar job types)",
+  },
 ]
 
 /** Estimate export template (Quotes tab). Notes → profiles.document_template_quote; other options → profiles.metadata */
@@ -869,6 +912,33 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     type: "custom_field",
     label: "Logo image URL (HTTPS). Upload below or paste a public PNG/JPEG link.",
     customFieldSubtype: "text",
+  },
+  {
+    id: "estimate_template_include_legal",
+    type: "checkbox",
+    label: "Include legal terms and signature block (lite acknowledgment — not a substitute for attorney review)",
+    defaultChecked: false,
+  },
+  {
+    id: "estimate_template_legal_text",
+    type: "custom_field",
+    customFieldSubtype: "textarea",
+    label: "Legal / acknowledgment text (plain text, before signatures)",
+    dependency: { dependsOnItemId: "estimate_template_include_legal", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_cancellation_fee",
+    type: "custom_field",
+    customFieldSubtype: "textarea",
+    label: "Cancellation fee terms (optional; only when legal block is enabled)",
+    dependency: { dependsOnItemId: "estimate_template_include_legal", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_legal_signatures",
+    type: "checkbox",
+    label: "Include signature and date lines on the document",
+    defaultChecked: true,
+    dependency: { dependsOnItemId: "estimate_template_include_legal", showWhenValue: "checked" },
   },
   {
     id: "estimate_template_use_ai",
@@ -1143,6 +1213,8 @@ export function getDefaultControlItems(tabId: string, controlId: string): Portal
   if (key === 'leads:settings') return [...DEFAULT_LEADS_SETTINGS_ITEMS]
   if (key === 'quotes:quote_settings') return [...DEFAULT_QUOTE_SETTINGS_ITEMS]
   if (key === "quotes:estimate_template") return [...DEFAULT_ESTIMATE_TEMPLATE_ITEMS]
+  if (key === "quotes:estimate_line_items") return [...DEFAULT_QUOTE_ESTIMATE_LINE_ITEMS]
+  if (key === "quotes:job_types") return [...DEFAULT_QUOTE_JOB_TYPES_ITEMS]
   if (key === 'quotes:auto_response_options') return [...DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]

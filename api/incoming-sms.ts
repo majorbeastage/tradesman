@@ -15,6 +15,7 @@ import {
 } from "./_communications.js"
 import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
 import { runConversationInboundSmsAutoReply } from "./_conversationAutoReply.js"
+import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -199,6 +200,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error("[incoming-sms] mms mirror", i, e instanceof Error ? e.message : e)
       }
     }
+  }
+
+  if (leadId && body.trim()) {
+    void evaluateAndPersistLeadFit(supabase, leadId, { supplementalText: body }).catch((e) =>
+      console.warn("[incoming-sms] lead fit", e instanceof Error ? e.message : e),
+    )
   }
 
   if (conversationId) {

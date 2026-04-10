@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Fragment, type ChangeEvent } from "react"
+import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -67,7 +67,7 @@ type QuoteRow = {
 type QuotesPageProps = { setPage?: (page: string) => void }
 export default function QuotesPage({ setPage }: QuotesPageProps) {
   const isMobile = useIsMobile()
-  const { userId: authUserId } = useAuth()
+  const { userId: authUserId, session } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
@@ -101,6 +101,32 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteShowLogo, setQuoteShowLogo] = useState(false)
   const [quoteLogoUrl, setQuoteLogoUrl] = useState("")
   const [estimateLogoUploadBusy, setEstimateLogoUploadBusy] = useState(false)
+  const [legalDraftBusy, setLegalDraftBusy] = useState(false)
+  const [quoteIncludeLegal, setQuoteIncludeLegal] = useState(false)
+  const [quoteLegalText, setQuoteLegalText] = useState("")
+  const [quoteCancellationText, setQuoteCancellationText] = useState("")
+  const [quoteLegalSignatures, setQuoteLegalSignatures] = useState(true)
+  const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
+  const [showQuoteJobTypesModal, setShowQuoteJobTypesModal] = useState(false)
+  const [estimateLinePresets, setEstimateLinePresets] = useState<
+    { id: string; description: string; quantity: number; unit_price: number }[]
+  >([])
+  const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
+  const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
+  const [quoteJobTypesList, setQuoteJobTypesList] = useState<
+    { id: string; name: string; duration_minutes: number; description: string | null; color_hex: string | null }[]
+  >([])
+  const [quoteJobTypesModalValues, setQuoteJobTypesModalValues] = useState<Record<string, string>>({})
+  const [estimateReview, setEstimateReview] = useState<{
+    subtotal: number | null
+    issues: string[]
+    agreesWithSubtotal: boolean | null
+  }>({ subtotal: null, issues: [], agreesWithSubtotal: null })
+  const [estimateLinePortalValues, setEstimateLinePortalValues] = useState<Record<string, string>>({})
+  const [estimateLineDraft, setEstimateLineDraft] = useState<
+    { id: string; description: string; quantity: number; unit_price: number }[]
+  >([])
+  const estimateReviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
   const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
@@ -161,6 +187,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     () => getControlItemsForUser(portalConfig, "quotes", "estimate_template", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
+  const estimateLineItemsPortal = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "estimate_line_items", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const quoteJobTypesPanelItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "job_types", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
   const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
   const quoteAddCustomerPortalItems = useMemo(
@@ -172,7 +206,43 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
   const showQuotesEstimateTemplate =
     getPageActionVisible(portalConfig, "quotes", "estimate_template") && getOmPageActionVisible(portalConfig, "quotes", "estimate_template")
+  const showQuotesEstimateLineItems =
+    getPageActionVisible(portalConfig, "quotes", "estimate_line_items") &&
+    getOmPageActionVisible(portalConfig, "quotes", "estimate_line_items")
+  const showQuotesJobTypesPanel =
+    getPageActionVisible(portalConfig, "quotes", "job_types") && getOmPageActionVisible(portalConfig, "quotes", "job_types")
   const estimateTemplateButtonLabel = portalConfig?.controlLabels?.estimate_template ?? "Estimate template"
+  const estimateLineItemsButtonLabel = portalConfig?.controlLabels?.estimate_line_items ?? "Estimate line items"
+  const quoteJobTypesButtonLabel = portalConfig?.controlLabels?.job_types ?? "Job types"
+
+  function isEstimateLinePortalItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, estimateLineItemsPortal, estimateLinePortalValues)
+  }
+
+  useEffect(() => {
+    if (estimateLineItemsPortal.length === 0) {
+      setEstimateLinePortalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of estimateLineItemsPortal) {
+      try {
+        const s = localStorage.getItem(`quotes_eli_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setEstimateLinePortalValues(next)
+  }, [estimateLineItemsPortal])
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -226,6 +296,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       setQuoteShowLineNumbers(meta.estimate_template_show_line_numbers === true)
       setQuoteShowLogo(meta.estimate_template_show_logo === true)
       setQuoteLogoUrl(typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : "")
+      setQuoteIncludeLegal(meta.estimate_template_include_legal === true)
+      setQuoteLegalText(typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : "")
+      setQuoteCancellationText(typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : "")
+      setQuoteLegalSignatures(meta.estimate_template_legal_signatures !== false)
+      const laborMeta = meta.estimate_default_labor_rate
+      if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
+      else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
+      const rawPresets = meta.estimate_line_presets
+      if (Array.isArray(rawPresets)) {
+        const cleaned = rawPresets
+          .map((row: unknown) => {
+            const o = row as Record<string, unknown>
+            const id = typeof o.id === "string" ? o.id : crypto.randomUUID()
+            const description = String(o.description ?? "").slice(0, 500)
+            const quantity = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+            const unit_price = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+            return { id, description, quantity, unit_price }
+          })
+          .filter((x) => x.description.trim())
+        setEstimateLinePresets(cleaned)
+      } else {
+        setEstimateLinePresets([])
+      }
     })()
     return () => {
       cancelled = true
@@ -262,6 +355,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return isPortalSettingDependencyVisible(item, estimateTemplateItems, estimateTemplateFormValues)
   }
 
+  function isQuoteJobTypesPanelItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, quoteJobTypesPanelItems, quoteJobTypesModalValues)
+  }
+
   useEffect(() => {
     if (!showEstimateTemplateModal || !supabase || !userId || estimateTemplateItems.length === 0) return
     let cancelled = false
@@ -280,6 +377,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       const lineNums = meta.estimate_template_show_line_numbers === true
       const showLogo = meta.estimate_template_show_logo === true
       const logoUrl = typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : ""
+      const includeLegal = meta.estimate_template_include_legal === true
+      const legalBody = typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : ""
+      const legalCancel = typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : ""
+      const legalSigs = meta.estimate_template_legal_signatures !== false
       const next: Record<string, string> = {}
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
@@ -291,6 +392,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         else if (item.id === "estimate_template_show_line_numbers") next[item.id] = lineNums ? "checked" : "unchecked"
         else if (item.id === "estimate_template_show_logo") next[item.id] = showLogo ? "checked" : "unchecked"
         else if (item.id === "estimate_template_logo_url") next[item.id] = logoUrl
+        else if (item.id === "estimate_template_include_legal") next[item.id] = includeLegal ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_legal_text") next[item.id] = legalBody
+        else if (item.id === "estimate_template_cancellation_fee") next[item.id] = legalCancel
+        else if (item.id === "estimate_template_legal_signatures") next[item.id] = legalSigs ? "checked" : "unchecked"
         else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
@@ -347,6 +452,23 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (logoRaw) prevMeta.estimate_template_logo_url = logoRaw
       else delete prevMeta.estimate_template_logo_url
     }
+    if (hasItem("estimate_template_include_legal")) {
+      prevMeta.estimate_template_include_legal = estimateTemplateFormValues.estimate_template_include_legal === "checked"
+    }
+    if (hasItem("estimate_template_legal_text")) {
+      const lt = (estimateTemplateFormValues.estimate_template_legal_text ?? "").trim()
+      if (lt) prevMeta.estimate_template_legal_text = lt
+      else delete prevMeta.estimate_template_legal_text
+    }
+    if (hasItem("estimate_template_cancellation_fee")) {
+      const cf = (estimateTemplateFormValues.estimate_template_cancellation_fee ?? "").trim()
+      if (cf) prevMeta.estimate_template_cancellation_fee = cf
+      else delete prevMeta.estimate_template_cancellation_fee
+    }
+    if (hasItem("estimate_template_legal_signatures")) {
+      prevMeta.estimate_template_legal_signatures =
+        estimateTemplateFormValues.estimate_template_legal_signatures === "checked"
+    }
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -377,7 +499,52 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (hasItem("estimate_template_logo_url")) {
       setQuoteLogoUrl((estimateTemplateFormValues.estimate_template_logo_url ?? "").trim())
     }
+    if (hasItem("estimate_template_include_legal")) {
+      setQuoteIncludeLegal(estimateTemplateFormValues.estimate_template_include_legal === "checked")
+    }
+    if (hasItem("estimate_template_legal_text")) {
+      setQuoteLegalText((estimateTemplateFormValues.estimate_template_legal_text ?? "").trim())
+    }
+    if (hasItem("estimate_template_cancellation_fee")) {
+      setQuoteCancellationText((estimateTemplateFormValues.estimate_template_cancellation_fee ?? "").trim())
+    }
+    if (hasItem("estimate_template_legal_signatures")) {
+      setQuoteLegalSignatures(estimateTemplateFormValues.estimate_template_legal_signatures === "checked")
+    }
     setShowEstimateTemplateModal(false)
+  }
+
+  async function runEstimateLegalDraft() {
+    if (!session?.access_token) {
+      alert("Sign in required.")
+      return
+    }
+    setLegalDraftBusy(true)
+    try {
+      const res = await fetch("/api/platform-tools?__route=estimate-legal-draft", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ businessName: profileDisplayNameForPdf }),
+      })
+      const j = (await res.json()) as { ok?: boolean; legalText?: string; cancellationText?: string; error?: string }
+      if (!res.ok) throw new Error(j.error || "Request failed")
+      setEstimateTemplateFormValues((prev) => ({
+        ...prev,
+        ...(typeof j.legalText === "string" && j.legalText.trim()
+          ? { estimate_template_legal_text: j.legalText }
+          : {}),
+        ...(typeof j.cancellationText === "string" && j.cancellationText.trim()
+          ? { estimate_template_cancellation_fee: j.cancellationText }
+          : {}),
+      }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLegalDraftBusy(false)
+    }
   }
 
   async function onEstimateLogoFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -540,6 +707,41 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
     setQuoteAddCustomerPortalValues(next)
   }, [showAddCustomer, quoteAddCustomerPortalItems])
+
+  useEffect(() => {
+    if (!showQuoteJobTypesModal || quoteJobTypesPanelItems.length === 0) {
+      if (showQuoteJobTypesModal) setQuoteJobTypesModalValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of quoteJobTypesPanelItems) {
+      try {
+        const s = localStorage.getItem(`quotes_qjt_${item.id}`)
+        if (item.type === "checkbox") {
+          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
+        } else if (item.type === "dropdown" && item.options?.length) {
+          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
+        } else {
+          next[item.id] = s ?? ""
+        }
+      } catch {
+        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
+        else next[item.id] = ""
+      }
+    }
+    setQuoteJobTypesModalValues(next)
+  }, [showQuoteJobTypesModal, quoteJobTypesPanelItems])
+
+  useEffect(() => {
+    if (!showQuoteJobTypesModal || !supabase || !userId) return
+    void supabase
+      .from("job_types")
+      .select("id, name, duration_minutes, description, color_hex")
+      .eq("user_id", userId)
+      .order("name")
+      .then(({ data }) => setQuoteJobTypesList(data || []))
+  }, [showQuoteJobTypesModal, userId])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -821,6 +1023,161 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return { desc, qty, up, tot }
   }
 
+  const quoteItemsReviewKey = useMemo(
+    () =>
+      JSON.stringify(
+        selectedQuoteItems.map((item) => {
+          const { desc, qty, up } = getItemDisplay(item)
+          const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
+          const unit_price = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
+          return { description: String(desc), quantity, unit_price }
+        }),
+      ),
+    [selectedQuoteItems],
+  )
+
+  useEffect(() => {
+    if (!selectedQuoteId || !session?.access_token) {
+      setEstimateReview({ subtotal: null, issues: [], agreesWithSubtotal: null })
+      return
+    }
+    let cancelled = false
+    if (estimateReviewTimerRef.current) clearTimeout(estimateReviewTimerRef.current)
+    estimateReviewTimerRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const lines = JSON.parse(quoteItemsReviewKey) as {
+            description: string
+            quantity: number
+            unit_price: number
+          }[]
+          const res = await fetch("/api/platform-tools?__route=quote-estimate-review", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ quoteId: selectedQuoteId, lines }),
+          })
+          const j = (await res.json()) as {
+            ok?: boolean
+            computedSubtotal?: number
+            issues?: string[]
+            agreesWithSubtotal?: boolean
+            error?: string
+          }
+          if (cancelled) return
+          if (!res.ok) {
+            setEstimateReview({ subtotal: null, issues: [], agreesWithSubtotal: null })
+            return
+          }
+          setEstimateReview({
+            subtotal: typeof j.computedSubtotal === "number" ? j.computedSubtotal : null,
+            issues: Array.isArray(j.issues) ? j.issues : [],
+            agreesWithSubtotal: typeof j.agreesWithSubtotal === "boolean" ? j.agreesWithSubtotal : null,
+          })
+        } catch {
+          if (!cancelled) setEstimateReview({ subtotal: null, issues: [], agreesWithSubtotal: null })
+        }
+      })()
+    }, 900)
+    return () => {
+      cancelled = true
+      if (estimateReviewTimerRef.current) clearTimeout(estimateReviewTimerRef.current)
+    }
+  }, [selectedQuoteId, quoteItemsReviewKey, session?.access_token])
+
+  function parseDefaultLaborRateNumber(): number {
+    const laborItem = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
+    const raw =
+      laborItem && isEstimateLinePortalItemVisible(laborItem)
+        ? (estimateLinePortalValues.eli_default_labor_rate ?? "").trim()
+        : String(estimateDefaultLaborRate).trim()
+    const n = Number.parseFloat(raw.replace(/[^0-9.]/g, ""))
+    return Number.isFinite(n) ? n : 0
+  }
+
+  function estimateLineTemplateOffered(itemId: string): boolean {
+    const item = estimateLineItemsPortal.find((i) => i.id === itemId)
+    if (!item) return false
+    const v = estimateLinePortalValues[itemId]
+    if (v === "checked" || v === "unchecked") return v === "checked"
+    return Boolean(item.defaultChecked)
+  }
+
+  async function insertQuoteLineRow(description: string, quantity: number, unitPrice: number) {
+    if (!supabase || !selectedQuoteId) return
+    const { error } = await supabase.from("quote_items").insert({
+      quote_id: selectedQuoteId,
+      description: description.trim(),
+      quantity,
+      unit_price: unitPrice,
+    })
+    if (error) {
+      alert(error.message)
+      return
+    }
+    openQuote(selectedQuoteId)
+  }
+
+  async function saveEstimateLineItemsModal() {
+    if (!supabase || !userId) {
+      setShowEstimateLineItemsModal(false)
+      return
+    }
+    setEstimateLineSaveBusy(true)
+    try {
+      for (const item of estimateLineItemsPortal) {
+        const v = estimateLinePortalValues[item.id]
+        if (v != null) {
+          try {
+            localStorage.setItem(`quotes_eli_${item.id}`, v)
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) {
+        alert(fetchErr.message)
+        return
+      }
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      const laborItem = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
+      const laborFieldVisible = laborItem ? isEstimateLinePortalItemVisible(laborItem) : false
+      const laborRaw = laborFieldVisible
+        ? (estimateLinePortalValues.eli_default_labor_rate ?? "").trim()
+        : estimateDefaultLaborRate.trim()
+      const laborNum = Number.parseFloat(laborRaw.replace(/[^0-9.]/g, ""))
+      if (Number.isFinite(laborNum) && laborNum >= 0) prevMeta.estimate_default_labor_rate = laborNum
+      else delete prevMeta.estimate_default_labor_rate
+
+      const presets = estimateLineDraft
+        .map((row) => ({
+          id: row.id,
+          description: row.description.trim().slice(0, 500),
+          quantity: row.quantity,
+          unit_price: row.unit_price,
+        }))
+        .filter((row) => row.description)
+      prevMeta.estimate_line_presets = presets
+
+      const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setEstimateLinePresets(presets)
+      if (Number.isFinite(laborNum) && laborNum >= 0) setEstimateDefaultLaborRate(String(laborNum))
+      setShowEstimateLineItemsModal(false)
+    } finally {
+      setEstimateLineSaveBusy(false)
+    }
+  }
+
   async function handleQuoteEntityFileChange(files: FileList | null) {
     if (!files?.length || !userId || !selectedQuoteId || !supabase) return
     const file = files[0]
@@ -871,6 +1228,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
         if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
       }
+      const legal =
+        quoteIncludeLegal && quoteLegalText.trim()
+          ? {
+              body: quoteLegalText.trim(),
+              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : null,
+              showSignatures: quoteLegalSignatures,
+            }
+          : null
       const base = {
         title: `Quote ${selectedQuote.id.slice(0, 8)}`,
         businessLabel: profileDisplayNameForPdf || "Quote",
@@ -881,6 +1246,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         includePreparedDate: quoteIncludePreparedDate,
         showLineNumbers: quoteShowLineNumbers,
         logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
+        legal,
       }
       const shortId = selectedQuote.id.slice(0, 8)
       if (quoteExportFormat === "docx") {
@@ -1031,6 +1397,27 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 {estimateTemplateButtonLabel}
               </button>
             )}
+            {showQuotesEstimateLineItems && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
+                  setShowEstimateLineItemsModal(true)
+                }}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {estimateLineItemsButtonLabel}
+              </button>
+            )}
+            {showQuotesJobTypesPanel && (
+              <button
+                type="button"
+                onClick={() => setShowQuoteJobTypesModal(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {quoteJobTypesButtonLabel}
+              </button>
+            )}
             {customActionButtons.map((btn) => (
               <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
             ))}
@@ -1066,7 +1453,34 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             isItemVisible={isEstimateTemplateItemVisible}
             onClose={() => void closeEstimateTemplateModal()}
             belowForm={
-              estimateTemplateItems.some((i) => i.id === "estimate_template_logo_url") ? (
+              <>
+              {estimateTemplateItems.some((i) => i.id === "estimate_template_include_legal") ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: theme.text }}>Suggested wording</p>
+                  <p style={{ margin: 0, fontSize: 12, color: theme.text, opacity: 0.82, lineHeight: 1.45 }}>
+                    Generates acknowledgment and cancellation-style paragraphs you can edit above. Not legal advice — have an attorney review before use.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={legalDraftBusy || !session?.access_token}
+                    onClick={() => void runEstimateLegalDraft()}
+                    style={{
+                      alignSelf: "flex-start",
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      cursor: legalDraftBusy ? "wait" : "pointer",
+                      fontWeight: 600,
+                      fontSize: 13,
+                    }}
+                  >
+                    {legalDraftBusy ? "Working…" : "Fill legal & cancellation from business name"}
+                  </button>
+                </div>
+              ) : null}
+              {estimateTemplateItems.some((i) => i.id === "estimate_template_logo_url") ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: theme.text }}>Upload company logo</p>
                   <p style={{ margin: 0, fontSize: 12, color: theme.text, opacity: 0.82, lineHeight: 1.45 }}>
@@ -1105,7 +1519,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     </div>
                   ) : null}
                 </div>
-              ) : null
+              ) : null}
+              </>
             }
           />
         )}
@@ -1544,28 +1959,224 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                             <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>No files attached to this quote yet.</p>
                           )}
 
-            <h3 style={{ marginTop: "24px" }}>Quote items</h3>
-            <table style={{ width: "100%", minWidth: isMobile ? "540px" : "100%", borderCollapse: "collapse", marginTop: "8px", border: "1px solid #ddd" }}>
+            <div style={{ marginTop: 24, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>Quote items</h3>
+              {showQuotesEstimateLineItems ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
+                    setShowEstimateLineItemsModal(true)
+                  }}
+                  style={{
+                    fontSize: 12,
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {estimateLineItemsButtonLabel}
+                </button>
+              ) : null}
+              {showQuotesJobTypesPanel ? (
+                <button
+                  type="button"
+                  onClick={() => setShowQuoteJobTypesModal(true)}
+                  style={{
+                    fontSize: 12,
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {quoteJobTypesButtonLabel}
+                </button>
+              ) : null}
+            </div>
+            {(estimateLineTemplateOffered("eli_show_labor") ||
+              estimateLineTemplateOffered("eli_show_materials") ||
+              estimateLineTemplateOffered("eli_show_travel") ||
+              estimateLineTemplateOffered("eli_show_misc")) && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Quick add</span>
+                {estimateLineTemplateOffered("eli_show_labor") ? (
+                  <button
+                    type="button"
+                    onClick={() => void insertQuoteLineRow("Labor (hours)", 1, parseDefaultLaborRateNumber())}
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      background: "#fff",
+                      color: "#111827",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Labor
+                  </button>
+                ) : null}
+                {estimateLineTemplateOffered("eli_show_materials") ? (
+                  <button
+                    type="button"
+                    onClick={() => void insertQuoteLineRow("Materials", 1, 0)}
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      background: "#fff",
+                      color: "#111827",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Materials
+                  </button>
+                ) : null}
+                {estimateLineTemplateOffered("eli_show_travel") ? (
+                  <button
+                    type="button"
+                    onClick={() => void insertQuoteLineRow("Travel / trip", 1, 0)}
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      background: "#fff",
+                      color: "#111827",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Travel
+                  </button>
+                ) : null}
+                {estimateLineTemplateOffered("eli_show_misc") ? (
+                  <button
+                    type="button"
+                    onClick={() => void insertQuoteLineRow("Miscellaneous", 1, 0)}
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      background: "#fff",
+                      color: "#111827",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Misc
+                  </button>
+                ) : null}
+              </div>
+            )}
+            {estimateLinePresets.length > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Saved lines</span>
+                {estimateLinePresets.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => void insertQuoteLineRow(p.description, p.quantity, p.unit_price)}
+                    style={{
+                      fontSize: 12,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "1px solid #94a3b8",
+                      background: "#f1f5f9",
+                      color: "#0f172a",
+                      cursor: "pointer",
+                      maxWidth: 220,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={p.description}
+                  >
+                    {p.description.length > 36 ? `${p.description.slice(0, 36)}…` : p.description}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {(estimateReview.subtotal != null || estimateReview.issues.length > 0) && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #cbd5e1",
+                  background: "#f8fafc",
+                  fontSize: 13,
+                  color: "#111827",
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Document check</div>
+                {estimateReview.subtotal != null ? (
+                  <p style={{ margin: "4px 0" }}>
+                    Line items subtotal (cross-check):{" "}
+                    <strong>${estimateReview.subtotal.toFixed(2)}</strong>
+                    {estimateReview.agreesWithSubtotal === false ? (
+                      <span style={{ color: "#b45309" }}> — double-check quantities and unit prices.</span>
+                    ) : null}
+                  </p>
+                ) : null}
+                {estimateReview.issues.length > 0 ? (
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#1e293b" }}>
+                    {estimateReview.issues.map((issue, idx) => (
+                      <li key={idx} style={{ marginBottom: 4 }}>
+                        {issue}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+            <table
+              style={{
+                width: "100%",
+                minWidth: isMobile ? "540px" : "100%",
+                borderCollapse: "collapse",
+                marginTop: "8px",
+                border: "1px solid #cbd5e1",
+              }}
+            >
               <thead>
-                <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd", background: "#f9fafb" }}>
-                  <th style={{ padding: "8px" }}>Description</th>
-                  <th style={{ padding: "8px" }}>Quantity</th>
-                  <th style={{ padding: "8px" }}>Unit price</th>
-                  <th style={{ padding: "8px" }}>Total</th>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Quantity</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Unit price</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Total</th>
                 </tr>
               </thead>
               <tbody>
                 {selectedQuoteItems.length === 0 ? (
-                  <tr><td colSpan={4} style={{ padding: "12px", color: "#6b7280" }}>No line items. Add one below.</td></tr>
+                  <tr>
+                    <td colSpan={5} style={{ padding: "12px", color: "#334155", fontWeight: 500 }}>
+                      No line items. Add one below.
+                    </td>
+                  </tr>
                 ) : (
-                  selectedQuoteItems.map((item) => {
+                  selectedQuoteItems.map((item, rowIdx) => {
                     const { desc, qty, up, tot } = getItemDisplay(item)
                     return (
-                      <tr key={item.id} style={{ borderBottom: "1px solid #eee" }}>
-                        <td style={{ padding: "8px" }}>{desc}</td>
-                        <td style={{ padding: "8px" }}>{qty}</td>
-                        <td style={{ padding: "8px" }}>{typeof up === "number" ? up.toFixed(2) : up}</td>
-                        <td style={{ padding: "8px" }}>{tot != null ? (typeof tot === "number" ? tot.toFixed(2) : tot) : "—"}</td>
+                      <tr key={item.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                        <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 13 }}>{rowIdx + 1}</td>
+                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>{desc}</td>
+                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>{qty}</td>
+                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>
+                          {typeof up === "number" ? up.toFixed(2) : up}
+                        </td>
+                        <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 14 }}>
+                          {tot != null ? (typeof tot === "number" ? tot.toFixed(2) : tot) : "—"}
+                        </td>
                       </tr>
                     )
                   })
@@ -1850,6 +2461,294 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </button>
                 <button onClick={() => setShowAddToCalendar(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
               </div>
+            </div>
+          </>
+        )}
+
+        {showEstimateLineItemsModal && (
+          <>
+            <div
+              onClick={() => setShowEstimateLineItemsModal(false)}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: "92%",
+                maxWidth: 640,
+                maxHeight: "90vh",
+                overflow: "auto",
+                background: "white",
+                borderRadius: 8,
+                padding: 24,
+                boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+                zIndex: 9999,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>{estimateLineItemsButtonLabel}</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowEstimateLineItemsModal(false)}
+                  style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+                >
+                  ✕
+                </button>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
+                Save reusable lines (labor, materials, travel, etc.). They appear as one-click inserts on each quote and stay in sync with your profile.
+              </p>
+              {estimateLineItemsPortal.length > 0 ? (
+                <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${theme.border}` }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                  <PortalSettingItemsForm
+                    items={estimateLineItemsPortal}
+                    formValues={estimateLinePortalValues}
+                    setFormValue={(id, v) => {
+                      setEstimateLinePortalValues((prev) => ({ ...prev, [id]: v }))
+                      try {
+                        localStorage.setItem(`quotes_eli_${id}`, v)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    isItemVisible={isEstimateLinePortalItemVisible}
+                  />
+                </div>
+              ) : null}
+              {(() => {
+                const li = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
+                const portalShowsLabor = li && isEstimateLinePortalItemVisible(li)
+                return portalShowsLabor ? null : (
+                  <label style={{ display: "block", marginBottom: 14, fontSize: 13, color: theme.text }}>
+                    <span style={{ fontWeight: 600, display: "block", marginBottom: 6 }}>Default labor rate ($/hr)</span>
+                    <input
+                      value={estimateDefaultLaborRate}
+                      onChange={(e) => setEstimateDefaultLaborRate(e.target.value)}
+                      placeholder="e.g. 85"
+                      style={{ ...theme.formInput, maxWidth: 200 }}
+                    />
+                  </label>
+                )
+              })()}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>Preset lines</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEstimateLineDraft((rows) => [
+                      ...rows,
+                      { id: crypto.randomUUID(), description: "", quantity: 1, unit_price: 0 },
+                    ])
+                  }
+                  style={{
+                    fontSize: 12,
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    cursor: "pointer",
+                    color: theme.text,
+                  }}
+                >
+                  Add row
+                </button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {estimateLineDraft.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No presets yet. Add a row or use Quick add on a quote.</p>
+                ) : (
+                  estimateLineDraft.map((row, idx) => (
+                    <div
+                      key={row.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobile ? "1fr" : "1fr 80px 100px auto",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      <input
+                        placeholder="Description"
+                        value={row.description}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, description: v } : r)))
+                        }}
+                        style={theme.formInput}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        placeholder="Qty"
+                        value={row.quantity}
+                        onChange={(e) => {
+                          const q = Number.parseFloat(e.target.value) || 0
+                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
+                        }}
+                        style={theme.formInput}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        placeholder="Unit $"
+                        value={row.unit_price}
+                        onChange={(e) => {
+                          const p = Number.parseFloat(e.target.value) || 0
+                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
+                        }}
+                        style={theme.formInput}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEstimateLineDraft((prev) => prev.filter((_, i) => i !== idx))}
+                        style={{
+                          fontSize: 12,
+                          color: "#b91c1c",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          justifySelf: isMobile ? "start" : undefined,
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={estimateLineSaveBusy}
+                  onClick={() => void saveEstimateLineItemsModal()}
+                  style={{
+                    padding: "10px 16px",
+                    background: theme.primary,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: estimateLineSaveBusy ? "wait" : "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {estimateLineSaveBusy ? "Saving…" : "Save & close"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEstimateLineItemsModal(false)}
+                  style={{
+                    padding: "10px 16px",
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 6,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {showQuoteJobTypesModal && (
+          <>
+            <div
+              onClick={() => setShowQuoteJobTypesModal(false)}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: "92%",
+                maxWidth: 520,
+                maxHeight: "90vh",
+                overflow: "auto",
+                background: "white",
+                borderRadius: 8,
+                padding: 24,
+                boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+                zIndex: 9999,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>{quoteJobTypesButtonLabel}</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowQuoteJobTypesModal(false)}
+                  style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+                >
+                  ✕
+                </button>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
+                Same job types as Calendar → Job Types for this account. Manage them from the Calendar tab; use them when scheduling from a quote.
+              </p>
+              {quoteJobTypesPanelItems.length > 0 ? (
+                <div style={{ marginBottom: 16 }}>
+                  <PortalSettingItemsForm
+                    items={quoteJobTypesPanelItems}
+                    formValues={quoteJobTypesModalValues}
+                    setFormValue={(id, v) => {
+                      setQuoteJobTypesModalValues((prev) => ({ ...prev, [id]: v }))
+                      try {
+                        localStorage.setItem(`quotes_qjt_${id}`, v)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    isItemVisible={isQuoteJobTypesPanelItemVisible}
+                  />
+                </div>
+              ) : null}
+              {quoteJobTypesList.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add them under Calendar → Job Types.</p>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: "#0f172a" }}>
+                  <thead>
+                    <tr style={{ background: "#e2e8f0", textAlign: "left" }}>
+                      <th style={{ padding: 8, color: "#0f172a" }}>Name</th>
+                      <th style={{ padding: 8, color: "#0f172a" }}>Duration</th>
+                      <th style={{ padding: 8, color: "#0f172a" }}>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quoteJobTypesList.map((jt) => (
+                      <tr key={jt.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                        <td style={{ padding: 8, fontWeight: 600 }}>{jt.name}</td>
+                        <td style={{ padding: 8 }}>{jt.duration_minutes} min</td>
+                        <td style={{ padding: 8, color: "#334155" }}>{jt.description?.trim() || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowQuoteJobTypesModal(false)}
+                style={{
+                  marginTop: 16,
+                  padding: "10px 16px",
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 6,
+                  background: theme.background,
+                  color: theme.text,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Close
+              </button>
             </div>
           </>
         )}

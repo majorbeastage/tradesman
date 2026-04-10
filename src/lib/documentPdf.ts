@@ -17,17 +17,30 @@ export async function buildQuotePdfBytes(params: {
   showLineNumbers?: boolean
   /** Optional logo above the business name (PNG or JPEG bytes). */
   logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
+  /** Optional legal / lite-contract block and signature lines (after footer text). */
+  legal?: {
+    body: string
+    cancellation?: string | null
+    showSignatures: boolean
+  } | null
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
-  const page = doc.addPage([612, 792])
-  const { height } = page.getSize()
+  let page = doc.addPage([612, 792])
+  const pageHeight = 792
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
-  let y = height - 50
+  let y = pageHeight - 50
   const left = 50
   const lineH = 14
 
+  const newPageIfNeeded = (minY: number) => {
+    if (y >= minY) return
+    page = doc.addPage([612, pageHeight])
+    y = pageHeight - 50
+  }
+
   const draw = (text: string, size = 11, bold = false, gray = 0) => {
+    newPageIfNeeded(56)
     page.drawText(text.slice(0, 500), {
       x: left,
       y,
@@ -51,7 +64,7 @@ export async function buildQuotePdfBytes(params: {
       const w = embedded.width * scale
       const h = embedded.height * scale
       const marginFromTop = 40
-      const targetUpperY = height - marginFromTop
+      const targetUpperY = pageHeight - marginFromTop
       const lowerLeftY = targetUpperY - h
       page.drawImage(embedded, { x: left, y: lowerLeftY, width: w, height: h })
       y = lowerLeftY - 18
@@ -92,6 +105,30 @@ export async function buildQuotePdfBytes(params: {
     y -= 12
     for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 12)) {
       draw(para, 9, false, 0.45)
+    }
+  }
+
+  if (params.legal?.body?.trim()) {
+    y -= 18
+    newPageIfNeeded(120)
+    draw("Terms and acknowledgment", 11, true, 0.12)
+    y -= 4
+    for (const para of params.legal.body.trim().split(/\n+/).slice(0, 28)) {
+      if (!para.trim()) continue
+      draw(para.trim(), 9, false, 0.28)
+    }
+    if (params.legal.cancellation?.trim()) {
+      y -= 6
+      for (const para of params.legal.cancellation.trim().split(/\n+/).slice(0, 10)) {
+        if (!para.trim()) continue
+        draw(para.trim(), 9, false, 0.32)
+      }
+    }
+    if (params.legal.showSignatures) {
+      y -= 20
+      newPageIfNeeded(80)
+      draw("Customer signature: _____________________________  Date: ______________", 9, false, 0.2)
+      draw("Authorized representative: ______________________  Date: ______________", 9, false, 0.2)
     }
   }
 

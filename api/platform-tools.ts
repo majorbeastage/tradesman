@@ -22,6 +22,159 @@ import {
   runLeadCaptureSideEffects,
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
+import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+
+/** Verify Supabase JWT; returns userId or null + optional error response writer. */
+async function getUserIdFromBearer(
+  req: VercelRequest,
+  res: VercelResponse,
+): Promise<{ userId: string } | null> {
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing authorization" })
+    return null
+  }
+  const token = authHeader.slice("Bearer ".length).trim()
+  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
+  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  if (!supabaseUrl || !anonKey) {
+    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    return null
+  }
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
+  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  if (userErr || !userData.user) {
+    res.status(401).json({ error: "Invalid session" })
+    return null
+  }
+  return { userId: userData.user.id }
+}
+
+/**
+ * Draft estimate legal + cancellation language. Does not honor ai_assistant_visible (estimate workflow).
+ * POST body: { businessName?: string }
+ */
+async function handleEstimateLegalDraft(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const body = jsonBody(req)
+  const businessName = pickFirstString(body.businessName).slice(0, 200)
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(503).json({ error: "OpenAI is not configured on the server." })
+    return
+  }
+
+  const raw =
+    (await openAiText(
+      "You help home-service contractors in the US. Reply with a single JSON object only, keys: legal (string, plain text, 2-4 short paragraphs for an estimate acknowledgment / lite pre-contract terms, not legal advice), cancellation (string, one short paragraph on typical cancellation fee language, must say customize with attorney). No markdown. Escape quotes properly in JSON.",
+      `Business: ${businessName || "Home services contractor"}. Draft estimate acknowledgment text plus optional cancellation fee paragraph.`,
+    ))?.trim() ?? ""
+
+  let legalText = ""
+  let cancellationText = ""
+  try {
+    const j = JSON.parse(raw) as { legal?: string; cancellation?: string }
+    legalText = typeof j.legal === "string" ? j.legal : ""
+    cancellationText = typeof j.cancellation === "string" ? j.cancellation : ""
+  } catch {
+    legalText = raw
+  }
+  res.status(200).json({ ok: true, legalText, cancellationText })
+}
+
+/**
+ * Background estimate review (math + consistency). Does not honor ai_assistant_visible.
+ * POST body: { quoteId: string, lines: { description?: string; quantity?: number; unit_price?: number }[] }
+ */
+async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const { userId } = auth
+
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+
+  const body = jsonBody(req)
+  const quoteId = pickFirstString(body.quoteId).trim()
+  const linesRaw = body.lines
+  if (!quoteId) {
+    res.status(400).json({ error: "quoteId required" })
+    return
+  }
+
+  const { data: quote, error: qErr } = await service.from("quotes").select("id, user_id").eq("id", quoteId).maybeSingle()
+  const qr = quote as { id: string; user_id: string } | null
+  if (qErr || !qr || qr.user_id !== userId) {
+    res.status(404).json({ error: "Quote not found" })
+    return
+  }
+
+  const lines = Array.isArray(linesRaw) ? linesRaw : []
+  const normalized = lines
+    .map((row) => {
+      const o = row as Record<string, unknown>
+      const q = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+      const p = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+      const d = String(o.description ?? o.item_description ?? "").slice(0, 500)
+      return { description: d, quantity: q, unit_price: p, lineTotal: q * p }
+    })
+    .filter((x) => x.description.trim() || x.lineTotal !== 0 || x.quantity !== 0)
+
+  const computedSubtotal = normalized.reduce((s, x) => s + x.lineTotal, 0)
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(200).json({
+      ok: true,
+      computedSubtotal,
+      issues: [],
+      note: "OpenAI not configured; subtotal computed locally only.",
+    })
+    return
+  }
+
+  const pack = JSON.stringify({
+    lines: normalized,
+    computedSubtotal: Math.round(computedSubtotal * 100) / 100,
+  }).slice(0, 12000)
+
+  const raw =
+    (await openAiText(
+      "You review residential/commercial service estimates. Reply with JSON only: {\"issues\": string[] (max 6 short plain-English tips: missing labor, travel, materials, unclear qty, etc. Empty if nothing to flag), \"agreesWithSubtotal\": boolean}. No markdown.",
+      pack,
+    ))?.trim() ?? "{}"
+
+  let issues: string[] = []
+  let agreesWithSubtotal = true
+  try {
+    const j = JSON.parse(raw) as { issues?: unknown; agreesWithSubtotal?: boolean }
+    if (Array.isArray(j.issues)) {
+      issues = j.issues.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, 300)).slice(0, 6)
+    }
+    agreesWithSubtotal = j.agreesWithSubtotal !== false
+  } catch {
+    issues = []
+  }
+
+  res.status(200).json({ ok: true, computedSubtotal, issues, agreesWithSubtotal })
+}
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   const raw = req.body
@@ -36,6 +189,46 @@ function jsonBody(req: VercelRequest): Record<string, unknown> {
   }
   if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
   return {}
+}
+
+/** Rules-first lead fit evaluation (optional force to re-run). */
+async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+  const body = jsonBody(req)
+  const leadId = pickFirstString(body.leadId).trim()
+  if (!leadId) {
+    res.status(400).json({ error: "leadId required" })
+    return
+  }
+  const force = body.force === true
+  const { data: row, error } = await service.from("leads").select("id,user_id").eq("id", leadId).maybeSingle()
+  const l = row as { id: string; user_id: string } | null
+  if (error || !l || l.user_id !== auth.userId) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+  const result = await evaluateAndPersistLeadFit(service, leadId, { force })
+  if (result == null) {
+    res.status(200).json({
+      ok: true,
+      skipped: true,
+      message: "Auto filter is off, this lead was already scored, or it is locked after a manual override.",
+    })
+    return
+  }
+  res.status(200).json({ ok: true, ...result })
 }
 
 async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -671,6 +864,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "ai-regenerate-lead-consumer-reply",
         "ai-regenerate-conversation-consumer-reply",
         "notify-admin-verified-signup",
+        "estimate-legal-draft",
+        "quote-estimate-review",
+        "lead-evaluate-fit",
       ],
     })
     return
@@ -701,9 +897,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       await handleNotifyAdminVerifiedSignup(req, res)
       return
     }
+    if (route === "estimate-legal-draft") {
+      await handleEstimateLegalDraft(req, res)
+      return
+    }
+    if (route === "quote-estimate-review") {
+      await handleQuoteEstimateReview(req, res)
+      return
+    }
+    if (route === "lead-evaluate-fit") {
+      await handleLeadEvaluateFit(req, res)
+      return
+    }
     res.status(400).json({
       error: "Unknown __route",
-      hint: "Use public-lead, ai-summarize, ai-lead-assist, ai-regenerate-lead-consumer-reply, ai-regenerate-conversation-consumer-reply, or notify-admin-verified-signup",
+      hint: "See GET /api/platform-tools for supported __route values",
     })
   } catch (e) {
     console.error("[platform-tools]", e instanceof Error ? e.message : e)

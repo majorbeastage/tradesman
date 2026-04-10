@@ -54,6 +54,11 @@ export async function buildQuoteDocxBlob(params: {
   includePreparedDate?: boolean
   showLineNumbers?: boolean
   logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
+  legal?: {
+    body: string
+    cancellation?: string | null
+    showSignatures: boolean
+  } | null
 }): Promise<Blob> {
   const includeDate = params.includePreparedDate !== false
   const showNums = params.showLineNumbers === true
@@ -224,6 +229,61 @@ export async function buildQuoteDocxBlob(params: {
             children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "444444" })],
           }),
         )
+    }
+  }
+
+  if (params.legal?.body?.trim()) {
+    children.push(
+      new Paragraph({
+        spacing: { before: 240, after: 120 },
+        children: [new TextRun({ text: "Terms and acknowledgment", bold: true, size: 24 })],
+      }),
+    )
+    for (const para of params.legal.body.trim().split(/\n+/).slice(0, 28)) {
+      const t = para.trim()
+      if (t)
+        children.push(
+          new Paragraph({
+            spacing: { after: 100 },
+            children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "333333" })],
+          }),
+        )
+    }
+    if (params.legal.cancellation?.trim()) {
+      for (const para of params.legal.cancellation.trim().split(/\n+/).slice(0, 10)) {
+        const t = para.trim()
+        if (t)
+          children.push(
+            new Paragraph({
+              spacing: { after: 100 },
+              children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "333333" })],
+            }),
+          )
+      }
+    }
+    if (params.legal.showSignatures) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 200, after: 80 },
+          children: [
+            new TextRun({
+              text: "Customer signature: _____________________________  Date: ______________",
+              size: 20,
+              color: "222222",
+            }),
+          ],
+        }),
+        new Paragraph({
+          spacing: { after: 80 },
+          children: [
+            new TextRun({
+              text: "Authorized representative: ______________________  Date: ______________",
+              size: 20,
+              color: "222222",
+            }),
+          ],
+        }),
+      )
     }
   }
 
