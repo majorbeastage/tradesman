@@ -31,6 +31,7 @@ import {
   getOrderedAccountPortalSections,
   controlItemLabelKey,
   formatPortalItemDependenciesSummary,
+  sanitizePortalSettingItemDependencies,
 } from "../../types/portal-builder"
 import {
   ALL_USERS_ID,
@@ -877,7 +878,13 @@ function AdminAppInner() {
   }
 
   function updateControlItem(tabId: string, controlId: string, itemId: string, updates: Partial<PortalSettingItem>) {
-    setControlItems(tabId, controlId, getControlItems(tabId, controlId).map((x) => (x.id === itemId ? { ...x, ...updates } : x)))
+    setControlItems(
+      tabId,
+      controlId,
+      getControlItems(tabId, controlId).map((x) =>
+        x.id === itemId ? sanitizePortalSettingItemDependencies({ ...x, ...updates }) : x,
+      ),
+    )
   }
 
   function setControlItemVisible(tabId: string, controlId: string, itemId: string, visibleToUser: boolean) {
@@ -950,7 +957,7 @@ function AdminAppInner() {
     const btn = getCustomActionButton(buttonId)
     if (!btn) return
     updateCustomActionButton(buttonId, {
-      items: btn.items.map((x) => (x.id === itemId ? { ...x, ...updates } : x)),
+      items: btn.items.map((x) => (x.id === itemId ? sanitizePortalSettingItemDependencies({ ...x, ...updates }) : x)),
     })
   }
 
@@ -1542,7 +1549,9 @@ function AdminAppInner() {
                           const otherItemsInButton = (itemId: string) => allBtnItems.filter((x) => x.id !== itemId)
                           return (
                             <>
-                              <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Button label and items. Edit type, dropdown options (click Options), dependency, visible to user, and hide from admin.</p>
+                              <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>
+                                Button label and items. Edit each item&apos;s <strong>Label</strong> (shown to users unless you add per-tab overrides later). Type, Options, Dependency, visibility — same as other controls.
+                              </p>
                               <input
                                 type="text"
                                 value={btn.label}
@@ -1565,7 +1574,22 @@ function AdminAppInner() {
                                     <AdminSortableRow key={item.id} scope={`cab-items-${buttonId.replace(/[^a-zA-Z0-9_-]/g, "_")}`} index={itemIndex} onReorder={(from, to) => reorderCustomActionButtonItemsRow(buttonId, from, to)} rowStyle={{ marginBottom: 10 }}>
                                     <div style={{ padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
-                                        <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                        <input
+                                          type="text"
+                                          title="Label shown to users in this button"
+                                          aria-label="Item label"
+                                          value={item.label}
+                                          onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { label: e.target.value })}
+                                          style={{
+                                            minWidth: 140,
+                                            flex: "1 1 140px",
+                                            padding: "4px 8px",
+                                            borderRadius: 6,
+                                            border: `1px solid ${theme.border}`,
+                                            fontSize: 12,
+                                            fontWeight: 500,
+                                          }}
+                                        />
                                         <select
                                           value={item.type}
                                           onChange={(e) => updateCustomActionButtonItem(buttonId, item.id, { type: e.target.value as PortalSettingItem["type"], options: e.target.value === "dropdown" ? (item.options ?? []) : undefined })}
@@ -1697,7 +1721,9 @@ function AdminAppInner() {
                           const otherItemsFor = (itemId: string) => allItems.filter((x) => x.id !== itemId)
                           return (
                           <>
-                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>Drag ⋮⋮ to reorder. Edit each item: type, dropdown options (Options), dependency (Dependency), visible to user, and hide from admin builder. Same options on every tab.</p>
+                            <p style={{ fontSize: 11, color: theme.text, opacity: 0.8, marginBottom: 8 }}>
+                              Drag ⋮⋮ to reorder. <strong>Label</strong> is the default text in the user portal. <strong>User-facing label override</strong> replaces it when filled (item <code style={{ fontSize: 10 }}>id</code> stays the same for automations). Options, Dependency, visibility — same on every tab.
+                            </p>
                             {hiddenPortalItemCount > 0 && (
                               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.text, marginBottom: 10, cursor: "pointer" }}>
                                 <input type="checkbox" checked={showPortalItemsHiddenFromAdmin} onChange={(e) => setShowPortalItemsHiddenFromAdmin(e.target.checked)} />
@@ -1713,7 +1739,22 @@ function AdminAppInner() {
                                   <AdminSortableRow key={item.id} scope={ctlScope} index={itemIndex} onReorder={(from, to) => reorderControlItemsRow(tabId, controlId, from, to)} rowStyle={{ marginBottom: 10 }}>
                                   <div style={{ padding: 8, background: isSelected ? "rgba(0,0,0,0.04)" : "transparent", borderRadius: 6, border: `1px solid ${isSelected ? theme.primary : theme.border}` }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: isSelected ? 8 : 0 }}>
-                                      <span style={{ fontWeight: 500 }}>{item.label}</span>
+                                      <input
+                                        type="text"
+                                        title="Default label in user portal (unless override is set)"
+                                        aria-label="Item default label"
+                                        value={item.label}
+                                        onChange={(e) => updateControlItem(tabId, controlId, item.id, { label: e.target.value })}
+                                        style={{
+                                          minWidth: 120,
+                                          flex: "1 1 120px",
+                                          padding: "4px 8px",
+                                          borderRadius: 6,
+                                          border: `1px solid ${theme.border}`,
+                                          fontSize: 12,
+                                          fontWeight: 500,
+                                        }}
+                                      />
                                       <input
                                         type="text"
                                         title="Override label shown to users (empty = use item label above)"

@@ -1237,6 +1237,19 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
               <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>Leads Settings</h3>
               <button onClick={() => setShowSettings(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
             </div>
+            {(() => {
+              const embedItem = leadsSettingsItems.find((i) => i.id === "embed_lead_enabled")
+              const embedShown =
+                embedItem && isSettingItemVisible(embedItem, leadsSettingsItems, settingsFormValues)
+              if (!embedShown) return null
+              return (
+                <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 14px", lineHeight: 1.5 }}>
+                  <strong style={{ color: theme.text }}>Website lead form:</strong> This is not a separate product. When turned on below, the form lives{" "}
+                  <em>on this same Tradesman site</em> at <code style={{ fontSize: 11 }}>/embed/lead/…</code>. You put that link on your contractor website
+                  or send it to customers; submissions create leads in your account.
+                </p>
+              )
+            })()}
             <div style={{ display: "flex", flexDirection: "column", gap: "16px", color: theme.text }}>
               {leadsSettingsItems.length === 0 && (
                 <p style={{ fontSize: "14px", color: theme.text, opacity: 0.8 }}>No settings configured. Your admin can add items in the portal config.</p>
@@ -1311,7 +1324,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 const url = `${origin}/embed/lead/${encodeURIComponent(slug)}`
                 return (
                   <p style={{ margin: 0, fontSize: 12, color: "#4b5563", wordBreak: "break-all" }}>
-                    <strong>Form URL:</strong>{" "}
+                    <strong>Your public form link (this app):</strong>{" "}
                     <a href={url} style={{ color: theme.primary }} target="_blank" rel="noreferrer">
                       {url}
                     </a>

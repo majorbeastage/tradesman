@@ -332,11 +332,63 @@ export function getControlItemDisplayLabel(
   return o || item.label
 }
 
-/** Resolved list of dependency rules (legacy `dependency` or `dependencies`). */
+function isValidPortalDependencyRow(d: unknown): d is PortalSettingDependency {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return false
+  const o = d as Record<string, unknown>
+  return typeof o.dependsOnItemId === "string" && o.dependsOnItemId.trim().length > 0 && typeof o.showWhenValue === "string"
+}
+
+/** Normalize stored checkbox-like values for dependency comparison (legacy profiles / imports). */
+export function normalizePortalCheckboxDependencyValue(raw: string): "checked" | "unchecked" | string {
+  const t = (raw ?? "").trim().toLowerCase()
+  if (t === "checked" || t === "true" || t === "1" || t === "yes") return "checked"
+  if (t === "unchecked" || t === "false" || t === "0" || t === "no") return "unchecked"
+  return (raw ?? "").trim()
+}
+
+/**
+ * Resolved list of dependency rules (legacy `dependency` or `dependencies`).
+ * Empty `dependencies: []` falls back to `dependency` so AND/OR is not lost to a bad save.
+ */
 export function getPortalItemDependencyList(item: PortalSettingItem): PortalSettingDependency[] {
-  if (Array.isArray(item.dependencies) && item.dependencies.length > 0) return item.dependencies
-  if (item.dependency) return [item.dependency]
+  const rawList = Array.isArray(item.dependencies) ? item.dependencies : []
+  const filtered = rawList.filter(isValidPortalDependencyRow)
+  if (filtered.length > 0) return filtered
+  if (item.dependency && isValidPortalDependencyRow(item.dependency)) return [item.dependency]
   return []
+}
+
+/** AND vs OR: only meaningful when there are 2+ rules; otherwise always "all". */
+export function getPortalItemDependencyJoinMode(item: PortalSettingItem): "all" | "any" {
+  const deps = getPortalItemDependencyList(item)
+  if (deps.length < 2) return "all"
+  return item.dependencyMode === "any" ? "any" : "all"
+}
+
+/**
+ * Canonical dependency shape for portal JSON (avoids stale `dependency` + `dependencies` fighting).
+ * Call when saving items from the admin builder.
+ */
+export function sanitizePortalSettingItemDependencies(item: PortalSettingItem): PortalSettingItem {
+  const multi = Array.isArray(item.dependencies) ? item.dependencies.filter(isValidPortalDependencyRow) : []
+  if (multi.length >= 2) {
+    return {
+      ...item,
+      dependency: undefined,
+      dependencies: multi,
+      dependencyMode: item.dependencyMode === "any" ? "any" : "all",
+    }
+  }
+  if (multi.length === 1) {
+    const { dependencies: _deps, dependencyMode: _mode, ...rest } = item
+    return { ...rest, dependency: multi[0] }
+  }
+  if (item.dependency && isValidPortalDependencyRow(item.dependency)) {
+    const { dependencies: _deps, dependencyMode: _mode, ...rest } = item
+    return { ...rest, dependency: item.dependency }
+  }
+  const { dependency: _d, dependencies: _deps2, dependencyMode: _m2, ...clean } = item
+  return clean
 }
 
 function isSinglePortalDependencySatisfied(
@@ -352,6 +404,11 @@ function isSinglePortalDependencySatisfied(
   if (depItem?.type === "dropdown" && Array.isArray(showWhenValues) && showWhenValues.length > 0) {
     return showWhenValues.includes(depValue)
   }
+  if (depItem?.type === "checkbox") {
+    const left = normalizePortalCheckboxDependencyValue(depValue)
+    const right = normalizePortalCheckboxDependencyValue(showWhenValue)
+    return left === right
+  }
   return depValue === showWhenValue
 }
 
@@ -363,7 +420,7 @@ export function isPortalSettingDependencyVisible(
 ): boolean {
   const deps = getPortalItemDependencyList(item)
   if (deps.length === 0) return true
-  const mode = item.dependencyMode === "any" ? "any" : "all"
+  const mode = getPortalItemDependencyJoinMode(item)
   const results = deps.map((d) => isSinglePortalDependencySatisfied(d, allItems, formValues))
   return mode === "any" ? results.some(Boolean) : results.every(Boolean)
 }
@@ -378,8 +435,9 @@ export function formatPortalItemDependenciesSummary(item: PortalSettingItem, sib
     return `${labelOf(d.dependsOnItemId)} = ${valueStr}`
   })
   if (deps.length === 1) return `When ${parts[0]}`
-  const joiner = item.dependencyMode === "any" ? " OR " : " AND "
-  return (item.dependencyMode === "any" ? "Any: " : "All: ") + parts.join(joiner)
+  const join = getPortalItemDependencyJoinMode(item)
+  const joiner = join === "any" ? " OR " : " AND "
+  return (join === "any" ? "Any: " : "All: ") + parts.join(joiner)
 }
 
 const CONV_AUTO_PHONE_TTS_OPTION = "AI text to speech"
@@ -534,13 +592,13 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
   {
     id: "embed_lead_enabled",
     type: "checkbox",
-    label: "Enable embeddable web lead form (public URL posts to your API)",
+    label: 'Public "contact us" form hosted on this Tradesman app (link it from my own website)',
     defaultChecked: false,
   },
   {
     id: "embed_lead_slug",
     type: "custom_field",
-    label: "Embed form URL slug (letters, numbers, hyphens; min 3)",
+    label: "Ending of the form’s address here: …/embed/lead/<you choose>. Letters, numbers, hyphens only; at least 3 characters (example: acme-roofing)",
     customFieldSubtype: "text",
     dependency: { dependsOnItemId: "embed_lead_enabled", showWhenValue: "checked" },
   },

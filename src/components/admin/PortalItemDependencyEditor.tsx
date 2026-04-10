@@ -1,5 +1,5 @@
 import type { PortalSettingDependency, PortalSettingItem } from "../../types/portal-builder"
-import { getPortalItemDependencyList } from "../../types/portal-builder"
+import { getPortalItemDependencyJoinMode, getPortalItemDependencyList } from "../../types/portal-builder"
 import { theme } from "../../styles/theme"
 
 type Props = {
@@ -80,7 +80,7 @@ function DependencyValueSelect({
 
 export default function PortalItemDependencyEditor({ item, siblingItems, onApply }: Props) {
   const deps = getPortalItemDependencyList(item)
-  const mode: "all" | "any" = item.dependencyMode === "any" ? "any" : "all"
+  const mode: "all" | "any" = getPortalItemDependencyJoinMode(item)
 
   function setDeps(next: PortalSettingDependency[], nextMode: "all" | "any" = mode) {
     commitDependencyState(next, nextMode, onApply)
@@ -90,8 +90,9 @@ export default function PortalItemDependencyEditor({ item, siblingItems, onApply
     <div style={{ marginBottom: 8 }}>
       <p style={{ fontSize: 11, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Dependencies (when to show this field)</p>
       <p style={{ fontSize: 10, color: theme.text, opacity: 0.85, margin: "0 0 8px", lineHeight: 1.45 }}>
-        Add one or more rules referencing <strong>other items in this list</strong>.{" "}
-        <strong>All (AND)</strong> — every rule must match. <strong>Any (OR)</strong> — at least one must match. (Nested groups are not supported.)
+        Rules reference <strong>other items in this list</strong>. With two or more rules: <strong>All (AND)</strong> means the field shows only when
+        every rule matches (e.g. parent checked <em>and</em> child unchecked). <strong>Any (OR)</strong> means it shows when any rule matches. Nested
+        groups are not supported. Re-open this item and confirm the combine dropdown if behavior feels wrong—mis-saved JSON used to drop AND mode.
       </p>
       {siblingItems.length === 0 ? (
         <p style={{ fontSize: 11, color: "#92400e", margin: 0 }}>Add another item to this control first; then you can depend on it.</p>
