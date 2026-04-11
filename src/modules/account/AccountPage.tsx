@@ -166,7 +166,7 @@ export function AccountProfilePanel({
   adminContext = false,
 }: AccountProfilePanelProps) {
   const { user, refetchProfile } = useAuth()
-  const { setLocale, t } = useLocale()
+  const { setLocale, t, refetchLocale } = useLocale()
   const portalConfig = usePortalConfigForPage()
   const showAccountSection = (sectionId: string) =>
     adminContext || getAccountSectionVisible(portalConfig, sectionId)
@@ -195,6 +195,7 @@ export function AccountProfilePanel({
   const [voicemailExpanded, setVoicemailExpanded] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const [languageSaving, setLanguageSaving] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -305,6 +306,35 @@ export function AccountProfilePanel({
       }
     })()
   }, [profileUserId])
+
+  /** Language is saved immediately so My T works even when Contact & profile is hidden in portal. */
+  async function persistUiLanguage(next: "en" | "es") {
+    if (!supabase || !profileUserId) return
+    setLanguageSaving(true)
+    setError("")
+    try {
+      const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (metaErr) throw metaErr
+      const prevMeta =
+        metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+          ? { ...(metaRow.metadata as Record<string, unknown>) }
+          : {}
+      prevMeta.ui_language = next
+      const { error: upErr } = await supabase
+        .from("profiles")
+        .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
+        .eq("id", profileUserId)
+      if (upErr) throw upErr
+      setForm((prev) => ({ ...prev, ui_language: next }))
+      setLocale(next)
+      if (user?.id === profileUserId) await refetchLocale()
+      setMessage(adminContext ? "Language preference saved for this user." : "Language updated.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLanguageSaving(false)
+    }
+  }
 
   async function handleSave() {
     if (!supabase || !profileUserId) return
@@ -513,6 +543,26 @@ export function AccountProfilePanel({
           <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
+            <div style={ACCOUNT_SECTION_CARD}>
+              <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.language")}</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.languageHint")}</p>
+              <label style={{ display: "grid", gap: 6, maxWidth: 280 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Choose language</span>
+                <select
+                  value={form.ui_language}
+                  disabled={languageSaving}
+                  onChange={(e) => {
+                    const next = e.target.value === "es" ? "es" : "en"
+                    void persistUiLanguage(next)
+                  }}
+                  style={{ ...theme.formInput, opacity: languageSaving ? 0.7 : 1 }}
+                >
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+              </label>
+              {languageSaving ? <span style={{ fontSize: 12, color: "#6b7280" }}>Saving…</span> : null}
+            </div>
             {accountSectionIdsForRender.map((sectionId) => {
               if (!showAccountSection(sectionId)) return null
               if (sectionId === "profile") return (
@@ -548,20 +598,6 @@ export function AccountProfilePanel({
                   style={theme.formInput}
                   placeholder="If different from primary"
                 />
-              </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.language")}</span>
-                <select
-                  value={form.ui_language}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, ui_language: e.target.value === "es" ? "es" : "en" }))
-                  }
-                  style={theme.formInput}
-                >
-                  <option value="en">English</option>
-                  <option value="es">Español</option>
-                </select>
-                <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.languageHint")}</span>
               </label>
               </div>
             </div>
