@@ -50,9 +50,6 @@ type ProfileForm = {
   ui_language: "en" | "es"
 }
 
-const DEFAULT_WHISPER_TEMPLATE_HINT =
-  "Incoming Tradesman call from {caller_name}. Caller number {caller_phone_spoken}. Leave blank for the default announcement."
-
 const TIMEZONE_OPTIONS = [
   "America/New_York",
   "America/Chicago",
@@ -63,15 +60,7 @@ const TIMEZONE_OPTIONS = [
   "Pacific/Honolulu",
 ]
 
-const DAY_LABELS: Array<{ key: DayKey; label: string }> = [
-  { key: "mon", label: "Monday" },
-  { key: "tue", label: "Tuesday" },
-  { key: "wed", label: "Wednesday" },
-  { key: "thu", label: "Thursday" },
-  { key: "fri", label: "Friday" },
-  { key: "sat", label: "Saturday" },
-  { key: "sun", label: "Sunday" },
-]
+const DAY_KEYS: DayKey[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -131,7 +120,7 @@ function parseBusinessHours(value: unknown): BusinessHours {
   const base = defaultBusinessHours()
   if (!value || typeof value !== "object" || Array.isArray(value)) return base
   const input = value as Record<string, unknown>
-  for (const { key } of DAY_LABELS) {
+  for (const key of DAY_KEYS) {
     const raw = input[key]
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue
     const day = raw as Record<string, unknown>
@@ -328,7 +317,7 @@ export function AccountProfilePanel({
       setForm((prev) => ({ ...prev, ui_language: next }))
       setLocale(next)
       if (user?.id === profileUserId) await refetchLocale()
-      setMessage(adminContext ? "Language preference saved for this user." : "Language updated.")
+      setMessage(adminContext ? t("account.langSavedAdmin") : t("account.langSaved"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -409,7 +398,7 @@ export function AccountProfilePanel({
         primary_phone: formatPhone(payload.primary_phone ?? ""),
         best_contact_phone: formatPhone(payload.best_contact_phone ?? ""),
       }))
-      setMessage(adminContext ? "User account updated." : "Account updated.")
+      setMessage(adminContext ? t("account.msg.userUpdated") : t("account.msg.updated"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -426,7 +415,7 @@ export function AccountProfilePanel({
       const redirectTo = getPasswordRecoveryRedirectTo() || undefined
       const { error } = await supabase.auth.resetPasswordForEmail(emailForDisplay, redirectTo ? { redirectTo } : undefined)
       if (error) throw error
-      setMessage("Password reset email sent.")
+      setMessage(t("account.msg.passwordSent"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -470,7 +459,7 @@ export function AccountProfilePanel({
         .eq("id", profileUserId)
       if (persistErr) throw persistErr
       if (user?.id === profileUserId) await refetchProfile()
-      setMessage(adminContext ? "Greeting uploaded and saved to this user’s profile." : "Greeting uploaded and saved.")
+      setMessage(adminContext ? t("account.msg.greetingUploadedAdmin") : t("account.msg.greetingUploaded"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -488,7 +477,7 @@ export function AccountProfilePanel({
 
   async function handleStartRecording() {
     if (!recordingSupported) {
-      setError("This browser does not support microphone recording.")
+      setError(t("account.err.browserRecording"))
       return
     }
     setMessage("")
@@ -533,21 +522,19 @@ export function AccountProfilePanel({
     <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
       {adminContext && (
         <div style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>User account (My T)</h2>
-          <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
-            Same fields as the client sees on Account. Saves to this user&apos;s profile row in Supabase.
-          </p>
+          <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>{t("account.adminHeader")}</h2>
+          <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>{t("account.adminIntro")}</p>
         </div>
       )}
         {loading ? (
-          <p style={{ color: theme.text, margin: 0 }}>Loading account...</p>
+          <p style={{ color: theme.text, margin: 0 }}>{t("account.loading")}</p>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
             <div style={ACCOUNT_SECTION_CARD}>
               <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.language")}</h2>
               <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.languageHint")}</p>
               <label style={{ display: "grid", gap: 6, maxWidth: 280 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Choose language</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.chooseLanguage")}</span>
                 <select
                   value={form.ui_language}
                   disabled={languageSaving}
@@ -557,46 +544,44 @@ export function AccountProfilePanel({
                   }}
                   style={{ ...theme.formInput, opacity: languageSaving ? 0.7 : 1 }}
                 >
-                  <option value="en">English</option>
-                  <option value="es">Español</option>
+                  <option value="en">{t("account.langEnglish")}</option>
+                  <option value="es">{t("account.langSpanish")}</option>
                 </select>
               </label>
-              {languageSaving ? <span style={{ fontSize: 12, color: "#6b7280" }}>Saving…</span> : null}
+              {languageSaving ? <span style={{ fontSize: 12, color: "#6b7280" }}>{t("common.saving")}</span> : null}
             </div>
             {accountSectionIdsForRender.map((sectionId) => {
               if (!showAccountSection(sectionId)) return null
               if (sectionId === "profile") return (
             <Fragment key={sectionId}>
             <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Contact &amp; profile</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
-                Login email, display name, website, and phones.
-              </p>
+              <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.section.contactTitle")}</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.section.contactSub")}</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Login email</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.loginEmail")}</span>
                 <input value={emailForDisplay} readOnly style={{ ...theme.formInput, background: "#f9fafb", color: "#6b7280" }} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Business / display name</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.displayName")}</span>
                 <input value={form.display_name} onChange={(e) => setForm((prev) => ({ ...prev, display_name: e.target.value }))} style={theme.formInput} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Website URL</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.website")}</span>
                 <input value={form.website_url} onChange={(e) => setForm((prev) => ({ ...prev, website_url: e.target.value }))} style={theme.formInput} placeholder="https://example.com" />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Primary phone</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.primaryPhone")}</span>
                 <input value={form.primary_phone} onChange={(e) => setForm((prev) => ({ ...prev, primary_phone: e.target.value }))} onBlur={() => setForm((prev) => ({ ...prev, primary_phone: formatPhone(prev.primary_phone) }))} style={theme.formInput} placeholder="(555) 123-4567" />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Best contact phone (optional)</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.bestPhone")}</span>
                 <input
                   value={form.best_contact_phone}
                   onChange={(e) => setForm((prev) => ({ ...prev, best_contact_phone: e.target.value }))}
                   onBlur={() => setForm((prev) => ({ ...prev, best_contact_phone: formatPhone(prev.best_contact_phone) }))}
                   style={theme.formInput}
-                  placeholder="If different from primary"
+                  placeholder={t("account.placeholder.bestPhone")}
                 />
               </label>
               </div>
@@ -606,32 +591,32 @@ export function AccountProfilePanel({
               if (sectionId === "business_address") return (
             <Fragment key={sectionId}>
             <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Business Address</h2>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.addressTitle")}</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Address line 1</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.address1")}</span>
                   <input value={form.address_line_1} onChange={(e) => setForm((prev) => ({ ...prev, address_line_1: e.target.value }))} style={theme.formInput} />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Address line 2</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.address2")}</span>
                   <input value={form.address_line_2} onChange={(e) => setForm((prev) => ({ ...prev, address_line_2: e.target.value }))} style={theme.formInput} />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>City</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.city")}</span>
                   <input value={form.address_city} onChange={(e) => setForm((prev) => ({ ...prev, address_city: e.target.value }))} style={theme.formInput} />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>State</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.state")}</span>
                   <input value={form.address_state} onChange={(e) => setForm((prev) => ({ ...prev, address_state: e.target.value }))} style={theme.formInput} />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Zip</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.zip")}</span>
                   <input value={form.address_zip} onChange={(e) => setForm((prev) => ({ ...prev, address_zip: e.target.value }))} style={theme.formInput} />
                 </label>
               </div>
               <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}` }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>Formatted address</div>
-                <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || "No address entered yet."}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>{t("account.formattedAddress")}</div>
+                <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || t("account.noAddressYet")}</div>
               </div>
             </div>
             </Fragment>
@@ -639,10 +624,8 @@ export function AccountProfilePanel({
               if (sectionId === "service_area") return (
             <Fragment key={sectionId}>
             <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Service area</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
-                Optional. Set how far you typically travel from your business address (miles). Saved for your account; lead matching can use this later.
-              </p>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.serviceTitle")}</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.section.serviceSub")}</p>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                 <input
                   type="checkbox"
@@ -655,11 +638,11 @@ export function AccountProfilePanel({
                     }))
                   }
                 />
-                Add service radius
+                {t("account.serviceRadiusCheck")}
               </label>
               {form.service_radius_enabled && (
                 <label style={{ display: "grid", gap: 6, maxWidth: 220 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Radius (miles)</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.radiusMiles")}</span>
                   <input
                     type="number"
                     min={0}
@@ -667,7 +650,7 @@ export function AccountProfilePanel({
                     value={form.service_radius_miles}
                     onChange={(e) => setForm((prev) => ({ ...prev, service_radius_miles: e.target.value }))}
                     style={theme.formInput}
-                    placeholder="e.g. 25"
+                    placeholder={t("account.placeholder.radius")}
                   />
                 </label>
               )}
@@ -677,9 +660,9 @@ export function AccountProfilePanel({
               if (sectionId === "business_hours") return (
             <Fragment key={sectionId}>
             <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Timezone & Business Hours</h2>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.hoursTitle")}</h2>
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Timezone</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.timezone")}</span>
                 <select value={form.timezone} onChange={(e) => setForm((prev) => ({ ...prev, timezone: e.target.value }))} style={theme.formInput}>
                   {TIMEZONE_OPTIONS.map((tz) => (
                     <option key={tz} value={tz}>{tz}</option>
@@ -687,9 +670,9 @@ export function AccountProfilePanel({
                 </select>
               </label>
               <div style={{ display: "grid", gap: 10 }}>
-                {DAY_LABELS.map(({ key, label }) => (
+                {DAY_KEYS.map((key) => (
                   <div key={key} style={{ display: "grid", gridTemplateColumns: "minmax(110px, 160px) 120px 120px 120px", gap: 10, alignItems: "center" }}>
-                    <div style={{ color: theme.text, fontWeight: 600 }}>{label}</div>
+                    <div style={{ color: theme.text, fontWeight: 600 }}>{t(`account.day.${key}`)}</div>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
                       <input
                         type="checkbox"
@@ -704,7 +687,7 @@ export function AccountProfilePanel({
                           }))
                         }
                       />
-                      Open
+                      {t("account.hours.open")}
                     </label>
                     <input
                       type="time"
@@ -745,7 +728,7 @@ export function AccountProfilePanel({
               if (sectionId === "call_forwarding") return (
             <Fragment key={sectionId}>
             <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Call forwarding</h2>
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.forwardTitle")}</h2>
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
@@ -753,28 +736,24 @@ export function AccountProfilePanel({
                   checked={form.call_forwarding_enabled}
                   onChange={(e) => setForm((prev) => ({ ...prev, call_forwarding_enabled: e.target.checked }))}
                 />
-                Call forwarding from Twilio to my phone is enabled
+                {t("account.forward.enabled")}
               </label>
-              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>
-                Saving this updates live routing immediately for inbound forwarded calls.
-              </p>
+              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>{t("account.forward.saveNote")}</p>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600, marginTop: 12 }}>
                 <input
                   type="checkbox"
                   checked={!form.call_forwarding_outside_business_hours}
                   onChange={(e) => setForm((prev) => ({ ...prev, call_forwarding_outside_business_hours: !e.target.checked }))}
                 />
-                Turn forwarding off outside of business hours
+                {t("account.forward.outsideHours")}
               </label>
-              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>
-                When checked, calls only forward during the business hours you set above. When unchecked, calls may still forward on closed days or outside those hours. If forwarding is off entirely, unanswered calls use Tradesman voicemail.
-              </p>
+              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>{t("account.forward.outsideHelp")}</p>
 
               <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call screening (whisper)</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.forward.whisperHeading")}</span>
                 {!form.call_forwarding_enabled && (
                   <p style={{ margin: 0, padding: 10, borderRadius: 8, background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: 13, lineHeight: 1.5 }}>
-                    <strong>Forwarding is off.</strong> Whisper and press-1/2 screening only run when a call is <strong>forwarded to your phone</strong>. With forwarding unchecked, inbound calls go straight to Tradesman voicemail — you will not hear the announcement on your cell. Turn on <strong>Call forwarding</strong> above (and set your forward number on the channel in Admin → Communications) to use screening.
+                    {t("account.forward.whisperOffWarn")}
                   </p>
                 )}
                 <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
@@ -795,10 +774,8 @@ export function AccountProfilePanel({
                     }
                   />
                   <span style={{ display: "grid", gap: 4 }}>
-                    <span style={{ fontWeight: 700 }}>Announce caller before I connect</span>
-                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                      Short audio on your phone when you pick up a forwarded call: name (from your CRM when known) and number. Does not play if the call is not forwarded to you.
-                    </span>
+                    <span style={{ fontWeight: 700 }}>{t("account.forward.announceTitle")}</span>
+                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.announceHelp")}</span>
                   </span>
                 </label>
                 {form.forward_whisper_on_answer && (
@@ -810,10 +787,8 @@ export function AccountProfilePanel({
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
                       />
                       <span style={{ display: "grid", gap: 4 }}>
-                        <span style={{ fontWeight: 700 }}>Whisper only after hours</span>
-                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                          Uses the same business-hours schedule as above. When checked, open hours connect without the announcement.
-                        </span>
+                        <span style={{ fontWeight: 700 }}>{t("account.forward.whisperAfterHours")}</span>
+                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.whisperAfterHoursHelp")}</span>
                       </span>
                     </label>
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
@@ -823,29 +798,21 @@ export function AccountProfilePanel({
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
                       />
                       <span style={{ display: "grid", gap: 4 }}>
-                        <span style={{ fontWeight: 700 }}>Require accept or decline</span>
-                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                          After the announcement: press 1 (or say answer) to connect, 2 (or decline) to send the caller to Tradesman voicemail. Silence times out as decline.
-                        </span>
+                        <span style={{ fontWeight: 700 }}>{t("account.forward.requireKeypress")}</span>
+                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.requireKeypressHelp")}</span>
                       </span>
                     </label>
                     <label style={{ display: "grid", gap: 6 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Custom announcement (optional)</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.forward.customAnnounce")}</span>
                       <textarea
                         value={form.forward_whisper_announcement_template}
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_announcement_template: e.target.value }))}
                         style={{ ...theme.formInput, minHeight: 88, resize: "vertical" }}
-                        placeholder={DEFAULT_WHISPER_TEMPLATE_HINT}
+                        placeholder={t("account.whisperTemplate.placeholder")}
                       />
-                      <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                        Placeholders: <code style={{ fontSize: 11 }}>{"{caller_name}"}</code>, <code style={{ fontSize: 11 }}>{"{caller_phone}"}</code>,{" "}
-                        <code style={{ fontSize: 11 }}>{"{caller_phone_spoken}"}</code> (digits with pauses for text-to-speech). If the name is unknown,{" "}
-                        <code style={{ fontSize: 11 }}>{"{caller_name}"}</code> is read as &quot;Unknown caller&quot;.
-                      </span>
+                      <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.placeholdersHelp")}</span>
                     </label>
-                    <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>
-                      <strong>Fine print:</strong> Screening avoids odd carrier behavior if you hang up during the whisper. Unclear or timed-out responses are treated like decline (voicemail).
-                    </p>
+                    <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>{t("account.forward.finePrint")}</p>
                   </div>
                 )}
               </div>
@@ -877,10 +844,10 @@ export function AccountProfilePanel({
                 }}
               >
                 <span>
-                  Voicemail greeting
+                  {t("account.voicemail.title")}
                   <span style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "#6b7280" }}>
-                    {form.voicemail_greeting_mode === "ai_text" ? "AI reads your script" : "Custom audio recording"}
-                    {!voicemailExpanded ? " · Expand to change" : ""}
+                    {form.voicemail_greeting_mode === "ai_text" ? t("account.voicemail.subAi") : t("account.voicemail.subRecorded")}
+                    {!voicemailExpanded ? t("account.voicemail.expand") : ""}
                   </span>
                 </span>
                 <span style={{ fontSize: 14, color: "#6b7280", flexShrink: 0 }} aria-hidden>
@@ -891,7 +858,7 @@ export function AccountProfilePanel({
               {voicemailExpanded && (
                 <div style={{ display: "grid", gap: 14, paddingTop: 4 }}>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Conversations → Voicemails</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.convLabel")}</span>
                     <select
                       value={form.voicemail_conversations_display}
                       onChange={(e) =>
@@ -902,17 +869,13 @@ export function AccountProfilePanel({
                       }
                       style={theme.formInput}
                     >
-                      <option value="use_channel">Match each line (Admin → Communications → Voicemail mode)</option>
-                      <option value="summary">Prefer summary (full transcript shown below when available)</option>
-                      <option value="full_transcript">Prefer full transcript</option>
+                      <option value="use_channel">{t("account.voicemail.optUseChannel")}</option>
+                      <option value="summary">{t("account.voicemail.optSummary")}</option>
+                      <option value="full_transcript">{t("account.voicemail.optTranscript")}</option>
                     </select>
-                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                      Controls how voicemail text appears in the portal. Admins set the default per Twilio channel; this choice overrides only your view.
-                    </span>
+                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.voicemail.convHelp")}</span>
                   </label>
-                  <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
-                    Optional. Leave collapsed if the default greeting is fine. Use <strong style={{ color: theme.text }}>Save account</strong> below after changes.
-                  </p>
+                  <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>{t("account.voicemail.optionalNote")}</p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
                       <input
@@ -921,7 +884,7 @@ export function AccountProfilePanel({
                         checked={form.voicemail_greeting_mode === "ai_text"}
                         onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "ai_text" }))}
                       />
-                      AI text to voice
+                      {t("account.voicemail.modeAi")}
                     </label>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
                       <input
@@ -930,24 +893,22 @@ export function AccountProfilePanel({
                         checked={form.voicemail_greeting_mode === "recorded"}
                         onChange={() => setForm((prev) => ({ ...prev, voicemail_greeting_mode: "recorded" }))}
                       />
-                      Recorded greeting
+                      {t("account.voicemail.modeRecorded")}
                     </label>
                   </div>
 
                   {form.voicemail_greeting_mode === "ai_text" && (
                     <>
                       <label style={{ display: "grid", gap: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Greeting script</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.greetingScript")}</span>
                         <textarea
                           value={form.voicemail_greeting_text}
                           onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_text: e.target.value }))}
                           style={{ ...theme.formInput, minHeight: 96, resize: "vertical" }}
-                          placeholder="Thanks for calling. We missed you. Please leave your name, number, and a short message after the tone."
+                          placeholder={t("account.voicemail.scriptPlaceholder")}
                         />
                       </label>
-                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
-                        This text is what callers hear when your mailbox uses the AI voice path. No upload or PIN needed for this option.
-                      </p>
+                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>{t("account.voicemail.aiScriptHelp")}</p>
                     </>
                   )}
 
@@ -955,11 +916,11 @@ export function AccountProfilePanel({
                     <>
                       {/\.webm(\?|$)/i.test(form.voicemail_greeting_recording_url.trim()) && (
                         <p style={{ margin: 0, padding: 10, borderRadius: 8, background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: 13, lineHeight: 1.5 }}>
-                          <strong>WebM greeting:</strong> Twilio often cannot play WebM on the phone network (you may hear static or silence). Use <strong>MP3 or WAV</strong> (upload file), or record via the help-desk phone flow so the file is saved in a phone-friendly format.
+                          {t("account.voicemail.webmWarning")}
                         </p>
                       )}
                       <label style={{ display: "grid", gap: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Recorded greeting URL (optional)</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.recordedUrlLabel")}</span>
                         <input
                           value={form.voicemail_greeting_recording_url}
                           onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_recording_url: e.target.value }))}
@@ -969,12 +930,12 @@ export function AccountProfilePanel({
                       </label>
                       <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 220px) auto", gap: 10, alignItems: "end" }}>
                         <label style={{ display: "grid", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Call-in PIN (6 digits)</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.pinLabel")}</span>
                           <input
                             value={form.voicemail_greeting_pin}
                             onChange={(e) => setForm((prev) => ({ ...prev, voicemail_greeting_pin: normalizePin(e.target.value) }))}
                             style={theme.formInput}
-                            placeholder="Required to update by phone"
+                            placeholder={t("account.voicemail.pinPlaceholder")}
                             maxLength={6}
                           />
                         </label>
@@ -983,15 +944,15 @@ export function AccountProfilePanel({
                           onClick={() => setForm((prev) => ({ ...prev, voicemail_greeting_pin: createGreetingPin() }))}
                           style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", height: 42 }}
                         >
-                          New PIN
+                          {t("account.voicemail.newPin")}
                         </button>
                       </div>
                       <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
-                        Call {HELP_DESK_PHONE_DISPLAY} from the <strong style={{ color: theme.text }}>Primary phone</strong> on this account (or verify that number if you call from another line), enter this PIN, then record. That number is Tradesman&apos;s line—not your business caller ID.
+                        {t("account.voicemail.callInstructions").replace("{phone}", HELP_DESK_PHONE_DISPLAY)}
                       </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                         <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}>
-                          {uploadingGreeting ? "Uploading..." : "Upload audio (MP3 or WAV)"}
+                          {uploadingGreeting ? t("account.voicemail.uploading") : t("account.voicemail.uploadAudio")}
                           <input type="file" accept="audio/*" onChange={(e) => void handleGreetingFileChange(e)} disabled={uploadingGreeting} style={{ display: "none" }} />
                         </label>
                         {recordingSupported && (
@@ -1001,19 +962,17 @@ export function AccountProfilePanel({
                             disabled={uploadingGreeting}
                             style={{ padding: "10px 16px", background: recordingGreeting ? "#7f1d1d" : "#fff", color: recordingGreeting ? "#fff" : theme.text, border: `1px solid ${recordingGreeting ? "#7f1d1d" : theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}
                           >
-                            {recordingGreeting ? "Stop recording" : "Record in browser"}
+                            {recordingGreeting ? t("account.voicemail.stopRecording") : t("account.voicemail.recordInBrowser")}
                           </button>
                         )}
                       </div>
                       {(recordingPreviewUrl || form.voicemail_greeting_recording_url) && (
                         <div style={{ display: "grid", gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Preview</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.preview")}</span>
                           <audio controls src={recordingPreviewUrl || form.voicemail_greeting_recording_url} />
                         </div>
                       )}
-                      <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.45 }}>
-                        If no recording URL is saved, callers still hear the script text as a fallback. Prefer MP3 or WAV for phone networks.
-                      </p>
+                      <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.45 }}>{t("account.voicemail.recordedFallbackHelp")}</p>
                     </>
                   )}
                 </div>
@@ -1031,22 +990,18 @@ export function AccountProfilePanel({
                       gap: 10,
                     }}
                   >
-                    <h3 style={{ margin: 0, fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
+                    <h3 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.section.helpTitle")}</h3>
                     <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                      <span style={{ fontWeight: 700, color: theme.text }}>Tradesman toll-free:</span>{" "}
+                      <span style={{ fontWeight: 700, color: theme.text }}>{t("account.help.tollFreeLabel")}</span>{" "}
                       <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
                         {HELP_DESK_PHONE_DISPLAY}
                       </a>
                     </p>
-                    <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                      Same number for product help and for updating a <strong style={{ color: theme.text }}>recorded</strong> mailbox greeting by phone (open Voicemail greeting above, choose Recorded, save your PIN, then call from your saved Primary phone).
-                    </p>
+                    <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>{t("account.help.sameNumber")}</p>
                     {adminContext && (
                       <div style={{ marginTop: 4, padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
-                        <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio toll-free</div>
-                        <div>
-                          The shared toll-free should use <code style={{ fontSize: 11 }}>POST /api/help-desk-voice</code> for the main menu. Callers press <strong>9</strong> there to open the PIN / record flow (<code style={{ fontSize: 11 }}>/api/voicemail-greeting</code>). Do not point the toll-free directly at voicemail-greeting or the keypad menu will never run.
-                        </div>
+                        <div style={{ fontWeight: 700, color: theme.text }}>{t("account.admin.twilioTitle")}</div>
+                        <div>{t("account.admin.twilioBody")}</div>
                       </div>
                     )}
                   </div>
@@ -1057,22 +1012,18 @@ export function AccountProfilePanel({
               if (sectionId === "help_desk") return (
             <Fragment key={sectionId}>
               <div style={ACCOUNT_SECTION_CARD}>
-                <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>Help &amp; greeting line</h3>
+                <h3 style={{ margin: "0 0 10px", fontSize: 16, color: theme.text }}>{t("account.section.helpTitle")}</h3>
                 <p style={{ margin: "0 0 8px", color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                  <span style={{ fontWeight: 700, color: theme.text }}>Tradesman toll-free:</span>{" "}
+                  <span style={{ fontWeight: 700, color: theme.text }}>{t("account.help.tollFreeLabel")}</span>{" "}
                   <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
                     {HELP_DESK_PHONE_DISPLAY}
                   </a>
                 </p>
-                <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>
-                  Same number for product help and for updating a <strong style={{ color: theme.text }}>recorded</strong> mailbox greeting by phone (open Voicemail greeting above, choose Recorded, save your PIN, then call from your saved Primary phone).
-                </p>
+                <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>{t("account.help.sameNumber")}</p>
                 {adminContext && (
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
-                    <div style={{ fontWeight: 700, color: theme.text }}>Admin: Twilio toll-free</div>
-                    <div>
-                      The shared toll-free should use <code style={{ fontSize: 11 }}>POST /api/help-desk-voice</code> for the main menu. Callers press <strong>9</strong> there to open the PIN / record flow (<code style={{ fontSize: 11 }}>/api/voicemail-greeting</code>). Do not point the toll-free directly at voicemail-greeting or the keypad menu will never run.
-                    </div>
+                    <div style={{ fontWeight: 700, color: theme.text }}>{t("account.admin.twilioTitle")}</div>
+                    <div>{t("account.admin.twilioBody")}</div>
                   </div>
                 )}
               </div>
@@ -1082,12 +1033,9 @@ export function AccountProfilePanel({
                 return (
                   <Fragment key={sectionId}>
                     <div style={ACCOUNT_SECTION_CARD}>
-                      <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>AI automations</h2>
+                      <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.ai.title")}</h2>
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                        Turn this off if you do not want AI features anywhere in your portal. When unchecked, options such as thread summary, Fill with AI on leads,
-                        conversation automatic-reply AI, AI text-to-speech for outbound calls, AI-assisted status inference, and AI-assisted PDF template toggles are hidden
-                        on the Leads, Conversations, Quotes, and Calendar tabs. Your embeddable lead form and PDF note fields stay available on those tabs.{" "}
-                        {t("account.aiSignupNote")}
+                        {t("account.ai.body")} {t("account.aiSignupNote")}
                       </p>
                       <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                         <input
@@ -1095,7 +1043,7 @@ export function AccountProfilePanel({
                           checked={form.ai_assistant_visible}
                           onChange={(e) => setForm((prev) => ({ ...prev, ai_assistant_visible: e.target.checked }))}
                         />
-                        Allow AI automations
+                        {t("account.ai.allow")}
                       </label>
                     </div>
                   </Fragment>
@@ -1106,7 +1054,7 @@ export function AccountProfilePanel({
                 return (
                   <Fragment key={sectionId}>
                     <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer", justifySelf: "start" }}>
-                      {resetting ? "Sending..." : "Reset password"}
+                      {resetting ? t("account.password.sending") : t("account.password.reset")}
                     </button>
                   </Fragment>
                 )
@@ -1119,7 +1067,7 @@ export function AccountProfilePanel({
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <button type="button" onClick={() => void handleSave()} disabled={saving} style={{ padding: "10px 16px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
-                {saving ? "Saving..." : adminContext ? "Save user account" : "Save account"}
+                {saving ? t("account.save.saving") : adminContext ? t("account.saveUser") : t("account.save")}
               </button>
             </div>
           </div>
@@ -1130,16 +1078,15 @@ export function AccountProfilePanel({
 
 export default function AccountPage() {
   const { user } = useAuth()
+  const { t } = useLocale()
   if (!user?.id) {
-    return <p style={{ padding: 24, color: theme.text }}>Sign in to manage your account.</p>
+    return <p style={{ padding: 24, color: theme.text }}>{t("account.signInPrompt")}</p>
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
-        <h1 style={{ margin: "0 0 8px", color: theme.text }}>Account</h1>
-        <p style={{ margin: 0, color: "#6b7280" }}>
-          This information is saved directly to Supabase and will power profile, routing, and Google Business Profile data.
-        </p>
+        <h1 style={{ margin: "0 0 8px", color: theme.text }}>{t("account.pageTitle")}</h1>
+        <p style={{ margin: 0, color: "#6b7280" }}>{t("account.pageSubtitle")}</p>
       </div>
       <AccountProfilePanel profileUserId={user.id} loginEmail={user.email ?? undefined} showPasswordReset />
     </div>

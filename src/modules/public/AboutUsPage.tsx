@@ -11,6 +11,7 @@ import {
   type AboutUsContent,
 } from "../../types/about-us"
 import logo from "../../assets/logo.png"
+import { useLocale } from "../../i18n/LocaleContext"
 
 type Props = {
   onBack: () => void
@@ -24,6 +25,7 @@ const CAPTION_HTML_BOX: CSSProperties = {
 }
 
 export default function AboutUsPage({ onBack }: Props) {
+  const { t } = useLocale()
   const [content, setContent] = useState<AboutUsContent>({ ...DEFAULT_ABOUT_US_CONTENT, blocks: [...DEFAULT_ABOUT_US_CONTENT.blocks] })
   const [loading, setLoading] = useState(true)
 
@@ -76,7 +78,7 @@ export default function AboutUsPage({ onBack }: Props) {
             fontSize: 14,
           }}
         >
-          ← Home
+          {t("about.backHome")}
         </button>
 
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
@@ -88,7 +90,7 @@ export default function AboutUsPage({ onBack }: Props) {
         </div>
 
         {loading ? (
-          <p style={{ opacity: 0.8 }}>Loading…</p>
+          <p style={{ opacity: 0.8 }}>{t("about.loading")}</p>
         ) : (
           <>
             <h1 style={{ fontSize: "clamp(1.75rem, 4vw, 2.35rem)", fontWeight: 800, margin: "0 0 12px", letterSpacing: -0.5, lineHeight: 1.2 }}>
@@ -147,7 +149,7 @@ export default function AboutUsPage({ onBack }: Props) {
                   >
                     {group.blocks.map((block) => {
                       const safeCaption = sanitizeAboutCaptionHtml(block.caption_html ?? "")
-                      const imgAlt = block.alt?.trim() || "Team photo"
+                      const imgAlt = block.alt?.trim() || t("about.imageAltDefault")
                       return (
                         <figure
                           key={block.id}
@@ -169,7 +171,7 @@ export default function AboutUsPage({ onBack }: Props) {
                             {block.url ? (
                               <img src={block.url} alt={imgAlt} style={{ width: "100%", height: "auto", display: "block" }} />
                             ) : (
-                              <div style={{ padding: 48, textAlign: "center", opacity: 0.5 }}>No image yet</div>
+                              <div style={{ padding: 48, textAlign: "center", opacity: 0.5 }}>{t("about.noImageYet")}</div>
                             )}
                           </div>
                           {safeCaption ? (

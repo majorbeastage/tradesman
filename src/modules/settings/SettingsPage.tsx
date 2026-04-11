@@ -3,8 +3,10 @@ import { useScopedClientId } from "../../contexts/OfficeManagerScopeContext"
 import { fetchCustomFields } from "../../lib/portal-builder-api"
 import type { CustomField } from "../../types/portal-builder"
 import { theme } from "../../styles/theme"
+import { useLocale } from "../../i18n/LocaleContext"
 
 export default function SettingsPage() {
+  const { t } = useLocale()
   const clientId = useScopedClientId()
   const [fields, setFields] = useState<CustomField[]>([])
   const [values, setValues] = useState<Record<string, string | boolean>>({})
@@ -102,7 +104,7 @@ export default function SettingsPage() {
                   onChange={(e) => update(f.key, e.target.value)}
                   style={inputStyle}
                 >
-                  <option value="">— Select —</option>
+                  <option value="">{t("settings.selectOption")}</option>
                   {(f.options ?? []).map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}

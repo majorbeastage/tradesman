@@ -7,6 +7,7 @@ import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/h
 import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } from "../../constants/supportLinks"
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
+import { useLocale } from "../../i18n/LocaleContext"
 
 type LoginType = "user" | "office_manager" | "admin"
 
@@ -18,6 +19,7 @@ type LoginPageProps = {
 }
 
 export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack }: LoginPageProps) {
+  const { t } = useLocale()
   const { signIn, signUp, user, role, accountAccessBlocked, clearAccessBlockedReason } = useAuth()
   const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin")
@@ -40,12 +42,12 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
     setError("")
     setMessage("")
     if (!email.trim()) {
-      setError("Email is required.")
+      setError(t("login.err.emailRequired"))
       return
     }
     if (mode === "forgot") {
       if (!supabase) {
-        setError("App is not connected to Supabase.")
+        setError(t("login.err.noSupabase"))
         return
       }
       setSubmitting(true)
@@ -53,23 +55,23 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
         const redirectTo = getPasswordRecoveryRedirectTo() || undefined
         const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined)
         if (err) setError(err.message)
-        else setMessage("If that email is registered, you will receive a reset link. Check spam folders too.")
+        else setMessage(t("login.msg.resetSent"))
       } finally {
         setSubmitting(false)
       }
       return
     }
     if (!password) {
-      setError("Password is required.")
+      setError(t("login.err.passwordRequired"))
       return
     }
     if (mode === "signup") {
       if (password.length < 6) {
-        setError("Password must be at least 6 characters.")
+        setError(t("login.err.passwordShort"))
         return
       }
       if (password !== confirmPassword) {
-        setError("Passwords do not match.")
+        setError(t("login.err.passwordMismatch"))
         return
       }
     }
@@ -78,14 +80,11 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
       if (mode === "signin") {
         const { error: err } = await signIn(email.trim(), password)
         if (err) setError(err.message)
-        else setMessage("Signing you in…")
+        else setMessage(t("login.msg.signingIn"))
       } else {
         const { error: err } = await signUp(email.trim(), password)
         if (err) setError(err.message)
-        else
-          setMessage(
-            "If email confirmation is enabled for this site, check your inbox and spam — you must verify before you can sign in. Otherwise you can try signing in now."
-          )
+        else setMessage(t("login.msg.confirmEmail"))
       }
     } finally {
       setSubmitting(false)
@@ -123,7 +122,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           onClick={onBack}
           style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: theme.primary, marginBottom: 16 }}
         >
-          ← Back to home
+          {t("login.backHome")}
         </button>
         {!isAdminLogin && (
           <div
@@ -140,16 +139,22 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           </div>
         )}
         <h1 style={{ margin: "0 0 8px", color: theme.text, fontSize: 22 }}>
-          {isAdminLogin ? "Admin sign in" : mode === "forgot" ? "Reset password" : mode === "signin" ? "Sign in" : "Create account"}
+          {isAdminLogin
+            ? t("login.title.admin")
+            : mode === "forgot"
+              ? t("login.title.forgot")
+              : mode === "signin"
+                ? t("login.title.signin")
+                : t("login.title.signup")}
         </h1>
         <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
           {isAdminLogin
-            ? "Sign in with an admin account."
+            ? t("login.sub.admin")
             : mode === "forgot"
-              ? "We will email you a link to choose a new password."
+              ? t("login.sub.forgot")
               : mode === "signin"
-                ? "Use your email and password to access your data."
-                : "Sign up to get your own workspace."}
+                ? t("login.sub.signin")
+                : t("login.sub.signup")}
         </p>
 
         {accountAccessBlocked && (
@@ -166,17 +171,15 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               border: "1px solid rgba(185, 28, 28, 0.25)",
             }}
           >
-            <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
-              This account has been deactivated. Contact your administrator if you need access again.
-            </p>
+            <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t("login.deactivatedTitle")}</p>
             <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
               <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
-                Email tech support
+                {t("login.emailTech")}
               </a>
               <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
             </p>
             <p style={{ margin: 0, color: "#7f1d1d" }}>
-              Help desk:{" "}
+              {t("login.helpDeskLabel")}{" "}
               <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
                 {HELP_DESK_PHONE_DISPLAY}
               </a>
@@ -186,20 +189,20 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
 
         {!isAdminLogin && mode === "signin" && (
           <div style={{ marginBottom: 16 }}>
-            <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>Login as</label>
+            <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>{t("login.loginAs")}</label>
             <select
               value={loginType}
               onChange={(e) => setLoginType(e.target.value as LoginType)}
               style={{ ...inputStyle, marginTop: 0, marginBottom: 0 }}
             >
-              <option value="user">User</option>
-              <option value="office_manager">Office Manager</option>
+              <option value="user">{t("login.roleUser")}</option>
+              <option value="office_manager">{t("login.roleOfficeManager")}</option>
             </select>
           </div>
         )}
 
         <label style={labelStyle}>
-          Email
+          {t("login.email")}
           <input
             type="email"
             value={email}
@@ -209,12 +212,12 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             }}
             autoComplete="email"
             style={inputStyle}
-            placeholder="you@example.com"
+            placeholder={t("login.emailPlaceholder")}
           />
         </label>
         {mode !== "forgot" && (
           <label style={labelStyle}>
-            Password
+            {t("login.password")}
             <input
               type="password"
               value={password}
@@ -227,7 +230,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
         )}
         {mode === "signup" && !isAdminLogin && (
           <label style={labelStyle}>
-            Confirm password
+            {t("login.confirmPassword")}
             <input
               type="password"
               value={confirmPassword}
@@ -255,7 +258,13 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             cursor: submitting ? "wait" : "pointer",
           }}
         >
-          {submitting ? "Please wait…" : mode === "forgot" ? "Send reset link" : mode === "signin" ? "Sign in" : "Sign up"}
+          {submitting
+            ? t("login.submit.wait")
+            : mode === "forgot"
+              ? t("login.submit.reset")
+              : mode === "signin"
+                ? t("login.submit.signin")
+                : t("login.submit.signup")}
         </button>
         {!isAdminLogin && mode === "signin" && (
           <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
@@ -264,7 +273,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               onClick={() => { setMode("forgot"); setError(""); setMessage("") }}
               style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600, padding: 0 }}
             >
-              Forgot password?
+              {t("login.forgotLink")}
             </button>
           </p>
         )}
@@ -272,20 +281,20 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           <p style={{ marginTop: 16, fontSize: 14, color: theme.text }}>
             {mode === "forgot" ? (
               <button type="button" onClick={() => { setMode("signin"); setError(""); setMessage("") }} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                ← Back to sign in
+                {t("login.backSignIn")}
               </button>
             ) : mode === "signin" ? (
               <>
-                No account?{" "}
+                {t("login.noAccount")}{" "}
                 <button type="button" onClick={() => setMode("signup")} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                  Sign up
+                  {t("login.signUpCta")}
                 </button>
               </>
             ) : (
               <>
-                Already have an account?{" "}
+                {t("login.haveAccount")}{" "}
                 <button type="button" onClick={() => setMode("signin")} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                  Sign in
+                  {t("login.signInCta")}
                 </button>
               </>
             )}

@@ -112,12 +112,12 @@ function MainApp() {
           zIndex: 9999,
           textAlign: "center"
         }}>
-          {connectionStatus === "checking" && "Checking connection…"}
-          {connectionStatus === "no-config" && "Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to tradesman/.env and restart the dev server."}
+          {connectionStatus === "checking" && t("app.connection.checking")}
+          {connectionStatus === "no-config" && t("app.connection.noConfig")}
           {connectionStatus === "failed" && (
             <>
-              Supabase connection failed. {connectionError && `Error: ${connectionError} `}
-              If you see "row-level security" or "policy", add RLS policies in Supabase (see below).
+              {t("app.connection.failed")}
+              {connectionError ? ` ${t("app.connection.errorPrefix")} ${connectionError}` : ""}
             </>
           )}
         </div>
@@ -171,7 +171,8 @@ function MainApp() {
       {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "account", "web-support", "tech-support", "settings"].includes(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
-          <p style={{ color: "var(--text, #6b7280)" }}>This section is configured by your admin. Content can be added here later.</p>
+          <p style={{ color: "var(--text, #6b7280)", margin: "0 0 8px" }}>{t("app.customTab.title")}</p>
+          <p style={{ color: "var(--text, #6b7280)", margin: 0 }}>{t("app.customTab.body")}</p>
         </div>
       )}
     </AppLayout>

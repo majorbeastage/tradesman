@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react"
 import { APP_VERSION } from "../constants/appVersion"
+import { useLocale } from "../i18n/LocaleContext"
 
 type Variant = "default" | "portal" | "about"
 
@@ -30,6 +31,7 @@ const variantStyles: Record<
 
 /** © line plus Version x.y.z — version comes from root `package.json` (see `vite.config.ts` + `appVersion.ts`). */
 export function CopyrightVersionFooter({ variant = "default", align = "left", style }: Props) {
+  const { t } = useLocale()
   const year = new Date().getFullYear()
   const v = variantStyles[variant]
   return (
@@ -46,9 +48,11 @@ export function CopyrightVersionFooter({ variant = "default", align = "left", st
         ...style,
       }}
     >
-      <div>© {year} Tradesman. All rights reserved.</div>
+      <div>
+        © {year} {t("footer.rightsLine")}
+      </div>
       <div style={{ marginTop: 4, color: v.versionColor ?? v.color, fontSize: 11, opacity: variant === "default" ? 0.95 : 1 }}>
-        Version {APP_VERSION}
+        {t("footer.version")} {APP_VERSION}
       </div>
     </footer>
   )

@@ -91,7 +91,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
                 cursor: "pointer",
               }}
             >
-              Account
+              {t("layout.account")}
             </button>
           </div>
         )}

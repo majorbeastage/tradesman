@@ -103,7 +103,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           color: "rgba(255,255,255,0.75)",
         }}
       >
-        <div style={{ fontWeight: 700, color: theme.primary, marginBottom: 6, fontSize: 11, letterSpacing: 0.3 }}>Tradesman Help Desk</div>
+        <div style={{ fontWeight: 700, color: theme.primary, marginBottom: 6, fontSize: 11, letterSpacing: 0.3 }}>{t("sidebar.helpDesk")}</div>
         <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
           {HELP_DESK_PHONE_DISPLAY}
         </a>
@@ -142,9 +142,9 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             cursor: "pointer",
             alignSelf: "flex-start"
           }}
-          title="Account"
+          title={t("layout.account")}
         >
-          <img src={accountIcon} alt="Account" style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
+          <img src={accountIcon} alt={t("layout.account")} style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
         </button>
       )}
     </div>

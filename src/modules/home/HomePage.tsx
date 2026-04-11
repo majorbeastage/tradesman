@@ -3,6 +3,7 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import logo from "../../assets/logo.png"
 import { consumeAuthHashErrorMessage } from "../../lib/authRedirectBase"
+import { useLocale } from "../../i18n/LocaleContext"
 
 type HomePageProps = {
   onLogin: () => void
@@ -13,45 +14,10 @@ type HomePageProps = {
   onRequestDemo: () => void
 }
 
-const FEATURES: { id: string; title: string; body: string }[] = [
-  {
-    id: "clean",
-    title: "Clean Workflow",
-    body: "A single tool to manage all new and existing clients, for the lifespan of a job or working relationship.",
-  },
-  {
-    id: "automation",
-    title: "Automation tools",
-    body: "We utilize multiple AI services and/or pre-determined options, to generate as many automation options as possible for your office requirements.",
-  },
-  {
-    id: "leads",
-    title: "Create and Manage Leads",
-    body: "Manage existing and new organic customer acquisitions, as well as AI powered new lead capturing. Fully customizable opportunities to meet your needs and expectations.",
-  },
-  {
-    id: "comms",
-    title: "Organized Communications",
-    body: "Client communications from Phone Calls, Missed Calls, Voicemails, Text Messages and Emails are all neatly catalogued in your Conversations Tab.",
-  },
-  {
-    id: "quotes",
-    title: "Quotes/Estimates/Scheduling",
-    body: "Seamlessly progress Leads and client Conversations to receive pre-established or patterned quotes and estimates, potentially using AI to determine customer intent and automatically schedule based off your preferences, or manually schedule using our customized Calendar.",
-  },
-  {
-    id: "history",
-    title: "Centralized History",
-    body: "Don't lose a Client. We keep your past jobs archived in your inventory. Anytime you receive repeat business, simply review the readily available notes from your previous job with that client.",
-  },
-  {
-    id: "custom",
-    title: "Fully Customizable",
-    body: "We are very confident that Tradesman will meet all of your office management needs. We believe this because we focus on offering as many options and customizations as possible, to fit into your business's specific needs.",
-  },
-]
+const FEATURE_IDS = ["clean", "automation", "leads", "comms", "quotes", "history", "custom"] as const
 
 export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo }: HomePageProps) {
+  const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [pinnedId, setPinnedId] = useState<string | null>(null)
@@ -114,7 +80,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               lineHeight: 1.5,
             }}
           >
-            <strong style={{ display: "block", marginBottom: 4 }}>Link issue</strong>
+            <strong style={{ display: "block", marginBottom: 4 }}>{t("home.linkIssue")}</strong>
             {authLinkBanner}{" "}
             <button
               type="button"
@@ -150,7 +116,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontWeight: 800, letterSpacing: -0.2, fontSize: 20, color: theme.text }}>Tradesman</span>
-              <span style={{ fontSize: 12, color: theme.text, opacity: 0.7 }}>Leads • Quotes • Scheduling</span>
+              <span style={{ fontSize: 12, color: theme.text, opacity: 0.7 }}>{t("home.tagline")}</span>
             </div>
           </div>
 
@@ -169,7 +135,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               fontWeight: 600,
             }}
           >
-            Admin Login
+            {t("home.adminLogin")}
           </button>
         </div>
 
@@ -203,7 +169,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                 lineHeight: 1.65,
               }}
             >
-              Tradesman is a powerful, automated and fully customizable Office Management tool. We are 2 proud United States Veterans, who developed this platform to help contractors like you take back your time, focus on your customers, and grow your business without the headache of juggling an office. We are very excited to offer you the opportunity to join our platform, and we look forward to being able to assist you Focus, Manage and Grow your business into further success.
+              {t("home.hero")}
             </p>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
@@ -221,7 +187,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                User Login
+                {t("home.userLogin")}
               </button>
               <button
                 type="button"
@@ -237,7 +203,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                Office Manager Login
+                {t("home.officeManagerLogin")}
               </button>
               <button
                 type="button"
@@ -253,7 +219,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                Sign up
+                {t("home.signUp")}
               </button>
             </div>
           </div>
@@ -277,30 +243,30 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                 padding: "0 4px",
               }}
             >
-              <span style={{ fontWeight: 900, color: theme.charcoal, fontSize: 13 }}>Platform highlights</span>
-              <span style={{ fontSize: 11, color: theme.primary, fontWeight: 800 }}>Hover or tap</span>
+              <span style={{ fontWeight: 900, color: theme.charcoal, fontSize: 13 }}>{t("home.platformHighlights")}</span>
+              <span style={{ fontSize: 11, color: theme.primary, fontWeight: 800 }}>{t("home.hoverOrTap")}</span>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {FEATURES.map((f) => {
+              {FEATURE_IDS.map((fid) => {
                 const expanded =
-                  (supportsHover && hoverId === f.id) ||
-                  (supportsHover && hoverId === null && pinnedId === f.id) ||
-                  (!supportsHover && pinnedId === f.id)
+                  (supportsHover && hoverId === fid) ||
+                  (supportsHover && hoverId === null && pinnedId === fid) ||
+                  (!supportsHover && pinnedId === fid)
                 return (
                   <div
-                    key={f.id}
+                    key={fid}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault()
-                        setPinnedId((p) => (p === f.id ? null : f.id))
+                        setPinnedId((p) => (p === fid ? null : fid))
                       }
                     }}
-                    onMouseEnter={() => supportsHover && setHoverId(f.id)}
+                    onMouseEnter={() => supportsHover && setHoverId(fid)}
                     onMouseLeave={() => supportsHover && setHoverId(null)}
-                    onClick={() => setPinnedId((p) => (p === f.id ? null : f.id))}
+                    onClick={() => setPinnedId((p) => (p === fid ? null : fid))}
                     style={{
                       padding: "7px 9px",
                       borderRadius: 8,
@@ -315,7 +281,9 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontWeight: 800, color: theme.charcoal, fontSize: 12, lineHeight: 1.35 }}>{f.title}</span>
+                      <span style={{ fontWeight: 800, color: theme.charcoal, fontSize: 12, lineHeight: 1.35 }}>
+                        {t(`home.feature.${fid}.title`)}
+                      </span>
                       <span
                         style={{
                           width: 8,
@@ -341,7 +309,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                         transition: "max-height 0.35s ease, opacity 0.28s ease, margin-top 0.2s ease",
                       }}
                     >
-                      {f.body}
+                      {t(`home.feature.${fid}.body`)}
                     </div>
                   </div>
                 )
@@ -358,11 +326,9 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               }}
             >
               <div style={{ fontWeight: 900, color: theme.charcoal, fontSize: 12, marginBottom: 4 }}>
-                Want to see it in action?
+                {t("home.demoTitle")}
               </div>
-              <div style={{ color: theme.text, opacity: 0.85, fontSize: 11, lineHeight: 1.5, marginBottom: 8 }}>
-                Request a demo and we will walk you through how Tradesman can fit your office.
-              </div>
+              <div style={{ color: theme.text, opacity: 0.85, fontSize: 11, lineHeight: 1.5, marginBottom: 8 }}>{t("home.demoBody")}</div>
               <button
                 type="button"
                 onClick={onRequestDemo}
@@ -378,7 +344,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                Request a demo
+                {t("home.requestDemo")}
               </button>
               <button
                 type="button"
@@ -406,7 +372,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <CopyrightVersionFooter variant="default" style={{ borderTop: "none", paddingTop: 0, paddingBottom: 0, marginTop: 0 }} />
             <div style={{ color: theme.text, opacity: 0.7, fontSize: 12, paddingBottom: 2 }}>
-              Designed for desktop and mobile web.
+              {t("home.designedFor")}
             </div>
           </div>
         </div>

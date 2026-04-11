@@ -29,7 +29,7 @@ export function isQuoteItemsMetadataSchemaError(err: { message?: string; details
 export async function insertQuoteItemRowSafe(
   supabase: SupabaseClient,
   payload: QuoteItemInsertPayload,
-): Promise<{ ok: true; warn: string | null } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const { quantity, unit_price } = normalizeQuoteItemNumbers(payload.quantity, payload.unit_price)
   const base = {
     quote_id: payload.quote_id,
@@ -41,15 +41,15 @@ export async function insertQuoteItemRowSafe(
   const withMeta = meta ? { ...base, metadata: meta as object } : base
 
   const { error: e1 } = await supabase.from("quote_items").insert(withMeta)
-  if (!e1) return { ok: true, warn: null }
+  if (!e1) return { ok: true }
 
   if (meta && isQuoteItemsMetadataSchemaError(e1)) {
     const { error: e2 } = await supabase.from("quote_items").insert(base)
     if (e2) return { ok: false, error: e2.message }
-    return {
-      ok: true,
-      warn: 'Line saved without extra fields (job type link, crew size, etc.). In Supabase SQL Editor, run the script in tradesman/supabase/quote-items-metadata.sql, then add the line again if you need those options.',
-    }
+    console.warn(
+      "[quote_items] Line saved without metadata (crew, job link, etc.). Run tradesman/supabase/quote-items-metadata.sql in Supabase if you need those fields.",
+    )
+    return { ok: true }
   }
 
   return { ok: false, error: e1.message }

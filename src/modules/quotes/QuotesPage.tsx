@@ -63,7 +63,8 @@ type EstimateLinePresetRow = {
   quantity: number
   unit_price: number
   minimum_line_total?: number
-  job_type_id?: string | null
+  /** Job types this template is linked to (for the Job types screen); not applied automatically to quote lines. */
+  linked_job_type_ids?: string[]
   line_kind?: string
   /** hours | miles | each — unit shown next to quantity */
   unit_basis?: string
@@ -96,6 +97,29 @@ function eliUnitSuffix(unitBasis: string | undefined): string {
   return "hr"
 }
 
+function normalizePresetLinkedJobTypes(raw: Record<string, unknown>): string[] {
+  const arr = raw.linked_job_type_ids
+  if (Array.isArray(arr)) {
+    return [...new Set(arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))]
+  }
+  const single = raw.job_type_id
+  if (typeof single === "string" && single.trim()) return [single.trim()]
+  return []
+}
+
+function serializePresetForProfile(row: EstimateLinePresetRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    description: row.description.trim().slice(0, 500),
+    quantity: row.quantity,
+    unit_price: row.unit_price,
+    ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
+    ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
+    ...(row.unit_basis === "hours" || row.unit_basis === "miles" || row.unit_basis === "each" ? { unit_basis: row.unit_basis } : {}),
+    ...(row.linked_job_type_ids?.length ? { linked_job_type_ids: row.linked_job_type_ids } : {}),
+  }
+}
+
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
 type MessageRow = { content: string | null; created_at: string | null }
@@ -106,6 +130,7 @@ type QuoteRow = {
   updated_at?: string
   customer_id: string
   conversation_id: string | null
+  job_type_id?: string | null
   customers: CustomerRow | null
   conversations?: { messages?: MessageRow[] | null } | null
 }
@@ -173,7 +198,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [eliSimpleUnit, setEliSimpleUnit] = useState<EliUnit>("hours")
   const [eliSimpleQty, setEliSimpleQty] = useState("1")
   const [eliSimplePrice, setEliSimplePrice] = useState("")
-  const [eliSimpleJobId, setEliSimpleJobId] = useState("")
+  /** Saved-line row id → expanded (edit fields visible) */
+  const [expandedEliById, setExpandedEliById] = useState<Record<string, boolean>>({})
+  /** Per draft row: job type picked for “Add to job type” */
+  const [eliLinkJtPick, setEliLinkJtPick] = useState<Record<string, string>>({})
+  /** Job types modal: link templates to the job type being added/edited */
+  const [jtModalPresetChecks, setJtModalPresetChecks] = useState<Record<string, boolean>>({})
   const [estimateModalJobTypes, setEstimateModalJobTypes] = useState<{ id: string; name: string }[]>([])
   /** Job types for quote line dropdowns (loaded with quote detail). */
   const [quoteDetailJobTypes, setQuoteDetailJobTypes] = useState<{ id: string; name: string }[]>([])
@@ -391,17 +421,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             const minRaw = o.minimum_line_total
             const minNum = typeof minRaw === "number" ? minRaw : Number.parseFloat(String(minRaw ?? ""))
             const minimum_line_total = Number.isFinite(minNum) && minNum >= 0 ? minNum : undefined
-            const job_type_id =
-              typeof o.job_type_id === "string" && o.job_type_id.trim()
-                ? o.job_type_id.trim()
-                : o.job_type_id === "" || o.job_type_id === null
-                  ? null
-                  : undefined
+            const linked_job_type_ids = normalizePresetLinkedJobTypes(o)
             const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
             const ub = o.unit_basis
             const unit_basis =
               typeof ub === "string" && (ub === "hours" || ub === "miles" || ub === "each") ? ub : undefined
-            return { id, description, quantity, unit_price, minimum_line_total, job_type_id, line_kind, unit_basis }
+            return { id, description, quantity, unit_price, minimum_line_total, linked_job_type_ids, line_kind, unit_basis }
           })
           .filter((x) => x.description.trim())
         setEstimateLinePresets(cleaned)
@@ -838,10 +863,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }, [showQuoteJobTypesModal, quoteJobTypesList])
 
   useEffect(() => {
+    if (!showEstimateLineItemsModal || !supabase || !userId) return
+    void supabase
+      .from("job_types")
+      .select("id, name")
+      .eq("user_id", userId)
+      .order("name")
+      .then(({ data }) => setEstimateModalJobTypes(data || []))
+  }, [showEstimateLineItemsModal, userId])
+
+  useEffect(() => {
     if (eliSimpleKind === "travel") setEliSimpleUnit("miles")
     else if (eliSimpleKind === "labor") setEliSimpleUnit("hours")
     else setEliSimpleUnit("each")
   }, [eliSimpleKind])
+
+  useEffect(() => {
+    if (!editingQuoteJtId) return
+    const next: Record<string, boolean> = {}
+    for (const p of estimateLinePresets) {
+      next[p.id] = (p.linked_job_type_ids ?? []).includes(editingQuoteJtId)
+    }
+    setJtModalPresetChecks(next)
+  }, [editingQuoteJtId, estimateLinePresets])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -853,6 +897,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         updated_at,
         customer_id,
         conversation_id,
+        job_type_id,
         scheduled_at,
         removed_at,
         customers (
@@ -876,6 +921,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         updated_at,
         customer_id,
         conversation_id,
+        job_type_id,
         customers (
           display_name,
           customer_identifiers (
@@ -1029,6 +1075,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         updated_at,
         customer_id,
         conversation_id,
+        job_type_id,
         scheduled_at,
         customers (
           display_name,
@@ -1139,10 +1186,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     const preset = newItemPresetId ? estimateLinePresets.find((p) => p.id === newItemPresetId) : null
     if (preset) {
       meta.preset_id = preset.id
-      if (preset.job_type_id) meta.job_type_id = preset.job_type_id
       if (preset.line_kind) meta.line_kind = preset.line_kind
       if (preset.minimum_line_total != null && meta.minimum_line_total === undefined) meta.minimum_line_total = preset.minimum_line_total
     }
+    const qJt =
+      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string" && (selectedQuote as QuoteRow).job_type_id?.trim()
+        ? (selectedQuote as QuoteRow).job_type_id!.trim()
+        : ""
+    if (qJt) meta.job_type_id = qJt
     setAddItemLoading(true)
     const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
@@ -1157,7 +1208,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert(result.error)
       return
     }
-    if (result.warn) alert(result.warn)
     setNewItemDescription("")
     setNewItemQuantity("1")
     setNewItemUnitPrice("")
@@ -1279,12 +1329,13 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   function openEstimateLineItemsModal() {
     setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
+    setExpandedEliById({})
+    setEliLinkJtPick({})
     setEliSimpleKind("labor")
     setEliSimpleUnit("hours")
     setEliSimpleQty("1")
     const lr = parseDefaultLaborRateNumber()
     setEliSimplePrice(lr > 0 ? String(lr) : "")
-    setEliSimpleJobId("")
     setShowEstimateLineItemsModal(true)
   }
 
@@ -1315,7 +1366,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         quantity: qty,
         unit_price: price,
         minimum_line_total: undefined,
-        job_type_id: eliSimpleJobId || "",
+        linked_job_type_ids: [],
         line_kind,
         unit_basis: eliSimpleUnit,
       },
@@ -1346,6 +1397,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (m.line_kind) meta.line_kind = m.line_kind
     }
     if (opts?.presetId) meta.preset_id = opts.presetId
+    const qJt =
+      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string" && (selectedQuote as QuoteRow).job_type_id?.trim()
+        ? (selectedQuote as QuoteRow).job_type_id!.trim()
+        : ""
+    if (qJt && !meta.job_type_id) meta.job_type_id = qJt
     const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
       description: description.trim(),
@@ -1357,7 +1413,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert(result.error)
       return
     }
-    if (result.warn) alert(result.warn)
     openQuote(selectedQuoteId)
   }
 
@@ -1370,7 +1425,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       presetId: p.id,
       metadata: {
         minimum_line_total: p.minimum_line_total,
-        job_type_id: p.job_type_id?.trim() ? p.job_type_id.trim() : undefined,
         line_kind: p.line_kind,
         ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower") ? { manpower: laborManpowerQuick } : {}),
       },
@@ -1398,6 +1452,67 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     openQuote(selectedQuoteId)
   }
 
+  async function persistEstimatePresetsToProfile(nextPresets: EstimateLinePresetRow[]) {
+    if (!supabase || !userId) return
+    const trimmed = nextPresets.filter((p) => p.description.trim())
+    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (fetchErr) {
+      alert(fetchErr.message)
+      return
+    }
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.estimate_line_presets = trimmed.map(serializePresetForProfile)
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setEstimateLinePresets(trimmed)
+    if (showEstimateLineItemsModal) {
+      setEstimateLineDraft((prev) =>
+        prev.map((row) => {
+          const u = trimmed.find((t) => t.id === row.id)
+          if (!u) return row
+          return { ...row, linked_job_type_ids: u.linked_job_type_ids ? [...u.linked_job_type_ids] : [] }
+        }),
+      )
+    }
+  }
+
+  async function mergePresetLinksForJobType(jobTypeId: string, checks: Record<string, boolean>) {
+    const merged = estimateLinePresets.map((p) => {
+      const want = checks[p.id] === true
+      const set = new Set(p.linked_job_type_ids ?? [])
+      if (want) set.add(jobTypeId)
+      else set.delete(jobTypeId)
+      return { ...p, linked_job_type_ids: Array.from(set) }
+    })
+    await persistEstimatePresetsToProfile(merged)
+  }
+
+  async function persistQuoteJobType(jobTypeId: string) {
+    if (!supabase || !selectedQuoteId) return
+    const v = jobTypeId.trim() || null
+    const { error } = await supabase
+      .from("quotes")
+      .update({ job_type_id: v, updated_at: new Date().toISOString() })
+      .eq("id", selectedQuoteId)
+    if (error) {
+      const msg = String(error.message ?? "")
+      alert(
+        msg +
+          (msg.toLowerCase().includes("job_type") || msg.toLowerCase().includes("column")
+            ? "\n\nRun tradesman/supabase/quotes-job-type.sql in the Supabase SQL Editor."
+            : ""),
+      )
+      return
+    }
+    setSelectedQuote((prev: QuoteRow | null) => (prev && typeof prev === "object" ? { ...prev, job_type_id: v } : prev))
+  }
+
   async function saveQuoteModalNewJobType() {
     if (!quoteJtNewName.trim()) {
       alert("Please enter a name for the job type.")
@@ -1412,18 +1527,32 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         duration_minutes: Math.max(15, quoteJtNewDuration),
         color_hex: quoteJtNewColor,
       }
-      const { error } = editingQuoteJtId
-        ? await supabase.from("job_types").update(payload).eq("id", editingQuoteJtId).eq("user_id", userId)
-        : await supabase.from("job_types").insert({ user_id: userId, ...payload })
-      if (error) {
-        alert(error.message)
-        return
+      if (editingQuoteJtId) {
+        const { error } = await supabase.from("job_types").update(payload).eq("id", editingQuoteJtId).eq("user_id", userId)
+        if (error) {
+          alert(error.message)
+          return
+        }
+        await mergePresetLinksForJobType(editingQuoteJtId, jtModalPresetChecks)
+      } else {
+        const { data: inserted, error } = await supabase
+          .from("job_types")
+          .insert({ user_id: userId, ...payload })
+          .select("id")
+          .single()
+        if (error) {
+          alert(error.message)
+          return
+        }
+        const newId = inserted?.id
+        if (newId) await mergePresetLinksForJobType(newId, jtModalPresetChecks)
       }
       setQuoteJtNewName("")
       setQuoteJtNewDesc("")
       setQuoteJtNewDuration(60)
       setQuoteJtNewColor("#F97316")
       setEditingQuoteJtId(null)
+      setJtModalPresetChecks({})
       const { data } = await supabase
         .from("job_types")
         .select("id, name, duration_minutes, description, color_hex")
@@ -1452,6 +1581,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setQuoteJtNewDuration(60)
     setQuoteJtNewColor("#F97316")
     setEditingQuoteJtId(null)
+    setJtModalPresetChecks({})
   }
 
   async function removeQuoteJobTypeRow(jt: { id: string; name: string }) {
@@ -1472,6 +1602,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
     setEstimateModalJobTypes(shortList || [])
     setQuoteDetailJobTypes(shortList || [])
+    const stripped = estimateLinePresets.map((p) => ({
+      ...p,
+      linked_job_type_ids: (p.linked_job_type_ids ?? []).filter((id) => id !== jt.id),
+    }))
+    await persistEstimatePresetsToProfile(stripped)
   }
 
   async function saveEstimateLineItemsModal() {
@@ -1509,28 +1644,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (Number.isFinite(laborNum) && laborNum >= 0) prevMeta.estimate_default_labor_rate = laborNum
       else delete prevMeta.estimate_default_labor_rate
 
-      const presets = estimateLineDraft
-        .map((row) => ({
-          id: row.id,
-          description: row.description.trim().slice(0, 500),
-          quantity: row.quantity,
-          unit_price: row.unit_price,
-          ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
-          ...(row.job_type_id != null && row.job_type_id !== "" ? { job_type_id: row.job_type_id } : {}),
-          ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
-          ...(row.unit_basis === "hours" || row.unit_basis === "miles" || row.unit_basis === "each"
-            ? { unit_basis: row.unit_basis }
-            : {}),
-        }))
-        .filter((row) => row.description)
-      prevMeta.estimate_line_presets = presets
+      const cleanedDraft = estimateLineDraft.filter((row) => row.description.trim())
+      prevMeta.estimate_line_presets = cleanedDraft.map(serializePresetForProfile)
 
       const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
       if (error) {
         alert(error.message)
         return
       }
-      setEstimateLinePresets(presets)
+      setEstimateLinePresets(cleanedDraft)
       if (Number.isFinite(laborNum) && laborNum >= 0) setEstimateDefaultLaborRate(String(laborNum))
       setShowEstimateLineItemsModal(false)
     } finally {
@@ -2093,6 +2215,30 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                             </div>
                             <p style={{ margin: 0 }}><strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}</p>
                             <p style={{ margin: 0 }}><strong>Status:</strong> {selectedQuote.status ?? "—"}</p>
+                            {showQuotesJobTypesPanel ? (
+                              <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
+                                <strong style={{ flexShrink: 0 }}>Quote job type:</strong>
+                                <select
+                                  value={
+                                    typeof (selectedQuote as QuoteRow).job_type_id === "string"
+                                      ? (selectedQuote as QuoteRow).job_type_id ?? ""
+                                      : ""
+                                  }
+                                  onChange={(e) => void persistQuoteJobType(e.target.value)}
+                                  style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 180, maxWidth: "100%" }}
+                                >
+                                  <option value="">— None —</option>
+                                  {quoteDetailJobTypes.map((jt) => (
+                                    <option key={jt.id} value={jt.id}>
+                                      {jt.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 400 }}>
+                                  New lines inherit this unless the line already has a job type.
+                                </span>
+                              </label>
+                            ) : null}
                             <p style={{ margin: 0 }}><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
                           </div>
 
@@ -2355,104 +2501,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </button>
               ) : null}
             </div>
-            {(estimateLineTemplateOffered("eli_show_labor") ||
-              estimateLineTemplateOffered("eli_show_materials") ||
-              estimateLineTemplateOffered("eli_show_travel") ||
-              estimateLineTemplateOffered("eli_show_misc")) && (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Quick add</span>
-                {estimateLineTemplateOffered("eli_show_labor") ? (
-                  <>
-                    {estimateLineTemplateOffered("eli_show_manpower") ? (
-                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, color: "#111827" }}>
-                        <span>Crew</span>
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={laborManpowerQuick}
-                          onChange={(e) => setLaborManpowerQuick(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                          style={{ width: 52, padding: 4, borderRadius: 4, border: "1px solid #cbd5e1" }}
-                        />
-                      </label>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void insertQuoteLineRow("Labor (hours)", 1, parseDefaultLaborRateNumber(), {
-                          metadata: {
-                            line_kind: "labor",
-                            ...(estimateLineTemplateOffered("eli_show_manpower") ? { manpower: laborManpowerQuick } : {}),
-                          },
-                        })
-                      }
-                      style={{
-                        fontSize: 12,
-                        padding: "4px 10px",
-                        borderRadius: 6,
-                        border: "1px solid #cbd5e1",
-                        background: "#fff",
-                        color: "#111827",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Labor
-                    </button>
-                  </>
-                ) : null}
-                {estimateLineTemplateOffered("eli_show_materials") ? (
-                  <button
-                    type="button"
-                    onClick={() => void insertQuoteLineRow("Materials", 1, 0, { metadata: { line_kind: "material" } })}
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #cbd5e1",
-                      background: "#fff",
-                      color: "#111827",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Materials
-                  </button>
-                ) : null}
-                {estimateLineTemplateOffered("eli_show_travel") ? (
-                  <button
-                    type="button"
-                    onClick={() => void insertQuoteLineRow("Travel / trip", 1, 0, { metadata: { line_kind: "travel" } })}
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #cbd5e1",
-                      background: "#fff",
-                      color: "#111827",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Travel
-                  </button>
-                ) : null}
-                {estimateLineTemplateOffered("eli_show_misc") ? (
-                  <button
-                    type="button"
-                    onClick={() => void insertQuoteLineRow("Miscellaneous", 1, 0, { metadata: { line_kind: "misc" } })}
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #cbd5e1",
-                      background: "#fff",
-                      color: "#111827",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Misc
-                  </button>
-                ) : null}
-              </div>
-            )}
             {estimateLinePresets.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Saved lines</span>
@@ -2465,7 +2513,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         presetId: p.id,
                         metadata: {
                           minimum_line_total: p.minimum_line_total,
-                          job_type_id: p.job_type_id ?? undefined,
                           line_kind: p.line_kind,
                           ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
                             ? { manpower: laborManpowerQuick }
@@ -2739,7 +2786,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               </tbody>
             </table>
             <p style={{ margin: "10px 0 4px", fontSize: 12, color: "#64748b" }}>
-              Edit any column in the table (including lines from Quick add). Job type links this line to your Calendar job types. Totals use crew × quantity × unit price, then the minimum if set.
+              Edit any column in the table. Per-line job type links to Calendar; new lines also use <strong>Quote job type</strong> when set. Totals use crew × quantity × unit price, then the minimum if set.
             </p>
             <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
               <div style={{ position: "relative" }}>
@@ -3212,7 +3259,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr)) minmax(0, 90px) minmax(0, 110px) auto",
+                    gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 90px) minmax(0, 110px) auto",
                     gap: 10,
                     alignItems: "end",
                   }}
@@ -3241,17 +3288,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       {ELI_UNITS.map((u) => (
                         <option key={u} value={u}>
                           {ELI_UNIT_LABEL[u]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
-                    Job type (optional)
-                    <select value={eliSimpleJobId} onChange={(e) => setEliSimpleJobId(e.target.value)} style={theme.formInput}>
-                      <option value="">— None —</option>
-                      {estimateModalJobTypes.map((jt) => (
-                        <option key={jt.id} value={jt.id}>
-                          {jt.name}
                         </option>
                       ))}
                     </select>
@@ -3339,162 +3375,301 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
               <div style={{ fontWeight: 700, fontSize: 13, color: theme.text, marginBottom: 8 }}>Your saved lines</div>
               <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>
-                Edit below, remove with Delete, then Save &amp; close. Totals on quotes use qty × (crew if labor) × $/unit.
+                Collapse rows to focus; expand to edit. Link templates to job types with <strong>Add to job type</strong> (one template can belong to several types). Save &amp; close to persist.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {estimateLineDraft.length === 0 ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No saved lines yet. Use the form above.</p>
                 ) : (
-                  estimateLineDraft.map((row, idx) => (
-                    <div
-                      key={row.id}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 10,
-                        padding: 14,
-                        borderRadius: 8,
-                        border: `1px solid ${theme.border}`,
-                        background: "#f9fafb",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>
-                          {row.description.trim() || "Line"}{" "}
-                          <span style={{ fontWeight: 500, opacity: 0.75 }}>
-                            · {row.quantity} {eliUnitSuffix(row.unit_basis)} @ ${Number(row.unit_price).toFixed(2)}
-                          </span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setEstimateLineDraft((prev) => prev.filter((_, i) => i !== idx))}
-                          style={{
-                            fontSize: 12,
-                            color: "#b91c1c",
-                            background: "white",
-                            border: "1px solid #fecaca",
-                            borderRadius: 6,
-                            padding: "4px 10px",
-                            cursor: "pointer",
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      <input
-                        placeholder="Description on quote"
-                        value={row.description}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, description: v } : r)))
-                        }}
-                        style={theme.formInput}
-                      />
+                  estimateLineDraft.map((row, idx) => {
+                    const expanded = expandedEliById[row.id] === true
+                    const linkedIds = row.linked_job_type_ids ?? []
+                    const linkedLabels = linkedIds
+                      .map((id) => estimateModalJobTypes.find((j) => j.id === id)?.name ?? id.slice(0, 8))
+                      .filter(Boolean)
+                    return (
                       <div
+                        key={row.id}
                         style={{
-                          display: "grid",
-                          gridTemplateColumns: isMobile ? "1fr 1fr" : "90px 90px 90px minmax(0,1fr) minmax(0,1fr)",
-                          gap: 8,
-                          alignItems: "center",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: expanded ? 10 : 0,
+                          padding: 14,
+                          borderRadius: 8,
+                          border: `1px solid ${theme.border}`,
+                          background: "#f9fafb",
                         }}
                       >
-                        <select
-                          value={row.unit_basis === "miles" || row.unit_basis === "each" ? row.unit_basis : "hours"}
-                          onChange={(e) => {
-                            const v = e.target.value as EliUnit
-                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_basis: v } : r)))
-                          }}
-                          style={theme.formInput}
-                          title="Unit"
-                        >
-                          <option value="hours">Hours</option>
-                          <option value="miles">Miles</option>
-                          <option value="each">Each</option>
-                        </select>
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          title="Quantity"
-                          placeholder="Qty"
-                          value={row.quantity}
-                          onChange={(e) => {
-                            const q = Number.parseFloat(e.target.value) || 0
-                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
-                          }}
-                          style={theme.formInput}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          placeholder="$/unit"
-                          value={row.unit_price}
-                          onChange={(e) => {
-                            const p = Number.parseFloat(e.target.value) || 0
-                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
-                          }}
-                          style={theme.formInput}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          title="Minimum line $ (optional)"
-                          placeholder="Min $"
-                          value={row.minimum_line_total ?? ""}
-                          onChange={(e) => {
-                            const t = e.target.value.trim()
-                            const n = t === "" ? undefined : Number.parseFloat(t)
-                            setEstimateLineDraft((prev) =>
-                              prev.map((r, i) =>
-                                i === idx ? { ...r, minimum_line_total: n != null && Number.isFinite(n) && n > 0 ? n : undefined } : r,
-                              ),
-                            )
-                          }}
-                          style={theme.formInput}
-                        />
-                        <select
-                          value={row.job_type_id ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, job_type_id: v || "" } : r)))
-                          }}
-                          style={theme.formInput}
-                        >
-                          <option value="">Job type</option>
-                          {estimateModalJobTypes.map((jt) => (
-                            <option key={jt.id} value={jt.id}>
-                              {jt.name}
-                            </option>
-                          ))}
-                        </select>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedEliById((prev) => ({ ...prev, [row.id]: !expanded }))}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              textAlign: "left",
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              cursor: "pointer",
+                              font: "inherit",
+                            }}
+                          >
+                            <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>
+                              {row.description.trim() || "Line"}{" "}
+                              <span style={{ fontWeight: 500, opacity: 0.75 }}>
+                                · {row.quantity} {eliUnitSuffix(row.unit_basis)} @ ${Number(row.unit_price).toFixed(2)}
+                              </span>
+                            </span>
+                            {!expanded && linkedLabels.length > 0 ? (
+                              <span style={{ display: "block", fontSize: 11, color: "#64748b", marginTop: 4, fontWeight: 500 }}>
+                                Job types: {linkedLabels.join(", ")}
+                              </span>
+                            ) : null}
+                            <span style={{ display: "block", fontSize: 11, color: theme.primary, marginTop: 4, fontWeight: 600 }}>
+                              {expanded ? "▾ Collapse" : "▸ Expand to edit"}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEstimateLineDraft((prev) => prev.filter((_, i) => i !== idx))}
+                            style={{
+                              fontSize: 12,
+                              color: "#b91c1c",
+                              background: "white",
+                              border: "1px solid #fecaca",
+                              borderRadius: 6,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              flexShrink: 0,
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        {expanded ? (
+                          <>
+                            <input
+                              placeholder="Description on quote"
+                              value={row.description}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, description: v } : r)))
+                              }}
+                              style={theme.formInput}
+                            />
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: isMobile ? "1fr 1fr" : "90px 90px 90px minmax(0,1fr)",
+                                gap: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <select
+                                value={row.unit_basis === "miles" || row.unit_basis === "each" ? row.unit_basis : "hours"}
+                                onChange={(e) => {
+                                  const v = e.target.value as EliUnit
+                                  setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_basis: v } : r)))
+                                }}
+                                style={theme.formInput}
+                                title="Unit"
+                              >
+                                <option value="hours">Hours</option>
+                                <option value="miles">Miles</option>
+                                <option value="each">Each</option>
+                              </select>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                title="Quantity"
+                                placeholder="Qty"
+                                value={row.quantity}
+                                onChange={(e) => {
+                                  const q = Number.parseFloat(e.target.value) || 0
+                                  setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
+                                }}
+                                style={theme.formInput}
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                placeholder="$/unit"
+                                value={row.unit_price}
+                                onChange={(e) => {
+                                  const p = Number.parseFloat(e.target.value) || 0
+                                  setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
+                                }}
+                                style={theme.formInput}
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                title="Minimum line $ (optional)"
+                                placeholder="Min $"
+                                value={row.minimum_line_total ?? ""}
+                                onChange={(e) => {
+                                  const t = e.target.value.trim()
+                                  const n = t === "" ? undefined : Number.parseFloat(t)
+                                  setEstimateLineDraft((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx ? { ...r, minimum_line_total: n != null && Number.isFinite(n) && n > 0 ? n : undefined } : r,
+                                    ),
+                                  )
+                                }}
+                                style={theme.formInput}
+                              />
+                            </div>
+                            <select
+                              value={eliLineKindFromPresetKind(row.line_kind)}
+                              onChange={(e) => {
+                                const k = e.target.value as EliLineKind
+                                const lk =
+                                  k === "material" ? "material" : k === "travel" ? "travel" : k === "misc" ? "misc" : "labor"
+                                setEstimateLineDraft((prev) =>
+                                  prev.map((r, i) => {
+                                    if (i !== idx) return r
+                                    const next: EstimateLinePresetRow = { ...r, line_kind: lk }
+                                    if (!r.description.trim()) next.description = ELI_KIND_LABEL[k]
+                                    return next
+                                  }),
+                                )
+                              }}
+                              style={{ ...theme.formInput, maxWidth: 280 }}
+                            >
+                              {ELI_LINE_KINDS.map((k) => (
+                                <option key={k} value={k}>
+                                  {ELI_KIND_LABEL[k]}
+                                </option>
+                              ))}
+                            </select>
+                            {showQuotesJobTypesPanel && estimateModalJobTypes.length > 0 ? (
+                              <div
+                                style={{
+                                  padding: 10,
+                                  borderRadius: 6,
+                                  border: `1px dashed ${theme.border}`,
+                                  background: "#fff",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 8,
+                                }}
+                              >
+                                <div style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Add to job type</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                  <select
+                                    value={eliLinkJtPick[row.id] ?? ""}
+                                    onChange={(e) =>
+                                      setEliLinkJtPick((prev) => ({ ...prev, [row.id]: e.target.value }))
+                                    }
+                                    style={{ ...theme.formInput, minWidth: 160, flex: "1 1 160px" }}
+                                  >
+                                    <option value="">Choose job type…</option>
+                                    {estimateModalJobTypes.map((jt) => (
+                                      <option key={jt.id} value={jt.id}>
+                                        {jt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const pick = (eliLinkJtPick[row.id] ?? "").trim()
+                                      if (!pick) {
+                                        alert("Choose a job type first.")
+                                        return
+                                      }
+                                      setEstimateLineDraft((prev) =>
+                                        prev.map((r, i) => {
+                                          if (i !== idx) return r
+                                          const set = new Set(r.linked_job_type_ids ?? [])
+                                          set.add(pick)
+                                          return { ...r, linked_job_type_ids: Array.from(set) }
+                                        }),
+                                      )
+                                      setEliLinkJtPick((prev) => ({ ...prev, [row.id]: "" }))
+                                    }}
+                                    style={{
+                                      padding: "8px 12px",
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: theme.primary,
+                                      color: "#fff",
+                                      fontWeight: 600,
+                                      fontSize: 12,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Add link
+                                  </button>
+                                </div>
+                                {linkedIds.length > 0 ? (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                    {linkedIds.map((jid) => {
+                                      const name = estimateModalJobTypes.find((j) => j.id === jid)?.name ?? jid.slice(0, 8)
+                                      return (
+                                        <span
+                                          key={jid}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            fontSize: 11,
+                                            padding: "4px 8px",
+                                            borderRadius: 999,
+                                            background: "#e0e7ff",
+                                            color: "#312e81",
+                                          }}
+                                        >
+                                          {name}
+                                          <button
+                                            type="button"
+                                            aria-label={`Remove ${name}`}
+                                            onClick={() =>
+                                              setEstimateLineDraft((prev) =>
+                                                prev.map((r, i) =>
+                                                  i === idx
+                                                    ? {
+                                                        ...r,
+                                                        linked_job_type_ids: (r.linked_job_type_ids ?? []).filter((x) => x !== jid),
+                                                      }
+                                                    : r,
+                                                ),
+                                              )
+                                            }
+                                            style={{
+                                              border: "none",
+                                              background: "none",
+                                              padding: 0,
+                                              cursor: "pointer",
+                                              fontSize: 14,
+                                              lineHeight: 1,
+                                              color: "#4338ca",
+                                            }}
+                                          >
+                                            ×
+                                          </button>
+                                        </span>
+                                      )
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span style={{ fontSize: 11, color: "#64748b" }}>Not linked to any job type yet.</span>
+                                )}
+                              </div>
+                            ) : showQuotesJobTypesPanel ? (
+                              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                                Add job types under <strong>{quoteJobTypesButtonLabel}</strong> to link templates here.
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
                       </div>
-                      <select
-                        value={eliLineKindFromPresetKind(row.line_kind)}
-                        onChange={(e) => {
-                          const k = e.target.value as EliLineKind
-                          const lk =
-                            k === "material" ? "material" : k === "travel" ? "travel" : k === "misc" ? "misc" : "labor"
-                          setEstimateLineDraft((prev) =>
-                            prev.map((r, i) => {
-                              if (i !== idx) return r
-                              const next: EstimateLinePresetRow = { ...r, line_kind: lk }
-                              if (!r.description.trim()) next.description = ELI_KIND_LABEL[k]
-                              return next
-                            }),
-                          )
-                        }}
-                        style={{ ...theme.formInput, maxWidth: 280 }}
-                      >
-                        {ELI_LINE_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {ELI_KIND_LABEL[k]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
               <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
@@ -3622,6 +3797,47 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     onChange={(e) => setQuoteJtNewDesc(e.target.value)}
                     style={theme.formInput}
                   />
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Saved line templates</div>
+                    <p style={{ margin: "0 0 8px", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                      Check lines to link them to this job type. One line can be linked to several types. Manage the full list under{" "}
+                      <strong>{estimateLineItemsButtonLabel}</strong>.
+                    </p>
+                    {estimateLinePresets.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>No saved line templates yet.</p>
+                    ) : (
+                      <div
+                        style={{
+                          maxHeight: 200,
+                          overflow: "auto",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 6,
+                          padding: 8,
+                          borderRadius: 6,
+                          border: `1px solid ${theme.border}`,
+                          background: "#fff",
+                        }}
+                      >
+                        {estimateLinePresets.map((p) => (
+                          <label
+                            key={p.id}
+                            style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}
+                          >
+                            <input
+                              type="checkbox"
+                              style={{ marginTop: 3 }}
+                              checked={jtModalPresetChecks[p.id] === true}
+                              onChange={(e) =>
+                                setJtModalPresetChecks((prev) => ({ ...prev, [p.id]: e.target.checked }))
+                              }
+                            />
+                            <span>{p.description.trim() || "Line"}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <button
                       type="button"

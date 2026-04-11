@@ -1,6 +1,8 @@
+import { APP_SHELL_STRINGS } from "./stringsAppShell"
+
 export type LocaleCode = "en" | "es"
 
-export const STRINGS: Record<LocaleCode, Record<string, string>> = {
+const CORE: Record<LocaleCode, Record<string, string>> = {
   en: {
     "nav.dashboard": "Dashboard",
     "nav.leads": "Leads",
@@ -78,4 +80,9 @@ export const STRINGS: Record<LocaleCode, Record<string, string>> = {
     "leads.asap": "Lo antes posible (lenguaje urgente / mismo día para Hot)",
     "leads.flexible": "Flexible",
   },
+}
+
+export const STRINGS: Record<LocaleCode, Record<string, string>> = {
+  en: { ...CORE.en, ...APP_SHELL_STRINGS.en },
+  es: { ...CORE.es, ...APP_SHELL_STRINGS.es },
 }
