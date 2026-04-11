@@ -39,7 +39,7 @@ import {
   parseQuoteItemMetadata,
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
-import { insertQuoteItemRowSafe } from "../../lib/quoteItemsDb"
+import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
@@ -1638,9 +1638,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   async function persistQuoteItemUpdate(itemId: string, patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> }) {
     if (!supabase || !selectedQuoteId) return
-    const { error } = await supabase.from("quote_items").update(patch).eq("id", itemId)
-    if (error) {
-      alert(error.message)
+    const result = await updateQuoteItemRowSafe(supabase, itemId, patch)
+    if (!result.ok) {
+      alert(result.error)
+      return
+    }
+    if (result.metadataDropped) {
+      alert(
+        "Saved your numbers, but crew / line-kind data is not stored yet because quote_items.metadata is missing. Run tradesman/supabase/quote-items-metadata.sql in Supabase SQL Editor, reload the API schema, then set crew again.",
+      )
+      void refreshQuoteItemsOnly()
       return
     }
     setSelectedQuoteItems((prev) =>

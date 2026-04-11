@@ -54,3 +54,42 @@ export async function insertQuoteItemRowSafe(
 
   return { ok: false, error: e1.message }
 }
+
+/**
+ * Updates a quote_items row. If `metadata` is missing in the database, retries without `metadata`
+ * so description/qty/price still save; metadata-only updates return a clear error.
+ */
+export async function updateQuoteItemRowSafe(
+  supabase: SupabaseClient,
+  itemId: string,
+  patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> },
+): Promise<{ ok: true; metadataDropped?: boolean } | { ok: false; error: string }> {
+  const hasKey = (k: keyof typeof patch) => patch[k] !== undefined
+  if (!hasKey("description") && !hasKey("quantity") && !hasKey("unit_price") && !hasKey("metadata")) {
+    return { ok: true }
+  }
+
+  const { error: e1 } = await supabase.from("quote_items").update(patch).eq("id", itemId)
+  if (!e1) return { ok: true }
+
+  if (patch.metadata !== undefined && isQuoteItemsMetadataSchemaError(e1)) {
+    const { metadata: _m, ...rest } = patch
+    const restHas =
+      rest.description !== undefined || rest.quantity !== undefined || rest.unit_price !== undefined
+    if (!restHas) {
+      return {
+        ok: false,
+        error:
+          "Could not save crew or line options: the quote_items table needs a metadata column. In Supabase → SQL Editor, run tradesman/supabase/quote-items-metadata.sql, then in Dashboard use Settings → API → Reload schema (or wait a minute for the cache to refresh).",
+      }
+    }
+    const { error: e2 } = await supabase.from("quote_items").update(rest).eq("id", itemId)
+    if (e2) return { ok: false, error: e2.message }
+    return {
+      ok: true,
+      metadataDropped: true,
+    }
+  }
+
+  return { ok: false, error: e1.message }
+}
