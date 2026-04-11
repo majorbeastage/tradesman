@@ -24,6 +24,13 @@
 -- );
 
 -- ========== RUN THIS BLOCK IN SUPABASE SQL EDITOR ==========
+-- Schema: default job type per quote (Quotes tab in app). Requires public.job_types to exist.
+-- Fixes: "column quotes.job_type_id does not exist"
+ALTER TABLE IF EXISTS public.quotes
+  ADD COLUMN IF NOT EXISTS job_type_id uuid REFERENCES public.job_types (id) ON DELETE SET NULL;
+
+COMMENT ON COLUMN public.quotes.job_type_id IS 'Optional default job type for this quote; new line items can inherit it when metadata allows.';
+
 -- Fixes: "new row violates row-level security policy for table quotes"
 
 -- 1) Allow anon to use quotes for your dev user (replace UUID if your DEV_USER_ID is different)
