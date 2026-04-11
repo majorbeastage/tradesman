@@ -47,6 +47,15 @@ function parsePositiveInt(raw: string | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : NaN
 }
 
+/** True if portal items include the standard recurring checkbox (same heuristic as `resolveRecurrenceFromPortal`). */
+export function portalHasRecurrenceControls(items: PortalSettingItem[]): boolean {
+  return items.some(
+    (i) =>
+      i.type === "checkbox" &&
+      (i.id === "make_event_recurring" || /recurring/i.test(i.id) || /recurring/i.test(i.label)),
+  )
+}
+
 /**
  * Detect "make recurring" checkbox + optional frequency dropdown from portal items.
  * Recognizes id `make_event_recurring` or any checkbox whose id/label mentions "recurring".

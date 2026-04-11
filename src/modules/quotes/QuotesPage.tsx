@@ -3207,21 +3207,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       return
                     }
                     const durationMs = calDuration * 60 * 1000
+                    const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
                     const recurrenceFromJt =
                       calJobTypeId && calendarJobTypesPortalItems.length > 0
                         ? resolveRecurrenceFromPortal(calendarJobTypesPortalItems, quoteJobTypesPortalValues)
                         : null
-                    const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
-                    let series = recurrenceFromJt ?? recurrenceFromQuote
+                    let series = recurrenceFromQuote ?? recurrenceFromJt
                     if (series) {
-                      const endItems =
-                        calJobTypeId && calendarJobTypesPortalItems.length > 0
-                          ? calendarJobTypesPortalItems
-                          : quoteCalendarItems
-                      const endVals =
-                        calJobTypeId && calendarJobTypesPortalItems.length > 0
-                          ? quoteJobTypesPortalValues
-                          : quoteCalPortalValues
+                      const fromQuoteModal = recurrenceFromQuote != null
+                      const endItems = fromQuoteModal ? quoteCalendarItems : calendarJobTypesPortalItems
+                      const endVals = fromQuoteModal ? quoteCalPortalValues : quoteJobTypesPortalValues
                       series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
                     }
                     const starts = series ? computeOccurrenceStarts(start, series) : [start]

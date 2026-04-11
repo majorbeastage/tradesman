@@ -19,6 +19,7 @@ import {
   applyRecurrenceEndLimitsFromPortal,
   computeOccurrenceStarts,
   intervalsOverlap,
+  portalHasRecurrenceControls,
 } from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -822,15 +823,17 @@ export default function CalendarPage() {
       return
     }
     const durationMs = addDuration * 60 * 1000
+    /** Prefer recurrence from this modal so job type + recurring still work (Job Types modal is optional). */
+    const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
     const recurrenceFromJobTypes =
       addJobTypeId && jobTypesPortalItems.length > 0
         ? resolveRecurrenceFromPortal(jobTypesPortalItems, jobTypesPortalValues)
         : null
-    const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
-    let series = recurrenceFromJobTypes ?? recurrenceFromAddItem
+    let series = recurrenceFromAddItem ?? recurrenceFromJobTypes
     if (series) {
-      const endItems = addJobTypeId && jobTypesPortalItems.length > 0 ? jobTypesPortalItems : addItemPortalItems
-      const endVals = addJobTypeId && jobTypesPortalItems.length > 0 ? jobTypesPortalValues : addItemPortalValues
+      const endFromAddModal = recurrenceFromAddItem != null
+      const endItems = endFromAddModal ? addItemPortalItems : jobTypesPortalItems
+      const endVals = endFromAddModal ? addItemPortalValues : jobTypesPortalValues
       series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
     }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]
@@ -1407,6 +1410,12 @@ export default function CalendarPage() {
                   ))}
                 </select>
               </div>
+              {addJobTypeId && portalHasRecurrenceControls(addItemPortalItems) ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                  Recurrence options below apply even when a job type is selected. You can also set defaults under{" "}
+                  <strong>Job Types</strong> when the add form has no recurrence controls.
+                </p>
+              ) : null}
               <div>
                 <label style={{ fontSize: "12px", color: theme.text }}>Time increments</label>
                 <select
