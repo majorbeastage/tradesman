@@ -1032,7 +1032,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   function mergeQuoteItemMetadataRow(
     item: any,
-    patch: Partial<QuoteItemMetadata> & { minimum_line_total?: number | null },
+    patch: Omit<Partial<QuoteItemMetadata>, "minimum_line_total"> & { minimum_line_total?: number | null },
   ): Record<string, unknown> {
     const prev =
       item?.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
