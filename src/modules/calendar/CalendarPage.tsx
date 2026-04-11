@@ -7,6 +7,7 @@ import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import {
+  DEFAULT_RECEIPT_TEMPLATE_ITEMS,
   getControlItemsForUser,
   getCustomActionButtonsForUser,
   getOmPageActionVisible,
@@ -31,6 +32,12 @@ import {
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
 import { buildReceiptPdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
+import {
+  type EstimateLinePresetRow,
+  formatEstimatePresetCostSummary,
+  parseEstimateLinePresetsFromMetadata,
+  serializePresetForProfile,
+} from "../../lib/estimateLinePresets"
 
 type JobType = {
   id: string
@@ -38,6 +45,7 @@ type JobType = {
   description: string | null
   duration_minutes: number
   color_hex: string | null
+  materials_list?: string | null
 }
 
 type CalendarEvent = {
@@ -54,6 +62,7 @@ type CalendarEvent = {
   removed_at?: string | null
   completed_at?: string | null
   recurrence_series_id?: string | null
+  materials_list?: string | null
   job_types?: JobType | null
   customers?: { display_name: string | null } | null
 }
@@ -158,15 +167,23 @@ function legacyRecurringCohortIds(selected: CalendarEvent, all: CalendarEvent[],
   return mates.map((m) => m.id)
 }
 
-/** PostgREST may return `customers` as one object or a single-element array. */
+/** PostgREST may return `customers` / `job_types` as one object or a single-element array. */
 function normalizeCalendarEventRow(raw: unknown): CalendarEvent {
-  const e = raw as CalendarEvent & { customers?: CalendarEvent["customers"] | { display_name: string | null }[] }
+  const e = raw as CalendarEvent & {
+    customers?: CalendarEvent["customers"] | { display_name: string | null }[]
+    job_types?: CalendarEvent["job_types"] | JobType[]
+  }
   let customers: CalendarEvent["customers"] = e.customers ?? null
   if (Array.isArray(e.customers)) {
     const c0 = e.customers[0]
     customers = c0 ? { display_name: c0.display_name ?? null } : null
   }
-  return { ...e, customers }
+  let job_types: CalendarEvent["job_types"] = e.job_types ?? null
+  if (Array.isArray(e.job_types)) {
+    const j0 = e.job_types[0]
+    job_types = j0 ?? null
+  }
+  return { ...e, customers, job_types }
 }
 
 export default function CalendarPage() {
@@ -232,6 +249,11 @@ export default function CalendarPage() {
   const [jtColor, setJtColor] = useState("#F97316")
   const [jtSaving, setJtSaving] = useState(false)
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
+  const [jtMaterials, setJtMaterials] = useState("")
+  const [estimateLinePresetsCal, setEstimateLinePresetsCal] = useState<EstimateLinePresetRow[]>([])
+  const [jtModalPresetChecksCal, setJtModalPresetChecksCal] = useState<Record<string, boolean>>({})
+  const [eventMaterialsDraft, setEventMaterialsDraft] = useState("")
+  const [eventMaterialsSaving, setEventMaterialsSaving] = useState(false)
 
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
@@ -249,10 +271,13 @@ export default function CalendarPage() {
     () => getControlItemsForUser(portalConfig, "calendar", "job_types", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
-  const receiptTemplateItems = useMemo(
-    () => getControlItemsForUser(portalConfig, "calendar", "receipt_template", { aiAutomationsEnabled }),
-    [portalConfig, aiAutomationsEnabled],
-  )
+  const receiptTemplateItems = useMemo(() => {
+    const got = getControlItemsForUser(portalConfig, "calendar", "receipt_template", { aiAutomationsEnabled })
+    if (got.length > 0) return got
+    const fallback = getControlItemsForUser(null, "calendar", "receipt_template", { aiAutomationsEnabled })
+    if (fallback.length > 0) return fallback
+    return [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
+  }, [portalConfig, aiAutomationsEnabled])
   const calendarSettingsItemsWithOrg = useMemo(() => {
     const orgToggle: PortalSettingItem = {
       id: "__org_all_events",
@@ -451,7 +476,7 @@ export default function CalendarPage() {
   }
 
   useEffect(() => {
-    if (!showReceiptTemplateModal || !supabase || !userId || receiptTemplateItems.length === 0) return
+    if (!showReceiptTemplateModal || !supabase || !userId) return
     let cancelled = false
     void (async () => {
       const { data } = await supabase.from("profiles").select("document_template_receipt, metadata").eq("id", userId).maybeSingle()
@@ -463,7 +488,8 @@ export default function CalendarPage() {
       const useAi = meta.receipt_template_use_ai === true
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
       const next: Record<string, string> = {}
-      for (const item of receiptTemplateItems) {
+      const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
+      for (const item of items) {
         if (item.id === "receipt_template_notes") next[item.id] = notes
         else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
@@ -531,34 +557,61 @@ export default function CalendarPage() {
       end.setDate(0)
       end.setHours(23, 59, 59, 999)
     }
-    const baseQuery = () =>
+    const baseQuery = (selectStr: string) =>
       client
         .from("calendar_events")
-        .select(
-          "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name )"
-        )
+        .select(selectStr)
         .is("removed_at", null)
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
-    const scopedQuery = () => (canViewOrgEvents ? baseQuery().in("user_id", orgUserIds) : baseQuery().eq("user_id", userId))
-    const { data, error } = await scopedQuery().order("start_at").is("completed_at", null)
-    if (error && error.message?.includes("completed_at")) {
-      setHasCompletedAtColumn(false)
-      const { data: data2, error: error2 } = await scopedQuery().order("start_at")
-      if (error2) {
-        setLoadError(error2.message)
+    const scopedQuery = (selectStr: string) =>
+      canViewOrgEvents ? baseQuery(selectStr).in("user_id", orgUserIds) : baseQuery(selectStr).eq("user_id", userId)
+
+    const selectTiers = [
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, color_hex, duration_minutes, description )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name ), job_types ( id, name, color_hex, duration_minutes, description )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name )",
+    ]
+
+    const runOnce = async (sel: string, filterCompleted: boolean) => {
+      let q = scopedQuery(sel).order("start_at")
+      if (filterCompleted) q = q.is("completed_at", null)
+      return q
+    }
+
+    let filterCompleted = hasCompletedAtColumn
+    let lastErr: Error | null = null
+
+    for (const sel of selectTiers) {
+      let { data, error } = await runOnce(sel, filterCompleted)
+      if (error?.message?.includes("completed_at")) {
+        setHasCompletedAtColumn(false)
+        filterCompleted = false
+        const r = await runOnce(sel, false)
+        data = r.data
+        error = r.error
+      }
+      if (!error) {
+        setEvents((data || []).map(normalizeCalendarEventRow))
+        return
+      }
+      lastErr = error
+      const em = (error.message ?? "").toLowerCase()
+      const retry =
+        em.includes("materials_list") ||
+        em.includes("job_types") ||
+        (em.includes("column") && em.includes("does not exist"))
+      if (!retry) {
+        setLoadError(error.message)
         setEvents([])
         return
       }
-      setEvents((data2 || []).map(normalizeCalendarEventRow))
-      return
     }
-    if (error) {
-      setLoadError(error.message)
-      setEvents([])
-      return
-    }
-    setEvents((data || []).map(normalizeCalendarEventRow))
+
+    setLoadError(lastErr?.message ?? "Could not load calendar events.")
+    setEvents([])
   }
 
   useEffect(() => {
@@ -640,6 +693,27 @@ export default function CalendarPage() {
     }
   }
 
+  async function saveEventMaterialsList() {
+    if (!supabase || !selectedEvent?.id) return
+    setEventMaterialsSaving(true)
+    const v = eventMaterialsDraft.trim() || null
+    const { error } = await supabase.from("calendar_events").update({ materials_list: v }).eq("id", selectedEvent.id)
+    setEventMaterialsSaving(false)
+    if (error) {
+      const msg = error.message ?? String(error)
+      if (msg.toLowerCase().includes("materials_list")) {
+        alert(
+          "Could not save materials: the calendar_events table needs a materials_list column. Run tradesman/supabase/job-type-materials-list.sql in Supabase SQL Editor.",
+        )
+      } else {
+        alert(msg)
+      }
+      return
+    }
+    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, materials_list: v } : prev))
+    loadEvents()
+  }
+
   async function handleCalendarEntityFileChange(files: FileList | null) {
     if (!files?.length || !supabase || !selectedEvent?.id) return
     const owner = selectedEvent.user_id ?? userId
@@ -709,18 +783,105 @@ export default function CalendarPage() {
   async function loadJobTypes() {
     if (!userId || !supabase) return
     setJobTypesLoadError("")
-    const { data, error } = await supabase
+    const withMat = await supabase
       .from("job_types")
-      .select("id, name, description, duration_minutes, color_hex")
+      .select("id, name, description, duration_minutes, color_hex, materials_list")
       .eq("user_id", userId)
       .order("name")
+    let rows: JobType[] = (withMat.data ?? []) as JobType[]
+    let error = withMat.error
+    if (error?.message?.toLowerCase().includes("materials_list")) {
+      const noMat = await supabase
+        .from("job_types")
+        .select("id, name, description, duration_minutes, color_hex")
+        .eq("user_id", userId)
+        .order("name")
+      rows = (noMat.data ?? []) as JobType[]
+      error = noMat.error
+    }
     if (error) {
       setJobTypesLoadError(error.message)
       setJobTypes([])
       return
     }
-    setJobTypes((data as JobType[]) || [])
+    setJobTypes(rows)
   }
+
+  async function persistEstimatePresetsCal(next: EstimateLinePresetRow[]) {
+    if (!supabase || !userId) return
+    const trimmed = next.filter((p) => p.description.trim())
+    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (fetchErr) {
+      alert(fetchErr.message)
+      return
+    }
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.estimate_line_presets = trimmed.map(serializePresetForProfile)
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setEstimateLinePresetsCal(trimmed)
+  }
+
+  async function mergePresetLinksForJobTypeCal(jobTypeId: string, checks: Record<string, boolean>) {
+    const merged = estimateLinePresetsCal.map((p) => {
+      const want = checks[p.id] === true
+      const set = new Set(p.linked_job_type_ids ?? [])
+      if (want) set.add(jobTypeId)
+      else set.delete(jobTypeId)
+      return { ...p, linked_job_type_ids: Array.from(set) }
+    })
+    await persistEstimatePresetsCal(merged)
+  }
+
+  useEffect(() => {
+    if (!showJobTypes || !supabase || !userId) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        setEstimateLinePresetsCal(parseEstimateLinePresetsFromMetadata(meta))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showJobTypes, supabase, userId])
+
+  useEffect(() => {
+    if (!editingJobTypeId) return
+    const next: Record<string, boolean> = {}
+    for (const p of estimateLinePresetsCal) {
+      next[p.id] = (p.linked_job_type_ids ?? []).includes(editingJobTypeId)
+    }
+    setJtModalPresetChecksCal(next)
+  }, [editingJobTypeId, estimateLinePresetsCal])
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setEventMaterialsDraft("")
+      return
+    }
+    const jt =
+      (selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null) ??
+      jobTypes.find((j) => j.id === selectedEvent.job_type_id)
+    const evText = typeof selectedEvent.materials_list === "string" ? selectedEvent.materials_list : ""
+    const fallback = typeof jt?.materials_list === "string" ? jt.materials_list : ""
+    const trimmedEv = evText.trim()
+    setEventMaterialsDraft(trimmedEv !== "" ? evText : fallback)
+  }, [selectedEvent?.id, selectedEvent?.materials_list, selectedEvent?.job_type_id, selectedEvent?.job_types, jobTypes])
 
   useEffect(() => {
     if (!userId) return
@@ -873,18 +1034,38 @@ export default function CalendarPage() {
     setAddSaving(true)
     const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
     const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
-    const rows = newRanges.map(({ s, e }) => ({
+    const jtForMaterials = addJobTypeId ? jobTypes.find((j) => j.id === addJobTypeId) : undefined
+    const materialsFromJobType =
+      jtForMaterials && typeof jtForMaterials.materials_list === "string" && jtForMaterials.materials_list.trim()
+        ? jtForMaterials.materials_list.trim()
+        : null
+    const rowBase = {
       user_id: eventOwnerUserId,
       title: addTitle.trim(),
-      start_at: s.toISOString(),
-      end_at: e.toISOString(),
+      start_at: "" as string,
+      end_at: "" as string,
       job_type_id: addJobTypeId || null,
       quote_id: addQuoteId || null,
       customer_id: addCustomerId || null,
       notes: addNotes.trim() || null,
       ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
+    }
+    const rowsWithMat = newRanges.map(({ s, e }) => ({
+      ...rowBase,
+      start_at: s.toISOString(),
+      end_at: e.toISOString(),
+      materials_list: materialsFromJobType,
     }))
-    const { error } = await supabase.from("calendar_events").insert(rows)
+    const rowsNoMat = newRanges.map(({ s, e }) => ({
+      ...rowBase,
+      start_at: s.toISOString(),
+      end_at: e.toISOString(),
+    }))
+    let { error } = await supabase.from("calendar_events").insert(rowsWithMat)
+    if (error?.message?.toLowerCase().includes("materials_list")) {
+      const r = await supabase.from("calendar_events").insert(rowsNoMat)
+      error = r.error
+    }
     setAddSaving(false)
     if (error) {
       setAddError(error.message)
@@ -921,29 +1102,56 @@ export default function CalendarPage() {
       return
     }
     setJtSaving(true)
-    const payload = {
+    const payloadFull = {
       name: jtName.trim(),
       description: jtDescription.trim() || null,
       duration_minutes: jtDuration,
-      color_hex: jtColor
+      color_hex: jtColor,
+      materials_list: jtMaterials.trim() || null,
     }
-    const { error } = editingJobTypeId
-      ? await supabase.from("job_types").update(payload).eq("id", editingJobTypeId).eq("user_id", userId)
-      : await supabase.from("job_types").insert({ user_id: userId, ...payload })
+    const payloadNoMat = {
+      name: payloadFull.name,
+      description: payloadFull.description,
+      duration_minutes: payloadFull.duration_minutes,
+      color_hex: payloadFull.color_hex,
+    }
+
+    let jobTypeIdForPresets: string | null = editingJobTypeId
+    let error: { message: string } | null = null
+
+    if (editingJobTypeId) {
+      let r = await supabase.from("job_types").update(payloadFull).eq("id", editingJobTypeId).eq("user_id", userId)
+      if (r.error?.message?.toLowerCase().includes("materials_list")) {
+        r = await supabase.from("job_types").update(payloadNoMat).eq("id", editingJobTypeId).eq("user_id", userId)
+      }
+      error = r.error
+    } else {
+      let r = await supabase.from("job_types").insert({ user_id: userId, ...payloadFull }).select("id").single()
+      if (r.error?.message?.toLowerCase().includes("materials_list")) {
+        r = await supabase.from("job_types").insert({ user_id: userId, ...payloadNoMat }).select("id").single()
+      }
+      error = r.error
+      const inserted = r.data as { id?: string } | null
+      if (!error && inserted?.id) jobTypeIdForPresets = inserted.id
+    }
+
     setJtSaving(false)
     if (error) {
       const msg = error.message || String(error)
-      console.error("[Job type save failed]", { error, userId, payload })
+      console.error("[Job type save failed]", { error, userId, payloadFull })
       const hint = (msg.includes("policy") || msg.includes("RLS") || msg.includes("row-level") || msg.includes("permission") || msg.includes("does not exist"))
         ? "\n\nFix: In Supabase Dashboard → SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql (creates job_types table + RLS policies), then try again."
         : ""
       alert("Could not save job type: " + msg + hint)
       return
     }
+    if (jobTypeIdForPresets) await mergePresetLinksForJobTypeCal(jobTypeIdForPresets, jtModalPresetChecksCal)
     setJtName("")
     setJtDescription("")
     setJtDuration(60)
     setJtColor("#F97316")
+    setJtMaterials("")
+    setJtModalPresetChecksCal({})
     setEditingJobTypeId(null)
     loadJobTypes()
   }
@@ -953,6 +1161,7 @@ export default function CalendarPage() {
     setJtDescription(jt.description ?? "")
     setJtDuration(jt.duration_minutes)
     setJtColor(jt.color_hex ?? "#F97316")
+    setJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setEditingJobTypeId(jt.id)
   }
 
@@ -961,7 +1170,9 @@ export default function CalendarPage() {
     setJtDescription("")
     setJtDuration(60)
     setJtColor("#F97316")
+    setJtMaterials("")
     setEditingJobTypeId(null)
+    setJtModalPresetChecksCal({})
   }
 
   async function removeJobType(jt: JobType) {
@@ -973,6 +1184,11 @@ export default function CalendarPage() {
       return
     }
     if (editingJobTypeId === jt.id) cancelEditJobType()
+    const stripped = estimateLinePresetsCal.map((p) => ({
+      ...p,
+      linked_job_type_ids: (p.linked_job_type_ids ?? []).filter((id) => id !== jt.id),
+    }))
+    await persistEstimatePresetsCal(stripped)
     loadJobTypes()
   }
 
@@ -1490,8 +1706,11 @@ export default function CalendarPage() {
       {showJobTypes && (
         <>
           <div onClick={() => setShowJobTypes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "480px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "520px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, opacity: 0.9 }}>
+              Same job types as <strong>Quotes</strong> (materials + line templates). Recurrence options below apply when you add items from the calendar.
+            </p>
             {jobTypesPortalItems.length > 0 && (
               <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
                 <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
@@ -1519,7 +1738,7 @@ export default function CalendarPage() {
                 <strong>Fix:</strong> In Supabase Dashboard → SQL Editor, run the full script in <code style={{ fontSize: "12px" }}>tradesman/supabase-job-types-setup.sql</code>, then close and reopen this window.
               </p>
             )}
-            <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>Create job types with description, time required, and a custom color for the calendar.</p>
+            <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>Create job types with description, time required, color, optional materials checklist, and links to saved quote line templates.</p>
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
               <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
               <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
@@ -1528,6 +1747,82 @@ export default function CalendarPage() {
                 <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
                 <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
               </div>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
+                Materials checklist (optional, one line per item — copied to new events; editable per event)
+                <textarea
+                  value={jtMaterials}
+                  onChange={(e) => setJtMaterials(e.target.value)}
+                  rows={4}
+                  placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
+                  style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </label>
+              <details
+                style={{
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  padding: "8px 10px",
+                }}
+              >
+                <summary
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#111827",
+                    cursor: "pointer",
+                    listStyle: "none",
+                  }}
+                >
+                  Saved line templates
+                  {estimateLinePresetsCal.length > 0 ? (
+                    <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresetsCal.length})</span>
+                  ) : null}
+                </summary>
+                <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
+                  Check lines to link them to this job type. Manage the full list under <strong style={{ color: "#111827" }}>Quotes → Saved line templates</strong>.
+                </p>
+                {estimateLinePresetsCal.length === 0 ? (
+                  <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
+                ) : (
+                  <div
+                    style={{
+                      maxHeight: 220,
+                      overflow: "auto",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      padding: 8,
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#f9fafb",
+                    }}
+                  >
+                    {estimateLinePresetsCal.map((p) => {
+                      const costLine = formatEstimatePresetCostSummary(p)
+                      return (
+                        <label
+                          key={p.id}
+                          style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
+                        >
+                          <input
+                            type="checkbox"
+                            style={{ marginTop: 4, flexShrink: 0 }}
+                            checked={jtModalPresetChecksCal[p.id] === true}
+                            onChange={(e) =>
+                              setJtModalPresetChecksCal((prev) => ({ ...prev, [p.id]: e.target.checked }))
+                            }
+                          />
+                          <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+                            <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
+                            {costLine ? <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span> : null}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </details>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 <button onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
                   {jtSaving ? (editingJobTypeId ? "Updating..." : "Adding...") : editingJobTypeId ? "Update job type" : "Add job type"}
@@ -1584,11 +1879,12 @@ export default function CalendarPage() {
       {showReceiptTemplateModal && (
         <PortalSettingsModal
           title={receiptTemplateButtonLabel}
-          items={receiptTemplateItems}
+          items={receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]}
           formValues={receiptTemplateFormValues}
           setFormValue={(id, value) => setReceiptTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
           isItemVisible={isReceiptTemplateItemVisible}
           onClose={() => void closeReceiptTemplateModal()}
+          maxWidthPx={520}
         />
       )}
       {showCustomizeUser && (
@@ -1944,6 +2240,37 @@ export default function CalendarPage() {
                 <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
               </p>
             )}
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Materials</p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                Starts from the job type checklist when the event is created. Edit below for this date only.
+              </p>
+              <textarea
+                value={eventMaterialsDraft}
+                onChange={(e) => setEventMaterialsDraft(e.target.value)}
+                rows={5}
+                placeholder="One line per item"
+                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+              />
+              <button
+                type="button"
+                disabled={eventMaterialsSaving || !supabase}
+                onClick={() => void saveEventMaterialsList()}
+                style={{
+                  marginTop: 8,
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: eventMaterialsSaving ? "wait" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {eventMaterialsSaving ? "Saving…" : "Save materials"}
+              </button>
+            </div>
             <div style={{ marginBottom: 12 }}>
               <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Event files</p>
               <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>

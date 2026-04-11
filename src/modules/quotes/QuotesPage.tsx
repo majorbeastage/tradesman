@@ -40,6 +40,12 @@ import {
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
 import { insertQuoteItemRowSafe } from "../../lib/quoteItemsDb"
+import {
+  type EstimateLinePresetRow,
+  formatEstimatePresetCostSummary,
+  parseEstimateLinePresetsFromMetadata,
+  serializePresetForProfile,
+} from "../../lib/estimateLinePresets"
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -54,20 +60,6 @@ function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
 
 function dropdownToExportFormat(label: string): "pdf" | "docx" {
   return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
-}
-
-/** Saved estimate presets (profile metadata.estimate_line_presets). */
-type EstimateLinePresetRow = {
-  id: string
-  description: string
-  quantity: number
-  unit_price: number
-  minimum_line_total?: number
-  /** Job types this template is linked to (for the Job types screen); not applied automatically to quote lines. */
-  linked_job_type_ids?: string[]
-  line_kind?: string
-  /** hours | miles | each — unit shown next to quantity */
-  unit_basis?: string
 }
 
 const ELI_LINE_KINDS = ["labor", "material", "travel", "misc"] as const
@@ -104,38 +96,6 @@ function eliUnitSuffix(unitBasis: string | undefined): string {
 function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): boolean {
   const m = (message ?? "").toLowerCase()
   return m.includes("job_type_id") && (m.includes("does not exist") || m.includes("schema cache"))
-}
-
-function formatEstimatePresetCostSummary(p: EstimateLinePresetRow): string {
-  const q = Number(p.quantity)
-  const u = Number(p.unit_price)
-  if (!Number.isFinite(q) || !Number.isFinite(u)) return ""
-  const sub = q * u
-  const su = eliUnitSuffix(p.unit_basis)
-  return `$${u.toFixed(2)}/${su} × ${q} → $${sub.toFixed(2)}`
-}
-
-function normalizePresetLinkedJobTypes(raw: Record<string, unknown>): string[] {
-  const arr = raw.linked_job_type_ids
-  if (Array.isArray(arr)) {
-    return [...new Set(arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))]
-  }
-  const single = raw.job_type_id
-  if (typeof single === "string" && single.trim()) return [single.trim()]
-  return []
-}
-
-function serializePresetForProfile(row: EstimateLinePresetRow): Record<string, unknown> {
-  return {
-    id: row.id,
-    description: row.description.trim().slice(0, 500),
-    quantity: row.quantity,
-    unit_price: row.unit_price,
-    ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
-    ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
-    ...(row.unit_basis === "hours" || row.unit_basis === "miles" || row.unit_basis === "each" ? { unit_basis: row.unit_basis } : {}),
-    ...(row.linked_job_type_ids?.length ? { linked_job_type_ids: row.linked_job_type_ids } : {}),
-  }
 }
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -203,7 +163,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
   const [quoteJobTypesList, setQuoteJobTypesList] = useState<
-    { id: string; name: string; duration_minutes: number; description: string | null; color_hex: string | null }[]
+    {
+      id: string
+      name: string
+      duration_minutes: number
+      description: string | null
+      color_hex: string | null
+      materials_list?: string | null
+    }[]
   >([])
   const [quoteJobTypesModalValues, setQuoteJobTypesModalValues] = useState<Record<string, string>>({})
   const [estimateReview, setEstimateReview] = useState<{
@@ -265,6 +232,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteJtNewColor, setQuoteJtNewColor] = useState("#F97316")
   const [quoteJtSaving, setQuoteJtSaving] = useState(false)
   const [editingQuoteJtId, setEditingQuoteJtId] = useState<string | null>(null)
+  const [quoteJtMaterials, setQuoteJtMaterials] = useState("")
+  const [applyJtLinesBusy, setApplyJtLinesBusy] = useState(false)
   // Add to Calendar (from quote detail)
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
   const [calTitle, setCalTitle] = useState("")
@@ -428,30 +397,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       const laborMeta = meta.estimate_default_labor_rate
       if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
       else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
-      const rawPresets = meta.estimate_line_presets
-      if (Array.isArray(rawPresets)) {
-        const cleaned = rawPresets
-          .map((row: unknown) => {
-            const o = row as Record<string, unknown>
-            const id = typeof o.id === "string" ? o.id : crypto.randomUUID()
-            const description = String(o.description ?? "").slice(0, 500)
-            const quantity = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
-            const unit_price = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
-            const minRaw = o.minimum_line_total
-            const minNum = typeof minRaw === "number" ? minRaw : Number.parseFloat(String(minRaw ?? ""))
-            const minimum_line_total = Number.isFinite(minNum) && minNum >= 0 ? minNum : undefined
-            const linked_job_type_ids = normalizePresetLinkedJobTypes(o)
-            const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
-            const ub = o.unit_basis
-            const unit_basis =
-              typeof ub === "string" && (ub === "hours" || ub === "miles" || ub === "each") ? ub : undefined
-            return { id, description, quantity, unit_price, minimum_line_total, linked_job_type_ids, line_kind, unit_basis }
-          })
-          .filter((x) => x.description.trim())
-        setEstimateLinePresets(cleaned)
-      } else {
-        setEstimateLinePresets([])
-      }
+      setEstimateLinePresets(parseEstimateLinePresetsFromMetadata(meta))
     })()
     return () => {
       cancelled = true
@@ -868,13 +814,25 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   useEffect(() => {
     if (!showQuoteJobTypesModal || !supabase || !userId) return
-    void supabase
+    const client = supabase
+    void client
       .from("job_types")
-      .select("id, name, duration_minutes, description, color_hex")
+      .select("id, name, duration_minutes, description, color_hex, materials_list")
       .eq("user_id", userId)
       .order("name")
-      .then(({ data }) => setQuoteJobTypesList(data || []))
-  }, [showQuoteJobTypesModal, userId])
+      .then(({ data, error }) => {
+        if (error?.message?.toLowerCase().includes("materials_list")) {
+          void client
+            .from("job_types")
+            .select("id, name, duration_minutes, description, color_hex")
+            .eq("user_id", userId)
+            .order("name")
+            .then(({ data: d2 }) => setQuoteJobTypesList(d2 || []))
+          return
+        }
+        setQuoteJobTypesList(data || [])
+      })
+  }, [showQuoteJobTypesModal, supabase, userId])
 
   useEffect(() => {
     if (!showQuoteJobTypesModal) return
@@ -1485,9 +1443,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     description: string,
     quantity: number,
     unitPrice: number,
-    opts?: { metadata?: QuoteItemMetadata; presetId?: string },
-  ) {
-    if (!supabase || !selectedQuoteId) return
+    opts?: { metadata?: QuoteItemMetadata; presetId?: string; skipRefresh?: boolean },
+  ): Promise<boolean> {
+    if (!supabase || !selectedQuoteId) return false
     const meta: Record<string, unknown> = {}
     if (opts?.metadata) {
       const m = opts.metadata
@@ -1511,9 +1469,61 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     })
     if (!result.ok) {
       alert(result.error)
+      return false
+    }
+    if (!opts?.skipRefresh) openQuote(selectedQuoteId)
+    return true
+  }
+
+  async function applyJobTypeLinesToQuoteItems() {
+    const jtId =
+      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string"
+        ? String((selectedQuote as QuoteRow).job_type_id ?? "").trim()
+        : ""
+    if (!jtId) {
+      alert("Choose a quote job type first.")
       return
     }
-    openQuote(selectedQuoteId)
+    if (!supabase || !selectedQuoteId) return
+    const presets = estimateLinePresets.filter((p) => (p.linked_job_type_ids ?? []).includes(jtId))
+    if (presets.length === 0) {
+      alert(
+        "No saved line templates are linked to this job type. Link them under Job types or Estimate line items (Add to job type), then try again.",
+      )
+      return
+    }
+    const existingIds = new Set<string>()
+    for (const item of selectedQuoteItems) {
+      const m = parseQuoteItemMetadata(item.metadata)
+      if (m.preset_id) existingIds.add(m.preset_id)
+    }
+    const toInsert = presets.filter((p) => !existingIds.has(p.id))
+    if (toInsert.length === 0) {
+      alert("Every template line linked to this job type is already on the quote.")
+      return
+    }
+    setApplyJtLinesBusy(true)
+    try {
+      for (let i = 0; i < toInsert.length; i++) {
+        const p = toInsert[i]
+        const skipRefresh = i < toInsert.length - 1
+        const ok = await insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+          presetId: p.id,
+          metadata: {
+            minimum_line_total: p.minimum_line_total,
+            line_kind: p.line_kind,
+            ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+              ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+              : {}),
+          },
+          skipRefresh,
+        })
+        if (!ok) return
+      }
+      openQuote(selectedQuoteId)
+    } finally {
+      setApplyJtLinesBusy(false)
+    }
   }
 
   function insertSavedPresetOnOpenQuote(p: EstimateLinePresetRow) {
@@ -1628,6 +1638,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         description: quoteJtNewDesc.trim() || null,
         duration_minutes: Math.max(15, quoteJtNewDuration),
         color_hex: quoteJtNewColor,
+        materials_list: quoteJtMaterials.trim() || null,
       }
       if (editingQuoteJtId) {
         const { error } = await supabase.from("job_types").update(payload).eq("id", editingQuoteJtId).eq("user_id", userId)
@@ -1657,7 +1668,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       setJtModalPresetChecks({})
       const { data } = await supabase
         .from("job_types")
-        .select("id, name, duration_minutes, description, color_hex")
+        .select("id, name, duration_minutes, description, color_hex, materials_list")
         .eq("user_id", userId)
         .order("name")
       setQuoteJobTypesList(data || [])
@@ -1669,11 +1680,19 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
   }
 
-  function startEditQuoteJobType(jt: { id: string; name: string; duration_minutes: number; description: string | null; color_hex: string | null }) {
+  function startEditQuoteJobType(jt: {
+    id: string
+    name: string
+    duration_minutes: number
+    description: string | null
+    color_hex: string | null
+    materials_list?: string | null
+  }) {
     setQuoteJtNewName(jt.name)
     setQuoteJtNewDesc(jt.description ?? "")
     setQuoteJtNewDuration(Math.max(15, jt.duration_minutes))
     setQuoteJtNewColor(jt.color_hex ?? "#F97316")
+    setQuoteJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setEditingQuoteJtId(jt.id)
   }
 
@@ -1682,6 +1701,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setQuoteJtNewDesc("")
     setQuoteJtNewDuration(60)
     setQuoteJtNewColor("#F97316")
+    setQuoteJtMaterials("")
     setEditingQuoteJtId(null)
     setJtModalPresetChecks({})
   }
@@ -1697,7 +1717,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (editingQuoteJtId === jt.id) cancelEditQuoteJobType()
     const { data } = await supabase
       .from("job_types")
-      .select("id, name, duration_minutes, description, color_hex")
+      .select("id, name, duration_minutes, description, color_hex, materials_list")
       .eq("user_id", userId)
       .order("name")
     setQuoteJobTypesList(data || [])
@@ -2352,6 +2372,31 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                   New lines inherit this unless the line already has a job type.
                                 </span>
                               </label>
+                            ) : null}
+                            {showQuotesJobTypesPanel && estimateLinePresets.length > 0 ? (
+                              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                <button
+                                  type="button"
+                                  disabled={applyJtLinesBusy || !(selectedQuote as QuoteRow).job_type_id}
+                                  onClick={() => void applyJobTypeLinesToQuoteItems()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    borderRadius: 6,
+                                    border: "none",
+                                    background: theme.primary,
+                                    color: "#fff",
+                                    cursor: applyJtLinesBusy ? "wait" : "pointer",
+                                    opacity: (selectedQuote as QuoteRow).job_type_id ? 1 : 0.5,
+                                  }}
+                                >
+                                  {applyJtLinesBusy ? "Adding…" : "Add job type lines to quote"}
+                                </button>
+                                <span style={{ fontSize: 12, color: "#64748b", maxWidth: 420 }}>
+                                  Inserts every saved line template linked to this job type (skips lines already on the quote).
+                                </span>
+                              </div>
                             ) : null}
                             <p style={{ margin: 0 }}><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
                           </div>
@@ -3906,6 +3951,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     onChange={(e) => setQuoteJtNewDesc(e.target.value)}
                     style={theme.formInput}
                   />
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
+                    Materials checklist (optional, one line per item — shown on scheduled calendar events)
+                    <textarea
+                      value={quoteJtMaterials}
+                      onChange={(e) => setQuoteJtMaterials(e.target.value)}
+                      rows={4}
+                      placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
+                      style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                    />
+                  </label>
                   <details
                     style={{
                       marginTop: 4,
