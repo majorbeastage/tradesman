@@ -100,6 +100,21 @@ function eliUnitSuffix(unitBasis: string | undefined): string {
   return "hr"
 }
 
+/** PostgREST when `quotes.job_type_id` has not been migrated yet */
+function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): boolean {
+  const m = (message ?? "").toLowerCase()
+  return m.includes("job_type_id") && (m.includes("does not exist") || m.includes("schema cache"))
+}
+
+function formatEstimatePresetCostSummary(p: EstimateLinePresetRow): string {
+  const q = Number(p.quantity)
+  const u = Number(p.unit_price)
+  if (!Number.isFinite(q) || !Number.isFinite(u)) return ""
+  const sub = q * u
+  const su = eliUnitSuffix(p.unit_basis)
+  return `$${u.toFixed(2)}/${su} × ${q} → $${sub.toFixed(2)}`
+}
+
 function normalizePresetLinkedJobTypes(raw: Record<string, unknown>): string[] {
   const arr = raw.linked_job_type_ids
   if (Array.isArray(arr)) {
@@ -161,6 +176,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quotesError, setQuotesError] = useState<string>("")
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
   const [selectedQuote, setSelectedQuote] = useState<any>(null)
+  /** Shown in expanded row when openQuote fails (e.g. missing DB column) */
+  const [quoteOpenError, setQuoteOpenError] = useState("")
   const [selectedQuoteItems, setSelectedQuoteItems] = useState<any[]>([])
   const [quoteCommEvents, setQuoteCommEvents] = useState<any[]>([])
   const [quoteAttachmentsByEvent, setQuoteAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
@@ -916,6 +933,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           )
         )
       `
+    const selectWithNoJobType = `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+        scheduled_at,
+        removed_at,
+        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        ),
+        conversations (
+          messages (
+            content,
+            created_at
+          )
+        )
+      `
     const selectWithout = `
         id,
         status,
@@ -923,7 +963,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         updated_at,
         customer_id,
         conversation_id,
-        job_type_id,
         customers (
           display_name,
           customer_identifiers (
@@ -945,6 +984,21 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       .is("scheduled_at", null)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
+
+    if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
+      const r = await supabase
+        .from("quotes")
+        .select(selectWithNoJobType)
+        .eq("user_id", userId)
+        .is("scheduled_at", null)
+        .is("removed_at", null)
+        .order("updated_at", { ascending: false })
+      data = r.data
+      error = r.error
+      if (data) {
+        data = (data as any[]).map((q: any) => ({ ...q, job_type_id: q.job_type_id ?? null }))
+      }
+    }
 
     if (error && (error.message?.includes("scheduled_at") || error.message?.includes("removed_at"))) {
       const res = await supabase
@@ -1050,6 +1104,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (selectedQuoteId === quoteId) {
       setSelectedQuoteId(null)
       setSelectedQuote(null)
+      setQuoteOpenError("")
       setSelectedQuoteItems([])
       setQuoteCommEvents([])
       setQuoteThreadMessages([])
@@ -1062,15 +1117,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   async function openQuote(quoteId: string) {
     setSelectedQuoteId(quoteId)
+    setSelectedQuote(null)
+    setQuoteOpenError("")
     setSelectedQuoteItems([])
     setQuoteCommEvents([])
     setQuoteThreadMessages([])
     setQuoteAttachmentsByEvent({})
     setQuoteEntityRows([])
     if (!supabase) return
-    const { data, error } = await supabase
-      .from("quotes")
-      .select(`
+    const quoteDetailSelect = `
         id,
         status,
         created_at,
@@ -1086,14 +1141,41 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             value
           )
         )
-      `)
-      .eq("id", quoteId)
-      .single()
+      `
+    const quoteDetailSelectNoJobType = `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+        scheduled_at,
+        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        )
+      `
+    let { data, error } = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+    if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
+      const r = await supabase.from("quotes").select(quoteDetailSelectNoJobType).eq("id", quoteId).single()
+      data = r.data
+      error = r.error
+    }
     if (error) {
       console.error(error)
+      setQuoteOpenError(
+        `${error.message ?? "Could not load quote."}${
+          supabaseQuotesMissingJobTypeIdColumn(error.message)
+            ? "\n\nRun supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id (and RLS if needed)."
+            : ""
+        }`,
+      )
       return
     }
-    setSelectedQuote(data)
+    setSelectedQuote({ ...(data as object), job_type_id: (data as QuoteRow)?.job_type_id ?? null })
     const { data: items } = await supabase
       .from("quote_items")
       .select("*")
@@ -2057,8 +2139,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         })()}
 
         {quotesError && (
-          <p style={{ color: "#b91c1c", marginBottom: "12px", fontSize: "14px" }}>
-            {quotesError} Create the quotes table in Supabase (run supabase-quotes-table.sql).
+          <p style={{ color: "#b91c1c", marginBottom: "12px", fontSize: "14px", whiteSpace: "pre-wrap" }}>
+            {quotesError}
+            {quotesError.toLowerCase().includes("job_type_id")
+              ? " Run supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id."
+              : " Create the quotes table in Supabase (run supabase-quotes-table.sql) if the table is missing."}
           </p>
         )}
 
@@ -2168,7 +2253,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     </td>
                     <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg ?? undefined}>{lastMsgText}</td>
                   </tr>
-                  {isRowSelected && selectedQuote?.id === q.id ? (
+                  {isRowSelected && quoteOpenError ? (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 16, borderBottom: "1px solid #fecaca", background: "#fef2f2", verticalAlign: "top" }}>
+                        <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}>
+                          <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "#991b1b" }}>Could not load this quote</h3>
+                          <p style={{ margin: 0, fontSize: 14, color: "#7f1d1d", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{quoteOpenError}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : isRowSelected && selectedQuote?.id === q.id ? (
                     <tr>
                       <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid #e5e7eb", background: "#f8fafc", verticalAlign: "top" }}>
                         <div
@@ -3801,47 +3895,76 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     onChange={(e) => setQuoteJtNewDesc(e.target.value)}
                     style={theme.formInput}
                   />
-                  <div style={{ marginTop: 4 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Saved line templates</div>
-                    <p style={{ margin: "0 0 8px", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                  <details
+                    style={{
+                      marginTop: 4,
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      padding: "8px 10px",
+                    }}
+                  >
+                    <summary
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#111827",
+                        cursor: "pointer",
+                        listStyle: "none",
+                      }}
+                    >
+                      Saved line templates
+                      {estimateLinePresets.length > 0 ? (
+                        <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresets.length})</span>
+                      ) : null}
+                    </summary>
+                    <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
                       Check lines to link them to this job type. One line can be linked to several types. Manage the full list under{" "}
-                      <strong>{estimateLineItemsButtonLabel}</strong>.
+                      <strong style={{ color: "#111827" }}>{estimateLineItemsButtonLabel}</strong>.
                     </p>
                     {estimateLinePresets.length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>No saved line templates yet.</p>
+                      <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
                     ) : (
                       <div
                         style={{
-                          maxHeight: 200,
+                          maxHeight: 220,
                           overflow: "auto",
                           display: "flex",
                           flexDirection: "column",
-                          gap: 6,
+                          gap: 8,
                           padding: 8,
                           borderRadius: 6,
                           border: `1px solid ${theme.border}`,
-                          background: "#fff",
+                          background: "#f9fafb",
                         }}
                       >
-                        {estimateLinePresets.map((p) => (
-                          <label
-                            key={p.id}
-                            style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}
-                          >
-                            <input
-                              type="checkbox"
-                              style={{ marginTop: 3 }}
-                              checked={jtModalPresetChecks[p.id] === true}
-                              onChange={(e) =>
-                                setJtModalPresetChecks((prev) => ({ ...prev, [p.id]: e.target.checked }))
-                              }
-                            />
-                            <span>{p.description.trim() || "Line"}</span>
-                          </label>
-                        ))}
+                        {estimateLinePresets.map((p) => {
+                          const costLine = formatEstimatePresetCostSummary(p)
+                          return (
+                            <label
+                              key={p.id}
+                              style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
+                            >
+                              <input
+                                type="checkbox"
+                                style={{ marginTop: 4, flexShrink: 0 }}
+                                checked={jtModalPresetChecks[p.id] === true}
+                                onChange={(e) =>
+                                  setJtModalPresetChecks((prev) => ({ ...prev, [p.id]: e.target.checked }))
+                                }
+                              />
+                              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+                                <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
+                                {costLine ? (
+                                  <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span>
+                                ) : null}
+                              </span>
+                            </label>
+                          )
+                        })}
                       </div>
                     )}
-                  </div>
+                  </details>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <button
                       type="button"
