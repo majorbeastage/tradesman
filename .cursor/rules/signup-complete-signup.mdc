@@ -26,4 +26,5 @@ alwaysApply: true
 ## Frontend / Vercel
 
 - Env: **`VITE_SUPABASE_URL`**, **`VITE_SUPABASE_ANON_KEY`**.
+- After email verification, **`POST /api/notify-admin-verified-signup`** emails ops via Resend. Set **`ADMIN_SIGNUP_NOTIFY_EMAIL`** on Vercel if the inbox should differ from the default **`admin@tradesman-us.com`**. Requires **`RESEND_API_KEY`** + **`RESEND_FROM_EMAIL`**.
 - **`npm run build`** must pass (`tsc -b && vite build`) for Vercel production builds.
