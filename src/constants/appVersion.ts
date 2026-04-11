@@ -7,6 +7,7 @@
  * **1.2.4** — Receipt: full quote lines on PDF, calendar receipt editor + event metadata; materials SQL reminder.
  * **1.2.5** — quote_items.update retries without metadata + clearer SQL hint; run quote-items-metadata.sql for crew.
  * **1.2.6** — Itemized receipt: labor/materials/misc + mileage $ (rate in template); quote→calendar materials; live quote sync on event.
+ * **1.2.7** — Version bump (verify deploy / footer).
  *
  * @see CopyrightVersionFooter
  */
