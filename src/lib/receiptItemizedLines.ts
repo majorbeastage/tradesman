@@ -17,12 +17,24 @@ type EventLike = {
   job_types?: { materials_list?: string | null } | null
 }
 
+export type BuildReceiptItemizedLinesOpts = {
+  /**
+   * When true, skip priced quote material rows — use only event / job-type text checklist.
+   * Use with full quote line itemization so materials are not duplicated on the PDF.
+   */
+  supplementChecklistOnly?: boolean
+}
+
 /**
- * Lines for materials-only checklist: quote material line items first, else event materials checklist,
- * else job type default materials.
+ * Materials checklist lines: by default, priced quote material rows first, else event text, else job type.
+ * With supplementChecklistOnly, only event / job-type text (no quote_items).
  */
-export async function buildReceiptItemizedLines(supabase: SupabaseClient, ev: EventLike): Promise<string[]> {
-  if (ev.quote_id) {
+export async function buildReceiptItemizedLines(
+  supabase: SupabaseClient,
+  ev: EventLike,
+  opts?: BuildReceiptItemizedLinesOpts,
+): Promise<string[]> {
+  if (!opts?.supplementChecklistOnly && ev.quote_id) {
     const { data: rows } = await supabase
       .from("quote_items")
       .select("*")
@@ -78,6 +90,8 @@ export async function buildCalendarReceiptPdfSections(
     end_at: string
     receiptMeta: ParsedCalendarReceiptMeta
     itemizeMaterials: boolean
+    mileageMiles?: number | null
+    mileageRatePerMile?: number | null
   },
 ): Promise<{
   quoteLines: string[]
@@ -132,15 +146,30 @@ export async function buildCalendarReceiptPdfSections(
     )
   }
 
+  const miles = params.mileageMiles != null && Number.isFinite(Number(params.mileageMiles)) ? Number(params.mileageMiles) : 0
+  const rate =
+    params.mileageRatePerMile != null && Number.isFinite(Number(params.mileageRatePerMile))
+      ? Number(params.mileageRatePerMile)
+      : 0
+  if (params.itemizeMaterials && miles > 0 && rate > 0) {
+    const mileageCost = miles * rate
+    subtotal += mileageCost
+    quoteLines.push(`[Mileage] ${miles} mi × $${rate.toFixed(2)}/mi = $${mileageCost.toFixed(2)}`)
+  }
+
   const lineSubtotal = quoteLines.length > 0 ? subtotal : null
 
   let materialsChecklistLines: string[] = []
   if (params.itemizeMaterials) {
-    materialsChecklistLines = await buildReceiptItemizedLines(supabase, {
-      quote_id: params.quote_id,
-      materials_list: params.materials_list,
-      job_types: params.job_types ?? null,
-    })
+    materialsChecklistLines = await buildReceiptItemizedLines(
+      supabase,
+      {
+        quote_id: params.quote_id,
+        materials_list: params.materials_list,
+        job_types: params.job_types ?? null,
+      },
+      { supplementChecklistOnly: true },
+    )
   }
 
   return {

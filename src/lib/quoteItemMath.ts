@@ -34,3 +34,59 @@ export function computeQuoteLineTotal(
   const total = min != null && Number.isFinite(min) ? Math.max(subtotal, min) : subtotal
   return { effectiveQuantity, subtotal, total }
 }
+
+/** Row shape from Supabase quote_items (or similar). */
+export type QuoteItemRowLike = {
+  description?: string | null
+  quantity?: unknown
+  unit_price?: unknown
+  metadata?: unknown
+}
+
+export function totalFromQuoteItemRows(items: QuoteItemRowLike[]): number {
+  let sum = 0
+  for (const item of items) {
+    const qty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
+    const up = typeof item.unit_price === "number" ? item.unit_price : Number.parseFloat(String(item.unit_price ?? 0)) || 0
+    const meta = parseQuoteItemMetadata(item.metadata)
+    sum += computeQuoteLineTotal(qty, up, meta).total
+  }
+  return sum
+}
+
+/** One line per material row description (for calendar_events.materials_list). */
+export function materialDescriptionsFromQuoteItemRows(items: QuoteItemRowLike[]): string {
+  const lines: string[] = []
+  for (const item of items) {
+    const meta = parseQuoteItemMetadata(item.metadata)
+    if ((meta.line_kind ?? "").toLowerCase() !== "material") continue
+    const d = String(item.description ?? "").trim()
+    if (d) lines.push(d)
+  }
+  return lines.join("\n")
+}
+
+/** Quote material lines first, then job-type checklist (newline-separated). */
+export function mergeMaterialsListsForCalendar(quoteMaterials: string | null | undefined, jobTypeMaterials: string | null | undefined): string | null {
+  const q = quoteMaterials?.trim() ?? ""
+  const j = jobTypeMaterials?.trim() ?? ""
+  if (q && j) return `${q}\n${j}`
+  if (q) return q
+  if (j) return j
+  return null
+}
+
+/**
+ * If quote has material lines not yet reflected in the event checklist, prepend them (idempotent if first line matches).
+ */
+export function prependQuoteMaterialsToEventChecklist(quoteBlock: string, existingEventMaterials: string | null | undefined): string | null {
+  const q = quoteBlock.trim()
+  const e = (existingEventMaterials ?? "").trim()
+  if (!q) return e || null
+  if (!e) return q
+  const firstQ = q.split(/\r?\n/).map((s) => s.trim()).find(Boolean) ?? ""
+  if (!firstQ) return e
+  const eLines = e.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+  if (eLines.some((line) => line === firstQ)) return e
+  return `${q}\n${e}`
+}

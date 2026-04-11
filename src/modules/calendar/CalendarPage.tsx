@@ -45,7 +45,12 @@ import {
   parseEstimateLinePresetsFromMetadata,
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
-import { parseQuoteItemMetadata } from "../../lib/quoteItemMath"
+import {
+  materialDescriptionsFromQuoteItemRows,
+  parseQuoteItemMetadata,
+  prependQuoteMaterialsToEventChecklist,
+  totalFromQuoteItemRows,
+} from "../../lib/quoteItemMath"
 
 type JobType = {
   id: string
@@ -290,6 +295,12 @@ export default function CalendarPage() {
   const [receiptNewUnit, setReceiptNewUnit] = useState("0")
   const [receiptNewKind, setReceiptNewKind] = useState("misc")
 
+  const linkedQuoteLiveTotal = useMemo(() => {
+    if (!selectedEvent?.quote_id) return null
+    const t = totalFromQuoteItemRows(quoteItemsForReceipt)
+    return t > 0 ? t : null
+  }, [selectedEvent?.quote_id, quoteItemsForReceipt])
+
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
@@ -522,6 +533,13 @@ export default function CalendarPage() {
           : {}
       const useAi = meta.receipt_template_use_ai === true
       const itemize = meta.receipt_template_itemize === true
+      const rateRaw = meta.receipt_mileage_rate_per_mile
+      const rateStr =
+        typeof rateRaw === "number" && Number.isFinite(rateRaw)
+          ? String(rateRaw)
+          : typeof rateRaw === "string"
+            ? rateRaw
+            : ""
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
       const next: Record<string, string> = {}
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
@@ -529,6 +547,7 @@ export default function CalendarPage() {
         if (item.id === "receipt_template_notes") next[item.id] = notes
         else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.id === "receipt_template_itemize") next[item.id] = itemize ? "checked" : "unchecked"
+        else if (item.id === "receipt_template_mileage_rate") next[item.id] = rateStr
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
         else next[item.id] = ""
@@ -548,6 +567,8 @@ export default function CalendarPage() {
     const notes = (receiptTemplateFormValues.receipt_template_notes ?? "").trim()
     const useAi = receiptTemplateFormValues.receipt_template_use_ai === "checked"
     const itemize = receiptTemplateFormValues.receipt_template_itemize === "checked"
+    const rateField = (receiptTemplateFormValues.receipt_template_mileage_rate ?? "").trim().replace(/[^0-9.]/g, "")
+    const rateNum = rateField ? Number.parseFloat(rateField) : Number.NaN
     const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
     if (fetchErr) {
       alert(fetchErr.message)
@@ -559,6 +580,8 @@ export default function CalendarPage() {
         : {}
     prevMeta.receipt_template_use_ai = useAi
     prevMeta.receipt_template_itemize = itemize
+    if (Number.isFinite(rateNum) && rateNum >= 0) prevMeta.receipt_mileage_rate_per_mile = rateNum
+    else delete prevMeta.receipt_mileage_rate_per_mile
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -722,6 +745,7 @@ export default function CalendarPage() {
     try {
       const profileUserId = ev.user_id ?? userId
       let itemize = false
+      let mileageRatePerMile = 0
       if (profileUserId) {
         const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
         const meta =
@@ -729,8 +753,18 @@ export default function CalendarPage() {
             ? (prof.metadata as Record<string, unknown>)
             : {}
         itemize = meta.receipt_template_itemize === true
+        const rr = meta.receipt_mileage_rate_per_mile
+        if (typeof rr === "number" && Number.isFinite(rr) && rr >= 0) mileageRatePerMile = rr
+        else if (typeof rr === "string") {
+          const p = Number.parseFloat(rr.replace(/[^0-9.]/g, ""))
+          if (Number.isFinite(p) && p >= 0) mileageRatePerMile = p
+        }
       }
       const receiptMeta = parseCalendarEventReceiptMeta(ev.metadata)
+      const miles =
+        ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0
+          ? Number(ev.mileage_miles)
+          : 0
       const sections = await buildCalendarReceiptPdfSections(supabase, {
         quote_id: ev.quote_id,
         materials_list: ev.materials_list,
@@ -739,11 +773,12 @@ export default function CalendarPage() {
         end_at: ev.end_at,
         receiptMeta,
         itemizeMaterials: itemize,
+        mileageMiles: miles > 0 ? miles : null,
+        mileageRatePerMile: itemize && mileageRatePerMile > 0 ? mileageRatePerMile : null,
       })
+      const mileageCostInItemized = itemize && miles > 0 && mileageRatePerMile > 0
       const mileageLabel =
-        ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0
-          ? `Mileage: ${Number(ev.mileage_miles)} mi`
-          : null
+        miles > 0 && !mileageCostInItemized ? `Mileage: ${miles} mi` : null
       const customerName = ev.customers?.display_name ?? "Customer"
       const amount =
         ev.quote_total != null && ev.quote_total > 0 ? `Quote total: $${Number(ev.quote_total).toFixed(2)}` : null
@@ -759,8 +794,13 @@ export default function CalendarPage() {
         includeMaterialsChecklist: itemize,
         materialsChecklistLines: sections.materialsChecklistLines,
         lineSubtotalLabel:
-          sections.lineSubtotal != null ? `Line items subtotal: $${sections.lineSubtotal.toFixed(2)}` : null,
+          sections.lineSubtotal != null
+            ? itemize
+              ? `Itemized subtotal: $${sections.lineSubtotal.toFixed(2)}`
+              : `Line items subtotal: $${sections.lineSubtotal.toFixed(2)}`
+            : null,
         mileageLabel,
+        receiptItemizeMode: itemize,
       })
       downloadPdfBlob(bytes, `receipt-${ev.id.slice(0, 8)}.pdf`)
     } catch (e) {
@@ -1065,6 +1105,45 @@ export default function CalendarPage() {
       cancelled = true
     }
   }, [selectedEvent?.quote_id, supabase])
+
+  /** Keep calendar row in sync when the linked quote’s lines or totals change (open event). */
+  useEffect(() => {
+    if (!supabase || !selectedEvent?.quote_id || !selectedEvent.id) return
+    const liveTotal = totalFromQuoteItemRows(quoteItemsForReceipt)
+    const quoteMat = materialDescriptionsFromQuoteItemRows(quoteItemsForReceipt)
+    const curMat = (selectedEvent.materials_list ?? "").trim()
+    const patch: Record<string, unknown> = {}
+    if (liveTotal > 0 && Math.abs((selectedEvent.quote_total ?? 0) - liveTotal) > 0.009) {
+      patch.quote_total = liveTotal
+    }
+    if (quoteMat.trim()) {
+      const nextMat = prependQuoteMaterialsToEventChecklist(quoteMat, selectedEvent.materials_list) ?? ""
+      if (nextMat.trim() && nextMat.trim() !== curMat) {
+        patch.materials_list = nextMat.trim() || null
+      }
+    }
+    if (Object.keys(patch).length === 0) return
+    let cancelled = false
+    void supabase
+      .from("calendar_events")
+      .update(patch)
+      .eq("id", selectedEvent.id)
+      .then(({ error }) => {
+        if (cancelled || error) return
+        setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, ...patch } : prev))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    supabase,
+    selectedEvent?.id,
+    selectedEvent?.quote_id,
+    selectedEvent?.quote_total,
+    selectedEvent?.materials_list,
+    selectedEvent?.job_types,
+    quoteItemsForReceipt,
+  ])
 
   useEffect(() => {
     if (!userId) return
@@ -2451,9 +2530,18 @@ export default function CalendarPage() {
                 </p>
               )}
               {selectedEvent.quote_id && (
-                <p style={{ margin: 0 }}>
-                  <strong>Quote:</strong> linked
-                </p>
+                <div style={{ margin: 0 }}>
+                  <p style={{ margin: 0 }}>
+                    <strong>Quote:</strong> linked
+                  </p>
+                  {linkedQuoteLiveTotal != null ? (
+                    <p style={{ margin: "4px 0 0", fontSize: 13, color: "#0f766e", fontWeight: 600 }}>
+                      Quote total (from line items now): ${linkedQuoteLiveTotal.toFixed(2)}
+                    </p>
+                  ) : quoteItemsForReceipt.length === 0 ? (
+                    <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>Loading quote lines…</p>
+                  ) : null}
+                </div>
               )}
               {selectedEvent.user_id && selectedEvent.user_id !== userId && (
                 <p style={{ margin: 0 }}>
@@ -2485,7 +2573,7 @@ export default function CalendarPage() {
             <div style={{ marginBottom: 14 }}>
               <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Materials</p>
               <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                Starts from the job type checklist when the event is created. Edit below for this date only.
+                Filled from the job type and linked quote material lines when you add to calendar or open this event. Edit below for this date only.
               </p>
               <textarea
                 value={eventMaterialsDraft}

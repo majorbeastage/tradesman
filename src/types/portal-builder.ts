@@ -971,8 +971,16 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "receipt_template_itemize",
     type: "checkbox",
-    label: "Itemize receipt PDF — list materials from the linked quote (material lines) or job type / event checklist",
+    label:
+      "Itemize receipt PDF — list all cost lines (labor, materials, fees, etc. from the quote), mileage reimbursement (if miles + rate below), plus a supplies checklist from the event / job type",
     defaultChecked: false,
+  },
+  {
+    id: "receipt_template_mileage_rate",
+    type: "custom_field",
+    label: "Mileage reimbursement ($ per mile, optional — multiplied by miles on the calendar event when itemizing)",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "receipt_template_itemize", showWhenValue: "checked" },
   },
 ]
 

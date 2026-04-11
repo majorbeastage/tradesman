@@ -36,6 +36,8 @@ import {
 } from "../../lib/calendarRecurrence"
 import {
   computeQuoteLineTotal,
+  materialDescriptionsFromQuoteItemRows,
+  mergeMaterialsListsForCalendar,
   parseQuoteItemMetadata,
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
@@ -3555,6 +3557,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       jtRow && typeof jtRow.materials_list === "string" && jtRow.materials_list.trim()
                         ? jtRow.materials_list.trim()
                         : null
+                    const quoteMaterialsBlock = materialDescriptionsFromQuoteItemRows(selectedQuoteItems)
+                    const materialsCombined = mergeMaterialsListsForCalendar(
+                      quoteMaterialsBlock.trim() ? quoteMaterialsBlock : null,
+                      materialsFromJobType,
+                    )
                     const milesRaw = calMileage.trim().replace(/[^0-9.]/g, "")
                     const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
                     const mileageMiles =
@@ -3580,7 +3587,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           start_at: s.toISOString(),
                           end_at: e.toISOString(),
                         }
-                        if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
+                        if (includeMat && materialsCombined) row.materials_list = materialsCombined
                         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
                         return row
                       })

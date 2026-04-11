@@ -152,6 +152,8 @@ export async function buildReceiptPdfBytes(params: {
   /** Sum of quoteLineItems totals (if computed). */
   lineSubtotalLabel?: string | null
   mileageLabel?: string | null
+  /** When true, first block is titled "Itemized charges"; checklist block is "Supplies checklist". */
+  receiptItemizeMode?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
@@ -221,7 +223,7 @@ export async function buildReceiptPdfBytes(params: {
   const checklist = params.materialsChecklistLines?.filter((s) => s.trim()) ?? []
   if (params.includeMaterialsChecklist && checklist.length > 0) {
     y -= 6
-    draw("Materials checklist", 12, true, 0.15)
+    draw(params.receiptItemizeMode ? "Supplies checklist" : "Materials checklist", 12, true, 0.15)
     y -= 2
     for (const raw of checklist.slice(0, 40)) {
       const t = raw.trim()
