@@ -114,6 +114,26 @@ type QuoteRow = {
 }
 
 type QuotesPageProps = { setPage?: (page: string) => void }
+
+/** Job type row for calendar picker + Job types modal (columns vary with DB migration). */
+type QuoteJobTypeListRow = {
+  id: string
+  name: string
+  duration_minutes: number
+  description: string | null
+  color_hex: string | null
+  materials_list?: string | null
+  track_mileage?: boolean | null
+}
+
+type CalendarPickerJobType = {
+  id: string
+  name: string
+  duration_minutes: number
+  materials_list?: string | null
+  track_mileage?: boolean | null
+}
+
 export default function QuotesPage({ setPage }: QuotesPageProps) {
   const isMobile = useIsMobile()
   const { userId: authUserId, session } = useAuth()
@@ -162,16 +182,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
-  const [quoteJobTypesList, setQuoteJobTypesList] = useState<
-    {
-      id: string
-      name: string
-      duration_minutes: number
-      description: string | null
-      color_hex: string | null
-      materials_list?: string | null
-    }[]
-  >([])
+  const [quoteJobTypesList, setQuoteJobTypesList] = useState<QuoteJobTypeListRow[]>([])
   const [quoteJobTypesModalValues, setQuoteJobTypesModalValues] = useState<Record<string, string>>({})
   const [estimateReview, setEstimateReview] = useState<{
     subtotal: number | null
@@ -233,6 +244,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteJtSaving, setQuoteJtSaving] = useState(false)
   const [editingQuoteJtId, setEditingQuoteJtId] = useState<string | null>(null)
   const [quoteJtMaterials, setQuoteJtMaterials] = useState("")
+  const [quoteJtTrackMileage, setQuoteJtTrackMileage] = useState(false)
   const [applyJtLinesBusy, setApplyJtLinesBusy] = useState(false)
   // Add to Calendar (from quote detail)
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
@@ -241,8 +253,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [calTime, setCalTime] = useState("09:00")
   const [calDuration, setCalDuration] = useState(60)
   const [calJobTypeId, setCalJobTypeId] = useState("")
+  const [calMileage, setCalMileage] = useState("")
   const [calNotes, setCalNotes] = useState("")
-  const [jobTypes, setJobTypes] = useState<{ id: string; name: string; duration_minutes: number }[]>([])
+  const [jobTypes, setJobTypes] = useState<CalendarPickerJobType[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
   const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
   const [quoteJobTypesPortalValues, setQuoteJobTypesPortalValues] = useState<Record<string, string>>({})
@@ -701,13 +714,36 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   useEffect(() => {
     if (!showAddToCalendar || !supabase || !calendarTargetUserId) return
-    void supabase
-      .from("job_types")
-      .select("id, name, duration_minutes")
-      .eq("user_id", calendarTargetUserId)
-      .order("name")
-      .then(({ data }) => setJobTypes(data || []))
-  }, [showAddToCalendar, calendarTargetUserId])
+    void (async () => {
+      let rows: CalendarPickerJobType[] = []
+      let q = await supabase
+        .from("job_types")
+        .select("id, name, duration_minutes, materials_list, track_mileage")
+        .eq("user_id", calendarTargetUserId)
+        .order("name")
+      rows = (q.data ?? []) as CalendarPickerJobType[]
+      let err = q.error
+      const em = (e: typeof err) => (e?.message ?? "").toLowerCase()
+      if (err && (em(err).includes("track_mileage") || em(err).includes("materials_list"))) {
+        const q2 = await supabase
+          .from("job_types")
+          .select("id, name, duration_minutes, materials_list")
+          .eq("user_id", calendarTargetUserId)
+          .order("name")
+        rows = (q2.data ?? []) as CalendarPickerJobType[]
+        err = q2.error
+      }
+      if (err?.message?.toLowerCase().includes("materials_list")) {
+        const q3 = await supabase
+          .from("job_types")
+          .select("id, name, duration_minutes")
+          .eq("user_id", calendarTargetUserId)
+          .order("name")
+        rows = (q3.data ?? []) as CalendarPickerJobType[]
+      }
+      setJobTypes(rows)
+    })()
+  }, [showAddToCalendar, calendarTargetUserId, supabase])
 
   useEffect(() => {
     if (!showAddToCalendar) return
@@ -815,23 +851,39 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   useEffect(() => {
     if (!showQuoteJobTypesModal || !supabase || !userId) return
     const client = supabase
-    void client
-      .from("job_types")
-      .select("id, name, duration_minutes, description, color_hex, materials_list")
-      .eq("user_id", userId)
-      .order("name")
-      .then(({ data, error }) => {
-        if (error?.message?.toLowerCase().includes("materials_list")) {
-          void client
+    void (async () => {
+      const em = (e: { message?: string } | null) => (e?.message ?? "").toLowerCase()
+      const full = await client
+        .from("job_types")
+        .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
+        .eq("user_id", userId)
+        .order("name")
+      if (!full.error) {
+        setQuoteJobTypesList((full.data ?? []) as QuoteJobTypeListRow[])
+        return
+      }
+      if (full.error && (em(full.error).includes("track_mileage") || em(full.error).includes("materials_list"))) {
+        const mid = await client
+          .from("job_types")
+          .select("id, name, duration_minutes, description, color_hex, materials_list")
+          .eq("user_id", userId)
+          .order("name")
+        if (!mid.error) {
+          setQuoteJobTypesList((mid.data ?? []) as QuoteJobTypeListRow[])
+          return
+        }
+        if (mid.error?.message?.toLowerCase().includes("materials_list")) {
+          const min = await client
             .from("job_types")
             .select("id, name, duration_minutes, description, color_hex")
             .eq("user_id", userId)
             .order("name")
-            .then(({ data: d2 }) => setQuoteJobTypesList(d2 || []))
+          setQuoteJobTypesList((min.data ?? []) as QuoteJobTypeListRow[])
           return
         }
-        setQuoteJobTypesList(data || [])
-      })
+      }
+      setQuoteJobTypesList([])
+    })()
   }, [showQuoteJobTypesModal, supabase, userId])
 
   useEffect(() => {
@@ -1199,6 +1251,21 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
   }
 
+  /** Reload only quote_items (no full quote panel reset — avoids flash when editing lines). */
+  async function refreshQuoteItemsOnly() {
+    if (!supabase || !selectedQuoteId) return
+    const { data: items, error } = await supabase
+      .from("quote_items")
+      .select("*")
+      .eq("quote_id", selectedQuoteId)
+      .order("created_at", { ascending: true })
+    if (error) {
+      console.error(error)
+      return
+    }
+    setSelectedQuoteItems(items || [])
+  }
+
   function mergeQuoteItemMetadataRow(
     item: any,
     patch: Omit<Partial<QuoteItemMetadata>, "minimum_line_total"> & { minimum_line_total?: number | null },
@@ -1273,7 +1340,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setNewItemMinimum("")
     setNewItemPresetId(null)
     setPresetSuggestOpen(false)
-    openQuote(selectedQuoteId)
+    void refreshQuoteItemsOnly()
   }
 
   function getItemDisplay(item: any) {
@@ -1288,26 +1355,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }
 
   useEffect(() => {
-    const next: Record<
-      string,
-      { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string }
-    > = {}
-    for (const item of selectedQuoteItems) {
-      const { desc, qty, up, meta } = getItemDisplay(item)
-      const crew = meta.manpower ?? 1
-      const minStr =
-        meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total) ? String(meta.minimum_line_total) : ""
-      const jt = typeof meta.job_type_id === "string" && meta.job_type_id.trim() ? meta.job_type_id.trim() : ""
-      next[item.id] = {
-        description: String(desc),
-        quantity: String(qty),
-        unit_price: String(typeof up === "number" ? up : 0),
-        manpower: String(crew),
-        minimum: minStr,
-        job_type_id: jt,
+    setQuoteLineDrafts((prev) => {
+      const next: Record<
+        string,
+        { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string }
+      > = {}
+      for (const item of selectedQuoteItems) {
+        const { desc, qty, up, meta } = getItemDisplay(item)
+        const crew = meta.manpower ?? 1
+        const minStr =
+          meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total) ? String(meta.minimum_line_total) : ""
+        const jt = typeof meta.job_type_id === "string" && meta.job_type_id.trim() ? meta.job_type_id.trim() : ""
+        const built = {
+          description: String(desc),
+          quantity: String(qty),
+          unit_price: String(typeof up === "number" ? up : 0),
+          manpower: String(crew),
+          minimum: minStr,
+          job_type_id: jt,
+        }
+        next[item.id] = prev[item.id] ?? built
       }
-    }
-    setQuoteLineDrafts(next)
+      return next
+    })
   }, [selectedQuoteItems])
 
   const quoteItemsReviewKey = useMemo(
@@ -1439,6 +1509,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return Boolean(item.defaultChecked)
   }
 
+  const spreadsheetEstimateSubtotal = useMemo(() => {
+    let sum = 0
+    const showMp = estimateLineTemplateOffered("eli_show_manpower")
+    for (const item of selectedQuoteItems) {
+      const dr = quoteLineDrafts[item.id]
+      const baseMeta = parseQuoteItemMetadata(item.metadata)
+      const qty = Number.parseFloat(String(dr?.quantity ?? item.quantity ?? 0)) || 0
+      const up = Number.parseFloat(String(dr?.unit_price ?? item.unit_price ?? 0)) || 0
+      const crew = showMp
+        ? Math.max(1, Number.parseInt(String(dr?.manpower ?? baseMeta.manpower ?? 1), 10) || 1)
+        : Math.max(1, baseMeta.manpower ?? 1)
+      const minDraft = (dr?.minimum ?? "").trim()
+      let minimum_line_total = baseMeta.minimum_line_total
+      if (minDraft !== "") {
+        const n = Number.parseFloat(minDraft.replace(/[^0-9.]/g, ""))
+        if (Number.isFinite(n) && n >= 0) minimum_line_total = n > 0 ? n : undefined
+      }
+      const meta: QuoteItemMetadata = { ...baseMeta, manpower: crew, minimum_line_total }
+      sum += computeQuoteLineTotal(qty, up, meta).total
+    }
+    return sum
+  }, [selectedQuoteItems, quoteLineDrafts, estimateLineItemsPortal, estimateLinePortalValues])
+
   async function insertQuoteLineRow(
     description: string,
     quantity: number,
@@ -1471,7 +1564,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert(result.error)
       return false
     }
-    if (!opts?.skipRefresh) openQuote(selectedQuoteId)
+    if (!opts?.skipRefresh) void refreshQuoteItemsOnly()
     return true
   }
 
@@ -1520,7 +1613,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         })
         if (!ok) return
       }
-      openQuote(selectedQuoteId)
+      void refreshQuoteItemsOnly()
     } finally {
       setApplyJtLinesBusy(false)
     }
@@ -1550,7 +1643,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert(error.message)
       return
     }
-    openQuote(selectedQuoteId)
+    setSelectedQuoteItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== itemId) return it
+        const next = { ...it } as Record<string, unknown>
+        if (patch.description !== undefined) next.description = patch.description
+        if (patch.quantity !== undefined) next.quantity = patch.quantity
+        if (patch.unit_price !== undefined) next.unit_price = patch.unit_price
+        if (patch.metadata !== undefined) next.metadata = patch.metadata
+        return next as (typeof prev)[number]
+      }),
+    )
   }
 
   async function deleteQuoteItemRow(itemId: string) {
@@ -1561,7 +1664,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert(error.message)
       return
     }
-    openQuote(selectedQuoteId)
+    setSelectedQuoteItems((prev) => prev.filter((it) => it.id !== itemId))
+    setQuoteLineDrafts((prev) => {
+      const next = { ...prev }
+      delete next[itemId]
+      return next
+    })
   }
 
   async function persistEstimatePresetsToProfile(nextPresets: EstimateLinePresetRow[]) {
@@ -1633,45 +1741,92 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (!supabase || !userId) return
     setQuoteJtSaving(true)
     try {
-      const payload = {
+      let patch: Record<string, unknown> = {
         name: quoteJtNewName.trim(),
         description: quoteJtNewDesc.trim() || null,
         duration_minutes: Math.max(15, quoteJtNewDuration),
         color_hex: quoteJtNewColor,
         materials_list: quoteJtMaterials.trim() || null,
+        track_mileage: quoteJtTrackMileage,
       }
       if (editingQuoteJtId) {
-        const { error } = await supabase.from("job_types").update(payload).eq("id", editingQuoteJtId).eq("user_id", userId)
-        if (error) {
-          alert(error.message)
+        let r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
+        const lower = (m: string) => m.toLowerCase()
+        if (r.error && lower(r.error.message).includes("track_mileage")) {
+          const { track_mileage: _t, ...rest } = patch
+          patch = rest
+          r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
+        }
+        if (r.error && lower(r.error.message).includes("materials_list")) {
+          const { materials_list: _m, ...rest } = patch
+          patch = { ...rest }
+          r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
+        }
+        if (r.error) {
+          alert(r.error.message)
           return
         }
         await mergePresetLinksForJobType(editingQuoteJtId, jtModalPresetChecks)
       } else {
-        const { data: inserted, error } = await supabase
-          .from("job_types")
-          .insert({ user_id: userId, ...payload })
-          .select("id")
-          .single()
-        if (error) {
-          alert(error.message)
+        let r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
+        const lower = (m: string) => m.toLowerCase()
+        if (r.error && lower(r.error.message).includes("track_mileage")) {
+          const { track_mileage: _t, ...rest } = patch
+          patch = rest
+          r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
+        }
+        if (r.error && lower(r.error.message).includes("materials_list")) {
+          const { materials_list: _m, ...rest } = patch
+          patch = { ...rest }
+          r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
+        }
+        if (r.error) {
+          alert(r.error.message)
           return
         }
-        const newId = inserted?.id
+        const newId = (r.data as { id?: string } | null)?.id
         if (newId) await mergePresetLinksForJobType(newId, jtModalPresetChecks)
       }
       setQuoteJtNewName("")
       setQuoteJtNewDesc("")
       setQuoteJtNewDuration(60)
       setQuoteJtNewColor("#F97316")
+      setQuoteJtTrackMileage(false)
       setEditingQuoteJtId(null)
       setJtModalPresetChecks({})
-      const { data } = await supabase
+      const listFull = await supabase
         .from("job_types")
-        .select("id, name, duration_minutes, description, color_hex, materials_list")
+        .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
         .eq("user_id", userId)
         .order("name")
-      setQuoteJobTypesList(data || [])
+      let nextList: QuoteJobTypeListRow[]
+      if (!listFull.error) {
+        nextList = (listFull.data ?? []) as QuoteJobTypeListRow[]
+      } else if (
+        listFull.error.message.toLowerCase().includes("track_mileage") ||
+        listFull.error.message.toLowerCase().includes("materials_list")
+      ) {
+        const listMid = await supabase
+          .from("job_types")
+          .select("id, name, duration_minutes, description, color_hex, materials_list")
+          .eq("user_id", userId)
+          .order("name")
+        if (!listMid.error) {
+          nextList = (listMid.data ?? []) as QuoteJobTypeListRow[]
+        } else if (listMid.error.message.toLowerCase().includes("materials_list")) {
+          const listMin = await supabase
+            .from("job_types")
+            .select("id, name, duration_minutes, description, color_hex")
+            .eq("user_id", userId)
+            .order("name")
+          nextList = (listMin.data ?? []) as QuoteJobTypeListRow[]
+        } else {
+          nextList = []
+        }
+      } else {
+        nextList = []
+      }
+      setQuoteJobTypesList(nextList)
       const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
       setEstimateModalJobTypes(shortList || [])
       setQuoteDetailJobTypes(shortList || [])
@@ -1687,12 +1842,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     description: string | null
     color_hex: string | null
     materials_list?: string | null
+    track_mileage?: boolean | null
   }) {
     setQuoteJtNewName(jt.name)
     setQuoteJtNewDesc(jt.description ?? "")
     setQuoteJtNewDuration(Math.max(15, jt.duration_minutes))
     setQuoteJtNewColor(jt.color_hex ?? "#F97316")
     setQuoteJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
+    setQuoteJtTrackMileage(jt.track_mileage === true)
     setEditingQuoteJtId(jt.id)
   }
 
@@ -1702,6 +1859,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setQuoteJtNewDuration(60)
     setQuoteJtNewColor("#F97316")
     setQuoteJtMaterials("")
+    setQuoteJtTrackMileage(false)
     setEditingQuoteJtId(null)
     setJtModalPresetChecks({})
   }
@@ -1715,12 +1873,39 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       return
     }
     if (editingQuoteJtId === jt.id) cancelEditQuoteJobType()
-    const { data } = await supabase
+    const rqFull = await supabase
       .from("job_types")
-      .select("id, name, duration_minutes, description, color_hex, materials_list")
+      .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
       .eq("user_id", userId)
       .order("name")
-    setQuoteJobTypesList(data || [])
+    let afterRemove: QuoteJobTypeListRow[]
+    if (!rqFull.error) {
+      afterRemove = (rqFull.data ?? []) as QuoteJobTypeListRow[]
+    } else if (
+      rqFull.error.message.toLowerCase().includes("track_mileage") ||
+      rqFull.error.message.toLowerCase().includes("materials_list")
+    ) {
+      const rqMid = await supabase
+        .from("job_types")
+        .select("id, name, duration_minutes, description, color_hex, materials_list")
+        .eq("user_id", userId)
+        .order("name")
+      if (!rqMid.error) {
+        afterRemove = (rqMid.data ?? []) as QuoteJobTypeListRow[]
+      } else if (rqMid.error.message.toLowerCase().includes("materials_list")) {
+        const rqMin = await supabase
+          .from("job_types")
+          .select("id, name, duration_minutes, description, color_hex")
+          .eq("user_id", userId)
+          .order("name")
+        afterRemove = (rqMin.data ?? []) as QuoteJobTypeListRow[]
+      } else {
+        afterRemove = []
+      }
+    } else {
+      afterRemove = []
+    }
+    setQuoteJobTypesList(afterRemove)
     const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
     setEstimateModalJobTypes(shortList || [])
     setQuoteDetailJobTypes(shortList || [])
@@ -2745,7 +2930,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Job type</th>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Qty</th>
                   {estimateLineTemplateOffered("eli_show_manpower") ? (
                     <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Crew</th>
@@ -2760,7 +2944,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 {selectedQuoteItems.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                      colSpan={7 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
                       style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
                     >
                       No line items. Add one below.
@@ -2768,8 +2952,27 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   </tr>
                 ) : (
                   selectedQuoteItems.map((item, rowIdx) => {
-                    const { desc, qty, up, tot, meta } = getItemDisplay(item)
+                    const { desc, qty, up, meta } = getItemDisplay(item)
                     const dr = quoteLineDrafts[item.id]
+                    const showMpRow = estimateLineTemplateOffered("eli_show_manpower")
+                    const baseMetaRow = parseQuoteItemMetadata(item.metadata)
+                    const qtyLive = Number.parseFloat(String(dr?.quantity ?? item.quantity ?? 0)) || 0
+                    const upLive = Number.parseFloat(String(dr?.unit_price ?? item.unit_price ?? 0)) || 0
+                    const crewLive = showMpRow
+                      ? Math.max(1, Number.parseInt(String(dr?.manpower ?? baseMetaRow.manpower ?? 1), 10) || 1)
+                      : Math.max(1, baseMetaRow.manpower ?? 1)
+                    const minDraftLive = (dr?.minimum ?? "").trim()
+                    let minimumLive = baseMetaRow.minimum_line_total
+                    if (minDraftLive !== "") {
+                      const n = Number.parseFloat(minDraftLive.replace(/[^0-9.]/g, ""))
+                      if (Number.isFinite(n) && n >= 0) minimumLive = n > 0 ? n : undefined
+                    }
+                    const metaLive: QuoteItemMetadata = {
+                      ...baseMetaRow,
+                      manpower: crewLive,
+                      minimum_line_total: minimumLive,
+                    }
+                    const lineTotalLive = computeQuoteLineTotal(qtyLive, upLive, metaLive).total
                     const crew = meta.manpower ?? 1
                     const serverDesc = String(item.description ?? item.item_description ?? item.name ?? "—")
                     const serverQty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
@@ -2795,30 +2998,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                             }}
                             style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 120, boxSizing: "border-box" }}
                           />
-                        </td>
-                        <td style={{ padding: "6px 8px", fontSize: 13, minWidth: 130 }}>
-                          <select
-                            value={dr?.job_type_id ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, job_type_id: v } }
-                              })
-                              void persistQuoteItemUpdate(item.id, {
-                                metadata: mergeQuoteItemMetadataRow(item, { job_type_id: v ? v : null }),
-                              })
-                            }}
-                            style={{ ...theme.formInput, padding: "6px 8px", fontSize: 13, maxWidth: 200 }}
-                          >
-                            <option value="">— None —</option>
-                            {quoteDetailJobTypes.map((jt) => (
-                              <option key={jt.id} value={jt.id}>
-                                {jt.name}
-                              </option>
-                            ))}
-                          </select>
                         </td>
                         <td style={{ padding: "6px 8px", fontSize: 13 }}>
                           <input
@@ -2920,7 +3099,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           />
                         </td>
                         <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 14 }}>
-                          {tot != null ? (typeof tot === "number" ? tot.toFixed(2) : tot) : "—"}
+                          {lineTotalLive.toFixed(2)}
                         </td>
                         <td style={{ padding: "6px 8px" }}>
                           <button
@@ -2943,9 +3122,31 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   })
                 )}
               </tbody>
+              {selectedQuoteItems.length > 0 ? (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #94a3b8", background: "#f1f5f9" }}>
+                    <td
+                      colSpan={5 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                      style={{
+                        padding: "10px 8px",
+                        textAlign: "right",
+                        fontWeight: 800,
+                        fontSize: 14,
+                        color: "#0f172a",
+                      }}
+                    >
+                      Estimate subtotal
+                    </td>
+                    <td style={{ padding: "10px 8px", fontWeight: 800, fontSize: 15, color: "#0f172a", whiteSpace: "nowrap" }}>
+                      ${spreadsheetEstimateSubtotal.toFixed(2)}
+                    </td>
+                    <td style={{ padding: "10px 8px" }} />
+                  </tr>
+                </tfoot>
+              ) : null}
             </table>
             <p style={{ margin: "10px 0 4px", fontSize: 12, color: "#64748b" }}>
-              Edit any column in the table. Per-line job type links to Calendar; new lines also use <strong>Quote job type</strong> when set. Totals use crew × quantity × unit price, then the minimum if set.
+              Edit any column in the table. New lines use <strong>Quote job type</strong> when set (above). Line totals use crew × quantity × unit price, then the minimum if set. The subtotal updates as you type.
             </p>
             <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
               <div style={{ position: "relative" }}>
@@ -3102,13 +3303,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   type="button"
                   onClick={() => {
                     setCalTitle(`${selectedQuote.customers?.display_name ?? "Customer"} – Quote`)
-                  setCalDate(new Date().toISOString().slice(0, 10))
-                  setCalTime("09:00")
-                  setCalDuration(60)
-                  setCalJobTypeId("")
-                  setCalNotes("")
-                  setCalendarTargetUserId(userId)
-                  setShowAddToCalendar(true)
+                    setCalDate(new Date().toISOString().slice(0, 10))
+                    setCalTime("09:00")
+                    setCalMileage("")
+                    const qjt =
+                      typeof (selectedQuote as QuoteRow).job_type_id === "string"
+                        ? (selectedQuote as QuoteRow).job_type_id?.trim() ?? ""
+                        : ""
+                    setCalJobTypeId(qjt)
+                    setCalDuration(60)
+                    if (qjt && supabase) {
+                      void supabase
+                        .from("job_types")
+                        .select("duration_minutes")
+                        .eq("id", qjt)
+                        .maybeSingle()
+                        .then(({ data }) => {
+                          const dm = (data as { duration_minutes?: number } | null)?.duration_minutes
+                          if (typeof dm === "number" && dm >= 15) setCalDuration(dm)
+                        })
+                    }
+                    setCalNotes("")
+                    setCalendarTargetUserId(userId)
+                    setShowAddToCalendar(true)
                   }}
                   style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
                 >
@@ -3208,7 +3425,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       const id = e.target.value
                       setCalJobTypeId(id)
                       const jt = jobTypes.find((j) => j.id === id)
-                      if (jt) setCalDuration(Math.max(15, jt.duration_minutes))
+                      if (jt) {
+                        setCalDuration(Math.max(15, jt.duration_minutes))
+                        if (!jt.track_mileage) setCalMileage("")
+                      } else {
+                        setCalMileage("")
+                      }
                     }}
                     style={{ ...theme.formInput }}
                   >
@@ -3218,6 +3440,20 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     ))}
                   </select>
                 </div>
+                {calJobTypeId && jobTypes.find((j) => j.id === calJobTypeId)?.track_mileage ? (
+                  <div>
+                    <label style={{ fontSize: "12px", color: theme.text }}>Mileage (miles)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={calMileage}
+                      onChange={(e) => setCalMileage(e.target.value)}
+                      placeholder="e.g. 42"
+                      style={{ ...theme.formInput }}
+                    />
+                  </div>
+                ) : null}
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Notes</label>
                   <input placeholder="Optional notes" value={calNotes} onChange={(e) => setCalNotes(e.target.value)} style={{ ...theme.formInput }} />
@@ -3307,20 +3543,62 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
                     const targetUserId = assignToScopedUser ? selectedTarget : (authUserId || selectedTarget)
                     const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
-                    const rows = newRanges.map(({ s, e }) => ({
+                    const jtRow = calJobTypeId ? jobTypes.find((j) => j.id === calJobTypeId) : null
+                    const materialsFromJobType =
+                      jtRow && typeof jtRow.materials_list === "string" && jtRow.materials_list.trim()
+                        ? jtRow.materials_list.trim()
+                        : null
+                    const milesRaw = calMileage.trim().replace(/[^0-9.]/g, "")
+                    const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
+                    const mileageMiles =
+                      jtRow?.track_mileage === true && Number.isFinite(milesParsed) && milesParsed >= 0
+                        ? milesParsed
+                        : null
+                    const rowBase = {
                       user_id: targetUserId,
                       title: calTitle.trim(),
-                      start_at: s.toISOString(),
-                      end_at: e.toISOString(),
+                      start_at: "" as string,
+                      end_at: "" as string,
                       job_type_id: calJobTypeId || null,
                       quote_id: selectedQuote.id,
                       customer_id: selectedQuote.customer_id,
                       notes: calNotes.trim() || null,
                       quote_total: quoteTotal > 0 ? quoteTotal : null,
                       ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
-                    }))
-                    const { error } = await supabase.from("calendar_events").insert(rows)
-                    if (error) { setAddToCalendarLoading(false); alert(error.message); return }
+                    }
+                    const buildCalRows = (includeMat: boolean, includeMile: boolean) =>
+                      newRanges.map(({ s, e }) => {
+                        const row: Record<string, unknown> = {
+                          ...rowBase,
+                          start_at: s.toISOString(),
+                          end_at: e.toISOString(),
+                        }
+                        if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
+                        if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
+                        return row
+                      })
+                    const calAttempts: [boolean, boolean][] = [
+                      [true, true],
+                      [true, false],
+                      [false, true],
+                      [false, false],
+                    ]
+                    let insertError: { message: string } | null = null
+                    for (const [incMat, incMile] of calAttempts) {
+                      const r = await supabase.from("calendar_events").insert(buildCalRows(incMat, incMile))
+                      if (!r.error) {
+                        insertError = null
+                        break
+                      }
+                      insertError = r.error
+                      const em = (r.error.message ?? "").toLowerCase()
+                      if (!em.includes("materials_list") && !em.includes("mileage_miles")) break
+                    }
+                    if (insertError) {
+                      setAddToCalendarLoading(false)
+                      alert(insertError.message)
+                      return
+                    }
                     const { error: updateErr } = await supabase.from("quotes").update({ scheduled_at: new Date().toISOString() }).eq("id", selectedQuote.id)
                     setAddToCalendarLoading(false)
                     if (updateErr) { alert(updateErr.message); return }
@@ -3960,6 +4238,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
                       style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
                     />
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                    <input type="checkbox" checked={quoteJtTrackMileage} onChange={(e) => setQuoteJtTrackMileage(e.target.checked)} />
+                    Track mileage on calendar events (mileage field when this job type is selected)
                   </label>
                   <details
                     style={{

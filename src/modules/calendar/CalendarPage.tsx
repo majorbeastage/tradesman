@@ -32,6 +32,7 @@ import {
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
 import { buildReceiptPdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
+import { buildReceiptItemizedLines } from "../../lib/receiptItemizedLines"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
@@ -46,6 +47,7 @@ type JobType = {
   duration_minutes: number
   color_hex: string | null
   materials_list?: string | null
+  track_mileage?: boolean | null
 }
 
 type CalendarEvent = {
@@ -63,6 +65,7 @@ type CalendarEvent = {
   completed_at?: string | null
   recurrence_series_id?: string | null
   materials_list?: string | null
+  mileage_miles?: number | null
   job_types?: JobType | null
   customers?: { display_name: string | null } | null
 }
@@ -127,6 +130,9 @@ function buildCalendarReceiptBody(ev: CalendarEvent): string {
     `When: ${new Date(ev.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – ${new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
   ]
   if (ev.quote_total != null && ev.quote_total > 0) lines.push(`Total: $${Number(ev.quote_total).toFixed(2)}`)
+  if (ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0) {
+    lines.push(`Mileage: ${Number(ev.mileage_miles)} mi`)
+  }
   if (ev.notes?.trim()) lines.push(`Notes: ${ev.notes.trim()}`)
   return lines.join("\n")
 }
@@ -254,6 +260,10 @@ export default function CalendarPage() {
   const [jtModalPresetChecksCal, setJtModalPresetChecksCal] = useState<Record<string, boolean>>({})
   const [eventMaterialsDraft, setEventMaterialsDraft] = useState("")
   const [eventMaterialsSaving, setEventMaterialsSaving] = useState(false)
+  const [eventMileageDraft, setEventMileageDraft] = useState("")
+  const [eventMileageSaving, setEventMileageSaving] = useState(false)
+  const [addMileage, setAddMileage] = useState("")
+  const [jtTrackMileage, setJtTrackMileage] = useState(false)
 
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
@@ -486,12 +496,14 @@ export default function CalendarPage() {
           ? (data.metadata as Record<string, unknown>)
           : {}
       const useAi = meta.receipt_template_use_ai === true
+      const itemize = meta.receipt_template_itemize === true
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
       const next: Record<string, string> = {}
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
       for (const item of items) {
         if (item.id === "receipt_template_notes") next[item.id] = notes
         else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
+        else if (item.id === "receipt_template_itemize") next[item.id] = itemize ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
         else next[item.id] = ""
@@ -510,6 +522,7 @@ export default function CalendarPage() {
     }
     const notes = (receiptTemplateFormValues.receipt_template_notes ?? "").trim()
     const useAi = receiptTemplateFormValues.receipt_template_use_ai === "checked"
+    const itemize = receiptTemplateFormValues.receipt_template_itemize === "checked"
     const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
     if (fetchErr) {
       alert(fetchErr.message)
@@ -520,6 +533,7 @@ export default function CalendarPage() {
         ? { ...(data.metadata as Record<string, unknown>) }
         : {}
     prevMeta.receipt_template_use_ai = useAi
+    prevMeta.receipt_template_itemize = itemize
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -568,7 +582,9 @@ export default function CalendarPage() {
       canViewOrgEvents ? baseQuery(selectStr).in("user_id", orgUserIds) : baseQuery(selectStr).eq("user_id", userId)
 
     const selectTiers = [
-      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, mileage_miles, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, color_hex, duration_minutes, description )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, customers ( display_name ), job_types ( id, name, color_hex, duration_minutes, description )",
@@ -601,6 +617,8 @@ export default function CalendarPage() {
       const em = (error.message ?? "").toLowerCase()
       const retry =
         em.includes("materials_list") ||
+        em.includes("mileage_miles") ||
+        em.includes("track_mileage") ||
         em.includes("job_types") ||
         (em.includes("column") && em.includes("does not exist"))
       if (!retry) {
@@ -672,8 +690,31 @@ export default function CalendarPage() {
   }
 
   async function downloadReceiptPdfForEvent(ev: CalendarEvent) {
+    if (!supabase) return
     setReceiptPdfBusy(true)
     try {
+      const profileUserId = ev.user_id ?? userId
+      let itemize = false
+      if (profileUserId) {
+        const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+        const meta =
+          prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+            ? (prof.metadata as Record<string, unknown>)
+            : {}
+        itemize = meta.receipt_template_itemize === true
+      }
+      let itemizedLines: string[] = []
+      if (itemize) {
+        itemizedLines = await buildReceiptItemizedLines(supabase, {
+          quote_id: ev.quote_id,
+          materials_list: ev.materials_list,
+          job_types: ev.job_types ?? null,
+        })
+      }
+      const mileageLabel =
+        ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0
+          ? `Mileage: ${Number(ev.mileage_miles)} mi`
+          : null
       const customerName = ev.customers?.display_name ?? "Customer"
       const amount =
         ev.quote_total != null && ev.quote_total > 0 ? `Total: $${Number(ev.quote_total).toFixed(2)}` : null
@@ -684,6 +725,9 @@ export default function CalendarPage() {
         completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
         amountLabel: amount,
         templateFooter: calendarReceiptTemplate,
+        itemize: itemize && itemizedLines.length > 0,
+        itemizedLines,
+        mileageLabel,
       })
       downloadPdfBlob(bytes, `receipt-${ev.id.slice(0, 8)}.pdf`)
     } catch (e) {
@@ -711,6 +755,29 @@ export default function CalendarPage() {
       return
     }
     setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, materials_list: v } : prev))
+    loadEvents()
+  }
+
+  async function saveEventMileage() {
+    if (!supabase || !selectedEvent?.id) return
+    setEventMileageSaving(true)
+    const raw = eventMileageDraft.trim().replace(/[^0-9.]/g, "")
+    const n = raw ? Number.parseFloat(raw) : Number.NaN
+    const v = Number.isFinite(n) && n >= 0 ? n : null
+    const { error } = await supabase.from("calendar_events").update({ mileage_miles: v }).eq("id", selectedEvent.id)
+    setEventMileageSaving(false)
+    if (error) {
+      const msg = error.message ?? String(error)
+      if (msg.toLowerCase().includes("mileage_miles")) {
+        alert(
+          "Could not save mileage: add column mileage_miles to calendar_events. Run tradesman/supabase/receipt-mileage-job-type.sql in Supabase SQL Editor.",
+        )
+      } else {
+        alert(msg)
+      }
+      return
+    }
+    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, mileage_miles: v } : prev))
     loadEvents()
   }
 
@@ -783,21 +850,31 @@ export default function CalendarPage() {
   async function loadJobTypes() {
     if (!userId || !supabase) return
     setJobTypesLoadError("")
-    const withMat = await supabase
+    let q = await supabase
       .from("job_types")
-      .select("id, name, description, duration_minutes, color_hex, materials_list")
+      .select("id, name, description, duration_minutes, color_hex, materials_list, track_mileage")
       .eq("user_id", userId)
       .order("name")
-    let rows: JobType[] = (withMat.data ?? []) as JobType[]
-    let error = withMat.error
+    let rows: JobType[] = (q.data ?? []) as JobType[]
+    let error = q.error
+    const em = (e: typeof error) => (e?.message ?? "").toLowerCase()
+    if (error && (em(error).includes("track_mileage") || em(error).includes("materials_list"))) {
+      const q2 = await supabase
+        .from("job_types")
+        .select("id, name, description, duration_minutes, color_hex, materials_list")
+        .eq("user_id", userId)
+        .order("name")
+      rows = (q2.data ?? []) as JobType[]
+      error = q2.error
+    }
     if (error?.message?.toLowerCase().includes("materials_list")) {
-      const noMat = await supabase
+      const q3 = await supabase
         .from("job_types")
         .select("id, name, description, duration_minutes, color_hex")
         .eq("user_id", userId)
         .order("name")
-      rows = (noMat.data ?? []) as JobType[]
-      error = noMat.error
+      rows = (q3.data ?? []) as JobType[]
+      error = q3.error
     }
     if (error) {
       setJobTypesLoadError(error.message)
@@ -882,6 +959,16 @@ export default function CalendarPage() {
     const trimmedEv = evText.trim()
     setEventMaterialsDraft(trimmedEv !== "" ? evText : fallback)
   }, [selectedEvent?.id, selectedEvent?.materials_list, selectedEvent?.job_type_id, selectedEvent?.job_types, jobTypes])
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setEventMileageDraft("")
+      return
+    }
+    const m = selectedEvent.mileage_miles
+    if (m != null && Number.isFinite(Number(m))) setEventMileageDraft(String(Number(m)))
+    else setEventMileageDraft("")
+  }, [selectedEvent?.id, selectedEvent?.mileage_miles])
 
   useEffect(() => {
     if (!userId) return
@@ -1039,6 +1126,10 @@ export default function CalendarPage() {
       jtForMaterials && typeof jtForMaterials.materials_list === "string" && jtForMaterials.materials_list.trim()
         ? jtForMaterials.materials_list.trim()
         : null
+    const milesRaw = addMileage.trim().replace(/[^0-9.]/g, "")
+    const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
+    const mileageMiles =
+      jtForMaterials?.track_mileage === true && Number.isFinite(milesParsed) && milesParsed >= 0 ? milesParsed : null
     const rowBase = {
       user_id: eventOwnerUserId,
       title: addTitle.trim(),
@@ -1050,21 +1141,33 @@ export default function CalendarPage() {
       notes: addNotes.trim() || null,
       ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
     }
-    const rowsWithMat = newRanges.map(({ s, e }) => ({
-      ...rowBase,
-      start_at: s.toISOString(),
-      end_at: e.toISOString(),
-      materials_list: materialsFromJobType,
-    }))
-    const rowsNoMat = newRanges.map(({ s, e }) => ({
-      ...rowBase,
-      start_at: s.toISOString(),
-      end_at: e.toISOString(),
-    }))
-    let { error } = await supabase.from("calendar_events").insert(rowsWithMat)
-    if (error?.message?.toLowerCase().includes("materials_list")) {
-      const r = await supabase.from("calendar_events").insert(rowsNoMat)
+    const buildRows = (includeMat: boolean, includeMile: boolean) =>
+      newRanges.map(({ s, e }) => {
+        const row: Record<string, unknown> = {
+          ...rowBase,
+          start_at: s.toISOString(),
+          end_at: e.toISOString(),
+        }
+        if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
+        if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
+        return row
+      })
+    const attempts: [boolean, boolean][] = [
+      [true, true],
+      [true, false],
+      [false, true],
+      [false, false],
+    ]
+    let error: { message: string } | null = null
+    for (const [incMat, incMile] of attempts) {
+      const r = await supabase.from("calendar_events").insert(buildRows(incMat, incMile))
+      if (!r.error) {
+        error = null
+        break
+      }
       error = r.error
+      const em = (r.error.message ?? "").toLowerCase()
+      if (!em.includes("materials_list") && !em.includes("mileage_miles")) break
     }
     setAddSaving(false)
     if (error) {
@@ -1086,6 +1189,7 @@ export default function CalendarPage() {
     setAddNotes("")
     setAddQuoteId(null)
     setAddCustomerId(null)
+    setAddMileage("")
   }
 
   async function saveJobType() {
@@ -1101,34 +1205,52 @@ export default function CalendarPage() {
       alert("You must be signed in to add or update job types.")
       return
     }
+    const sb = supabase
     setJtSaving(true)
-    const payloadFull = {
+    const basePayload = {
       name: jtName.trim(),
       description: jtDescription.trim() || null,
       duration_minutes: jtDuration,
       color_hex: jtColor,
-      materials_list: jtMaterials.trim() || null,
     }
-    const payloadNoMat = {
-      name: payloadFull.name,
-      description: payloadFull.description,
-      duration_minutes: payloadFull.duration_minutes,
-      color_hex: payloadFull.color_hex,
+    let patch: Record<string, unknown> = {
+      ...basePayload,
+      materials_list: jtMaterials.trim() || null,
+      track_mileage: jtTrackMileage,
     }
 
     let jobTypeIdForPresets: string | null = editingJobTypeId
     let error: { message: string } | null = null
 
+    const runUpdate = async () => sb.from("job_types").update(patch).eq("id", editingJobTypeId!).eq("user_id", userId)
+    const runInsert = async () => sb.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
+
     if (editingJobTypeId) {
-      let r = await supabase.from("job_types").update(payloadFull).eq("id", editingJobTypeId).eq("user_id", userId)
-      if (r.error?.message?.toLowerCase().includes("materials_list")) {
-        r = await supabase.from("job_types").update(payloadNoMat).eq("id", editingJobTypeId).eq("user_id", userId)
+      let r = await runUpdate()
+      const lower = (m: string) => m.toLowerCase()
+      if (r.error && lower(r.error.message).includes("track_mileage")) {
+        const { track_mileage: _t, ...rest } = patch
+        patch = rest
+        r = await runUpdate()
+      }
+      if (r.error && lower(r.error.message).includes("materials_list")) {
+        const { materials_list: _m, ...rest } = patch
+        patch = { ...rest }
+        r = await runUpdate()
       }
       error = r.error
     } else {
-      let r = await supabase.from("job_types").insert({ user_id: userId, ...payloadFull }).select("id").single()
-      if (r.error?.message?.toLowerCase().includes("materials_list")) {
-        r = await supabase.from("job_types").insert({ user_id: userId, ...payloadNoMat }).select("id").single()
+      let r = await runInsert()
+      const lower = (m: string) => m.toLowerCase()
+      if (r.error && lower(r.error.message).includes("track_mileage")) {
+        const { track_mileage: _t, ...rest } = patch
+        patch = rest
+        r = await runInsert()
+      }
+      if (r.error && lower(r.error.message).includes("materials_list")) {
+        const { materials_list: _m, ...rest } = patch
+        patch = { ...rest }
+        r = await runInsert()
       }
       error = r.error
       const inserted = r.data as { id?: string } | null
@@ -1138,7 +1260,7 @@ export default function CalendarPage() {
     setJtSaving(false)
     if (error) {
       const msg = error.message || String(error)
-      console.error("[Job type save failed]", { error, userId, payloadFull })
+      console.error("[Job type save failed]", { error, userId, patch })
       const hint = (msg.includes("policy") || msg.includes("RLS") || msg.includes("row-level") || msg.includes("permission") || msg.includes("does not exist"))
         ? "\n\nFix: In Supabase Dashboard → SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql (creates job_types table + RLS policies), then try again."
         : ""
@@ -1151,6 +1273,7 @@ export default function CalendarPage() {
     setJtDuration(60)
     setJtColor("#F97316")
     setJtMaterials("")
+    setJtTrackMileage(false)
     setJtModalPresetChecksCal({})
     setEditingJobTypeId(null)
     loadJobTypes()
@@ -1162,6 +1285,7 @@ export default function CalendarPage() {
     setJtDuration(jt.duration_minutes)
     setJtColor(jt.color_hex ?? "#F97316")
     setJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
+    setJtTrackMileage(jt.track_mileage === true)
     setEditingJobTypeId(jt.id)
   }
 
@@ -1171,6 +1295,7 @@ export default function CalendarPage() {
     setJtDuration(60)
     setJtColor("#F97316")
     setJtMaterials("")
+    setJtTrackMileage(false)
     setEditingJobTypeId(null)
     setJtModalPresetChecksCal({})
   }
@@ -1616,6 +1741,9 @@ export default function CalendarPage() {
                     if (jt) {
                       const mins = jt.duration_minutes
                       setAddDuration(timeIncrement === 60 ? Math.max(60, Math.round(mins / 60) * 60) : mins)
+                      if (!jt.track_mileage) setAddMileage("")
+                    } else {
+                      setAddMileage("")
                     }
                   }}
                   style={addInputStyle}
@@ -1626,6 +1754,20 @@ export default function CalendarPage() {
                   ))}
                 </select>
               </div>
+              {addJobTypeId && jobTypes.find((j) => j.id === addJobTypeId)?.track_mileage ? (
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Mileage (miles)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={addMileage}
+                    onChange={(e) => setAddMileage(e.target.value)}
+                    placeholder="e.g. 42"
+                    style={addInputStyle}
+                  />
+                </div>
+              ) : null}
               {addJobTypeId && portalHasRecurrenceControls(addItemPortalItems) ? (
                 <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
                   Recurrence options below apply even when a job type is selected. You can also set defaults under{" "}
@@ -1756,6 +1898,10 @@ export default function CalendarPage() {
                   placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
                   style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
                 />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                <input type="checkbox" checked={jtTrackMileage} onChange={(e) => setJtTrackMileage(e.target.checked)} />
+                Track mileage on calendar events (mileage field when this job type is selected)
               </label>
               <details
                 style={{
@@ -2271,6 +2417,48 @@ export default function CalendarPage() {
                 {eventMaterialsSaving ? "Saving…" : "Save materials"}
               </button>
             </div>
+            {(() => {
+              const jt =
+                selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null
+              const jtResolved = jt ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
+              if (!jtResolved?.track_mileage) return null
+              return (
+                <div style={{ marginBottom: 14 }}>
+                  <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Mileage</p>
+                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                    This job type tracks mileage. Enter miles for this visit (optional until you have them).
+                  </p>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={eventMileageDraft}
+                    onChange={(e) => setEventMileageDraft(e.target.value)}
+                    placeholder="Miles"
+                    style={{ ...theme.formInput, width: "100%", maxWidth: 200, boxSizing: "border-box", fontSize: 13 }}
+                  />
+                  <button
+                    type="button"
+                    disabled={eventMileageSaving || !supabase}
+                    onClick={() => void saveEventMileage()}
+                    style={{
+                      marginTop: 8,
+                      display: "block",
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: eventMileageSaving ? "wait" : "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    {eventMileageSaving ? "Saving…" : "Save mileage"}
+                  </button>
+                </div>
+              )
+            })()}
             <div style={{ marginBottom: 12 }}>
               <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Event files</p>
               <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>

@@ -968,6 +968,12 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
     label: "Use AI assistant to help refine receipt wording when generating PDFs",
     defaultChecked: false,
   },
+  {
+    id: "receipt_template_itemize",
+    type: "checkbox",
+    label: "Itemize receipt PDF — list materials from the linked quote (material lines) or job type / event checklist",
+    defaultChecked: false,
+  },
 ]
 
 /** Default items for Quotes Auto Response Options (matches user portal built-in options) */

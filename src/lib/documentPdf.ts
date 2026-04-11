@@ -142,19 +142,48 @@ export async function buildReceiptPdfBytes(params: {
   completedAtLabel: string
   amountLabel?: string | null
   templateFooter?: string | null
+  /** When true, draw itemizedLines (materials / quote material lines). */
+  itemize?: boolean
+  itemizedLines?: string[]
+  mileageLabel?: string | null
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
-  const { height } = page.getSize()
+  const { height, width } = page.getSize()
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
   let y = height - 50
   const left = 50
+  const maxW = width - left - 50
   const lineH = 15
 
   const draw = (text: string, size = 11, bold = false, gray = 0) => {
     page.drawText(text.slice(0, 600), { x: left, y, size, font: bold ? fontBold : font, color: rgb(gray, gray, gray) })
     y -= lineH + (size > 12 ? 6 : 2)
+  }
+
+  /** Wrap long strings into visual lines (~chars per line estimated from width). */
+  const drawWrapped = (text: string, size = 10, gray = 0.3) => {
+    const approxChars = Math.max(24, Math.floor(maxW / (size * 0.52)))
+    const words = text.split(/\s+/)
+    let line = ""
+    const flush = () => {
+      if (line.trim()) {
+        page.drawText(line.trim().slice(0, 500), { x: left, y, size, font, color: rgb(gray, gray, gray) })
+        y -= lineH
+      }
+      line = ""
+    }
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w
+      if (next.length > approxChars) {
+        flush()
+        line = w
+      } else {
+        line = next
+      }
+    }
+    flush()
   }
 
   draw("Receipt / job complete", 18, true, 0.12)
@@ -163,7 +192,20 @@ export async function buildReceiptPdfBytes(params: {
   draw(`Customer: ${params.customerName}`, 12, true, 0.2)
   draw(`Job: ${params.jobTitle}`, 11, false, 0.25)
   draw(`Completed: ${params.completedAtLabel}`, 11, false, 0.25)
+  if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
   if (params.amountLabel) draw(params.amountLabel, 12, true, 0.15)
+
+  if (params.itemize && params.itemizedLines && params.itemizedLines.length > 0) {
+    y -= 6
+    draw("Itemized (materials)", 12, true, 0.15)
+    y -= 2
+    for (const raw of params.itemizedLines.slice(0, 40)) {
+      const t = raw.trim()
+      if (!t) continue
+      drawWrapped(`• ${t}`, 10, 0.28)
+    }
+  }
+
   y -= 10
   draw("Thank you for your business.", 11, false, 0.35)
   if (params.templateFooter?.trim()) {
