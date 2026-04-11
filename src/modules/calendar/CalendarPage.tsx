@@ -1485,7 +1485,9 @@ export default function CalendarPage() {
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
             {jobTypesPortalItems.length > 0 && (
               <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
+                  Options (from your portal setup)
+                </p>
                 <PortalSettingItemsForm
                   items={jobTypesPortalItems}
                   formValues={jobTypesPortalValues}

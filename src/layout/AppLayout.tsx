@@ -5,6 +5,7 @@ import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
 import { useIsMobile } from "../hooks/useIsMobile"
+import { useLocale } from "../i18n/LocaleContext"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -19,6 +20,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
   const { signOut } = useAuth()
   const { setView } = useView()
   const isMobile = useIsMobile()
+  const { t } = useLocale()
 
   const handleLogout = () => {
     signOut()
@@ -71,7 +73,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
                 cursor: "pointer",
               }}
             >
-              Menu
+              {t("layout.menu")}
             </button>
             <div style={{ flex: 1, minWidth: 0, textAlign: "center", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {currentPage ?? "Tradesman"}

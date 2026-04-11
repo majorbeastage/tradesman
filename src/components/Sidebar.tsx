@@ -4,6 +4,8 @@ import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
 import { TAB_ID_LABELS } from "../types/portal-builder"
+import { useLocale } from "../i18n/LocaleContext"
+import { formatPortalTabLabel } from "../i18n/navLabel"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -21,6 +23,7 @@ const DEFAULT_TABS = [
 ]
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
+  const { t } = useLocale()
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
   const allTabs = portalTabs && portalTabs.length > 0
     ? portalTabs
@@ -83,9 +86,9 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
       </div>
 
       <div style={{ marginTop: "30px", flex: 1 }}>
-        {tabs.map((t) => (
-          <p key={t.tab_id} onClick={() => { setPage(t.tab_id); onClose?.() }} style={itemStyle}>
-            {t.label ?? TAB_ID_LABELS[t.tab_id] ?? t.tab_id}
+        {tabs.map((tab) => (
+          <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
+            {formatPortalTabLabel(tab.tab_id, tab.label, t)}
           </p>
         ))}
       </div>
@@ -123,7 +126,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             textAlign: "left",
           }}
         >
-          Log out
+          {t("layout.logout")}
         </button>
       )}
       {showAccount && (

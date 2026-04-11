@@ -11,6 +11,12 @@
 # Resend webhooks have no Supabase JWT; handler verifies Svix + uses service role internally.
 verify_jwt = false
 
+# Public signup: browser sends anon key as Bearer; gateway JWT verification must be off or
+# the request returns 401 before index.ts runs. Auth is not used for access — the function
+# uses the service role key internally only.
+[functions.complete-signup]
+verify_jwt = false
+
 [functions.portal-assistant]
 # When true, the API gateway validates JWT before your code runs. A failed check can
 # return a response without CORS headers; browsers then show only "Failed to send a request

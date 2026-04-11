@@ -18,6 +18,7 @@ import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
+import { useLocale } from "../../i18n/LocaleContext"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 
@@ -99,6 +100,7 @@ function mergeLeadsSettingsFormDefaults(
 export default function LeadsPage({ setPage }: LeadsPageProps) {
   const userId = useScopedUserId()
   const { session } = useAuth()
+  const { t } = useLocale()
   const portalConfig = usePortalConfigForPage()
   const isMobile = useIsMobile()
   const [showForm, setShowForm] = useState(false)
@@ -1443,24 +1445,45 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 </label>
               ) : null}
               <div>
-                <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, display: "block", marginBottom: 6 }}>Timing preference</span>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: "pointer", fontSize: 13 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, display: "block", marginBottom: 6 }}>{t("leads.timingTitle")}</span>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 6,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    color: "#111827",
+                    fontWeight: 500,
+                  }}
+                >
                   <input
                     type="radio"
                     name="lf_avail"
                     checked={leadFilterPrefs.availability === "asap"}
                     onChange={() => setLeadFilterPrefs((p) => ({ ...p, availability: "asap" }))}
                   />
-                  ASAP (prefer urgent / same-day language for Hot)
+                  {t("leads.asap")}
                 </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    color: "#111827",
+                    fontWeight: 500,
+                  }}
+                >
                   <input
                     type="radio"
                     name="lf_avail"
                     checked={leadFilterPrefs.availability === "flexible"}
                     onChange={() => setLeadFilterPrefs((p) => ({ ...p, availability: "flexible" }))}
                   />
-                  Flexible
+                  {t("leads.flexible")}
                 </label>
               </div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>

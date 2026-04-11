@@ -1,0 +1,29 @@
+Tradesman — Google Play (Android) release checklist
+====================================================
+
+CODEBASE (this repo)
+- Run `npm run mobile:sync` after each web release so `dist` copies into `android/`.
+- Open Android Studio: `npm run mobile:open:android` (or `npx cap open android`).
+- In `android/`, set applicationId if you change from `com.tradesman.app` (must match Play Console package name).
+- Point the embedded WebView at production: ensure the app loads your real HTTPS origin (Capacitor loads bundled `dist` by default; for live site use `server.url` in `capacitor.config.ts` only if intentional).
+- Add adaptive launcher icons and splash (Android 12+); replace default Capacitor placeholders in `android/app/src/main/res`.
+- Configure `AndroidManifest.xml`: INTERNET, any permissions (camera/mic/storage) only if the web app uses them.
+- ProGuard / minify: test release builds with R8 enabled before upload.
+- Target API level: meet Google’s current targetSdk requirement (update when Play Console warns).
+
+GOOGLE PLAY CONSOLE
+- Create app; package name must match `applicationId` / `appId`.
+- Complete store listing: title, short/full description, screenshots (phone + 7" tablet if required), feature graphic, privacy policy URL.
+- Content rating questionnaire; target audience; ads declaration; data safety form (match what Supabase/Twilio/your APIs collect).
+- App access: if login required, provide test credentials or demo mode instructions.
+- Signing: use Play App Signing; upload first release as AAB (Android App Bundle).
+- Internal testing track first, then closed/open production.
+
+COMPLIANCE & OPS
+- Privacy policy hosted URL (web) covering mobile data use, third parties, retention.
+- If you use SMS/voice: carrier and regional rules are separate from Play; still disclose in listing and policy.
+- Crash reporting (optional): Firebase Crashlytics or similar — declare in data safety.
+
+QUICK COMMANDS
+- `npm run mobile:sync` — build web + copy to Android (and iOS if present).
+- `npm run mobile:open:android` — open project in Android Studio for Run / Generate Signed Bundle.

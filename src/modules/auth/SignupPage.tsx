@@ -14,7 +14,6 @@ import {
 
 type Props = {
   onBack: () => void
-  onSuccessNeedVerify: () => void
 }
 
 function normalizePhone(value: string): string {
@@ -49,9 +48,9 @@ function formatBusinessAddress(a: {
 const supabaseUrlEnv = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonEnv = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
-async function tryCompleteSignupViaEdge(body: {
+type SyncProfileBody = {
+  user_id: string
   email: string
-  password: string
   display_name: string
   website_url: string | null
   primary_phone: string | null
@@ -67,7 +66,12 @@ async function tryCompleteSignupViaEdge(body: {
   ack_terms?: boolean
   ack_privacy?: boolean
   ack_sms?: boolean
-}): Promise<"success" | "not_deployed"> {
+  use_ai_automation?: boolean
+  ui_language?: string
+}
+
+/** Saves full profile via Edge (service role). Password is never sent. */
+async function trySyncSignupProfileViaEdge(body: SyncProfileBody): Promise<"success" | "not_deployed"> {
   if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) return "not_deployed"
   const base = supabaseUrlEnv.replace(/\/$/, "")
   const fnUrl = `${base}/functions/v1/complete-signup`
@@ -102,7 +106,7 @@ function req(cfg: SignupRequirementsValue, field: keyof SignupRequirementsValue[
   return cfg.fields[field] === "required"
 }
 
-export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
+export default function SignupPage({ onBack }: Props) {
   const [signupCfg, setSignupCfg] = useState<SignupRequirementsValue>({
     ...DEFAULT_SIGNUP_REQUIREMENTS,
     fields: { ...DEFAULT_SIGNUP_REQUIREMENTS.fields },
@@ -125,9 +129,16 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
   const [ackTerms, setAckTerms] = useState(false)
   const [ackPrivacy, setAckPrivacy] = useState(false)
   const [ackSms, setAckSms] = useState(false)
+  /** User must explicitly allow or deny AI features (stored as `ai_assistant_visible` / edge `use_ai_automation`). */
+  const [aiAutomationChoice, setAiAutomationChoice] = useState<"allow" | "deny" | null>(null)
+  const [uiLanguage, setUiLanguage] = useState<"en" | "es">("en")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
+  /** After signup when email confirmation is required — stay on this screen until user leaves. */
+  const [awaitingEmailFor, setAwaitingEmailFor] = useState<string | null>(null)
+  const [resendBusy, setResendBusy] = useState(false)
+  const [resendHint, setResendHint] = useState<string>("")
 
   useEffect(() => {
     if (!supabase) return
@@ -218,6 +229,11 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
       setError("Please confirm SMS consent.")
       return
     }
+    if (aiAutomationChoice === null) {
+      setError("Please choose whether to allow AI-assisted features in your account.")
+      return
+    }
+    const useAiAutomation = aiAutomationChoice === "allow"
 
     const website = websiteUrl.trim() ? normalizeUrl(websiteUrl) : null
     const primary = normalizePhone(primaryPhone) || null
@@ -238,44 +254,8 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
       signup_extras[f.id] = v || null
     }
 
-    const edgeBody = {
-      email: em,
-      password,
-      display_name: dn,
-      website_url: website,
-      primary_phone: primary,
-      best_contact_phone: best,
-      address_line_1: addressLine1.trim() || null,
-      address_line_2: addressLine2.trim() || null,
-      address_city: city.trim() || null,
-      address_state: state.trim() || null,
-      address_zip: zip.trim() || null,
-      business_address,
-      timezone: tz,
-      signup_extras: Object.keys(signup_extras).length ? signup_extras : undefined,
-      ack_terms: ackTerms,
-      ack_privacy: ackPrivacy,
-      ack_sms: ackSms,
-    }
-
     setSubmitting(true)
     try {
-      let edgeOutcome: "success" | "not_deployed" = "not_deployed"
-      try {
-        edgeOutcome = await tryCompleteSignupViaEdge(edgeBody)
-      } catch (edgeErr) {
-        setError(edgeErr instanceof Error ? edgeErr.message : String(edgeErr))
-        return
-      }
-
-      if (edgeOutcome === "success") {
-        setMessage(
-          "Account created. Your login is not active until you verify your email — check your inbox and spam folder for a confirmation link, then sign in with User Login. Your profile details were saved."
-        )
-        onSuccessNeedVerify()
-        return
-      }
-
       const { data, error: signErr } = await supabase.auth.signUp({
         email: em,
         password,
@@ -286,10 +266,34 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
         return
       }
       if (data.session) await revokeOtherAuthSessions()
-      const uid = data.user?.id
+      const uid = data.user?.id ?? data.session?.user?.id
       if (!uid) {
-        setError("Could not create account. This email may already be registered.")
+        setError(
+          "Could not create account (no user id from sign up). If this email is already registered, sign in instead; otherwise try again or contact support.",
+        )
         return
+      }
+
+      const syncBody: SyncProfileBody = {
+        user_id: uid,
+        email: em,
+        display_name: dn,
+        website_url: website,
+        primary_phone: primary,
+        best_contact_phone: best,
+        address_line_1: addressLine1.trim() || null,
+        address_line_2: addressLine2.trim() || null,
+        address_city: city.trim() || null,
+        address_state: state.trim() || null,
+        address_zip: zip.trim() || null,
+        business_address,
+        timezone: tz,
+        signup_extras: Object.keys(signup_extras).length ? signup_extras : undefined,
+        ack_terms: ackTerms,
+        ack_privacy: ackPrivacy,
+        ack_sms: ackSms,
+        use_ai_automation: useAiAutomation,
+        ui_language: uiLanguage,
       }
 
       const profilePayload = {
@@ -309,21 +313,58 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
         timezone: tz,
         signup_extras: Object.keys(signup_extras).length ? signup_extras : {},
         portal_config: getDefaultPortalConfigForNewUser(),
+        ai_assistant_visible: useAiAutomation,
+        metadata: { ui_language: uiLanguage },
         updated_at: new Date().toISOString(),
       }
 
-      if (data.session) {
-        const { error: upErr } = await supabase.from("profiles").upsert(profilePayload, { onConflict: "id" })
-        if (upErr) {
-          setError(`Account created but profile save failed: ${upErr.message}. You can complete details in My T after signing in.`)
+      let edgeOutcome: "success" | "not_deployed" = "not_deployed"
+      try {
+        edgeOutcome = await trySyncSignupProfileViaEdge(syncBody)
+      } catch (edgeErr) {
+        if (data.session) {
+          const { error: upErr } = await supabase.from("profiles").upsert(profilePayload, { onConflict: "id" })
+          if (upErr) {
+            setError(
+              `Account created but profile save failed: ${upErr.message}. ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`,
+            )
+            return
+          }
+          setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
           return
         }
-        setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
-      } else {
-        setMessage(
-          "Account created. Your login is not active until you verify your email — check your inbox and spam folder, then open User Login. If your profile is incomplete after you confirm, use Account (My T) or ask your admin to deploy the complete-signup edge function for full signup without a session."
+        setError(
+          edgeErr instanceof Error
+            ? `${edgeErr.message} Your confirmation email may still arrive — check inbox and spam. After confirming, sign in; if profile data is missing, contact support (Edge function may need redeploy).`
+            : String(edgeErr),
         )
-        onSuccessNeedVerify()
+        setAwaitingEmailFor(em)
+        return
+      }
+
+      if (edgeOutcome === "not_deployed") {
+        if (data.session) {
+          const { error: upErr } = await supabase.from("profiles").upsert(profilePayload, { onConflict: "id" })
+          if (upErr) {
+            setError(`Account created but profile save failed: ${upErr.message}`)
+            return
+          }
+          setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
+        } else {
+          setAwaitingEmailFor(em)
+          setError(
+            "Confirmation email should be on the way. The profile server is not deployed — after you confirm your email, open Account (My T) to finish your details, or ask your admin to deploy the complete-signup function.",
+          )
+        }
+        return
+      }
+
+      if (!data.session) {
+        setAwaitingEmailFor(em)
+        setMessage("")
+        setError("")
+      } else {
+        setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -357,6 +398,108 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
       {label}
     </a>
   )
+
+  async function handleResendConfirmation() {
+    if (!supabase || !awaitingEmailFor) return
+    setResendBusy(true)
+    setResendHint("")
+    try {
+      const { error: rErr } = await supabase.auth.resend({ type: "signup", email: awaitingEmailFor })
+      if (rErr) setResendHint(rErr.message)
+      else setResendHint("Another confirmation message was sent. Check inbox, spam, and promotions.")
+    } finally {
+      setResendBusy(false)
+    }
+  }
+
+  if (awaitingEmailFor) {
+    return (
+      <div style={{ minHeight: "100vh", background: theme.background, padding: 24 }}>
+        <div style={{ maxWidth: 520, margin: "0 auto" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setAwaitingEmailFor(null)
+              onBack()
+            }}
+            style={{
+              marginBottom: 20,
+              padding: "8px 14px",
+              background: "transparent",
+              border: `1px solid ${theme.border}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              color: theme.text,
+              fontWeight: 600,
+            }}
+          >
+            ← Back to home
+          </button>
+          <div
+            style={{
+              padding: 28,
+              borderRadius: 14,
+              border: `2px solid ${theme.primary}`,
+              background: "#fff",
+              boxShadow: "0 8px 28px rgba(0,0,0,0.08)",
+            }}
+          >
+            <h1 style={{ color: theme.text, margin: "0 0 12px", fontSize: 26 }}>Check your email</h1>
+            <p style={{ color: theme.text, margin: "0 0 14px", lineHeight: 1.6, fontSize: 15 }}>
+              We created your account and sent a <strong>confirmation link</strong> to{" "}
+              <strong style={{ wordBreak: "break-all" }}>{awaitingEmailFor}</strong>.
+            </p>
+            <p style={{ color: "#374151", margin: "0 0 14px", lineHeight: 1.6, fontSize: 14 }}>
+              <strong>You cannot sign in until you open that link.</strong> The message usually arrives within a minute. Check spam,
+              promotions, and “All mail” if you use Gmail.
+            </p>
+            <p style={{ color: "#6b7280", margin: "0 0 18px", lineHeight: 1.55, fontSize: 13 }}>
+              After you confirm, use <strong>User Login</strong> on the home page with the same email and password you just chose.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
+              <button
+                type="button"
+                disabled={resendBusy}
+                onClick={() => void handleResendConfirmation()}
+                style={{
+                  padding: "10px 18px",
+                  background: theme.primary,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 10,
+                  fontWeight: 700,
+                  cursor: resendBusy ? "wait" : "pointer",
+                  fontSize: 14,
+                }}
+              >
+                {resendBusy ? "Sending…" : "Resend confirmation email"}
+              </button>
+            </div>
+            {resendHint ? (
+              <p style={{ margin: "0 0 14px", fontSize: 14, color: resendHint.includes("sent") ? "#059669" : "#b91c1c" }}>{resendHint}</p>
+            ) : null}
+            <div
+              style={{
+                marginTop: 8,
+                padding: 14,
+                borderRadius: 10,
+                background: "#f9fafb",
+                border: `1px solid ${theme.border}`,
+                fontSize: 13,
+                color: "#4b5563",
+                lineHeight: 1.55,
+              }}
+            >
+              <strong style={{ color: theme.text }}>Still nothing?</strong> In Supabase: Authentication → Providers → Email → confirm
+              signups is enabled; Authentication → Emails → templates; Project Settings → Auth → SMTP (custom SMTP is often required for
+              reliable delivery). The confirmation link must match your <strong>Site URL</strong> and allowed redirect URLs.
+            </div>
+          </div>
+          <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 8, marginTop: 24 }} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: theme.background, padding: 24 }}>
@@ -448,6 +591,60 @@ export default function SignupPage({ onBack, onSuccessNeedVerify }: Props) {
               ))}
             </select>
           </label>
+
+          <div
+            style={{
+              padding: 14,
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              fontSize: 14,
+              color: theme.text,
+              lineHeight: 1.55,
+            }}
+          >
+            <p style={{ margin: "0 0 10px", fontWeight: 700 }}>AI-assisted features</p>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6b7280", fontWeight: 400 }}>
+              Choose whether Tradesman may show AI-assisted tools (summaries, suggestions, etc.) in your workspace. You can change this anytime
+              under Account (My T).
+            </p>
+            <div style={{ display: "grid", gap: 10 }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="ai-automation"
+                  checked={aiAutomationChoice === "allow"}
+                  onChange={() => setAiAutomationChoice("allow")}
+                  style={{ marginTop: 3 }}
+                />
+                <span>Yes — allow AI-assisted features where available</span>
+              </label>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="ai-automation"
+                  checked={aiAutomationChoice === "deny"}
+                  onChange={() => setAiAutomationChoice("deny")}
+                  style={{ marginTop: 3 }}
+                />
+                <span>No — do not use AI features (hide AI options on Leads, Conversations, Quotes, and Calendar)</span>
+              </label>
+            </div>
+            <label style={{ display: "grid", gap: 6, marginTop: 14, fontWeight: 600 }}>
+              Language
+              <select
+                value={uiLanguage}
+                onChange={(e) => setUiLanguage(e.target.value === "es" ? "es" : "en")}
+                style={{ ...inputStyle, marginTop: 4 }}
+              >
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+              <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 400 }}>
+                Controls navigation and shared labels after sign-in. You can change this in Account (My T).
+              </span>
+            </label>
+          </div>
 
           {signupCfg.custom_fields.map((f) => (
             <label key={f.id} style={labelStyle}>

@@ -1,9 +1,10 @@
-// Public signup: create auth user + full profiles row (works when email confirmation leaves client without a session).
+// Sync full profile after the browser runs supabase.auth.signUp() (that sends the confirm-email).
 // Deploy: supabase functions deploy complete-signup
-// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto in hosted Supabase)
-// Admin notification after email verification: Vercel POST /api/notify-admin-verified-signup → platform-tools merged route (first sign-in).
+// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (only — no anon key required)
 //
-// Validates required fields using platform_settings key tradesman_signup_requirements (same as SignupPage).
+// Why browser signUp first: GoTrue sends confirmation mail from the same path as any SPA; server-side
+// signUp from Edge was unreliable for some projects. This function only upserts public.profiles and
+// verifies auth.users.id matches the email in the body.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
@@ -15,8 +16,10 @@ const corsHeaders = {
 const SIGNUP_REQ_KEY = "tradesman_signup_requirements"
 
 type Body = {
+  /** From client after auth.signUp — required (camelCase alias: userId) */
+  user_id?: string
+  userId?: string
   email?: string
-  password?: string
   display_name?: string
   website_url?: string | null
   primary_phone?: string | null
@@ -32,6 +35,8 @@ type Body = {
   ack_terms?: boolean
   ack_privacy?: boolean
   ack_sms?: boolean
+  use_ai_automation?: boolean
+  ui_language?: string
 }
 
 type FieldRule = "required" | "optional"
@@ -118,6 +123,9 @@ async function loadSignupRules(adminClient: ReturnType<typeof createClient>): Pr
   return parseSignupRules(data?.value)
 }
 
+/** Accept any hex UUID shape (v4, v7, etc.); older regex only allowed version nibble 1–5 and broke v7 IDs. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
 
@@ -149,14 +157,29 @@ Deno.serve(async (req) => {
     })
   }
 
+  const userIdRaw =
+    (typeof body.user_id === "string" ? body.user_id.trim() : "") ||
+    (typeof body.userId === "string" ? body.userId.trim() : "")
+  if (!userIdRaw || !UUID_RE.test(userIdRaw)) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "Missing or invalid user_id. The app must call auth.signUp in the browser first, then send that user id here.",
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    )
+  }
+
   const rules = await loadSignupRules(adminClient)
 
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
-  const password = typeof body.password === "string" ? body.password : ""
   let display_name = typeof body.display_name === "string" ? body.display_name.trim() : ""
 
-  if (!email || !password || password.length < 6) {
-    return new Response(JSON.stringify({ error: "Valid email and password (6+ chars) required" }), {
+  if (!email) {
+    return new Response(JSON.stringify({ error: "Email is required." }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -256,21 +279,25 @@ Deno.serve(async (req) => {
           .filter(Boolean)
           .join("\n") || null
 
-  const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: false,
-    user_metadata: { display_name },
-  })
-
-  if (createErr || !created.user) {
-    return new Response(JSON.stringify({ error: createErr?.message ?? "Could not create user" }), {
-      status: 400,
+  const { data: authData, error: authLookupErr } = await adminClient.auth.admin.getUserById(userIdRaw)
+  if (authLookupErr || !authData?.user) {
+    return new Response(
+      JSON.stringify({ error: "Could not verify your new account. Try signing up again from the beginning." }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    )
+  }
+  const authEmail = (authData.user.email ?? "").trim().toLowerCase()
+  if (!authEmail || authEmail !== email) {
+    return new Response(JSON.stringify({ error: "Email does not match this signup session." }), {
+      status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
 
-  const uid = created.user.id
+  const uid = userIdRaw
   const now = new Date().toISOString()
 
   const portal_config = {
@@ -287,6 +314,9 @@ Deno.serve(async (req) => {
       settings: false,
     },
   }
+
+  const useAi = body.use_ai_automation !== false
+  const uiLang = body.ui_language === "es" ? "es" : "en"
 
   const { error: profileErr } = await adminClient.from("profiles").upsert(
     {
@@ -306,6 +336,8 @@ Deno.serve(async (req) => {
       business_address,
       timezone,
       signup_extras: extras,
+      ai_assistant_visible: useAi,
+      metadata: { ui_language: uiLang },
       updated_at: now,
     },
     { onConflict: "id" },
@@ -318,7 +350,15 @@ Deno.serve(async (req) => {
     })
   }
 
-  return new Response(JSON.stringify({ ok: true, userId: uid, profileSaved: true }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  })
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      userId: uid,
+      profileSaved: true,
+      signupFlow: "browser_signup_edge_profile",
+    }),
+    {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    },
+  )
 })

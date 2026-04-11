@@ -846,6 +846,12 @@ export const DEFAULT_QUOTE_ESTIMATE_LINE_ITEMS: PortalSettingItem[] = [
   { id: "eli_show_travel", type: "checkbox", label: "Offer Travel / trip line template", defaultChecked: true },
   { id: "eli_show_misc", type: "checkbox", label: "Offer Miscellaneous line template", defaultChecked: true },
   {
+    id: "eli_show_manpower",
+    type: "checkbox",
+    label: "Show crew / manpower on labor lines (quantity × crew for billing)",
+    defaultChecked: true,
+  },
+  {
     id: "eli_default_labor_rate",
     type: "custom_field",
     customFieldSubtype: "text",

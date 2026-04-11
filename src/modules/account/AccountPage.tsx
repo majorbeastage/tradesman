@@ -6,6 +6,7 @@ import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
 import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
+import { useLocale } from "../../i18n/LocaleContext"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -45,6 +46,8 @@ type ProfileForm = {
   voicemail_conversations_display: "use_channel" | "summary" | "full_transcript"
   /** Master switch: when false, AI-specific options are hidden on Leads, Conversations, Quotes, and Calendar. */
   ai_assistant_visible: boolean
+  /** profiles.metadata.ui_language — sidebar + dashboard strings (expand over time). */
+  ui_language: "en" | "es"
 }
 
 const DEFAULT_WHISPER_TEMPLATE_HINT =
@@ -163,6 +166,7 @@ export function AccountProfilePanel({
   adminContext = false,
 }: AccountProfilePanelProps) {
   const { user, refetchProfile } = useAuth()
+  const { setLocale, t } = useLocale()
   const portalConfig = usePortalConfigForPage()
   const showAccountSection = (sectionId: string) =>
     adminContext || getAccountSectionVisible(portalConfig, sectionId)
@@ -220,6 +224,7 @@ export function AccountProfilePanel({
     forward_whisper_require_keypress: false,
     voicemail_conversations_display: "use_channel",
     ai_assistant_visible: true,
+    ui_language: "en",
   })
 
   const emailForDisplay = useMemo(() => (loginEmail?.trim() || profileEmailFromDb).trim(), [loginEmail, profileEmailFromDb])
@@ -243,11 +248,15 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible, metadata")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
         setProfileEmailFromDb(typeof data?.email === "string" ? data.email : "")
+        const metaRaw = (data as { metadata?: unknown }).metadata
+        const metaObj =
+          metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
+        const uiLang = metaObj.ui_language === "es" ? "es" : "en"
         const row = data as {
           service_radius_enabled?: boolean | null
           service_radius_miles?: number | string | null
@@ -287,6 +296,7 @@ export function AccountProfilePanel({
               ? ((data as { voicemail_conversations_display?: string }).voicemail_conversations_display as ProfileForm["voicemail_conversations_display"])
               : "use_channel",
           ai_assistant_visible: (data as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false,
+          ui_language: uiLang,
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -302,6 +312,14 @@ export function AccountProfilePanel({
     setMessage("")
     setError("")
     try {
+      const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (metaErr) throw metaErr
+      const prevMeta =
+        metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+          ? { ...(metaRow.metadata as Record<string, unknown>) }
+          : {}
+      prevMeta.ui_language = form.ui_language
+
       const website_url = form.website_url.trim() ? normalizeUrl(form.website_url) : null
       const payload = {
         display_name: form.display_name.trim() || null,
@@ -336,6 +354,7 @@ export function AccountProfilePanel({
         forward_whisper_require_keypress: form.forward_whisper_require_keypress,
         voicemail_conversations_display: form.voicemail_conversations_display,
         ai_assistant_visible: form.ai_assistant_visible,
+        metadata: prevMeta,
         updated_at: new Date().toISOString(),
       }
       let { error } = await supabase.from("profiles").update(payload).eq("id", profileUserId)
@@ -350,7 +369,10 @@ export function AccountProfilePanel({
         error = second.error
       }
       if (error) throw error
-      if (user?.id === profileUserId) await refetchProfile()
+      if (user?.id === profileUserId) {
+        setLocale(form.ui_language)
+        await refetchProfile()
+      }
       setForm((prev) => ({
         ...prev,
         website_url: website_url ?? "",
@@ -526,6 +548,20 @@ export function AccountProfilePanel({
                   style={theme.formInput}
                   placeholder="If different from primary"
                 />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.language")}</span>
+                <select
+                  value={form.ui_language}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, ui_language: e.target.value === "es" ? "es" : "en" }))
+                  }
+                  style={theme.formInput}
+                >
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+                <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.languageHint")}</span>
               </label>
               </div>
             </div>
@@ -1014,7 +1050,8 @@ export function AccountProfilePanel({
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                         Turn this off if you do not want AI features anywhere in your portal. When unchecked, options such as thread summary, Fill with AI on leads,
                         conversation automatic-reply AI, AI text-to-speech for outbound calls, AI-assisted status inference, and AI-assisted PDF template toggles are hidden
-                        on the Leads, Conversations, Quotes, and Calendar tabs. Your embeddable lead form and PDF note fields stay available on those tabs.
+                        on the Leads, Conversations, Quotes, and Calendar tabs. Your embeddable lead form and PDF note fields stay available on those tabs.{" "}
+                        {t("account.aiSignupNote")}
                       </p>
                       <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                         <input

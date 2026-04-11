@@ -39,9 +39,18 @@ complete-signup Edge function + admin notify after email verification
 
 Deploy: supabase functions deploy complete-signup
 
-The function enforces required signup fields using platform_settings key tradesman_signup_requirements
-(same rules as the public Signup page). It does not send the admin “new user” email; that runs only after the user
-verifies their email and has an active session (first load / sign-in).
+Requires on the function: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY only.
+
+Flow: the **browser** calls `supabase.auth.signUp()` first (that is what sends the “Confirm signup” email). Then the app calls this
+function with `user_id` + profile fields (no password). The function checks `auth.users.id` matches the email, then upserts
+`public.profiles` with the service role.
+
+Optional: set `verify_jwt = false` for `complete-signup` in supabase/config.toml so the anon key can invoke the function.
+
+The function does not send the admin “new user” email; that runs only after the user verifies their email and has an active session.
+
+If no confirmation email arrives: Authentication → Providers → Email; Email templates; URL configuration; SMTP. The mail is triggered
+by **browser signUp**, not by this function.
 
 Admin notification (Vercel API route)
 

@@ -23,6 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 
+# Supabase CLI / local secrets (never commit)
+supabase/.temp/
+supabase/TWILIO_SECRETS.txt
+
+# Android Gradle (root-level wrapper project)
+/local.properties
+
 # Capacitor / native (keep projects; ignore local build noise)
 android/app/build
 android/build

@@ -1,0 +1,34 @@
+Tradesman — Apple App Store (iOS) release checklist
+====================================================
+
+PREREQUISITE
+- Xcode on a Mac is required to archive, sign, and upload. The `ios/` folder in this repo can be synced from Windows/Linux, but builds and TestFlight/App Store Connect steps need macOS.
+
+CODEBASE (this repo)
+- Run `npm run mobile:sync` after each web release so `dist` copies into `ios/`.
+- Open Xcode: `npm run mobile:open:ios` (on Mac) or open `ios/App/App.xcworkspace` / project as Capacitor documents for your version.
+- Set Bundle Identifier to match App Store Connect (default from Capacitor: `com.tradesman.app` — change in Xcode if needed).
+- Signing & capabilities: Team, automatic signing, any entitlements (Push, Associated Domains, etc.) only if you use them.
+- Icons and launch screen: replace Capacitor defaults in the Xcode asset catalog.
+- If the app uses camera/mic/photos/tracking: add usage strings to `Info.plist` (Privacy — Camera Usage Description, etc.).
+- App Transport Security: production should use HTTPS; avoid broad ATS exceptions unless justified.
+
+APP STORE CONNECT
+- Create app record; bundle ID must match Xcode.
+- Store listing: name, subtitle, keywords, description, screenshots for required device sizes, privacy policy URL, support URL.
+- App Privacy (nutrition labels): align with actual data collection (auth, analytics, crash logs, etc.).
+- Age rating; content rights; encryption export compliance (usually “standard encryption” exemption if only HTTPS).
+- TestFlight: internal then external testers; collect feedback before submission.
+- Submit for review; respond to rejection notes in Resolution Center.
+
+WEB + AUTH
+- Universal Links / Sign in with Apple: only if you implement them; otherwise use in-app WebView or native shell loading your deployed URL per your architecture.
+- If users sign in via Supabase: ensure redirect URLs and deep links work from the iOS app if you use custom URL schemes.
+
+QUICK COMMANDS (on Mac)
+- `npm run mobile:sync` — build web + copy to iOS.
+- `npm run mobile:open:ios` — open in Xcode.
+
+OPTIONAL HARDENING
+- Bitcode / dSYM for crash symbolication if using crash tools.
+- Validate with Xcode “Archive” → “Validate App” before “Distribute App”.

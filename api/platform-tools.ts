@@ -133,7 +133,15 @@ async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse
       const q = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
       const p = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
       const d = String(o.description ?? o.item_description ?? "").slice(0, 500)
-      return { description: d, quantity: q, unit_price: p, lineTotal: q * p }
+      const ltRaw = o.lineTotal ?? o.line_total
+      const lt =
+        typeof ltRaw === "number"
+          ? ltRaw
+          : typeof ltRaw === "string"
+            ? Number.parseFloat(ltRaw)
+            : Number.NaN
+      const lineTotal = Number.isFinite(lt) ? lt : q * p
+      return { description: d, quantity: q, unit_price: p, lineTotal }
     })
     .filter((x) => x.description.trim() || x.lineTotal !== 0 || x.quantity !== 0)
 

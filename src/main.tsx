@@ -4,12 +4,15 @@ import './index.css'
 import App from './App.tsx'
 import { ErrorBoundary } from './ErrorBoundary'
 import { AuthProvider } from './contexts/AuthContext'
+import { LocaleProvider } from './i18n/LocaleContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
-        <App />
+        <LocaleProvider>
+          <App />
+        </LocaleProvider>
       </AuthProvider>
     </ErrorBoundary>
   </StrictMode>,

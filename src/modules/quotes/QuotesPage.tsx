@@ -34,6 +34,11 @@ import {
   computeOccurrenceStarts,
   intervalsOverlap,
 } from "../../lib/calendarRecurrence"
+import {
+  computeQuoteLineTotal,
+  parseQuoteItemMetadata,
+  type QuoteItemMetadata,
+} from "../../lib/quoteItemMath"
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -48,6 +53,17 @@ function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
 
 function dropdownToExportFormat(label: string): "pdf" | "docx" {
   return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
+}
+
+/** Saved estimate presets (profile metadata.estimate_line_presets). */
+type EstimateLinePresetRow = {
+  id: string
+  description: string
+  quantity: number
+  unit_price: number
+  minimum_line_total?: number
+  job_type_id?: string | null
+  line_kind?: string
 }
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -108,9 +124,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [quoteLegalSignatures, setQuoteLegalSignatures] = useState(true)
   const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
   const [showQuoteJobTypesModal, setShowQuoteJobTypesModal] = useState(false)
-  const [estimateLinePresets, setEstimateLinePresets] = useState<
-    { id: string; description: string; quantity: number; unit_price: number }[]
-  >([])
+  const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
   const [quoteJobTypesList, setQuoteJobTypesList] = useState<
@@ -123,9 +137,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     agreesWithSubtotal: boolean | null
   }>({ subtotal: null, issues: [], agreesWithSubtotal: null })
   const [estimateLinePortalValues, setEstimateLinePortalValues] = useState<Record<string, string>>({})
-  const [estimateLineDraft, setEstimateLineDraft] = useState<
-    { id: string; description: string; quantity: number; unit_price: number }[]
-  >([])
+  const [estimateLineDraft, setEstimateLineDraft] = useState<EstimateLinePresetRow[]>([])
+  const [estimateModalJobTypes, setEstimateModalJobTypes] = useState<{ id: string; name: string }[]>([])
   const estimateReviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
   const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
@@ -149,7 +162,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [newItemDescription, setNewItemDescription] = useState("")
   const [newItemQuantity, setNewItemQuantity] = useState("1")
   const [newItemUnitPrice, setNewItemUnitPrice] = useState("")
+  const [newItemManpower, setNewItemManpower] = useState("1")
+  const [newItemMinimum, setNewItemMinimum] = useState("")
+  const [newItemPresetId, setNewItemPresetId] = useState<string | null>(null)
+  const [presetSuggestOpen, setPresetSuggestOpen] = useState(false)
+  const [laborManpowerQuick, setLaborManpowerQuick] = useState(1)
   const [addItemLoading, setAddItemLoading] = useState(false)
+  const [quoteJtNewName, setQuoteJtNewName] = useState("")
+  const [quoteJtNewDuration, setQuoteJtNewDuration] = useState(60)
+  const [quoteJtNewDesc, setQuoteJtNewDesc] = useState("")
+  const [quoteJtNewColor, setQuoteJtNewColor] = useState("#F97316")
+  const [quoteJtSaving, setQuoteJtSaving] = useState(false)
   // Add to Calendar (from quote detail)
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
   const [calTitle, setCalTitle] = useState("")
@@ -244,6 +267,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     setEstimateLinePortalValues(next)
   }, [estimateLineItemsPortal])
 
+  useEffect(() => {
+    if (!showEstimateLineItemsModal || !supabase || !userId) return
+    void supabase
+      .from("job_types")
+      .select("id, name")
+      .eq("user_id", userId)
+      .order("name")
+      .then(({ data }) => setEstimateModalJobTypes(data || []))
+  }, [showEstimateLineItemsModal, userId])
+
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
     const out: Record<string, string> = {}
@@ -312,7 +345,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             const description = String(o.description ?? "").slice(0, 500)
             const quantity = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
             const unit_price = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
-            return { id, description, quantity, unit_price }
+            const minRaw = o.minimum_line_total
+            const minNum = typeof minRaw === "number" ? minRaw : Number.parseFloat(String(minRaw ?? ""))
+            const minimum_line_total = Number.isFinite(minNum) && minNum >= 0 ? minNum : undefined
+            const job_type_id =
+              typeof o.job_type_id === "string" && o.job_type_id.trim()
+                ? o.job_type_id.trim()
+                : o.job_type_id === "" || o.job_type_id === null
+                  ? null
+                  : undefined
+            const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
+            return { id, description, quantity, unit_price, minimum_line_total, job_type_id, line_kind }
           })
           .filter((x) => x.description.trim())
         setEstimateLinePresets(cleaned)
@@ -987,6 +1030,34 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
   }
 
+  function mergeQuoteItemMetadataRow(
+    item: any,
+    patch: Partial<QuoteItemMetadata> & { minimum_line_total?: number | null },
+  ): Record<string, unknown> {
+    const prev =
+      item?.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
+        ? { ...(item.metadata as Record<string, unknown>) }
+        : {}
+    if (patch.manpower != null) prev.manpower = patch.manpower
+    if (patch.minimum_line_total !== undefined) {
+      if (patch.minimum_line_total == null || patch.minimum_line_total <= 0) delete prev.minimum_line_total
+      else prev.minimum_line_total = patch.minimum_line_total
+    }
+    if (patch.preset_id !== undefined) {
+      if (!patch.preset_id) delete prev.preset_id
+      else prev.preset_id = patch.preset_id
+    }
+    if (patch.job_type_id !== undefined) {
+      if (patch.job_type_id === null || patch.job_type_id === "") delete prev.job_type_id
+      else prev.job_type_id = patch.job_type_id
+    }
+    if (patch.line_kind !== undefined) {
+      if (!patch.line_kind) delete prev.line_kind
+      else prev.line_kind = patch.line_kind
+    }
+    return prev
+  }
+
   async function addQuoteItem() {
     if (!supabase || !selectedQuoteId) return
     const qty = parseFloat(newItemQuantity) || 0
@@ -995,42 +1066,69 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert("Enter a description for the line item.")
       return
     }
+    const mp = Math.max(1, Math.floor(Number.parseFloat(newItemManpower) || 1))
+    const minRaw = newItemMinimum.trim()
+    const minNum = minRaw ? Number.parseFloat(minRaw.replace(/[^0-9.]/g, "")) : Number.NaN
+    const meta: QuoteItemMetadata = {}
+    if (estimateLineTemplateOffered("eli_show_manpower")) meta.manpower = mp
+    if (Number.isFinite(minNum) && minNum >= 0) meta.minimum_line_total = minNum
+    const preset = newItemPresetId ? estimateLinePresets.find((p) => p.id === newItemPresetId) : null
+    if (preset) {
+      meta.preset_id = preset.id
+      if (preset.job_type_id) meta.job_type_id = preset.job_type_id
+      if (preset.line_kind) meta.line_kind = preset.line_kind
+      if (preset.minimum_line_total != null && meta.minimum_line_total === undefined) meta.minimum_line_total = preset.minimum_line_total
+    }
     setAddItemLoading(true)
     const row: Record<string, unknown> = {
       quote_id: selectedQuoteId,
       description: newItemDescription.trim(),
       quantity: qty,
-      unit_price: price
+      unit_price: price,
     }
+    if (Object.keys(meta).length > 0) row.metadata = meta
     const { error } = await supabase.from("quote_items").insert(row)
     setAddItemLoading(false)
     if (error) {
       console.error(error)
-      alert(error.message)
+      alert(
+        error.message +
+          (String(error.message).includes("metadata") || String(error.message).includes("column")
+            ? "\n\nIf this mentions an unknown column, run supabase/quote-items-metadata.sql in the Supabase SQL editor."
+            : ""),
+      )
       return
     }
     setNewItemDescription("")
     setNewItemQuantity("1")
     setNewItemUnitPrice("")
+    setNewItemManpower("1")
+    setNewItemMinimum("")
+    setNewItemPresetId(null)
+    setPresetSuggestOpen(false)
     openQuote(selectedQuoteId)
   }
 
   function getItemDisplay(item: any) {
     const desc = item.description ?? item.item_description ?? item.name ?? "—"
-    const qty = item.quantity ?? item.qty ?? "—"
-    const up = item.unit_price ?? item.price ?? "—"
-    const tot = item.total ?? (typeof item.quantity === "number" && typeof item.unit_price === "number" ? item.quantity * item.unit_price : null)
-    return { desc, qty, up, tot }
+    const qtyRaw = item.quantity ?? item.qty ?? 0
+    const upRaw = item.unit_price ?? item.price ?? 0
+    const qtyNum = typeof qtyRaw === "number" ? qtyRaw : Number.parseFloat(String(qtyRaw)) || 0
+    const upNum = typeof upRaw === "number" ? upRaw : Number.parseFloat(String(upRaw)) || 0
+    const meta = parseQuoteItemMetadata(item.metadata)
+    const { effectiveQuantity, total } = computeQuoteLineTotal(qtyNum, upNum, meta)
+    return { desc, qty: qtyNum, up: upNum, tot: total, meta, effectiveQuantity }
   }
 
   const quoteItemsReviewKey = useMemo(
     () =>
       JSON.stringify(
         selectedQuoteItems.map((item) => {
-          const { desc, qty, up } = getItemDisplay(item)
+          const { desc, qty, up, tot } = getItemDisplay(item)
           const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
           const unit_price = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
-          return { description: String(desc), quantity, unit_price }
+          const lineTotal = typeof tot === "number" ? tot : quantity * unit_price
+          return { description: String(desc), quantity, unit_price, lineTotal }
         }),
       ),
     [selectedQuoteItems],
@@ -1105,19 +1203,98 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return Boolean(item.defaultChecked)
   }
 
-  async function insertQuoteLineRow(description: string, quantity: number, unitPrice: number) {
+  async function insertQuoteLineRow(
+    description: string,
+    quantity: number,
+    unitPrice: number,
+    opts?: { metadata?: QuoteItemMetadata; presetId?: string },
+  ) {
     if (!supabase || !selectedQuoteId) return
-    const { error } = await supabase.from("quote_items").insert({
+    const meta: Record<string, unknown> = {}
+    if (opts?.metadata) {
+      const m = opts.metadata
+      if (m.manpower != null) meta.manpower = m.manpower
+      if (m.minimum_line_total != null) meta.minimum_line_total = m.minimum_line_total
+      if (m.job_type_id) meta.job_type_id = m.job_type_id
+      if (m.line_kind) meta.line_kind = m.line_kind
+    }
+    if (opts?.presetId) meta.preset_id = opts.presetId
+    const row: Record<string, unknown> = {
       quote_id: selectedQuoteId,
       description: description.trim(),
       quantity,
       unit_price: unitPrice,
-    })
+    }
+    if (Object.keys(meta).length > 0) row.metadata = meta
+    const { error } = await supabase.from("quote_items").insert(row)
+    if (error) {
+      alert(
+        error.message +
+          (String(error.message).includes("metadata") || String(error.message).includes("column")
+            ? "\n\nRun supabase/quote-items-metadata.sql if metadata column is missing."
+            : ""),
+      )
+      return
+    }
+    openQuote(selectedQuoteId)
+  }
+
+  async function persistQuoteItemUpdate(itemId: string, patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> }) {
+    if (!supabase || !selectedQuoteId) return
+    const { error } = await supabase.from("quote_items").update(patch).eq("id", itemId)
     if (error) {
       alert(error.message)
       return
     }
     openQuote(selectedQuoteId)
+  }
+
+  async function deleteQuoteItemRow(itemId: string) {
+    if (!supabase || !selectedQuoteId) return
+    if (!confirm("Remove this line item?")) return
+    const { error } = await supabase.from("quote_items").delete().eq("id", itemId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    openQuote(selectedQuoteId)
+  }
+
+  async function saveQuoteModalNewJobType() {
+    if (!quoteJtNewName.trim()) {
+      alert("Please enter a name for the job type.")
+      return
+    }
+    if (!supabase || !userId) return
+    setQuoteJtSaving(true)
+    try {
+      const payload = {
+        user_id: userId,
+        name: quoteJtNewName.trim(),
+        description: quoteJtNewDesc.trim() || null,
+        duration_minutes: Math.max(15, quoteJtNewDuration),
+        color_hex: quoteJtNewColor,
+      }
+      const { error } = await supabase.from("job_types").insert(payload)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setQuoteJtNewName("")
+      setQuoteJtNewDesc("")
+      setQuoteJtNewDuration(60)
+      setQuoteJtNewColor("#F97316")
+      const { data } = await supabase
+        .from("job_types")
+        .select("id, name, duration_minutes, description, color_hex")
+        .eq("user_id", userId)
+        .order("name")
+      setQuoteJobTypesList(data || [])
+      const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
+      setEstimateModalJobTypes(shortList || [])
+    } finally {
+      setQuoteJtSaving(false)
+    }
   }
 
   async function saveEstimateLineItemsModal() {
@@ -1161,6 +1338,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           description: row.description.trim().slice(0, 500),
           quantity: row.quantity,
           unit_price: row.unit_price,
+          ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
+          ...(row.job_type_id != null && row.job_type_id !== "" ? { job_type_id: row.job_type_id } : {}),
+          ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
         }))
         .filter((row) => row.description)
       prevMeta.estimate_line_presets = presets
@@ -1220,7 +1400,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         const { desc, qty, up, tot } = getItemDisplay(item)
         const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
         const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
-        const total = typeof tot === "number" ? tot : quantity * unitPrice
+        const total = typeof tot === "number" && !Number.isNaN(tot) ? tot : quantity * unitPrice
         return { description: String(desc), quantity, unitPrice, total }
       })
       let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
@@ -2008,26 +2188,48 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Quick add</span>
                 {estimateLineTemplateOffered("eli_show_labor") ? (
-                  <button
-                    type="button"
-                    onClick={() => void insertQuoteLineRow("Labor (hours)", 1, parseDefaultLaborRateNumber())}
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #cbd5e1",
-                      background: "#fff",
-                      color: "#111827",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Labor
-                  </button>
+                  <>
+                    {estimateLineTemplateOffered("eli_show_manpower") ? (
+                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, color: "#111827" }}>
+                        <span>Crew</span>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={laborManpowerQuick}
+                          onChange={(e) => setLaborManpowerQuick(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          style={{ width: 52, padding: 4, borderRadius: 4, border: "1px solid #cbd5e1" }}
+                        />
+                      </label>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void insertQuoteLineRow("Labor (hours)", 1, parseDefaultLaborRateNumber(), {
+                          metadata: {
+                            line_kind: "labor",
+                            ...(estimateLineTemplateOffered("eli_show_manpower") ? { manpower: laborManpowerQuick } : {}),
+                          },
+                        })
+                      }
+                      style={{
+                        fontSize: 12,
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        background: "#fff",
+                        color: "#111827",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Labor
+                    </button>
+                  </>
                 ) : null}
                 {estimateLineTemplateOffered("eli_show_materials") ? (
                   <button
                     type="button"
-                    onClick={() => void insertQuoteLineRow("Materials", 1, 0)}
+                    onClick={() => void insertQuoteLineRow("Materials", 1, 0, { metadata: { line_kind: "material" } })}
                     style={{
                       fontSize: 12,
                       padding: "4px 10px",
@@ -2044,7 +2246,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 {estimateLineTemplateOffered("eli_show_travel") ? (
                   <button
                     type="button"
-                    onClick={() => void insertQuoteLineRow("Travel / trip", 1, 0)}
+                    onClick={() => void insertQuoteLineRow("Travel / trip", 1, 0, { metadata: { line_kind: "travel" } })}
                     style={{
                       fontSize: 12,
                       padding: "4px 10px",
@@ -2061,7 +2263,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 {estimateLineTemplateOffered("eli_show_misc") ? (
                   <button
                     type="button"
-                    onClick={() => void insertQuoteLineRow("Miscellaneous", 1, 0)}
+                    onClick={() => void insertQuoteLineRow("Miscellaneous", 1, 0, { metadata: { line_kind: "misc" } })}
                     style={{
                       fontSize: 12,
                       padding: "4px 10px",
@@ -2084,7 +2286,19 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   <button
                     key={p.id}
                     type="button"
-                    onClick={() => void insertQuoteLineRow(p.description, p.quantity, p.unit_price)}
+                    onClick={() =>
+                      void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+                        presetId: p.id,
+                        metadata: {
+                          minimum_line_total: p.minimum_line_total,
+                          job_type_id: p.job_type_id ?? undefined,
+                          line_kind: p.line_kind,
+                          ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                            ? { manpower: laborManpowerQuick }
+                            : {}),
+                        },
+                      })
+                    }
                     style={{
                       fontSize: 12,
                       padding: "4px 10px",
@@ -2141,7 +2355,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             <table
               style={{
                 width: "100%",
-                minWidth: isMobile ? "540px" : "100%",
+                minWidth: isMobile ? "640px" : "100%",
                 borderCollapse: "collapse",
                 marginTop: "8px",
                 border: "1px solid #cbd5e1",
@@ -2151,31 +2365,137 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Quantity</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Unit price</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Qty</th>
+                  {estimateLineTemplateOffered("eli_show_manpower") ? (
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Crew</th>
+                  ) : null}
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Min $</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Unit</th>
                   <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Total</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }} />
                 </tr>
               </thead>
               <tbody>
                 {selectedQuoteItems.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ padding: "12px", color: "#334155", fontWeight: 500 }}>
+                    <td
+                      colSpan={estimateLineTemplateOffered("eli_show_manpower") ? 8 : 7}
+                      style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
+                    >
                       No line items. Add one below.
                     </td>
                   </tr>
                 ) : (
                   selectedQuoteItems.map((item, rowIdx) => {
-                    const { desc, qty, up, tot } = getItemDisplay(item)
+                    const { desc, qty, up, tot, meta } = getItemDisplay(item)
+                    const crew = meta.manpower ?? 1
+                    const minStr =
+                      meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total)
+                        ? String(meta.minimum_line_total)
+                        : ""
                     return (
                       <tr key={item.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
                         <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 13 }}>{rowIdx + 1}</td>
-                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>{desc}</td>
-                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>{qty}</td>
-                        <td style={{ padding: "10px 8px", color: "#0f172a", fontSize: 14 }}>
-                          {typeof up === "number" ? up.toFixed(2) : up}
+                        <td style={{ padding: "6px 8px", color: "#0f172a", fontSize: 13 }}>
+                          <input
+                            key={`desc-${item.id}-${desc}`}
+                            defaultValue={String(desc)}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim()
+                              if (v && v !== String(desc)) void persistQuoteItemUpdate(item.id, { description: v })
+                            }}
+                            style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 120, boxSizing: "border-box" }}
+                          />
+                        </td>
+                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                          <input
+                            key={`qty-${item.id}-${qty}`}
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            defaultValue={qty}
+                            onBlur={(e) => {
+                              const n = Number.parseFloat(e.target.value) || 0
+                              if (n !== qty) void persistQuoteItemUpdate(item.id, { quantity: n })
+                            }}
+                            style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
+                          />
+                        </td>
+                        {estimateLineTemplateOffered("eli_show_manpower") ? (
+                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                            <input
+                              key={`crew-${item.id}-${crew}`}
+                              type="number"
+                              min={1}
+                              step={1}
+                              defaultValue={crew}
+                              onBlur={(e) => {
+                                const n = Math.max(1, parseInt(e.target.value, 10) || 1)
+                                if (n !== crew)
+                                  void persistQuoteItemUpdate(item.id, {
+                                    metadata: mergeQuoteItemMetadataRow(item, { manpower: n }),
+                                  })
+                              }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: 56 }}
+                            />
+                          </td>
+                        ) : null}
+                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                          <input
+                            key={`min-${item.id}-${minStr}`}
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            placeholder="—"
+                            defaultValue={minStr}
+                            onBlur={(e) => {
+                              const t = e.target.value.trim()
+                              const n = t === "" ? null : Number.parseFloat(t)
+                              const nextMin = n != null && Number.isFinite(n) && n > 0 ? n : null
+                              const cur = meta.minimum_line_total
+                              const same =
+                                (nextMin == null && cur == null) ||
+                                (nextMin != null && cur != null && Math.abs(nextMin - cur) < 1e-9)
+                              if (!same)
+                                void persistQuoteItemUpdate(item.id, {
+                                  metadata: mergeQuoteItemMetadataRow(item, { minimum_line_total: nextMin }),
+                                })
+                            }}
+                            style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
+                          />
+                        </td>
+                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                          <input
+                            key={`up-${item.id}-${up}`}
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            defaultValue={typeof up === "number" ? up : 0}
+                            onBlur={(e) => {
+                              const n = Number.parseFloat(e.target.value) || 0
+                              if (n !== up) void persistQuoteItemUpdate(item.id, { unit_price: n })
+                            }}
+                            style={{ ...theme.formInput, padding: "6px 8px", width: 88 }}
+                          />
                         </td>
                         <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 14 }}>
                           {tot != null ? (typeof tot === "number" ? tot.toFixed(2) : tot) : "—"}
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <button
+                            type="button"
+                            onClick={() => void deleteQuoteItemRow(item.id)}
+                            style={{
+                              fontSize: 12,
+                              color: "#b91c1c",
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              textDecoration: "underline",
+                            }}
+                          >
+                            Remove
+                          </button>
                         </td>
                       </tr>
                     )
@@ -2183,39 +2503,156 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 )}
               </tbody>
             </table>
-            <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
-              <input
-                placeholder="Description"
-                value={newItemDescription}
-                onChange={(e) => setNewItemDescription(e.target.value)}
-                style={{ ...theme.formInput, padding: "6px 10px", width: "200px" }}
-              />
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Qty"
-                value={newItemQuantity}
-                onChange={(e) => setNewItemQuantity(e.target.value)}
-                style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
-              />
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Unit price"
-                value={newItemUnitPrice}
-                onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
-              />
-              <button
-                type="button"
-                onClick={addQuoteItem}
-                disabled={addItemLoading}
-                style={{ padding: "6px 12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "14px" }}
-              >
-                {addItemLoading ? "Adding..." : "Add line item"}
-              </button>
+            <p style={{ margin: "10px 0 4px", fontSize: 12, color: "#64748b" }}>
+              Pick a saved line to autofill, or type a custom description. Totals use crew × quantity × unit price, then apply the minimum if set.
+            </p>
+            <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
+              <div style={{ position: "relative" }}>
+                <input
+                  placeholder="Description (type to filter saved lines)"
+                  value={newItemDescription}
+                  onChange={(e) => {
+                    setNewItemDescription(e.target.value)
+                    setNewItemPresetId(null)
+                    setPresetSuggestOpen(true)
+                  }}
+                  onFocus={() => setPresetSuggestOpen(true)}
+                  onBlur={() => window.setTimeout(() => setPresetSuggestOpen(false), 180)}
+                  style={{ ...theme.formInput, padding: "6px 10px", width: "100%", boxSizing: "border-box" }}
+                />
+                {presetSuggestOpen && estimateLinePresets.length > 0 ? (
+                  <ul
+                    style={{
+                      position: "absolute",
+                      zIndex: 20,
+                      left: 0,
+                      right: 0,
+                      top: "100%",
+                      margin: "4px 0 0",
+                      padding: 4,
+                      listStyle: "none",
+                      background: "#fff",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 6,
+                      maxHeight: 200,
+                      overflowY: "auto",
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                    }}
+                  >
+                    {estimateLinePresets
+                      .filter((p) =>
+                        !newItemDescription.trim()
+                          ? true
+                          : p.description.toLowerCase().includes(newItemDescription.toLowerCase().trim()),
+                      )
+                      .slice(0, 12)
+                      .map((p) => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setNewItemDescription(p.description)
+                              setNewItemQuantity(String(p.quantity))
+                              setNewItemUnitPrice(String(p.unit_price))
+                              setNewItemMinimum(
+                                p.minimum_line_total != null && Number.isFinite(p.minimum_line_total)
+                                  ? String(p.minimum_line_total)
+                                  : "",
+                              )
+                              setNewItemManpower(
+                                p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                                  ? String(laborManpowerQuick)
+                                  : "1",
+                              )
+                              setNewItemPresetId(p.id)
+                              setPresetSuggestOpen(false)
+                            }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "8px 10px",
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              fontSize: 13,
+                              color: "#0f172a",
+                              borderRadius: 4,
+                            }}
+                          >
+                            {p.description}
+                            <span style={{ opacity: 0.65, fontSize: 11 }}>
+                              {" "}
+                              · qty {p.quantity} @ ${p.unit_price.toFixed(2)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Qty"
+                  value={newItemQuantity}
+                  onChange={(e) => setNewItemQuantity(e.target.value)}
+                  style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
+                />
+                {estimateLineTemplateOffered("eli_show_manpower") ? (
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
+                    Crew
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={newItemManpower}
+                      onChange={(e) => setNewItemManpower(e.target.value)}
+                      style={{ ...theme.formInput, padding: "6px 10px", width: "72px" }}
+                    />
+                  </label>
+                ) : null}
+                <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
+                  Min $
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="optional"
+                    value={newItemMinimum}
+                    onChange={(e) => setNewItemMinimum(e.target.value)}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: "88px" }}
+                  />
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Unit price"
+                  value={newItemUnitPrice}
+                  onChange={(e) => setNewItemUnitPrice(e.target.value)}
+                  style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void addQuoteItem()}
+                  disabled={addItemLoading}
+                  style={{
+                    padding: "6px 12px",
+                    background: theme.primary,
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  {addItemLoading ? "Adding..." : "Add line item"}
+                </button>
+              </div>
             </div>
 
             {!selectedQuote.scheduled_at && (
@@ -2278,7 +2715,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {quoteCalendarItems.length > 0 && (
                   <div style={{ marginBottom: 4, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
-                    <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
+                      Scheduling options (from your portal setup)
+                    </p>
                     <PortalSettingItemsForm
                       items={quoteCalendarItems}
                       formValues={quoteCalPortalValues}
@@ -2503,7 +2942,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               </p>
               {estimateLineItemsPortal.length > 0 ? (
                 <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${theme.border}` }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Portal options</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
+                    Line templates and defaults (from your portal setup)
+                  </p>
                   <PortalSettingItemsForm
                     items={estimateLineItemsPortal}
                     formValues={estimateLinePortalValues}
@@ -2541,7 +2982,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   onClick={() =>
                     setEstimateLineDraft((rows) => [
                       ...rows,
-                      { id: crypto.randomUUID(), description: "", quantity: 1, unit_price: 0 },
+                      {
+                        id: crypto.randomUUID(),
+                        description: "",
+                        quantity: 1,
+                        unit_price: 0,
+                        minimum_line_total: undefined,
+                        job_type_id: "",
+                        line_kind: "",
+                      },
                     ])
                   }
                   style={{
@@ -2565,10 +3014,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     <div
                       key={row.id}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: isMobile ? "1fr" : "1fr 80px 100px auto",
+                        display: "flex",
+                        flexDirection: "column",
                         gap: 8,
-                        alignItems: "center",
+                        paddingBottom: 12,
+                        borderBottom: `1px solid ${theme.border}`,
                       }}
                     >
                       <input
@@ -2580,44 +3030,104 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         }}
                         style={theme.formInput}
                       />
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        placeholder="Qty"
-                        value={row.quantity}
-                        onChange={(e) => {
-                          const q = Number.parseFloat(e.target.value) || 0
-                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
-                        }}
-                        style={theme.formInput}
-                      />
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        placeholder="Unit $"
-                        value={row.unit_price}
-                        onChange={(e) => {
-                          const p = Number.parseFloat(e.target.value) || 0
-                          setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
-                        }}
-                        style={theme.formInput}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setEstimateLineDraft((prev) => prev.filter((_, i) => i !== idx))}
+                      <div
                         style={{
-                          fontSize: 12,
-                          color: "#b91c1c",
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          justifySelf: isMobile ? "start" : undefined,
+                          display: "grid",
+                          gridTemplateColumns: isMobile ? "1fr 1fr" : "minmax(0,70px) minmax(0,90px) minmax(0,90px) minmax(0,1.2fr) minmax(0,1fr) auto",
+                          gap: 8,
+                          alignItems: "center",
                         }}
                       >
-                        Remove
-                      </button>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          title="Default quantity when inserting on a quote"
+                          placeholder="Qty"
+                          value={row.quantity}
+                          onChange={(e) => {
+                            const q = Number.parseFloat(e.target.value) || 0
+                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
+                          }}
+                          style={theme.formInput}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          placeholder="Unit $"
+                          value={row.unit_price}
+                          onChange={(e) => {
+                            const p = Number.parseFloat(e.target.value) || 0
+                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
+                          }}
+                          style={theme.formInput}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          title="Minimum line total when inserted"
+                          placeholder="Min $"
+                          value={row.minimum_line_total ?? ""}
+                          onChange={(e) => {
+                            const t = e.target.value.trim()
+                            const n = t === "" ? undefined : Number.parseFloat(t)
+                            setEstimateLineDraft((prev) =>
+                              prev.map((r, i) =>
+                                i === idx ? { ...r, minimum_line_total: n != null && Number.isFinite(n) && n > 0 ? n : undefined } : r,
+                              ),
+                            )
+                          }}
+                          style={theme.formInput}
+                        />
+                        <select
+                          value={row.job_type_id ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setEstimateLineDraft((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, job_type_id: v || "" } : r)),
+                            )
+                          }}
+                          style={theme.formInput}
+                        >
+                          <option value="">Job type (optional)</option>
+                          {estimateModalJobTypes.map((jt) => (
+                            <option key={jt.id} value={jt.id}>
+                              {jt.name}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={row.line_kind ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, line_kind: v } : r)))
+                          }}
+                          style={theme.formInput}
+                        >
+                          <option value="">Kind (optional)</option>
+                          <option value="labor">Labor</option>
+                          <option value="material">Material</option>
+                          <option value="travel">Travel</option>
+                          <option value="misc">Misc</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setEstimateLineDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          style={{
+                            fontSize: 12,
+                            color: "#b91c1c",
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            justifySelf: isMobile ? "start" : undefined,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -2692,8 +3202,72 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </button>
               </div>
               <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-                Same job types as Calendar → Job Types for this account. Manage them from the Calendar tab; use them when scheduling from a quote.
+                Same job types as Calendar for this account. Add types here or under Calendar; both update this list.
               </p>
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: 12,
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                }}
+              >
+                <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: theme.text }}>New job type</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <input
+                    placeholder="Name"
+                    value={quoteJtNewName}
+                    onChange={(e) => setQuoteJtNewName(e.target.value)}
+                    style={theme.formInput}
+                  />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <label style={{ fontSize: 12, color: theme.text }}>
+                      Duration (min)
+                      <input
+                        type="number"
+                        min={15}
+                        step={15}
+                        value={quoteJtNewDuration}
+                        onChange={(e) => setQuoteJtNewDuration(parseInt(e.target.value, 10) || 60)}
+                        style={{ ...theme.formInput, display: "block", marginTop: 4, width: 100 }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 12, color: theme.text }}>
+                      Color
+                      <input
+                        type="color"
+                        value={quoteJtNewColor}
+                        onChange={(e) => setQuoteJtNewColor(e.target.value)}
+                        style={{ display: "block", marginTop: 4, width: 48, height: 32, padding: 0, border: "none" }}
+                      />
+                    </label>
+                  </div>
+                  <input
+                    placeholder="Description (optional)"
+                    value={quoteJtNewDesc}
+                    onChange={(e) => setQuoteJtNewDesc(e.target.value)}
+                    style={theme.formInput}
+                  />
+                  <button
+                    type="button"
+                    disabled={quoteJtSaving}
+                    onClick={() => void saveQuoteModalNewJobType()}
+                    style={{
+                      alignSelf: "flex-start",
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: quoteJtSaving ? "wait" : "pointer",
+                    }}
+                  >
+                    {quoteJtSaving ? "Saving…" : "Save job type"}
+                  </button>
+                </div>
+              </div>
               {quoteJobTypesPanelItems.length > 0 ? (
                 <div style={{ marginBottom: 16 }}>
                   <PortalSettingItemsForm
@@ -2712,7 +3286,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </div>
               ) : null}
               {quoteJobTypesList.length === 0 ? (
-                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add them under Calendar → Job Types.</p>
+                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add one above or under Calendar → Job Types.</p>
               ) : (
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: "#0f172a" }}>
                   <thead>

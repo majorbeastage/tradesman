@@ -29,6 +29,8 @@ import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useIsMobile } from "./hooks/useIsMobile"
 import { getPortalTabListForConfig, TAB_ID_LABELS, type PortalConfig } from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
+import { useLocale } from "./i18n/LocaleContext"
+import { formatPortalTabLabel } from "./i18n/navLabel"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
@@ -49,6 +51,7 @@ function MainApp() {
   const { clientId, portalConfig, role: authRole } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
   const isMobile = useIsMobile()
+  const { t } = useLocale()
   // Prefer per-user portal_config from admin (default + custom tabs, filtered by visibility)
   const portalTabs = buildPortalTabsFromConfig(portalConfig) ?? portalTabsFromApi
 
@@ -74,8 +77,11 @@ function MainApp() {
     })()
   }, [])
 
+  const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
+  const currentPageTitle = formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
+
   return (
-    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={TAB_ID_LABELS[page] ?? page}>
+    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
       {authRole === "demo_user" && (
         <div
           style={{
@@ -89,7 +95,7 @@ function MainApp() {
             lineHeight: 1.45,
           }}
         >
-          <strong>Demo account.</strong> Leads, conversations, quotes, calendar, and inbox-style activity are cleared on a schedule (typically every hour or two). Your login and profile stay; Twilio channels are not removed. Ask your admin for a full account when you are ready.
+          <strong>{t("dashboard.demoLabel")}</strong> {t("dashboard.demoBanner")}
         </div>
       )}
 
@@ -119,7 +125,7 @@ function MainApp() {
 
       {page === "dashboard" && (
         <>
-          <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>Dashboard</h1>
+          <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>{t("dashboard.title")}</h1>
           <div
             style={{
               display: "grid",
@@ -130,29 +136,25 @@ function MainApp() {
             }}
           >
             <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Pipeline</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Leads → Quotes → Calendar</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Track every customer from first contact to booked job.</p>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.pipeline")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.pipeline")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.pipelineSub")}</p>
             </div>
             <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Communication</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Messages + Notes</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Keep customer history centralized and easy to review.</p>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.comm")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.comm")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.commSub")}</p>
             </div>
             <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>Scheduling</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>Smart Recurrence</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>Plan one-time and recurring jobs with less manual work.</p>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.schedule")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.schedule")}</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.scheduleSub")}</p>
             </div>
           </div>
           <div style={{ maxWidth: "920px", marginTop: "8px", padding: isMobile ? "18px" : "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "10px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
-            <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#fff" }}>Welcome to Tradesman</h2>
-            <p style={{ margin: "0 0 10px" }}>
-              We help contractors and small businesses manage leads, conversations, quotes, and scheduling in one clean workspace.
-            </p>
-            <p style={{ margin: 0 }}>
-              Use the sidebar to jump to the next step in your workflow. The layout is optimized for desktop and mobile web so your team can stay productive anywhere.
-            </p>
+            <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#fff" }}>{t("dashboard.welcomeTitle")}</h2>
+            <p style={{ margin: "0 0 10px" }}>{t("dashboard.welcomeBody1")}</p>
+            <p style={{ margin: 0 }}>{t("dashboard.welcomeBody2")}</p>
           </div>
         </>
       )}
@@ -255,10 +257,7 @@ function App() {
 
   if (view === "signup") {
     return (
-      <SignupPage
-        onBack={() => setView("home")}
-        onSuccessNeedVerify={() => setView("home")}
-      />
+      <SignupPage onBack={() => setView("home")} />
     )
   }
 
