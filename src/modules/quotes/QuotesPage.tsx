@@ -977,13 +977,16 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           )
         )
       `
-    let { data, error } = await supabase
+    const listFirst = await supabase
       .from("quotes")
       .select(selectWith)
       .eq("user_id", userId)
       .is("scheduled_at", null)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
+
+    let data: any[] | null = listFirst.data
+    let error = listFirst.error
 
     if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
       const r = await supabase
@@ -996,7 +999,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       data = r.data
       error = r.error
       if (data) {
-        data = (data as any[]).map((q: any) => ({ ...q, job_type_id: q.job_type_id ?? null }))
+        data = data.map((q: any) => ({ ...q, job_type_id: q.job_type_id ?? null }))
       }
     }
 
@@ -1011,13 +1014,19 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         setQuotes([])
         return
       }
-      data = (res.data || []).map((q: any) => ({ ...q, scheduled_at: q.scheduled_at ?? null, removed_at: q.removed_at ?? null }))
+      data = (res.data || []).map((q: any) => ({
+        ...q,
+        scheduled_at: q.scheduled_at ?? null,
+        removed_at: q.removed_at ?? null,
+        job_type_id: q.job_type_id ?? null,
+      }))
+      error = null
     } else if (error) {
       setQuotesError(error.message)
       setQuotes([])
       return
     }
-    setQuotes((data as any[]) || [])
+    setQuotes(data || [])
   }
 
   useEffect(() => {
@@ -1158,10 +1167,13 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           )
         )
       `
-    let { data, error } = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+    const detailFirst = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+    let row: any = detailFirst.data
+    let error = detailFirst.error
+
     if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
       const r = await supabase.from("quotes").select(quoteDetailSelectNoJobType).eq("id", quoteId).single()
-      data = r.data
+      row = r.data
       error = r.error
     }
     if (error) {
@@ -1175,7 +1187,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       )
       return
     }
-    setSelectedQuote({ ...(data as object), job_type_id: (data as QuoteRow)?.job_type_id ?? null })
+    if (!row) {
+      setQuoteOpenError("Quote not found.")
+      return
+    }
+    setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
     const { data: items } = await supabase
       .from("quote_items")
       .select("*")
@@ -1190,7 +1206,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       setQuoteDetailJobTypes([])
     }
 
-    const cid = data.customer_id as string
+    const cid = row.customer_id as string
     if (userId && cid) {
       const { data: evs } = await supabase
         .from("communication_events")
@@ -1212,7 +1228,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
     setQuoteEntityRows(await loadEntityAttachmentsForQuote(quoteId))
 
-    const convId = data.conversation_id as string | null
+    const convId = row.conversation_id as string | null
     if (convId) {
       const { data: msgs } = await supabase
         .from("messages")

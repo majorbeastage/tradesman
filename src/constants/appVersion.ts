@@ -3,7 +3,7 @@
  * Vite injects it at build time (`vite.config.ts` → `define` → `__APP_VERSION__`).
  *
  * Release 1.2.0: Quotes estimate/legal + lead fit automation (rules-first).
- * Next patch line: **1.2.1** (hotfixes / small follow-ups).
+ * **1.2.2** — Quotes load fallbacks + Vercel TS fixes. Next patch: bump `package.json` only.
  *
  * @see CopyrightVersionFooter
  */
