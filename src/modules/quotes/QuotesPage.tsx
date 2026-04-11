@@ -86,6 +86,9 @@ const ELI_UNIT_LABEL: Record<EliUnit, string> = {
   each: "Flat / each",
 }
 
+/** Crew count when inserting labor lines from saved presets (table row still edits crew per line). */
+const DEFAULT_PRESET_LABOR_MANPOWER = 1
+
 function eliLineKindFromPresetKind(kind: string | undefined): EliLineKind {
   if (kind === "material" || kind === "travel" || kind === "misc") return kind
   return "labor"
@@ -238,7 +241,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [newItemMinimum, setNewItemMinimum] = useState("")
   const [newItemPresetId, setNewItemPresetId] = useState<string | null>(null)
   const [presetSuggestOpen, setPresetSuggestOpen] = useState(false)
-  const [laborManpowerQuick, setLaborManpowerQuick] = useState(1)
   const [addItemLoading, setAddItemLoading] = useState(false)
   const [quoteJtNewName, setQuoteJtNewName] = useState("")
   const [quoteJtNewDuration, setQuoteJtNewDuration] = useState(60)
@@ -1426,7 +1428,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       metadata: {
         minimum_line_total: p.minimum_line_total,
         line_kind: p.line_kind,
-        ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower") ? { manpower: laborManpowerQuick } : {}),
+        ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+          ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+          : {}),
       },
     })
   }
@@ -2515,7 +2519,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           minimum_line_total: p.minimum_line_total,
                           line_kind: p.line_kind,
                           ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                            ? { manpower: laborManpowerQuick }
+                            ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
                             : {}),
                         },
                       })
@@ -2844,7 +2848,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                               )
                               setNewItemManpower(
                                 p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                                  ? String(laborManpowerQuick)
+                                  ? String(DEFAULT_PRESET_LABOR_MANPOWER)
                                   : "1",
                               )
                               setNewItemPresetId(p.id)
