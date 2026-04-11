@@ -1,0 +1,29 @@
+---
+description: Working signup + complete-signup flow and deploy (verified working)
+alwaysApply: true
+---
+
+# Signup / `complete-signup` — bookmark (do not regress)
+
+## End-to-end flow
+
+1. **Browser:** `supabase.auth.signUp({ email, password, options: { data: { display_name } } })` runs first (GoTrue sends confirmation email when enabled).
+2. **Edge:** `POST {SUPABASE_URL}/functions/v1/complete-signup` with JSON including:
+   - **`user_id`** — from `data.user?.id ?? data.session?.user?.id` after `signUp`
+   - **`email`**, profile fields, policy ack flags, **`use_ai_automation`** (maps to `profiles.ai_assistant_visible`)
+   - **Never** send the password to this function.
+
+## Supabase Edge (not Vercel)
+
+- **Deploy after edits:** `supabase functions deploy complete-signup` from this repo. Pushing to GitHub does **not** update Edge Functions unless CI runs that command.
+- **Function secrets:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+- **`supabase/config.toml`:** `[functions.complete-signup] verify_jwt = false` so the SPA can call with the anon key (`Authorization: Bearer <anon>` and `apikey: <anon>`).
+
+## `user_id` validation in the function
+
+- Use a **permissive** UUID shape check (`8-4-4-4-12` hex). A regex that only allows UUID “version” nibble **1–5** rejects valid auth user IDs (e.g. **v7**) and surfaces: *Missing or invalid user_id…*
+
+## Frontend / Vercel
+
+- Env: **`VITE_SUPABASE_URL`**, **`VITE_SUPABASE_ANON_KEY`**.
+- **`npm run build`** must pass (`tsc -b && vite build`) for Vercel production builds.
