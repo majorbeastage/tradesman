@@ -1,5 +1,7 @@
 -- Materials checklist: default on job type, per-event copy on calendar_events (editable on the event).
 -- Run in Supabase SQL Editor once.
+-- Related: tradesman/supabase/calendar-events-metadata.sql (receipt line overrides on events),
+--   tradesman/supabase/receipt-mileage-job-type.sql (mileage_miles + track_mileage).
 
 ALTER TABLE IF EXISTS public.job_types
   ADD COLUMN IF NOT EXISTS materials_list TEXT;

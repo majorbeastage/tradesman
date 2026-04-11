@@ -142,9 +142,15 @@ export async function buildReceiptPdfBytes(params: {
   completedAtLabel: string
   amountLabel?: string | null
   templateFooter?: string | null
-  /** When true, draw itemizedLines (materials / quote material lines). */
-  itemize?: boolean
-  itemizedLines?: string[]
+  /** Calendar block duration (start → end). */
+  scheduledDurationLabel?: string | null
+  /** Labor, materials, misc, etc. from quote + event extras. */
+  quoteLineItems?: string[]
+  /** When true, draw materialsChecklistLines (event/job-type checklist or quote material lines). */
+  includeMaterialsChecklist?: boolean
+  materialsChecklistLines?: string[]
+  /** Sum of quoteLineItems totals (if computed). */
+  lineSubtotalLabel?: string | null
   mileageLabel?: string | null
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -192,14 +198,32 @@ export async function buildReceiptPdfBytes(params: {
   draw(`Customer: ${params.customerName}`, 12, true, 0.2)
   draw(`Job: ${params.jobTitle}`, 11, false, 0.25)
   draw(`Completed: ${params.completedAtLabel}`, 11, false, 0.25)
+  if (params.scheduledDurationLabel?.trim()) draw(params.scheduledDurationLabel.trim(), 11, false, 0.24)
   if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
   if (params.amountLabel) draw(params.amountLabel, 12, true, 0.15)
 
-  if (params.itemize && params.itemizedLines && params.itemizedLines.length > 0) {
+  const quoteItems = params.quoteLineItems?.filter((s) => s.trim()) ?? []
+  if (quoteItems.length > 0) {
     y -= 6
-    draw("Itemized (materials)", 12, true, 0.15)
+    draw("Line items (quote & receipt)", 12, true, 0.15)
     y -= 2
-    for (const raw of params.itemizedLines.slice(0, 40)) {
+    for (const raw of quoteItems.slice(0, 45)) {
+      const t = raw.trim()
+      if (!t) continue
+      drawWrapped(`• ${t}`, 10, 0.28)
+    }
+    if (params.lineSubtotalLabel?.trim()) {
+      y -= 2
+      draw(params.lineSubtotalLabel.trim(), 11, true, 0.18)
+    }
+  }
+
+  const checklist = params.materialsChecklistLines?.filter((s) => s.trim()) ?? []
+  if (params.includeMaterialsChecklist && checklist.length > 0) {
+    y -= 6
+    draw("Materials checklist", 12, true, 0.15)
+    y -= 2
+    for (const raw of checklist.slice(0, 40)) {
       const t = raw.trim()
       if (!t) continue
       drawWrapped(`• ${t}`, 10, 0.28)

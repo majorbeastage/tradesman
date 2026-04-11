@@ -32,13 +32,20 @@ import {
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
 import { buildReceiptPdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
-import { buildReceiptItemizedLines } from "../../lib/receiptItemizedLines"
+import { buildCalendarReceiptPdfSections } from "../../lib/receiptItemizedLines"
+import {
+  parseCalendarEventReceiptMeta,
+  serializeCalendarReceiptMeta,
+  type ReceiptAdditionalLine,
+  type ReceiptQuoteOverride,
+} from "../../lib/calendarReceiptMetadata"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
   parseEstimateLinePresetsFromMetadata,
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
+import { parseQuoteItemMetadata } from "../../lib/quoteItemMath"
 
 type JobType = {
   id: string
@@ -66,8 +73,17 @@ type CalendarEvent = {
   recurrence_series_id?: string | null
   materials_list?: string | null
   mileage_miles?: number | null
+  metadata?: unknown
   job_types?: JobType | null
   customers?: { display_name: string | null } | null
+}
+
+type QuoteItemReceiptRow = {
+  id: string
+  description: string | null
+  quantity: number | string | null
+  unit_price: number | string | null
+  metadata: unknown
 }
 
 type UserCalendarPreference = {
@@ -128,6 +144,7 @@ function buildCalendarReceiptBody(ev: CalendarEvent): string {
   const lines = [
     `Job: ${ev.title}`,
     `When: ${new Date(ev.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – ${new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+    `Scheduled: ${formatEventDurationMinutes(ev.start_at, ev.end_at)}`,
   ]
   if (ev.quote_total != null && ev.quote_total > 0) lines.push(`Total: $${Number(ev.quote_total).toFixed(2)}`)
   if (ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0) {
@@ -264,6 +281,14 @@ export default function CalendarPage() {
   const [eventMileageSaving, setEventMileageSaving] = useState(false)
   const [addMileage, setAddMileage] = useState("")
   const [jtTrackMileage, setJtTrackMileage] = useState(false)
+  const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
+  const [receiptOverridesDraft, setReceiptOverridesDraft] = useState<Record<string, ReceiptQuoteOverride>>({})
+  const [receiptAdditionalDraft, setReceiptAdditionalDraft] = useState<ReceiptAdditionalLine[]>([])
+  const [receiptLinesSaving, setReceiptLinesSaving] = useState(false)
+  const [receiptNewDesc, setReceiptNewDesc] = useState("")
+  const [receiptNewQty, setReceiptNewQty] = useState("1")
+  const [receiptNewUnit, setReceiptNewUnit] = useState("0")
+  const [receiptNewKind, setReceiptNewKind] = useState("misc")
 
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
@@ -582,6 +607,7 @@ export default function CalendarPage() {
       canViewOrgEvents ? baseQuery(selectStr).in("user_id", orgUserIds) : baseQuery(selectStr).eq("user_id", userId)
 
     const selectTiers = [
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, mileage_miles, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description )",
@@ -618,6 +644,7 @@ export default function CalendarPage() {
       const retry =
         em.includes("materials_list") ||
         em.includes("mileage_miles") ||
+        em.includes("metadata") ||
         em.includes("track_mileage") ||
         em.includes("job_types") ||
         (em.includes("column") && em.includes("does not exist"))
@@ -703,21 +730,23 @@ export default function CalendarPage() {
             : {}
         itemize = meta.receipt_template_itemize === true
       }
-      let itemizedLines: string[] = []
-      if (itemize) {
-        itemizedLines = await buildReceiptItemizedLines(supabase, {
-          quote_id: ev.quote_id,
-          materials_list: ev.materials_list,
-          job_types: ev.job_types ?? null,
-        })
-      }
+      const receiptMeta = parseCalendarEventReceiptMeta(ev.metadata)
+      const sections = await buildCalendarReceiptPdfSections(supabase, {
+        quote_id: ev.quote_id,
+        materials_list: ev.materials_list,
+        job_types: ev.job_types ?? null,
+        start_at: ev.start_at,
+        end_at: ev.end_at,
+        receiptMeta,
+        itemizeMaterials: itemize,
+      })
       const mileageLabel =
         ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0
           ? `Mileage: ${Number(ev.mileage_miles)} mi`
           : null
       const customerName = ev.customers?.display_name ?? "Customer"
       const amount =
-        ev.quote_total != null && ev.quote_total > 0 ? `Total: $${Number(ev.quote_total).toFixed(2)}` : null
+        ev.quote_total != null && ev.quote_total > 0 ? `Quote total: $${Number(ev.quote_total).toFixed(2)}` : null
       const bytes = await buildReceiptPdfBytes({
         businessLabel: calendarProfileDisplayName || "Receipt",
         customerName,
@@ -725,8 +754,12 @@ export default function CalendarPage() {
         completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
         amountLabel: amount,
         templateFooter: calendarReceiptTemplate,
-        itemize: itemize && itemizedLines.length > 0,
-        itemizedLines,
+        scheduledDurationLabel: sections.scheduledDurationLabel,
+        quoteLineItems: sections.quoteLines,
+        includeMaterialsChecklist: itemize,
+        materialsChecklistLines: sections.materialsChecklistLines,
+        lineSubtotalLabel:
+          sections.lineSubtotal != null ? `Line items subtotal: $${sections.lineSubtotal.toFixed(2)}` : null,
         mileageLabel,
       })
       downloadPdfBlob(bytes, `receipt-${ev.id.slice(0, 8)}.pdf`)
@@ -778,6 +811,30 @@ export default function CalendarPage() {
       return
     }
     setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, mileage_miles: v } : prev))
+    loadEvents()
+  }
+
+  async function saveEventReceiptLines() {
+    if (!supabase || !selectedEvent?.id) return
+    setReceiptLinesSaving(true)
+    const nextMeta = serializeCalendarReceiptMeta(selectedEvent.metadata, {
+      receipt_quote_overrides: receiptOverridesDraft,
+      receipt_additional_lines: receiptAdditionalDraft,
+    })
+    const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", selectedEvent.id)
+    setReceiptLinesSaving(false)
+    if (error) {
+      const msg = error.message ?? String(error)
+      if (msg.toLowerCase().includes("metadata")) {
+        alert(
+          "Could not save receipt lines: calendar_events needs a metadata column. Run tradesman/supabase/calendar-events-metadata.sql in Supabase SQL Editor.",
+        )
+      } else {
+        alert(msg)
+      }
+      return
+    }
+    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
     loadEvents()
   }
 
@@ -969,6 +1026,45 @@ export default function CalendarPage() {
     if (m != null && Number.isFinite(Number(m))) setEventMileageDraft(String(Number(m)))
     else setEventMileageDraft("")
   }, [selectedEvent?.id, selectedEvent?.mileage_miles])
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setQuoteItemsForReceipt([])
+      setReceiptOverridesDraft({})
+      setReceiptAdditionalDraft([])
+      setReceiptNewDesc("")
+      setReceiptNewQty("1")
+      setReceiptNewUnit("0")
+      return
+    }
+    const p = parseCalendarEventReceiptMeta(selectedEvent.metadata)
+    setReceiptOverridesDraft(p.receipt_quote_overrides)
+    setReceiptAdditionalDraft(p.receipt_additional_lines)
+  }, [selectedEvent?.id, selectedEvent?.metadata])
+
+  useEffect(() => {
+    if (!supabase || !selectedEvent?.quote_id) {
+      setQuoteItemsForReceipt([])
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("quote_items")
+      .select("id, description, quantity, unit_price, metadata")
+      .eq("quote_id", selectedEvent.quote_id)
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) {
+          setQuoteItemsForReceipt([])
+          return
+        }
+        setQuoteItemsForReceipt((data ?? []) as QuoteItemReceiptRow[])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedEvent?.quote_id, supabase])
 
   useEffect(() => {
     if (!userId) return
@@ -2415,6 +2511,279 @@ export default function CalendarPage() {
                 }}
               >
                 {eventMaterialsSaving ? "Saving…" : "Save materials"}
+              </button>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Receipt line items</p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                Edit how quote lines appear on the PDF, hide a line, or add extra charges for this visit. Receipt template →{" "}
+                <strong>Itemize receipt</strong> adds the materials checklist block (event / job type / quote materials).
+              </p>
+              <div
+                style={{
+                  maxHeight: 240,
+                  overflowY: "auto",
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 8,
+                  padding: 8,
+                  marginBottom: 10,
+                  background: "#fafafa",
+                }}
+              >
+                {quoteItemsForReceipt.length === 0 && receiptAdditionalDraft.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                    {selectedEvent.quote_id ? "Loading quote lines…" : "No linked quote — add lines below for this job only."}
+                  </p>
+                ) : null}
+                {quoteItemsForReceipt.map((row) => {
+                  const ov = receiptOverridesDraft[row.id] ?? {}
+                  const meta = parseQuoteItemMetadata(row.metadata)
+                  const baseQ = typeof row.quantity === "number" ? row.quantity : Number.parseFloat(String(row.quantity ?? 0)) || 0
+                  const baseU = typeof row.unit_price === "number" ? row.unit_price : Number.parseFloat(String(row.unit_price ?? 0)) || 0
+                  const qStr = String(ov.quantity !== undefined && Number.isFinite(ov.quantity) ? ov.quantity : baseQ)
+                  const uStr = String(ov.unit_price !== undefined && Number.isFinite(ov.unit_price) ? ov.unit_price : baseU)
+                  const desc = ov.description !== undefined ? ov.description : String(row.description ?? "")
+                  const kind = meta.line_kind?.trim() || "line"
+                  return (
+                    <div
+                      key={row.id}
+                      style={{
+                        display: "grid",
+                        gap: 6,
+                        marginBottom: 10,
+                        paddingBottom: 10,
+                        borderBottom: `1px solid ${theme.border}`,
+                      }}
+                    >
+                      <div style={{ fontSize: 11, color: "#6b7280", textTransform: "capitalize" }}>From quote · {kind}</div>
+                      <input
+                        value={desc}
+                        onChange={(e) =>
+                          setReceiptOverridesDraft((p) => ({
+                            ...p,
+                            [row.id]: { ...p[row.id], description: e.target.value },
+                          }))
+                        }
+                        placeholder="Description"
+                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                      />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <label style={{ fontSize: 11, color: theme.text, display: "flex", alignItems: "center", gap: 4 }}>
+                          Qty
+                          <input
+                            value={qStr}
+                            onChange={(e) => {
+                              const n = Number.parseFloat(e.target.value)
+                              setReceiptOverridesDraft((p) => ({
+                                ...p,
+                                [row.id]: { ...p[row.id], quantity: Number.isFinite(n) ? n : 0 },
+                              }))
+                            }}
+                            type="number"
+                            step="any"
+                            style={{ ...theme.formInput, width: 72, fontSize: 13 }}
+                          />
+                        </label>
+                        <label style={{ fontSize: 11, color: theme.text, display: "flex", alignItems: "center", gap: 4 }}>
+                          Unit $
+                          <input
+                            value={uStr}
+                            onChange={(e) => {
+                              const n = Number.parseFloat(e.target.value)
+                              setReceiptOverridesDraft((p) => ({
+                                ...p,
+                                [row.id]: { ...p[row.id], unit_price: Number.isFinite(n) ? n : 0 },
+                              }))
+                            }}
+                            type="number"
+                            step="any"
+                            style={{ ...theme.formInput, width: 88, fontSize: 13 }}
+                          />
+                        </label>
+                        <label style={{ fontSize: 11, color: theme.text, display: "flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={ov.hidden === true}
+                            onChange={(e) =>
+                              setReceiptOverridesDraft((p) => ({
+                                ...p,
+                                [row.id]: { ...p[row.id], hidden: e.target.checked },
+                              }))
+                            }
+                          />
+                          Hide on receipt
+                        </label>
+                      </div>
+                    </div>
+                  )
+                })}
+                {receiptAdditionalDraft.map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      display: "grid",
+                      gap: 6,
+                      marginBottom: 10,
+                      paddingBottom: 10,
+                      borderBottom: `1px solid ${theme.border}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: "#6b7280" }}>Added for this event</div>
+                    <input
+                      value={row.description}
+                      onChange={(e) =>
+                        setReceiptAdditionalDraft((p) =>
+                          p.map((x) => (x.id === row.id ? { ...x, description: e.target.value } : x)),
+                        )
+                      }
+                      style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <input
+                        type="number"
+                        step="any"
+                        value={row.quantity}
+                        onChange={(e) => {
+                          const n = Number.parseFloat(e.target.value)
+                          setReceiptAdditionalDraft((p) =>
+                            p.map((x) => (x.id === row.id ? { ...x, quantity: Number.isFinite(n) ? n : 0 } : x)),
+                          )
+                        }}
+                        style={{ ...theme.formInput, width: 72, fontSize: 13 }}
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        value={row.unit_price}
+                        onChange={(e) => {
+                          const n = Number.parseFloat(e.target.value)
+                          setReceiptAdditionalDraft((p) =>
+                            p.map((x) => (x.id === row.id ? { ...x, unit_price: Number.isFinite(n) ? n : 0 } : x)),
+                          )
+                        }}
+                        style={{ ...theme.formInput, width: 88, fontSize: 13 }}
+                      />
+                      <select
+                        value={row.line_kind ?? "misc"}
+                        onChange={(e) =>
+                          setReceiptAdditionalDraft((p) =>
+                            p.map((x) => (x.id === row.id ? { ...x, line_kind: e.target.value } : x)),
+                          )
+                        }
+                        style={{ ...theme.formInput, fontSize: 13 }}
+                      >
+                        <option value="labor">Labor</option>
+                        <option value="material">Material</option>
+                        <option value="misc">Misc</option>
+                        <option value="fee">Fee</option>
+                        <option value="other">Other</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setReceiptAdditionalDraft((p) => p.filter((x) => x.id !== row.id))}
+                        style={{
+                          padding: "4px 8px",
+                          fontSize: 11,
+                          border: "none",
+                          background: "transparent",
+                          color: "#b91c1c",
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 12, color: theme.text }}>Add line to receipt</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                <input
+                  value={receiptNewDesc}
+                  onChange={(e) => setReceiptNewDesc(e.target.value)}
+                  placeholder="Description"
+                  style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                />
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <input
+                    value={receiptNewQty}
+                    onChange={(e) => setReceiptNewQty(e.target.value)}
+                    placeholder="Qty"
+                    type="number"
+                    step="any"
+                    style={{ ...theme.formInput, width: 72, fontSize: 13 }}
+                  />
+                  <input
+                    value={receiptNewUnit}
+                    onChange={(e) => setReceiptNewUnit(e.target.value)}
+                    placeholder="Unit $"
+                    type="number"
+                    step="any"
+                    style={{ ...theme.formInput, width: 88, fontSize: 13 }}
+                  />
+                  <select
+                    value={receiptNewKind}
+                    onChange={(e) => setReceiptNewKind(e.target.value)}
+                    style={{ ...theme.formInput, fontSize: 13 }}
+                  >
+                    <option value="labor">Labor</option>
+                    <option value="material">Material</option>
+                    <option value="misc">Misc</option>
+                    <option value="fee">Fee</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const q = Number.parseFloat(receiptNewQty) || 0
+                      const u = Number.parseFloat(receiptNewUnit) || 0
+                      const id = `r_add_${crypto.randomUUID()}`
+                      setReceiptAdditionalDraft((p) => [
+                        ...p,
+                        {
+                          id,
+                          description: receiptNewDesc.trim() || "Item",
+                          quantity: q,
+                          unit_price: u,
+                          line_kind: receiptNewKind,
+                        },
+                      ])
+                      setReceiptNewDesc("")
+                      setReceiptNewQty("1")
+                      setReceiptNewUnit("0")
+                    }}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "white",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      color: theme.text,
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={receiptLinesSaving || !supabase}
+                onClick={() => void saveEventReceiptLines()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: receiptLinesSaving ? "wait" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {receiptLinesSaving ? "Saving…" : "Save receipt lines"}
               </button>
             </div>
             {(() => {
