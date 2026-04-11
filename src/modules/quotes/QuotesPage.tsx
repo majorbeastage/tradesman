@@ -39,6 +39,7 @@ import {
   parseQuoteItemMetadata,
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
+import { insertQuoteItemRowSafe } from "../../lib/quoteItemsDb"
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -64,6 +65,35 @@ type EstimateLinePresetRow = {
   minimum_line_total?: number
   job_type_id?: string | null
   line_kind?: string
+  /** hours | miles | each — unit shown next to quantity */
+  unit_basis?: string
+}
+
+const ELI_LINE_KINDS = ["labor", "material", "travel", "misc"] as const
+type EliLineKind = (typeof ELI_LINE_KINDS)[number]
+const ELI_KIND_LABEL: Record<EliLineKind, string> = {
+  labor: "Labor",
+  material: "Materials",
+  travel: "Travel expenses",
+  misc: "Miscellaneous",
+}
+const ELI_UNITS = ["hours", "miles", "each"] as const
+type EliUnit = (typeof ELI_UNITS)[number]
+const ELI_UNIT_LABEL: Record<EliUnit, string> = {
+  hours: "Hours",
+  miles: "Miles (mileage)",
+  each: "Flat / each",
+}
+
+function eliLineKindFromPresetKind(kind: string | undefined): EliLineKind {
+  if (kind === "material" || kind === "travel" || kind === "misc") return kind
+  return "labor"
+}
+
+function eliUnitSuffix(unitBasis: string | undefined): string {
+  if (unitBasis === "miles") return "mi"
+  if (unitBasis === "each") return "ea"
+  return "hr"
 }
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -138,6 +168,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }>({ subtotal: null, issues: [], agreesWithSubtotal: null })
   const [estimateLinePortalValues, setEstimateLinePortalValues] = useState<Record<string, string>>({})
   const [estimateLineDraft, setEstimateLineDraft] = useState<EstimateLinePresetRow[]>([])
+  /** Simple “add saved line” form inside Estimate line items modal */
+  const [eliSimpleKind, setEliSimpleKind] = useState<EliLineKind>("labor")
+  const [eliSimpleUnit, setEliSimpleUnit] = useState<EliUnit>("hours")
+  const [eliSimpleQty, setEliSimpleQty] = useState("1")
+  const [eliSimplePrice, setEliSimplePrice] = useState("")
+  const [eliSimpleJobId, setEliSimpleJobId] = useState("")
   const [estimateModalJobTypes, setEstimateModalJobTypes] = useState<{ id: string; name: string }[]>([])
   /** Job types for quote line dropdowns (loaded with quote detail). */
   const [quoteDetailJobTypes, setQuoteDetailJobTypes] = useState<{ id: string; name: string }[]>([])
@@ -362,7 +398,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   ? null
                   : undefined
             const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
-            return { id, description, quantity, unit_price, minimum_line_total, job_type_id, line_kind }
+            const ub = o.unit_basis
+            const unit_basis =
+              typeof ub === "string" && (ub === "hours" || ub === "miles" || ub === "each") ? ub : undefined
+            return { id, description, quantity, unit_price, minimum_line_total, job_type_id, line_kind, unit_basis }
           })
           .filter((x) => x.description.trim())
         setEstimateLinePresets(cleaned)
@@ -793,6 +832,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       .then(({ data }) => setQuoteJobTypesList(data || []))
   }, [showQuoteJobTypesModal, userId])
 
+  useEffect(() => {
+    if (!showQuoteJobTypesModal) return
+    setEstimateModalJobTypes(quoteJobTypesList.map((j) => ({ id: j.id, name: j.name })))
+  }, [showQuoteJobTypesModal, quoteJobTypesList])
+
+  useEffect(() => {
+    if (eliSimpleKind === "travel") setEliSimpleUnit("miles")
+    else if (eliSimpleKind === "labor") setEliSimpleUnit("hours")
+    else setEliSimpleUnit("each")
+  }, [eliSimpleKind])
+
   async function loadQuotes() {
     if (!userId || !supabase) return
     setQuotesError("")
@@ -1094,25 +1144,20 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (preset.minimum_line_total != null && meta.minimum_line_total === undefined) meta.minimum_line_total = preset.minimum_line_total
     }
     setAddItemLoading(true)
-    const row: Record<string, unknown> = {
+    const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
       description: newItemDescription.trim(),
       quantity: qty,
       unit_price: price,
-    }
-    if (Object.keys(meta).length > 0) row.metadata = meta
-    const { error } = await supabase.from("quote_items").insert(row)
+      metadata: Object.keys(meta).length > 0 ? (meta as Record<string, unknown>) : undefined,
+    })
     setAddItemLoading(false)
-    if (error) {
-      console.error(error)
-      alert(
-        error.message +
-          (String(error.message).includes("metadata") || String(error.message).includes("column")
-            ? "\n\nIf this mentions an unknown column, run supabase/quote-items-metadata.sql in the Supabase SQL editor."
-            : ""),
-      )
+    if (!result.ok) {
+      console.error(result.error)
+      alert(result.error)
       return
     }
+    if (result.warn) alert(result.warn)
     setNewItemDescription("")
     setNewItemQuantity("1")
     setNewItemUnitPrice("")
@@ -1232,6 +1277,51 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return Number.isFinite(n) ? n : 0
   }
 
+  function openEstimateLineItemsModal() {
+    setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
+    setEliSimpleKind("labor")
+    setEliSimpleUnit("hours")
+    setEliSimpleQty("1")
+    const lr = parseDefaultLaborRateNumber()
+    setEliSimplePrice(lr > 0 ? String(lr) : "")
+    setEliSimpleJobId("")
+    setShowEstimateLineItemsModal(true)
+  }
+
+  function appendEliPresetFromSimpleForm() {
+    const qty = Number.parseFloat(String(eliSimpleQty).replace(/[^0-9.]/g, "")) || 0
+    const price = Number.parseFloat(String(eliSimplePrice).replace(/[^0-9.]/g, "")) || 0
+    if (qty <= 0) {
+      alert("Enter how many units (hours, miles, or quantity).")
+      return
+    }
+    if (price < 0) {
+      alert("Cost per unit cannot be negative.")
+      return
+    }
+    const line_kind: EstimateLinePresetRow["line_kind"] =
+      eliSimpleKind === "material"
+        ? "material"
+        : eliSimpleKind === "travel"
+          ? "travel"
+          : eliSimpleKind === "misc"
+            ? "misc"
+            : "labor"
+    setEstimateLineDraft((rows) => [
+      ...rows,
+      {
+        id: crypto.randomUUID(),
+        description: ELI_KIND_LABEL[eliSimpleKind],
+        quantity: qty,
+        unit_price: price,
+        minimum_line_total: undefined,
+        job_type_id: eliSimpleJobId || "",
+        line_kind,
+        unit_basis: eliSimpleUnit,
+      },
+    ])
+  }
+
   function estimateLineTemplateOffered(itemId: string): boolean {
     const item = estimateLineItemsPortal.find((i) => i.id === itemId)
     if (!item) return false
@@ -1256,24 +1346,35 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (m.line_kind) meta.line_kind = m.line_kind
     }
     if (opts?.presetId) meta.preset_id = opts.presetId
-    const row: Record<string, unknown> = {
+    const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
       description: description.trim(),
       quantity,
       unit_price: unitPrice,
-    }
-    if (Object.keys(meta).length > 0) row.metadata = meta
-    const { error } = await supabase.from("quote_items").insert(row)
-    if (error) {
-      alert(
-        error.message +
-          (String(error.message).includes("metadata") || String(error.message).includes("column")
-            ? "\n\nRun supabase/quote-items-metadata.sql if metadata column is missing."
-            : ""),
-      )
+      metadata: Object.keys(meta).length > 0 ? meta : undefined,
+    })
+    if (!result.ok) {
+      alert(result.error)
       return
     }
+    if (result.warn) alert(result.warn)
     openQuote(selectedQuoteId)
+  }
+
+  function insertSavedPresetOnOpenQuote(p: EstimateLinePresetRow) {
+    if (!selectedQuoteId) {
+      alert("Open a quote from the list first. Then use Saved lines under Quote items, or the buttons here.")
+      return
+    }
+    void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+      presetId: p.id,
+      metadata: {
+        minimum_line_total: p.minimum_line_total,
+        job_type_id: p.job_type_id?.trim() ? p.job_type_id.trim() : undefined,
+        line_kind: p.line_kind,
+        ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower") ? { manpower: laborManpowerQuick } : {}),
+      },
+    })
   }
 
   async function persistQuoteItemUpdate(itemId: string, patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> }) {
@@ -1417,6 +1518,9 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
           ...(row.job_type_id != null && row.job_type_id !== "" ? { job_type_id: row.job_type_id } : {}),
           ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
+          ...(row.unit_basis === "hours" || row.unit_basis === "miles" || row.unit_basis === "each"
+            ? { unit_basis: row.unit_basis }
+            : {}),
         }))
         .filter((row) => row.description)
       prevMeta.estimate_line_presets = presets
@@ -1656,10 +1760,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             {showQuotesEstimateLineItems && (
               <button
                 type="button"
-                onClick={() => {
-                  setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
-                  setShowEstimateLineItemsModal(true)
-                }}
+                onClick={() => openEstimateLineItemsModal()}
                 style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
               >
                 {estimateLineItemsButtonLabel}
@@ -2220,10 +2321,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               {showQuotesEstimateLineItems ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
-                    setShowEstimateLineItemsModal(true)
-                  }}
+                  onClick={() => openEstimateLineItemsModal()}
                   style={{
                     fontSize: 12,
                     padding: "4px 10px",
@@ -3074,10 +3172,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   ✕
                 </button>
               </div>
-              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-                Reusable line templates (same job types as Calendar). Each preset is a card you can edit or remove; use{" "}
-                <strong>Saved lines</strong> on a quote to insert. Manage calendar colors and durations under{" "}
-                <strong>{quoteJobTypesButtonLabel}</strong> (opens on top — same list as Calendar → Job Types).
+              <p style={{ margin: "0 0 16px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
+                Build <strong>saved lines</strong> here, then use them from <strong>Quote items → Saved lines</strong> on any open quote.
+                The same list appears under <strong>{quoteJobTypesButtonLabel}</strong> so you can insert a line while managing job types.
+                Click <strong>Save &amp; close</strong> to store your list.
               </p>
               {showQuotesJobTypesPanel ? (
                 <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -3097,78 +3195,155 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   >
                     {quoteJobTypesButtonLabel}
                   </button>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>Add, edit, or remove types — shared with Calendar.</span>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>Shared with Calendar.</span>
                 </div>
               ) : null}
-              {estimateLineItemsPortal.length > 0 ? (
-                <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${theme.border}` }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
-                    Line templates and defaults (from your portal setup)
-                  </p>
-                  <PortalSettingItemsForm
-                    items={estimateLineItemsPortal}
-                    formValues={estimateLinePortalValues}
-                    setFormValue={(id, v) => {
-                      setEstimateLinePortalValues((prev) => ({ ...prev, [id]: v }))
-                      try {
-                        localStorage.setItem(`quotes_eli_${id}`, v)
-                      } catch {
-                        /* ignore */
-                      }
-                    }}
-                    isItemVisible={isEstimateLinePortalItemVisible}
-                  />
-                </div>
-              ) : null}
-              {(() => {
-                const li = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
-                const portalShowsLabor = li && isEstimateLinePortalItemVisible(li)
-                return portalShowsLabor ? null : (
-                  <label style={{ display: "block", marginBottom: 14, fontSize: 13, color: theme.text }}>
-                    <span style={{ fontWeight: 600, display: "block", marginBottom: 6 }}>Default labor rate ($/hr)</span>
-                    <input
-                      value={estimateDefaultLaborRate}
-                      onChange={(e) => setEstimateDefaultLaborRate(e.target.value)}
-                      placeholder="e.g. 85"
-                      style={{ ...theme.formInput, maxWidth: 200 }}
-                    />
-                  </label>
-                )
-              })()}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>Preset lines</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEstimateLineDraft((rows) => [
-                      ...rows,
-                      {
-                        id: crypto.randomUUID(),
-                        description: "",
-                        quantity: 1,
-                        unit_price: 0,
-                        minimum_line_total: undefined,
-                        job_type_id: "",
-                        line_kind: "",
-                      },
-                    ])
-                  }
+
+              <div
+                style={{
+                  marginBottom: 18,
+                  padding: 14,
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: 13, color: theme.text, marginBottom: 10 }}>Add a saved line</div>
+                <div
                   style={{
-                    fontSize: 12,
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    cursor: "pointer",
-                    color: theme.text,
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr)) minmax(0, 90px) minmax(0, 110px) auto",
+                    gap: 10,
+                    alignItems: "end",
                   }}
                 >
-                  Add row
-                </button>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
+                    Line type
+                    <select
+                      value={eliSimpleKind}
+                      onChange={(e) => setEliSimpleKind(e.target.value as EliLineKind)}
+                      style={theme.formInput}
+                    >
+                      {ELI_LINE_KINDS.map((k) => (
+                        <option key={k} value={k}>
+                          {ELI_KIND_LABEL[k]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
+                    Unit
+                    <select
+                      value={eliSimpleUnit}
+                      onChange={(e) => setEliSimpleUnit(e.target.value as EliUnit)}
+                      style={theme.formInput}
+                    >
+                      {ELI_UNITS.map((u) => (
+                        <option key={u} value={u}>
+                          {ELI_UNIT_LABEL[u]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
+                    Job type (optional)
+                    <select value={eliSimpleJobId} onChange={(e) => setEliSimpleJobId(e.target.value)} style={theme.formInput}>
+                      <option value="">— None —</option>
+                      {estimateModalJobTypes.map((jt) => (
+                        <option key={jt.id} value={jt.id}>
+                          {jt.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
+                    Qty
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={eliSimpleQty}
+                      onChange={(e) => setEliSimpleQty(e.target.value)}
+                      style={theme.formInput}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
+                    $ / unit
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={eliSimplePrice}
+                      onChange={(e) => setEliSimplePrice(e.target.value)}
+                      placeholder="0"
+                      style={theme.formInput}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={appendEliPresetFromSimpleForm}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Add to list
+                  </button>
+                </div>
               </div>
+
+              <details style={{ marginBottom: 16 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 8 }}>
+                  Advanced: portal options &amp; default labor rate
+                </summary>
+                {estimateLineItemsPortal.length > 0 ? (
+                  <div style={{ marginTop: 10, marginBottom: 12 }}>
+                    <PortalSettingItemsForm
+                      items={estimateLineItemsPortal}
+                      formValues={estimateLinePortalValues}
+                      setFormValue={(id, v) => {
+                        setEstimateLinePortalValues((prev) => ({ ...prev, [id]: v }))
+                        try {
+                          localStorage.setItem(`quotes_eli_${id}`, v)
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      isItemVisible={isEstimateLinePortalItemVisible}
+                    />
+                  </div>
+                ) : null}
+                {(() => {
+                  const li = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
+                  const portalShowsLabor = li && isEstimateLinePortalItemVisible(li)
+                  return portalShowsLabor ? null : (
+                    <label style={{ display: "block", marginBottom: 8, fontSize: 13, color: theme.text }}>
+                      <span style={{ fontWeight: 600, display: "block", marginBottom: 6 }}>Default labor rate ($/hr) for quick-add</span>
+                      <input
+                        value={estimateDefaultLaborRate}
+                        onChange={(e) => setEstimateDefaultLaborRate(e.target.value)}
+                        placeholder="e.g. 85"
+                        style={{ ...theme.formInput, maxWidth: 200 }}
+                      />
+                    </label>
+                  )
+                })()}
+              </details>
+
+              <div style={{ fontWeight: 700, fontSize: 13, color: theme.text, marginBottom: 8 }}>Your saved lines</div>
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>
+                Edit below, remove with Delete, then Save &amp; close. Totals on quotes use qty × (crew if labor) × $/unit.
+              </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {estimateLineDraft.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No presets yet. Add a row or use Quick add on a quote.</p>
+                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No saved lines yet. Use the form above.</p>
                 ) : (
                   estimateLineDraft.map((row, idx) => (
                     <div
@@ -3185,10 +3360,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>
-                          Preset {idx + 1}
-                          {row.description.trim() ? (
-                            <span style={{ fontWeight: 500, opacity: 0.85 }}> — {row.description.trim().slice(0, 48)}{row.description.trim().length > 48 ? "…" : ""}</span>
-                          ) : null}
+                          {row.description.trim() || "Line"}{" "}
+                          <span style={{ fontWeight: 500, opacity: 0.75 }}>
+                            · {row.quantity} {eliUnitSuffix(row.unit_basis)} @ ${Number(row.unit_price).toFixed(2)}
+                          </span>
                         </span>
                         <button
                           type="button"
@@ -3203,11 +3378,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                             cursor: "pointer",
                           }}
                         >
-                          Delete preset
+                          Delete
                         </button>
                       </div>
                       <input
-                        placeholder="Description"
+                        placeholder="Description on quote"
                         value={row.description}
                         onChange={(e) => {
                           const v = e.target.value
@@ -3218,16 +3393,29 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: isMobile ? "1fr 1fr" : "minmax(0,70px) minmax(0,90px) minmax(0,90px) minmax(0,1.2fr) minmax(0,1fr)",
+                          gridTemplateColumns: isMobile ? "1fr 1fr" : "90px 90px 90px minmax(0,1fr) minmax(0,1fr)",
                           gap: 8,
                           alignItems: "center",
                         }}
                       >
+                        <select
+                          value={row.unit_basis === "miles" || row.unit_basis === "each" ? row.unit_basis : "hours"}
+                          onChange={(e) => {
+                            const v = e.target.value as EliUnit
+                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_basis: v } : r)))
+                          }}
+                          style={theme.formInput}
+                          title="Unit"
+                        >
+                          <option value="hours">Hours</option>
+                          <option value="miles">Miles</option>
+                          <option value="each">Each</option>
+                        </select>
                         <input
                           type="number"
                           min={0}
                           step={0.01}
-                          title="Default quantity when inserting on a quote"
+                          title="Quantity"
                           placeholder="Qty"
                           value={row.quantity}
                           onChange={(e) => {
@@ -3240,7 +3428,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           type="number"
                           min={0}
                           step={0.01}
-                          placeholder="Unit $"
+                          placeholder="$/unit"
                           value={row.unit_price}
                           onChange={(e) => {
                             const p = Number.parseFloat(e.target.value) || 0
@@ -3252,7 +3440,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           type="number"
                           min={0}
                           step={0.01}
-                          title="Minimum line total when inserted"
+                          title="Minimum line $ (optional)"
                           placeholder="Min $"
                           value={row.minimum_line_total ?? ""}
                           onChange={(e) => {
@@ -3270,35 +3458,41 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           value={row.job_type_id ?? ""}
                           onChange={(e) => {
                             const v = e.target.value
-                            setEstimateLineDraft((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, job_type_id: v || "" } : r)),
-                            )
+                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, job_type_id: v || "" } : r)))
                           }}
                           style={theme.formInput}
                         >
-                          <option value="">Job type (optional)</option>
+                          <option value="">Job type</option>
                           {estimateModalJobTypes.map((jt) => (
                             <option key={jt.id} value={jt.id}>
                               {jt.name}
                             </option>
                           ))}
                         </select>
-                        <select
-                          value={row.line_kind ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, line_kind: v } : r)))
-                          }}
-                          style={theme.formInput}
-                        >
-                          <option value="">Kind (optional)</option>
-                          <option value="labor">Labor</option>
-                          <option value="material">Material</option>
-                          <option value="travel">Travel</option>
-                          <option value="misc">Misc</option>
-                          <option value="custom">Custom</option>
-                        </select>
                       </div>
+                      <select
+                        value={eliLineKindFromPresetKind(row.line_kind)}
+                        onChange={(e) => {
+                          const k = e.target.value as EliLineKind
+                          const lk =
+                            k === "material" ? "material" : k === "travel" ? "travel" : k === "misc" ? "misc" : "labor"
+                          setEstimateLineDraft((prev) =>
+                            prev.map((r, i) => {
+                              if (i !== idx) return r
+                              const next: EstimateLinePresetRow = { ...r, line_kind: lk }
+                              if (!r.description.trim()) next.description = ELI_KIND_LABEL[k]
+                              return next
+                            }),
+                          )
+                        }}
+                        style={{ ...theme.formInput, maxWidth: 280 }}
+                      >
+                        {ELI_LINE_KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {ELI_KIND_LABEL[k]}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   ))
                 )}
@@ -3552,6 +3746,39 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   ))}
                 </div>
               )}
+              {estimateLinePresets.length > 0 ? (
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
+                  <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Saved line templates</h4>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Same presets as <strong>{estimateLineItemsButtonLabel}</strong>. With a quote open in the table above, click to add that line to the quote.
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {estimateLinePresets.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => insertSavedPresetOnOpenQuote(p)}
+                        style={{
+                          fontSize: 12,
+                          padding: "6px 12px",
+                          borderRadius: 6,
+                          border: `1px solid #94a3b8`,
+                          background: "#f1f5f9",
+                          color: "#0f172a",
+                          cursor: "pointer",
+                          maxWidth: 260,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={`${p.description} · ${p.quantity} ${eliUnitSuffix(p.unit_basis)} @ $${Number(p.unit_price).toFixed(2)}`}
+                      >
+                        {p.description.length > 40 ? `${p.description.slice(0, 40)}…` : p.description}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {

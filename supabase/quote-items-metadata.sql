@@ -1,5 +1,5 @@
--- Optional: add rich fields for quote line items (manpower, minimum bill, preset link).
--- Run in Supabase SQL Editor if quote_items exists without a metadata column.
+-- Quote line items: metadata column (crew, min line, preset id, job type, line kind).
+-- If inserts fail with errors about "metadata" or unknown column, run this in Supabase SQL Editor.
 
 alter table if exists public.quote_items
   add column if not exists metadata jsonb not null default '{}'::jsonb;
