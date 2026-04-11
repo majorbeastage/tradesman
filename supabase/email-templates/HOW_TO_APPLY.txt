@@ -59,7 +59,7 @@ Admin notification (Vercel API route)
 - Vercel → Environment Variables:
   - RESEND_API_KEY
   - RESEND_FROM_EMAIL — verified sender in Resend, e.g. onboarding@tradesman-us.com
-  - ADMIN_SIGNUP_NOTIFY_EMAIL — optional; defaults to admin@mail.tradesman-us.com
+  - ADMIN_SIGNUP_NOTIFY_EMAIL — optional; defaults to admin@tradesman-us.com (set on Vercel if you need a different inbox)
   - SUPABASE_URL / SUPABASE_ANON_KEY (or VITE_* equivalents) and SUPABASE_SERVICE_ROLE_KEY (same as other API routes)
 
 Idempotency: profiles.metadata.verified_signup_admin_notified_at (requires profiles.metadata column — see profiles-metadata-jsonb.sql).

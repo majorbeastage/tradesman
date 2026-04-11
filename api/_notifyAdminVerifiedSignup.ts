@@ -85,7 +85,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
 
   const apiKey = firstEnv("RESEND_API_KEY")
   const from = firstEnv("RESEND_FROM_EMAIL")
-  const adminTo = (firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL") || "admin@mail.tradesman-us.com").trim().toLowerCase()
+  const adminTo = (firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL") || "admin@tradesman-us.com").trim().toLowerCase()
 
   if (!apiKey || !from) {
     res.status(200).json({ ok: true, notifyDisabled: true, hint: "Set RESEND_API_KEY and RESEND_FROM_EMAIL on Vercel" })
