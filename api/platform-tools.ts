@@ -14,6 +14,8 @@ import {
   getOrCreateCustomerByPhone,
   normalizePhone,
   pickFirstString,
+  pickSupabaseAnonKeyForServer,
+  pickSupabaseUrlForServer,
 } from "./_communications.js"
 import {
   buildLeadConsumerAutoReplyText,
@@ -23,6 +25,42 @@ import {
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+
+/** Optional body fields when Vercel has no SUPABASE_* (same public values as the app). */
+function supabasePublicFromPostBody(req: VercelRequest): { url?: string; anon?: string } {
+  if (req.method !== "POST") return {}
+  try {
+    const raw = req.body
+    const o = typeof raw === "string" ? (JSON.parse(raw || "{}") as unknown) : raw
+    if (!o || typeof o !== "object" || Array.isArray(o)) return {}
+    const rec = o as Record<string, unknown>
+    const url = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
+    const anon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
+    return { url: url || undefined, anon: anon || undefined }
+  } catch {
+    return {}
+  }
+}
+
+function resolveSupabasePublicForUserJwt(req: VercelRequest): { supabaseUrl: string; anonKey: string } {
+  const fb = supabasePublicFromPostBody(req)
+  let jbUrl = ""
+  let jbAnon = ""
+  try {
+    const raw = req.body
+    const o = typeof raw === "string" ? (JSON.parse(raw || "{}") as unknown) : raw
+    if (o && typeof o === "object" && !Array.isArray(o)) {
+      const rec = o as Record<string, unknown>
+      jbUrl = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
+      jbAnon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
+    }
+  } catch {
+    /* ignore */
+  }
+  const supabaseUrl = (pickSupabaseUrlForServer() || fb.url || jbUrl || "").replace(/\/+$/, "")
+  const anonKey = pickSupabaseAnonKeyForServer() || fb.anon || jbAnon || ""
+  return { supabaseUrl, anonKey }
+}
 
 /** Verify Supabase JWT; returns userId or null + optional error response writer. */
 async function getUserIdFromBearer(
@@ -35,10 +73,12 @@ async function getUserIdFromBearer(
     return null
   }
   const token = authHeader.slice("Bearer ".length).trim()
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
   if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    res.status(500).json({
+      error:
+        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or the app will send supabaseUrl + supabaseAnonKey in the JSON body.",
+    })
     return null
   }
   const userClient = createClient(supabaseUrl, anonKey, {
@@ -368,10 +408,12 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
     return
   }
   const token = authHeader.slice("Bearer ".length).trim()
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
   if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    res.status(500).json({
+      error:
+        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or send supabaseUrl + supabaseAnonKey in the JSON body.",
+    })
     return
   }
 
@@ -514,28 +556,9 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
     res.status(405).json({ error: "Method not allowed" })
     return
   }
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Missing authorization" })
-    return
-  }
-  const token = authHeader.slice("Bearer ".length).trim()
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
-  if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
-    return
-  }
-
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  })
-  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
-  if (userErr || !userData.user) {
-    res.status(401).json({ error: "Invalid session" })
-    return
-  }
-  const userId = userData.user.id
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const { userId } = auth
 
   let service: ReturnType<typeof createServiceSupabase>
   try {
@@ -672,10 +695,12 @@ async function handleAiRegenerateLeadConsumerReply(req: VercelRequest, res: Verc
     return
   }
   const token = authHeader.slice("Bearer ".length).trim()
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
   if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    res.status(500).json({
+      error:
+        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or send supabaseUrl + supabaseAnonKey in the JSON body.",
+    })
     return
   }
 
@@ -762,10 +787,12 @@ async function handleAiRegenerateConversationConsumerReply(req: VercelRequest, r
     return
   }
   const token = authHeader.slice("Bearer ".length).trim()
-  const supabaseUrl = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/+$/, "")
-  const anonKey = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY")
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
   if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Missing Supabase URL/anon key on server" })
+    res.status(500).json({
+      error:
+        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or send supabaseUrl + supabaseAnonKey in the JSON body.",
+    })
     return
   }
 

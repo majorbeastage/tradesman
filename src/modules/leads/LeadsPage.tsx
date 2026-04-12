@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, Fragment } from "react"
-import { supabase } from "../../lib/supabase"
+import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -77,6 +77,17 @@ function formatAppError(err: unknown): string {
     if (parts.length) return parts.join(" — ")
   }
   return String(err)
+}
+
+/** Lets /api/platform-tools validate the JWT when server env omits Supabase URL/anon (e.g. Vercel). */
+function platformToolsJsonBody(payload: Record<string, unknown>): string {
+  const url = supabaseUrl.trim() || String(import.meta.env.VITE_SUPABASE_URL ?? "").trim()
+  const anon = supabaseAnonKey.trim() || String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim()
+  return JSON.stringify({
+    ...payload,
+    ...(url ? { supabaseUrl: url } : {}),
+    ...(anon ? { supabaseAnonKey: anon } : {}),
+  })
 }
 
 function mergeLeadsSettingsFormDefaults(
@@ -480,7 +491,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       const res = await fetch("/api/platform-tools?__route=lead-evaluate-fit", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ leadId: selectedLead.id, force: true }),
+        body: platformToolsJsonBody({ leadId: selectedLead.id, force: true }),
       })
       const raw = await res.text()
       if (!res.ok) {
@@ -831,7 +842,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ leadId: selectedLead.id }),
+        body: platformToolsJsonBody({ leadId: selectedLead.id }),
       })
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
@@ -887,7 +898,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ leadId: selectedLead.id }),
+        body: platformToolsJsonBody({ leadId: selectedLead.id }),
       })
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
@@ -1203,7 +1214,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         void fetch("/api/platform-tools?__route=lead-evaluate-fit", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ leadId: lead.id, force: false }),
+          body: platformToolsJsonBody({ leadId: lead.id, force: false }),
         })
           .then(() => loadLeads())
           .catch(() => loadLeads())

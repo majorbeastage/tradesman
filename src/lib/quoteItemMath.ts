@@ -54,14 +54,18 @@ export function totalFromQuoteItemRows(items: QuoteItemRowLike[]): number {
   return sum
 }
 
-/** One line per material row description (for calendar_events.materials_list). */
+/** One line per material row (description + quantity) for calendar_events.materials_list. */
 export function materialDescriptionsFromQuoteItemRows(items: QuoteItemRowLike[]): string {
   const lines: string[] = []
   for (const item of items) {
     const meta = parseQuoteItemMetadata(item.metadata)
     if ((meta.line_kind ?? "").toLowerCase() !== "material") continue
     const d = String(item.description ?? "").trim()
-    if (d) lines.push(d)
+    if (!d) continue
+    const qtyRaw = item.quantity
+    const qty = typeof qtyRaw === "number" ? qtyRaw : Number.parseFloat(String(qtyRaw ?? 0)) || 0
+    const qtyLabel = Number.isFinite(qty) && qty !== 1 && qty !== 0 ? ` × ${qty}` : qty === 0 ? " × 0" : ""
+    lines.push(`${d}${qtyLabel}`)
   }
   return lines.join("\n")
 }

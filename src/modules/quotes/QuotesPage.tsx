@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent } from "react"
-import { supabase } from "../../lib/supabase"
+import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
@@ -39,6 +39,7 @@ import {
   materialDescriptionsFromQuoteItemRows,
   mergeMaterialsListsForCalendar,
   parseQuoteItemMetadata,
+  totalFromQuoteItemRows,
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
 import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
@@ -48,6 +49,8 @@ import {
   parseEstimateLinePresetsFromMetadata,
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
+
+const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -149,7 +152,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [estimateTemplateFormValues, setEstimateTemplateFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
-  const [showAutoResponseOptions, setShowAutoResponseOptions] = useState(false)
+  const [showQuoteAutomaticReplies, setShowQuoteAutomaticReplies] = useState(false)
+  const [quoteAutoRepliesFormValues, setQuoteAutoRepliesFormValues] = useState<Record<string, string>>({})
+  const [quotesAutoRepliesProfile, setQuotesAutoRepliesProfile] = useState<Record<string, string>>({})
+  const [quoteAutoRepliesRecordingBusy, setQuoteAutoRepliesRecordingBusy] = useState(false)
+  const [quoteAutoRepliesUploading, setQuoteAutoRepliesUploading] = useState(false)
+  const [quoteAutoRepliesRecordingSupported, setQuoteAutoRepliesRecordingSupported] = useState(false)
+  const quoteAutoRepliesMediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const quoteAutoRepliesRecordedChunksRef = useRef<Blob[]>([])
+  const quoteAutoRepliesMediaStreamRef = useRef<MediaStream | null>(null)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
   const [sortField, setSortField] = useState<string>("name")
@@ -301,7 +312,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     [portalConfig, aiAutomationsEnabled],
   )
   const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
-  const showQuotesAutoResponse = getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
   const showQuotesEstimateTemplate =
     getPageActionVisible(portalConfig, "quotes", "estimate_template") && getOmPageActionVisible(portalConfig, "quotes", "estimate_template")
@@ -313,6 +323,17 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const estimateTemplateButtonLabel = portalConfig?.controlLabels?.estimate_template ?? "Estimate template"
   const estimateLineItemsButtonLabel = portalConfig?.controlLabels?.estimate_line_items ?? "Estimate line items"
   const quoteJobTypesButtonLabel = portalConfig?.controlLabels?.job_types ?? "Job types"
+  const quoteAutomaticRepliesItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "quotes", "auto_response_options", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
+  const showQuotesAutomaticReplies =
+    getPageActionVisible(portalConfig, "quotes", "auto_response_options") &&
+    getOmPageActionVisible(portalConfig, "quotes", "auto_response")
+  const quoteAutomaticRepliesButtonLabel =
+    portalConfig?.controlLabels?.automatic_replies ??
+    portalConfig?.controlLabels?.auto_response_options ??
+    "Automatic replies"
 
   function isEstimateLinePortalItemVisible(item: PortalSettingItem): boolean {
     return isPortalSettingDependencyVisible(item, estimateLineItemsPortal, estimateLinePortalValues)
@@ -672,32 +693,136 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     return isPortalSettingDependencyVisible(item, items, formValues)
   }
 
+  function isQuoteAutomaticRepliesItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, quoteAutomaticRepliesItems, quoteAutoRepliesFormValues)
+  }
+
+  useEffect(() => {
+    setQuoteAutoRepliesRecordingSupported(
+      typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia,
+    )
+  }, [])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (cancelled) return
+      if (error || !data) return
+      const meta =
+        data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const raw = meta.quotesAutomaticRepliesValues
+      const saved =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? Object.fromEntries(
+              Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+            )
+          : {}
+      setQuotesAutoRepliesProfile(saved)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId, supabase])
+
+  useEffect(() => {
+    if (!showQuoteAutomaticReplies || quoteAutomaticRepliesItems.length === 0) return
+    const base: Record<string, string> = {}
+    for (const item of quoteAutomaticRepliesItems) {
+      const saved = quotesAutoRepliesProfile[item.id]
+      if (item.type === "checkbox") {
+        base[item.id] = saved === "checked" || saved === "unchecked" ? saved : item.defaultChecked ? "checked" : "unchecked"
+      } else if (item.type === "dropdown" && item.options?.length) {
+        base[item.id] = saved && item.options.includes(saved) ? saved : item.options[0]
+      } else {
+        base[item.id] = saved ?? ""
+      }
+    }
+    setQuoteAutoRepliesFormValues(base)
+  }, [showQuoteAutomaticReplies, quoteAutomaticRepliesItems, quotesAutoRepliesProfile])
+
+  async function closeQuoteAutomaticRepliesModal() {
+    if (!supabase || !userId) {
+      setShowQuoteAutomaticReplies(false)
+      return
+    }
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.quotesAutomaticRepliesValues = { ...quoteAutoRepliesFormValues }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setQuotesAutoRepliesProfile({ ...quoteAutoRepliesFormValues })
+    setShowQuoteAutomaticReplies(false)
+  }
+
+  async function uploadQuoteAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
+    if (!supabase || !userId) return
+    setQuoteAutoRepliesUploading(true)
+    try {
+      const filePath = `${userId}/quote-auto-${Date.now()}.${extension}`
+      const { error: uploadError } = await supabase.storage.from(VOICEMAIL_GREETING_BUCKET).upload(filePath, blob, { upsert: true, contentType })
+      if (uploadError) throw uploadError
+      const { data } = supabase.storage.from(VOICEMAIL_GREETING_BUCKET).getPublicUrl(filePath)
+      setQuoteAutoRepliesFormValues((prev) => ({ ...prev, quote_auto_phone_recording_url: data.publicUrl }))
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setQuoteAutoRepliesUploading(false)
+    }
+  }
+
+  async function startQuoteAutoRepliesRecording() {
+    if (!quoteAutoRepliesRecordingSupported) {
+      alert("This browser does not support microphone recording.")
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
+      const recorder = new MediaRecorder(stream, { mimeType })
+      quoteAutoRepliesRecordedChunksRef.current = []
+      quoteAutoRepliesMediaStreamRef.current = stream
+      quoteAutoRepliesMediaRecorderRef.current = recorder
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) quoteAutoRepliesRecordedChunksRef.current.push(event.data)
+      }
+      recorder.onstop = async () => {
+        const blob = new Blob(quoteAutoRepliesRecordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        quoteAutoRepliesMediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+        quoteAutoRepliesMediaStreamRef.current = null
+        quoteAutoRepliesMediaRecorderRef.current = null
+        await uploadQuoteAutoVoiceBlob(blob, "webm", blob.type || "audio/webm")
+      }
+      recorder.start()
+      setQuoteAutoRepliesRecordingBusy(true)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  function stopQuoteAutoRepliesRecording() {
+    setQuoteAutoRepliesRecordingBusy(false)
+    if (quoteAutoRepliesMediaRecorderRef.current && quoteAutoRepliesMediaRecorderRef.current.state !== "inactive") {
+      quoteAutoRepliesMediaRecorderRef.current.stop()
+    }
+  }
+
   // Settings (localStorage)
   const [defaultQuoteStatus] = useState(() => {
     try { return localStorage.getItem("quotes_defaultStatus") ?? "draft" } catch { return "draft" }
-  })
-
-  // Auto Response Options (in-depth) - localStorage
-  const [arOnQuoteCreated, setArOnQuoteCreated] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("quotes_arOnQuoteCreated") ?? "true") } catch { return true }
-  })
-  const [arOnQuoteCreatedMessage, setArOnQuoteCreatedMessage] = useState(() => {
-    try { return localStorage.getItem("quotes_arOnQuoteCreatedMessage") ?? "" } catch { return "" }
-  })
-  const [arOnQuoteSent, setArOnQuoteSent] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("quotes_arOnQuoteSent") ?? "false") } catch { return false }
-  })
-  const [arOnQuoteSentMessage, setArOnQuoteSentMessage] = useState(() => {
-    try { return localStorage.getItem("quotes_arOnQuoteSentMessage") ?? "" } catch { return "" }
-  })
-  const [arOnQuoteViewed, setArOnQuoteViewed] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("quotes_arOnQuoteViewed") ?? "false") } catch { return false }
-  })
-  const [arOnQuoteViewedMessage, setArOnQuoteViewedMessage] = useState(() => {
-    try { return localStorage.getItem("quotes_arOnQuoteViewedMessage") ?? "" } catch { return "" }
-  })
-  const [arDelayMinutes, setArDelayMinutes] = useState(() => {
-    try { return localStorage.getItem("quotes_arDelayMinutes") ?? "0" } catch { return "0" }
   })
 
   useEffect(() => {
@@ -1417,7 +1542,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
               "Content-Type": "application/json",
               Authorization: `Bearer ${session.access_token}`,
             },
-            body: JSON.stringify({ quoteId: selectedQuoteId, lines }),
+            body: JSON.stringify({
+              quoteId: selectedQuoteId,
+              lines,
+              ...(supabaseUrl.trim() ? { supabaseUrl: supabaseUrl.trim() } : {}),
+              ...(supabaseAnonKey.trim() ? { supabaseAnonKey: supabaseAnonKey.trim() } : {}),
+            }),
           })
           const j = (await res.json()) as {
             ok?: boolean
@@ -1446,6 +1576,44 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       if (estimateReviewTimerRef.current) clearTimeout(estimateReviewTimerRef.current)
     }
   }, [selectedQuoteId, quoteItemsReviewKey, session?.access_token])
+
+  /** Keep linked calendar events’ materials + quote total aligned with quote line items. */
+  useEffect(() => {
+    if (!supabase || !selectedQuoteId || !userId) return
+    const client = supabase
+    const quote = selectedQuote as QuoteRow | null
+    if (!quote) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        let jtMaterials: string | null = null
+        const jtId = typeof quote.job_type_id === "string" && quote.job_type_id.trim() ? quote.job_type_id.trim() : ""
+        if (jtId) {
+          const { data } = await client.from("job_types").select("materials_list").eq("id", jtId).eq("user_id", userId).maybeSingle()
+          if (!cancelled && data && typeof (data as { materials_list?: unknown }).materials_list === "string") {
+            jtMaterials = (data as { materials_list: string }).materials_list
+          }
+        }
+        if (cancelled) return
+        const quoteMatBlock = materialDescriptionsFromQuoteItemRows(selectedQuoteItems)
+        const combined = mergeMaterialsListsForCalendar(quoteMatBlock.trim() ? quoteMatBlock : null, jtMaterials)
+        const total = totalFromQuoteItemRows(selectedQuoteItems)
+        const patch: Record<string, unknown> = {
+          quote_total: total > 0 ? total : null,
+          materials_list: combined ?? null,
+        }
+        const { error } = await client.from("calendar_events").update(patch).eq("quote_id", selectedQuoteId).is("removed_at", null)
+        if (error) {
+          const em = (error.message ?? "").toLowerCase()
+          if (!em.includes("materials_list") && !em.includes("quote_total")) console.warn("[quotes→calendar sync]", error.message)
+        }
+      })()
+    }, 700)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [selectedQuoteId, selectedQuote?.job_type_id, quoteItemsReviewKey, userId, supabase, selectedQuoteItems])
 
   function parseDefaultLaborRateNumber(): number {
     const laborItem = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
@@ -2170,20 +2338,21 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 Add Customer to quotes
               </button>
             )}
-            {showQuotesAutoResponse && (
-              <button
-                onClick={() => setShowAutoResponseOptions(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                Auto Response Options
-              </button>
-            )}
             {showQuotesSettings && (
               <button
                 onClick={() => setShowSettings(true)}
                 style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
               >
                 Settings
+              </button>
+            )}
+            {showQuotesAutomaticReplies && (
+              <button
+                type="button"
+                onClick={() => setShowQuoteAutomaticReplies(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {quoteAutomaticRepliesButtonLabel}
               </button>
             )}
             {showQuotesEstimateTemplate && (
@@ -2228,6 +2397,137 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             isItemVisible={isQuoteSettingItemVisible}
             onClose={() => setShowSettings(false)}
           />
+        )}
+
+        {showQuoteAutomaticReplies && (
+          <>
+            <div
+              role="presentation"
+              onClick={() => void closeQuoteAutomaticRepliesModal()}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                width: "90%",
+                maxWidth: "520px",
+                maxHeight: "90vh",
+                overflow: "auto",
+                background: "white",
+                borderRadius: "8px",
+                padding: "24px",
+                boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+                zIndex: 9999,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>{quoteAutomaticRepliesButtonLabel}</h3>
+                <button
+                  type="button"
+                  onClick={() => void closeQuoteAutomaticRepliesModal()}
+                  style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}
+                >
+                  ✕
+                </button>
+              </div>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                Preferences are saved to your profile. Server-side automations use these when quote workflows are enabled for your account.
+              </p>
+              <PortalSettingItemsForm
+                items={quoteAutomaticRepliesItems}
+                formValues={quoteAutoRepliesFormValues}
+                setFormValue={(id, value) => setQuoteAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
+                isItemVisible={isQuoteAutomaticRepliesItemVisible}
+              />
+              {quoteAutoRepliesFormValues.quote_auto_reply_method === "Phone call" &&
+                quoteAutoRepliesFormValues.quote_auto_phone_allow_automation === "checked" && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      padding: 12,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#f9fafb",
+                      fontSize: 12,
+                      color: "#374151",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
+                    such as &quot;This is a prerecorded message&quot; before your content.
+                  </div>
+                )}
+              {quoteAutoRepliesFormValues.quote_auto_phone_delivery === "Record in app" &&
+                quoteAutoRepliesFormValues.quote_auto_phone_allow_automation === "checked" &&
+                quoteAutoRepliesFormValues.quote_auto_reply_method === "Phone call" && (
+                  <div style={{ marginTop: 14 }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: theme.text }}>Record in browser</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                      {!quoteAutoRepliesRecordingBusy ? (
+                        <button
+                          type="button"
+                          disabled={!quoteAutoRepliesRecordingSupported || quoteAutoRepliesUploading}
+                          onClick={() => void startQuoteAutoRepliesRecording()}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                            cursor: quoteAutoRepliesRecordingSupported && !quoteAutoRepliesUploading ? "pointer" : "not-allowed",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                          }}
+                        >
+                          {quoteAutoRepliesUploading ? "Uploading…" : "Start recording"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => stopQuoteAutoRepliesRecording()}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            border: "1px solid #fca5a5",
+                            background: "#fef2f2",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: "#b91c1c",
+                          }}
+                        >
+                          Stop &amp; upload
+                        </button>
+                      )}
+                    </div>
+                    {quoteAutoRepliesFormValues.quote_auto_phone_recording_url?.trim() ? (
+                      <p style={{ margin: "10px 0 0", fontSize: 12, color: "#059669" }}>Recording URL saved in the field above.</p>
+                    ) : null}
+                  </div>
+                )}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+                <button
+                  type="button"
+                  onClick={() => void closeQuoteAutomaticRepliesModal()}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 14,
+                  }}
+                >
+                  Save &amp; close
+                </button>
+              </div>
+            </div>
+          </>
         )}
 
         {showEstimateTemplateModal && (
@@ -4567,112 +4867,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                 </button>
                 <button onClick={() => setShowAddCustomer(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
               </div>
-            </div>
-          </>
-        )}
-
-        {showAutoResponseOptions && (
-          <>
-            <div onClick={() => setShowAutoResponseOptions(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-            <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "560px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>Auto Response Options</h3>
-                <button onClick={() => setShowAutoResponseOptions(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "20px", color: theme.text }}>
-                <div style={{ padding: "12px", background: "#f9fafb", borderRadius: "8px", border: `1px solid ${theme.border}` }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={arOnQuoteCreated}
-                      onChange={(e) => {
-                        const v = e.target.checked
-                        setArOnQuoteCreated(v)
-                        try { localStorage.setItem("quotes_arOnQuoteCreated", JSON.stringify(v)) } catch { /* ignore */ }
-                      }}
-                    />
-                    <span><strong>When a quote is created</strong> — send an auto response to the customer.</span>
-                  </label>
-                  {arOnQuoteCreated && (
-                    <textarea
-                      value={arOnQuoteCreatedMessage}
-                      onChange={(e) => {
-                        setArOnQuoteCreatedMessage(e.target.value)
-                        try { localStorage.setItem("quotes_arOnQuoteCreatedMessage", e.target.value) } catch { /* ignore */ }
-                      }}
-                      placeholder="Message to send when a new quote is added..."
-                      rows={3}
-                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
-                    />
-                  )}
-                </div>
-                <div style={{ padding: "12px", background: "#f9fafb", borderRadius: "8px", border: `1px solid ${theme.border}` }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={arOnQuoteSent}
-                      onChange={(e) => {
-                        const v = e.target.checked
-                        setArOnQuoteSent(v)
-                        try { localStorage.setItem("quotes_arOnQuoteSent", JSON.stringify(v)) } catch { /* ignore */ }
-                      }}
-                    />
-                    <span><strong>When a quote is sent</strong> — send an auto response.</span>
-                  </label>
-                  {arOnQuoteSent && (
-                    <textarea
-                      value={arOnQuoteSentMessage}
-                      onChange={(e) => {
-                        setArOnQuoteSentMessage(e.target.value)
-                        try { localStorage.setItem("quotes_arOnQuoteSentMessage", e.target.value) } catch { /* ignore */ }
-                      }}
-                      placeholder="Message to send when quote is sent to customer..."
-                      rows={3}
-                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
-                    />
-                  )}
-                </div>
-                <div style={{ padding: "12px", background: "#f9fafb", borderRadius: "8px", border: `1px solid ${theme.border}` }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={arOnQuoteViewed}
-                      onChange={(e) => {
-                        const v = e.target.checked
-                        setArOnQuoteViewed(v)
-                        try { localStorage.setItem("quotes_arOnQuoteViewed", JSON.stringify(v)) } catch { /* ignore */ }
-                      }}
-                    />
-                    <span><strong>When a quote is viewed</strong> (by customer) — send an auto response.</span>
-                  </label>
-                  {arOnQuoteViewed && (
-                    <textarea
-                      value={arOnQuoteViewedMessage}
-                      onChange={(e) => {
-                        setArOnQuoteViewedMessage(e.target.value)
-                        try { localStorage.setItem("quotes_arOnQuoteViewedMessage", e.target.value) } catch { /* ignore */ }
-                      }}
-                      placeholder="Message to send when customer views the quote..."
-                      rows={3}
-                      style={{ ...theme.formInput, marginTop: "10px", resize: "vertical" }}
-                    />
-                  )}
-                </div>
-                <div>
-                  <label style={{ fontSize: "14px", fontWeight: 600, display: "block", marginBottom: "6px" }}>Delay before sending (minutes)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={arDelayMinutes}
-                    onChange={(e) => {
-                      setArDelayMinutes(e.target.value)
-                      try { localStorage.setItem("quotes_arDelayMinutes", e.target.value) } catch { /* ignore */ }
-                    }}
-                    style={{ ...theme.formInput }}
-                  />
-                </div>
-              </div>
-              <button onClick={() => setShowAutoResponseOptions(false)} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer", fontWeight: 600 }}>Done</button>
             </div>
           </>
         )}

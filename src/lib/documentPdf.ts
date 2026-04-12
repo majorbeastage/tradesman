@@ -142,6 +142,10 @@ export async function buildReceiptPdfBytes(params: {
   completedAtLabel: string
   amountLabel?: string | null
   templateFooter?: string | null
+  /** Plain text below the title (from receipt template intro). */
+  templateHeader?: string | null
+  /** Optional logo above the title (PNG or JPEG). */
+  logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
   /** Calendar block duration (start → end). */
   scheduledDurationLabel?: string | null
   /** Labor, materials, misc, etc. from quote + event extras. */
@@ -168,6 +172,25 @@ export async function buildReceiptPdfBytes(params: {
   const draw = (text: string, size = 11, bold = false, gray = 0) => {
     page.drawText(text.slice(0, 600), { x: left, y, size, font: bold ? fontBold : font, color: rgb(gray, gray, gray) })
     y -= lineH + (size > 12 ? 6 : 2)
+  }
+
+  if (params.logo?.bytes?.length) {
+    try {
+      const embedded =
+        params.logo.kind === "png" ? await doc.embedPng(params.logo.bytes) : await doc.embedJpg(params.logo.bytes)
+      const maxLogoW = 220
+      const maxLogoH = 72
+      const scale = Math.min(maxLogoW / embedded.width, maxLogoH / embedded.height, 1)
+      const w = embedded.width * scale
+      const h = embedded.height * scale
+      const marginFromTop = 40
+      const targetUpperY = height - marginFromTop
+      const lowerLeftY = targetUpperY - h
+      page.drawImage(embedded, { x: left, y: lowerLeftY, width: w, height: h })
+      y = lowerLeftY - 14
+    } catch {
+      /* ignore bad image */
+    }
   }
 
   /** Wrap long strings into visual lines (~chars per line estimated from width). */
@@ -197,6 +220,13 @@ export async function buildReceiptPdfBytes(params: {
   draw("Receipt / job complete", 18, true, 0.12)
   draw(params.businessLabel, 11, false, 0.35)
   y -= 8
+  if (params.templateHeader?.trim()) {
+    for (const para of params.templateHeader.trim().split(/\n+/).slice(0, 10)) {
+      if (!para.trim()) continue
+      drawWrapped(para.trim(), 10, 0.32)
+    }
+    y -= 4
+  }
   draw(`Customer: ${params.customerName}`, 12, true, 0.2)
   draw(`Job: ${params.jobTitle}`, 11, false, 0.25)
   draw(`Completed: ${params.completedAtLabel}`, 11, false, 0.25)

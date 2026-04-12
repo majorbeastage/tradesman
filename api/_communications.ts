@@ -44,10 +44,21 @@ export function firstEnvCaseInsensitive(canonicalName: string): string {
   return ""
 }
 
-function pickSupabaseUrlForServer(): string {
+export function pickSupabaseUrlForServer(): string {
   const direct = firstEnv("SUPABASE_URL", "VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
   if (direct) return direct
   for (const name of ["SUPABASE_URL", "VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"]) {
+    const v = firstEnvCaseInsensitive(name)
+    if (v) return v
+  }
+  return ""
+}
+
+/** Anon key for JWT validation with user-scoped Supabase client (same keys as the browser bundle). */
+export function pickSupabaseAnonKeyForServer(): string {
+  const direct = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+  if (direct) return direct
+  for (const name of ["SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
     const v = firstEnvCaseInsensitive(name)
     if (v) return v
   }
@@ -170,16 +181,6 @@ export function describeServerSupabaseEnvForDiagnostics(): {
     hasUrl: pickSupabaseUrlForServer().trim().length > 0,
     hasServiceRoleKey: pickServiceRoleKeyForServer().trim().length > 0,
   }
-}
-
-function pickSupabaseAnonKeyForServer(): string {
-  const direct = firstEnv("SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
-  if (direct) return direct
-  for (const name of ["SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
-    const v = firstEnvCaseInsensitive(name)
-    if (v) return v
-  }
-  return ""
 }
 
 /**

@@ -30,6 +30,8 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
   const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
   const tabs = allTabs.filter((t) => t.tab_id !== "account")
+  const mainNavTabs = tabs.filter((t) => t.tab_id !== "tech-support")
+  const techSupportNavTabs = tabs.filter((t) => t.tab_id === "tech-support")
 
   const grainUrl =
     "data:image/svg+xml," +
@@ -86,7 +88,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
       </div>
 
       <div style={{ marginTop: "30px", flex: 1 }}>
-        {tabs.map((tab) => (
+        {mainNavTabs.map((tab) => (
           <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
             {formatPortalTabLabel(tab.tab_id, tab.label, t)}
           </p>
@@ -103,50 +105,60 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           color: "rgba(255,255,255,0.75)",
         }}
       >
+        {techSupportNavTabs.map((tab) => (
+          <p
+            key={tab.tab_id}
+            onClick={() => { setPage(tab.tab_id); onClose?.() }}
+            style={{ ...itemStyle, margin: "8px 0 10px" }}
+          >
+            {formatPortalTabLabel(tab.tab_id, tab.label, t)}
+          </p>
+        ))}
         <div style={{ fontWeight: 700, color: theme.primary, marginBottom: 6, fontSize: 11, letterSpacing: 0.3 }}>{t("sidebar.helpDesk")}</div>
         <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
           {HELP_DESK_PHONE_DISPLAY}
         </a>
+        {onLogout && (
+          <button
+            type="button"
+            onClick={() => { onLogout?.(); onClose?.() }}
+            style={{
+              display: "block",
+              marginTop: 12,
+              marginBottom: 4,
+              padding: "8px 0",
+              width: "100%",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: theme.primary,
+              fontSize: 14,
+              fontWeight: 500,
+              textAlign: "left",
+            }}
+          >
+            {t("layout.logout")}
+          </button>
+        )}
+        {showAccount && (
+          <button
+            type="button"
+            onClick={() => { setPage("account"); onClose?.() }}
+            style={{
+              marginTop: 4,
+              marginBottom: "16px",
+              padding: "4px",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              alignSelf: "flex-start"
+            }}
+            title={t("layout.account")}
+          >
+            <img src={accountIcon} alt={t("layout.account")} style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
+          </button>
+        )}
       </div>
-
-      {onLogout && (
-        <button
-          type="button"
-          onClick={() => { onLogout?.(); onClose?.() }}
-          style={{
-            marginTop: 12,
-            marginBottom: 8,
-            padding: "8px 0",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            color: theme.primary,
-            fontSize: 14,
-            fontWeight: 500,
-            textAlign: "left",
-          }}
-        >
-          {t("layout.logout")}
-        </button>
-      )}
-      {showAccount && (
-        <button
-          type="button"
-          onClick={() => { setPage("account"); onClose?.() }}
-          style={{
-            marginTop: 0,
-            marginBottom: "24px",
-            padding: "4px",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            alignSelf: "flex-start"
-          }}
-          title={t("layout.account")}
-        >
-          <img src={accountIcon} alt={t("layout.account")} style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
-        </button>
-      )}
     </div>
   )
 

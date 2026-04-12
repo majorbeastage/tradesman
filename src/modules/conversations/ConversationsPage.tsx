@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
+import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { theme } from "../../styles/theme"
@@ -729,6 +730,39 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
     setConversationsAutoRepliesProfile({ ...autoRepliesFormValues })
     setShowAutomaticReplies(false)
+  }
+
+  async function carryOverAutoRepliesToQuotesProfile() {
+    if (!supabase || !userId) {
+      alert("Sign in to save.")
+      return
+    }
+    const quoteItems = getControlItemsForUser(portalConfig, "quotes", "auto_response_options", { aiAutomationsEnabled })
+    const idSet = new Set(quoteItems.map((i) => i.id))
+    const merged = carryConversationAutoRepliesToQuoteValues(autoRepliesFormValues, idSet)
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    const prevQ = prevMeta.quotesAutomaticRepliesValues
+    const existing =
+      prevQ && typeof prevQ === "object" && !Array.isArray(prevQ)
+        ? Object.fromEntries(
+            Object.entries(prevQ as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+          )
+        : {}
+    prevMeta.quotesAutomaticRepliesValues = { ...existing, ...merged }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    alert("Copied these settings to Quotes → Automatic replies. Open Quotes to review; custom text fields there stay empty until you fill them.")
   }
 
   async function uploadConversationsAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
@@ -1742,6 +1776,29 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     ) : null}
                   </div>
                 )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+                <button
+                  type="button"
+                  disabled={!supabase || !userId}
+                  onClick={() => void carryOverAutoRepliesToQuotesProfile()}
+                  style={{
+                    alignSelf: "flex-start",
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: !supabase || !userId ? "not-allowed" : "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                >
+                  Carry over these settings to Quotes tab
+                </button>
+                <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                  Copies toggles and methods to <strong>Quotes → Automatic replies</strong>. Quote custom message fields stay empty; “Require approval” for AI email/SMS on Quotes defaults to on.
+                </p>
+              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
                 <button
                   type="button"
@@ -2814,8 +2871,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
 
         {showInternalConversations && (
           <div style={{ marginTop: "32px" }}>
-            <h3 style={{ marginBottom: "12px", color: theme.text }}>Internal Conversations</h3>
-            <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>
+            <h3 style={{ marginBottom: "12px", color: "#64748b" }}>Internal Conversations</h3>
+            <p style={{ fontSize: "14px", color: "#94a3b8", marginBottom: "12px" }}>
               Team conversations (same organization). Other users can talk to each other here.
             </p>
             <button
@@ -2836,8 +2893,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
             <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #ddd", borderRadius: "6px" }}>
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd", background: "#f9fafb" }}>
-                  <th style={{ padding: "8px" }}>Title</th>
-                  <th style={{ padding: "8px" }}>Created</th>
+                  <th style={{ padding: "8px", color: "#0f172a", fontWeight: 800, fontSize: 13 }}>Title</th>
+                  <th style={{ padding: "8px", color: "#0f172a", fontWeight: 800, fontSize: 13 }}>Created</th>
                 </tr>
               </thead>
               <tbody>
@@ -2846,8 +2903,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 ) : (
                   internalConversations.map((ic) => (
                     <tr key={ic.id} style={{ borderBottom: "1px solid #eee" }}>
-                      <td style={{ padding: "8px" }}>{ic.title || "Untitled"}</td>
-                      <td style={{ padding: "8px" }}>{new Date(ic.created_at).toLocaleString()}</td>
+                      <td style={{ padding: "8px", color: "#1f2937", fontSize: 14 }}>{ic.title || "Untitled"}</td>
+                      <td style={{ padding: "8px", color: "#1f2937", fontSize: 14 }}>{new Date(ic.created_at).toLocaleString()}</td>
                     </tr>
                   ))
                 )}

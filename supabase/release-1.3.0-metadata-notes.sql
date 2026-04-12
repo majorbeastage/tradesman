@@ -1,0 +1,15 @@
+-- Release 1.3.0 — no new required columns (app uses existing jsonb/metadata).
+--
+-- Profiles.metadata keys introduced or used by the app:
+--   conversationsAutomaticRepliesValues  (existing)
+--   quotesAutomaticRepliesValues        (new — Quotes → Automatic replies)
+--   calendarCompletionValues            (new — Calendar → Job completion)
+--   receipt_template_intro              (optional string)
+--   receipt_template_show_logo          (optional boolean)
+--   receipt_template_logo_url           (optional string)
+--   receipt_template_carry_from_estimate (optional boolean)
+--
+-- calendar_events.metadata:
+--   completion_note                      (optional string, set when completing a job with a note)
+--
+-- If customer past notes are missing, run: supabase-customers-notes-past.sql (when not already applied).

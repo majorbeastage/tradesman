@@ -51,6 +51,7 @@ import {
   prependQuoteMaterialsToEventChecklist,
   totalFromQuoteItemRows,
 } from "../../lib/quoteItemMath"
+import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 
 type JobType = {
   id: string
@@ -238,7 +239,10 @@ export default function CalendarPage() {
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
+  const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
+  const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
+  const [calendarCompletionProfile, setCalendarCompletionProfile] = useState<Record<string, string>>({})
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
@@ -324,6 +328,10 @@ export default function CalendarPage() {
     if (fallback.length > 0) return fallback
     return [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
   }, [portalConfig, aiAutomationsEnabled])
+  const completionSettingsItems = useMemo(
+    () => getControlItemsForUser(portalConfig, "calendar", "completion_settings", { aiAutomationsEnabled }),
+    [portalConfig, aiAutomationsEnabled],
+  )
   const calendarSettingsItemsWithOrg = useMemo(() => {
     const orgToggle: PortalSettingItem = {
       id: "__org_all_events",
@@ -353,7 +361,11 @@ export default function CalendarPage() {
   const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
   const showCalReceiptTemplate =
     getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
+  const showCalCompletionSettings =
+    getPageActionVisible(portalConfig, "calendar", "completion_settings") &&
+    getOmPageActionVisible(portalConfig, "calendar", "completion_settings")
   const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
+  const completionSettingsButtonLabel = portalConfig?.controlLabels?.completion_settings ?? "Job completion"
 
   const [arReminderMins, setArReminderMins] = useState(() => {
     try {
@@ -508,6 +520,7 @@ export default function CalendarPage() {
   const [calendarEventActionBusy, setCalendarEventActionBusy] = useState(false)
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
+  const [completeCompletionNote, setCompleteCompletionNote] = useState("")
   const [calendarEventEntityRows, setCalendarEventEntityRows] = useState<EntityAttachmentRow[]>([])
   const [calendarEventEntityUploadBusy, setCalendarEventEntityUploadBusy] = useState(false)
   const [calendarReceiptTemplate, setCalendarReceiptTemplate] = useState<string | null>(null)
@@ -519,6 +532,73 @@ export default function CalendarPage() {
 
   function isReceiptTemplateItemVisible(item: PortalSettingItem): boolean {
     return isPortalSettingDependencyVisible(item, receiptTemplateItems, receiptTemplateFormValues)
+  }
+
+  function isCompletionSettingsItemVisible(item: PortalSettingItem): boolean {
+    return isPortalSettingDependencyVisible(item, completionSettingsItems, completionSettingsFormValues)
+  }
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        const meta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        const raw = meta.calendarCompletionValues
+        const saved =
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? Object.fromEntries(
+                Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+              )
+            : {}
+        setCalendarCompletionProfile(saved)
+      })
+  }, [supabase, userId])
+
+  useEffect(() => {
+    if (!showCompletionSettingsModal || completionSettingsItems.length === 0) return
+    const next: Record<string, string> = {}
+    for (const item of completionSettingsItems) {
+      const saved = calendarCompletionProfile[item.id]
+      if (item.type === "checkbox") {
+        next[item.id] = saved === "checked" || saved === "unchecked" ? saved : item.defaultChecked ? "checked" : "unchecked"
+      } else if (item.type === "dropdown" && item.options?.length) {
+        next[item.id] = saved && item.options.includes(saved) ? saved : item.options[0]
+      } else {
+        next[item.id] = saved ?? ""
+      }
+    }
+    setCompletionSettingsFormValues(next)
+  }, [showCompletionSettingsModal, completionSettingsItems, calendarCompletionProfile])
+
+  async function closeCompletionSettingsModal() {
+    if (!supabase || !userId) {
+      setShowCompletionSettingsModal(false)
+      return
+    }
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.calendarCompletionValues = { ...completionSettingsFormValues }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setCalendarCompletionProfile({ ...completionSettingsFormValues })
+    setShowCompletionSettingsModal(false)
   }
 
   useEffect(() => {
@@ -541,6 +621,10 @@ export default function CalendarPage() {
             ? rateRaw
             : ""
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
+      const intro = typeof meta.receipt_template_intro === "string" ? meta.receipt_template_intro : ""
+      const showRecLogo = meta.receipt_template_show_logo === true
+      const recLogoUrl = typeof meta.receipt_template_logo_url === "string" ? meta.receipt_template_logo_url : ""
+      const carryEst = meta.receipt_template_carry_from_estimate === true
       const next: Record<string, string> = {}
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
       for (const item of items) {
@@ -548,6 +632,10 @@ export default function CalendarPage() {
         else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.id === "receipt_template_itemize") next[item.id] = itemize ? "checked" : "unchecked"
         else if (item.id === "receipt_template_mileage_rate") next[item.id] = rateStr
+        else if (item.id === "receipt_template_intro") next[item.id] = intro
+        else if (item.id === "receipt_template_show_logo") next[item.id] = showRecLogo ? "checked" : "unchecked"
+        else if (item.id === "receipt_template_logo_url") next[item.id] = recLogoUrl
+        else if (item.id === "receipt_template_carry_from_estimate") next[item.id] = carryEst ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
         else next[item.id] = ""
@@ -582,6 +670,20 @@ export default function CalendarPage() {
     prevMeta.receipt_template_itemize = itemize
     if (Number.isFinite(rateNum) && rateNum >= 0) prevMeta.receipt_mileage_rate_per_mile = rateNum
     else delete prevMeta.receipt_mileage_rate_per_mile
+    const carry = receiptTemplateFormValues.receipt_template_carry_from_estimate === "checked"
+    prevMeta.receipt_template_carry_from_estimate = carry
+    if (carry) {
+      if (prevMeta.estimate_template_show_logo === true) prevMeta.receipt_template_show_logo = true
+      const estUrl = typeof prevMeta.estimate_template_logo_url === "string" ? prevMeta.estimate_template_logo_url.trim() : ""
+      if (estUrl) prevMeta.receipt_template_logo_url = estUrl
+    }
+    const introTrim = (receiptTemplateFormValues.receipt_template_intro ?? "").trim()
+    if (introTrim) prevMeta.receipt_template_intro = introTrim
+    else delete prevMeta.receipt_template_intro
+    prevMeta.receipt_template_show_logo = receiptTemplateFormValues.receipt_template_show_logo === "checked"
+    const logoTrim = (receiptTemplateFormValues.receipt_template_logo_url ?? "").trim()
+    if (logoTrim) prevMeta.receipt_template_logo_url = logoTrim
+    else delete prevMeta.receipt_template_logo_url
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -704,38 +806,105 @@ export default function CalendarPage() {
 
   async function confirmCompleteCalendarEvent() {
     if (!supabase || !completeFlowEvent?.id) return
+    const ownerUserId = completeFlowEvent.user_id ?? userId
+    const bodyBase = buildCalendarReceiptBody(completeFlowEvent)
+    const note = completeCompletionNote.trim()
+    const body = note ? `${bodyBase}\n\nCompletion note:\n${note}` : bodyBase
+
+    const actingId = authUserId || userId
+    const isAssignedUserCompleting = actingId === ownerUserId
+    const workerMay = calendarCompletionProfile.calendar_completion_worker_may_message_customer === "checked"
+    if (isAssignedUserCompleting && !workerMay && (receiptEmailCustomer || receiptSmsCustomer)) {
+      alert(
+        "Your office has not allowed assigned users to send receipts directly to customers. Ask your office manager to enable it under Calendar → Job completion, or complete without customer email/SMS.",
+      )
+      return
+    }
+
     setCompleteBusy(true)
+    const prevEvMeta =
+      completeFlowEvent.metadata && typeof completeFlowEvent.metadata === "object" && !Array.isArray(completeFlowEvent.metadata)
+        ? { ...(completeFlowEvent.metadata as Record<string, unknown>) }
+        : {}
+    if (note) prevEvMeta.completion_note = note
+    else delete prevEvMeta.completion_note
+
     const { error } = await supabase
       .from("calendar_events")
-      .update({ completed_at: new Date().toISOString() })
+      .update({ completed_at: new Date().toISOString(), metadata: prevEvMeta })
       .eq("id", completeFlowEvent.id)
-    setCompleteBusy(false)
     if (error) {
+      setCompleteBusy(false)
       alert(error.message)
       return
     }
-    const body = buildCalendarReceiptBody(completeFlowEvent)
-    const subject = encodeURIComponent(`Receipt: ${completeFlowEvent.title}`)
-    const bodyEnc = encodeURIComponent(body)
-    const openMail = (email: string) => {
-      window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${bodyEnc}`, "_blank", "noopener,noreferrer")
+
+    const sendErrs: string[] = []
+    try {
+      if (receiptEmailCustomer) {
+        if (!completeCustomerEmail) {
+          sendErrs.push("No customer email on file.")
+        } else {
+          const res = await fetch("/api/outbound-messages?__channel=email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: ownerUserId,
+              customerId: completeFlowEvent.customer_id ?? undefined,
+              to: completeCustomerEmail,
+              subject: `Receipt: ${completeFlowEvent.title}`,
+              body,
+            }),
+          })
+          const raw = await res.text()
+          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+        }
+      }
+      if (receiptSmsCustomer) {
+        if (!completeCustomerPhone?.trim()) {
+          sendErrs.push("No customer phone on file.")
+        } else {
+          const res = await fetch("/api/outbound-messages?__channel=sms", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: ownerUserId,
+              customerId: completeFlowEvent.customer_id ?? undefined,
+              to: completeCustomerPhone.trim(),
+              body,
+            }),
+          })
+          const raw = await res.text()
+          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+        }
+      }
+      if (receiptEmailSelf) {
+        const selfEmail = authUser?.email
+        if (!selfEmail) sendErrs.push("Your account has no email for “send receipt to myself”.")
+        else {
+          const res = await fetch("/api/outbound-messages?__channel=email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: ownerUserId,
+              to: selfEmail,
+              subject: `Receipt copy: ${completeFlowEvent.title}`,
+              body,
+            }),
+          })
+          const raw = await res.text()
+          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+        }
+      }
+    } catch (e) {
+      sendErrs.push(e instanceof Error ? e.message : String(e))
     }
-    if (receiptEmailCustomer) {
-      if (completeCustomerEmail) openMail(completeCustomerEmail)
-      else alert("No customer email on file. Add an email identifier for this customer to send a receipt by email.")
-    }
-    if (receiptSmsCustomer) {
-      const digits = (completeCustomerPhone ?? "").replace(/\D/g, "")
-      if (digits) window.open(`sms:${digits}?&body=${bodyEnc}`, "_blank", "noopener,noreferrer")
-      else alert("No customer phone on file. Add a phone identifier for this customer to send a receipt by SMS.")
-    }
-    if (receiptEmailSelf) {
-      const selfEmail = authUser?.email
-      if (selfEmail) openMail(selfEmail)
-      else alert("Your account has no email address for “send receipt to myself”.")
-    }
+
+    setCompleteBusy(false)
+    if (sendErrs.length) alert(`Job marked complete. Sending notes:\n${sendErrs.join("\n")}`)
     setCompleteFlowEvent(null)
     setSelectedEvent(null)
+    setCompleteCompletionNote("")
     loadEvents()
   }
 
@@ -746,6 +915,8 @@ export default function CalendarPage() {
       const profileUserId = ev.user_id ?? userId
       let itemize = false
       let mileageRatePerMile = 0
+      let templateHeader: string | null = null
+      let logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>> = null
       if (profileUserId) {
         const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
         const meta =
@@ -758,6 +929,12 @@ export default function CalendarPage() {
         else if (typeof rr === "string") {
           const p = Number.parseFloat(rr.replace(/[^0-9.]/g, ""))
           if (Number.isFinite(p) && p >= 0) mileageRatePerMile = p
+        }
+        const introRaw = meta.receipt_template_intro
+        templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
+        if (meta.receipt_template_show_logo === true) {
+          const u = typeof meta.receipt_template_logo_url === "string" ? meta.receipt_template_logo_url.trim() : ""
+          if (u) logo = await fetchQuoteLogoForExport(u)
         }
       }
       const receiptMeta = parseCalendarEventReceiptMeta(ev.metadata)
@@ -788,6 +965,8 @@ export default function CalendarPage() {
         jobTitle: ev.title,
         completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
         amountLabel: amount,
+        templateHeader,
+        logo,
         templateFooter: calendarReceiptTemplate,
         scheduledDurationLabel: sections.scheduledDurationLabel,
         quoteLineItems: sections.quoteLines,
@@ -1561,6 +1740,15 @@ export default function CalendarPage() {
             Settings
           </button>
         )}
+        {showCalCompletionSettings && (
+          <button
+            type="button"
+            onClick={() => setShowCompletionSettingsModal(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+          >
+            {completionSettingsButtonLabel}
+          </button>
+        )}
         {showCalReceiptTemplate && (
           <button
             type="button"
@@ -2208,6 +2396,22 @@ export default function CalendarPage() {
           maxWidthPx={520}
         />
       )}
+      {showCompletionSettingsModal && (
+        <PortalSettingsModal
+          title={completionSettingsButtonLabel}
+          items={completionSettingsItems}
+          formValues={completionSettingsFormValues}
+          setFormValue={(id, value) => setCompletionSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
+          isItemVisible={isCompletionSettingsItemVisible}
+          onClose={() => void closeCompletionSettingsModal()}
+          maxWidthPx={520}
+          intro={
+            <p style={{ margin: 0, fontSize: 13, color: theme.text, opacity: 0.85, lineHeight: 1.5 }}>
+              Controls who may message the customer when a job is completed and optional office-manager notifications. Values are stored on your profile.
+            </p>
+          }
+        />
+      )}
       {showCustomizeUser && (
         <>
           <div onClick={() => setShowCustomizeUser(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
@@ -2410,8 +2614,18 @@ export default function CalendarPage() {
           >
             <h3 style={{ margin: "0 0 8px", color: theme.text }}>Complete job</h3>
             <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#6b7280" }}>
-              Mark <strong>{completeFlowEvent.title}</strong> complete. Optionally open your email or SMS app with a receipt message (you send it from your device).
+              Mark <strong>{completeFlowEvent.title}</strong> complete. Receipt email/SMS uses your Tradesman communications channels (same as Conversations/Quotes), not your device mail app.
             </p>
+            <label style={{ display: "block", marginBottom: 10, fontSize: 13, color: theme.text }}>
+              <span style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Completion note (optional)</span>
+              <textarea
+                value={completeCompletionNote}
+                onChange={(e) => setCompleteCompletionNote(e.target.value)}
+                rows={3}
+                placeholder="Visible on the event and included in receipt messages when you send them."
+                style={{ width: "100%", boxSizing: "border-box", padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, fontFamily: "inherit", fontSize: 13 }}
+              />
+            </label>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "14px", color: theme.text }}>
               <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                 <input type="checkbox" checked={receiptEmailCustomer} onChange={(e) => setReceiptEmailCustomer(e.target.checked)} />
@@ -3014,6 +3228,7 @@ export default function CalendarPage() {
                       setReceiptEmailCustomer(false)
                       setReceiptSmsCustomer(false)
                       setReceiptEmailSelf(false)
+                      setCompleteCompletionNote("")
                       setCompleteFlowEvent(selectedEvent)
                       setSelectedEvent(null)
                     }}

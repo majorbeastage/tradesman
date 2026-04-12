@@ -309,6 +309,12 @@ export const PORTAL_ITEM_IDS_HIDDEN_WHEN_AI_DISABLED = new Set([
   "ar_use_ai_customer_message_require_approval",
   "ar_customer_reminder_use_ai",
   "ar_customer_reminder_use_ai_require_approval",
+  "quote_auto_reply_ai",
+  "quote_auto_reply_ai_brief",
+  "quote_auto_reply_ai_require_approval",
+  "quote_auto_phone_tts_script",
+  "quote_auto_phone_tts_require_approval",
+  "quote_auto_scheduling_respect_calendar",
 ])
 
 export function stripAiPortalItems(items: PortalSettingItem[], aiAutomationsEnabled: boolean): PortalSettingItem[] {
@@ -482,6 +488,19 @@ function adjustConversationAutomaticRepliesForAi(items: PortalSettingItem[], aiO
   })
 }
 
+function adjustQuoteAutomaticRepliesForAi(items: PortalSettingItem[], aiOn: boolean): PortalSettingItem[] {
+  if (aiOn) return items
+  return items.map((it) => {
+    if (it.id === "quote_auto_phone_delivery" && it.options?.length) {
+      return {
+        ...it,
+        options: it.options.filter((o) => o !== CONV_AUTO_PHONE_TTS_OPTION),
+      }
+    }
+    return it
+  })
+}
+
 /** Canonical conversation statuses (edit UI + automations). Legacy free text maps to these where possible. */
 export const CONVERSATION_STATUS_OPTIONS = ["Open", "Contacted", "Pending info", "Qualified", "Lost"] as const
 
@@ -517,6 +536,7 @@ const CONTROL_ITEMS_MERGE_DEFAULTS_WHEN_EMPTY = new Set([
   "quotes:estimate_line_items",
   "quotes:job_types",
   "calendar:receipt_template",
+  "calendar:completion_settings",
 ])
 
 function mergeMissingRecurrencePortalItems(
@@ -582,6 +602,9 @@ export function getControlItemsForUser(
   let out = stripAiPortalItems(visible, aiOn)
   if (key === "conversations:automatic_replies") {
     out = adjustConversationAutomaticRepliesForAi(out, aiOn)
+  }
+  if (key === "quotes:auto_response_options") {
+    out = adjustQuoteAutomaticRepliesForAi(out, aiOn)
   }
   return out.map((item) => ({
     ...item,
@@ -740,7 +763,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'custom_header_button', label: 'Custom button (next to Settings)', type: 'header_button' },
     { id: 'add_customer_to_quotes', label: 'Add Customer to quotes', type: 'button' },
     { id: 'add_quote_to_calendar', label: 'Add quote to calendar (modal)', type: 'button' },
-    { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
+    { id: 'auto_response_options', label: 'Automatic replies', type: 'button' },
     { id: 'quote_settings', label: 'Quote settings', type: 'button' },
     { id: 'estimate_template', label: 'Estimate template', type: 'button' },
     { id: 'estimate_line_items', label: 'Estimate line items', type: 'button' },
@@ -754,6 +777,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'auto_response_options', label: 'Auto Response Options', type: 'button' },
     { id: 'job_types', label: 'Job Types', type: 'button' },
     { id: 'working_hours', label: 'Settings (working hours)', type: 'button' },
+    { id: 'completion_settings', label: 'Job completion', type: 'button' },
     { id: 'receipt_template', label: 'Receipt template', type: 'button' },
     { id: 'customize_user', label: 'Customize user (ribbon / auto-assign)', type: 'button' },
     { id: 'job_type', label: 'Job type', type: 'dropdown' },
@@ -826,7 +850,16 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
     'job_types',
     'status',
   ],
-  calendar: ['add_item_to_calendar', 'auto_response_options', 'job_types', 'working_hours', 'receipt_template', 'customize_user', 'job_type'],
+  calendar: [
+    'add_item_to_calendar',
+    'auto_response_options',
+    'job_types',
+    'working_hours',
+    'completion_settings',
+    'receipt_template',
+    'customize_user',
+    'job_type',
+  ],
   settings: ['custom_fields'],
   dashboard: [],
   customers: [],
@@ -957,6 +990,31 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
 /** Receipt PDF template (Calendar); notes map to profiles.document_template_receipt */
 export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
+    id: "receipt_template_carry_from_estimate",
+    type: "checkbox",
+    label: "When saving, copy logo from Quotes → Estimate template (if estimate has “show logo” on)",
+    defaultChecked: false,
+  },
+  {
+    id: "receipt_template_intro",
+    type: "custom_field",
+    label: "Intro / header on receipt PDF (plain text, below title)",
+    customFieldSubtype: "textarea",
+  },
+  {
+    id: "receipt_template_show_logo",
+    type: "checkbox",
+    label: "Show company logo on receipt PDF",
+    defaultChecked: false,
+  },
+  {
+    id: "receipt_template_logo_url",
+    type: "custom_field",
+    label: "Logo image URL (HTTPS); can be filled from estimate via checkbox above",
+    customFieldSubtype: "text",
+    dependency: { dependsOnItemId: "receipt_template_show_logo", showWhenValue: "checked" },
+  },
+  {
     id: "receipt_template_notes",
     type: "custom_field",
     label: "Footer note on receipt PDF (plain text)",
@@ -984,30 +1042,128 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   },
 ]
 
-/** Default items for Quotes Auto Response Options (matches user portal built-in options) */
+/** Quotes → Automatic replies (same shape as Conversations; ends with quote-specific scheduling / qualification). */
 export const DEFAULT_QUOTE_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
-  { id: 'ar_on_quote_created', type: 'checkbox', label: 'When a quote is created — send an auto response to the customer', defaultChecked: false },
-  { id: 'ar_on_quote_sent', type: 'checkbox', label: 'When a quote is sent — send an auto response', defaultChecked: false },
-  { id: 'ar_on_quote_viewed', type: 'checkbox', label: 'When a quote is viewed (by customer) — send an auto response', defaultChecked: false },
-  { id: 'ar_delay_minutes', type: 'custom_field', label: 'Delay before sending (minutes)', customFieldSubtype: 'text' },
   {
-    id: "ar_use_ai_customer_message",
+    id: "quote_auto_reply_enabled",
     type: "checkbox",
-    label: "Use AI to draft customer auto-response messages (when quote auto-response sending is enabled in product)",
+    label: "Allow automatic replies",
     defaultChecked: false,
-    dependencyMode: "any",
+  },
+  {
+    id: "quote_auto_reply_method",
+    type: "dropdown",
+    label: "Contact method",
+    options: ["Email", "Text message", "Phone call"],
+    dependency: { dependsOnItemId: "quote_auto_reply_enabled", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_reply_message",
+    type: "custom_field",
+    label: "Message (email or SMS)",
+    customFieldSubtype: "textarea",
+    dependency: {
+      dependsOnItemId: "quote_auto_reply_method",
+      showWhenValue: "Email",
+      showWhenValues: ["Email", "Text message"],
+    },
+  },
+  {
+    id: "quote_auto_reply_ai",
+    type: "checkbox",
+    label: "Allow AI automation for Auto Reply (uses quote + customer data + your summary)",
+    defaultChecked: false,
+    dependency: {
+      dependsOnItemId: "quote_auto_reply_method",
+      showWhenValue: "Email",
+      showWhenValues: ["Email", "Text message"],
+    },
+  },
+  {
+    id: "quote_auto_reply_ai_require_approval",
+    type: "checkbox",
+    label: "Require user approval before sending AI-drafted email or SMS",
+    defaultChecked: true,
+    dependency: { dependsOnItemId: "quote_auto_reply_ai", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_reply_ai_brief",
+    type: "custom_field",
+    label: "Summary for AI (what you want communicated)",
+    customFieldSubtype: "textarea",
+    dependency: { dependsOnItemId: "quote_auto_reply_ai", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_phone_allow_automation",
+    type: "checkbox",
+    label: "Allow automated voice message",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "quote_auto_reply_method", showWhenValue: "Phone call" },
+  },
+  {
+    id: "quote_auto_phone_delivery",
+    type: "dropdown",
+    label: "Voice delivery",
+    options: ["Record in app", "Recording URL", CONV_AUTO_PHONE_TTS_OPTION],
+    dependency: { dependsOnItemId: "quote_auto_phone_allow_automation", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_phone_recording_url",
+    type: "custom_field",
+    label: "Recording URL (or filled after in-app record)",
+    customFieldSubtype: "text",
+    dependency: {
+      dependsOnItemId: "quote_auto_phone_delivery",
+      showWhenValue: "Recording URL",
+      showWhenValues: ["Recording URL", "Record in app"],
+    },
+  },
+  {
+    id: "quote_auto_phone_tts_script",
+    type: "custom_field",
+    label: "Script for AI text-to-speech call",
+    customFieldSubtype: "textarea",
+    dependency: { dependsOnItemId: "quote_auto_phone_delivery", showWhenValue: CONV_AUTO_PHONE_TTS_OPTION },
+  },
+  {
+    id: "quote_auto_phone_tts_require_approval",
+    type: "checkbox",
+    label: "Require user approval before placing AI text-to-speech call",
+    defaultChecked: false,
+    dependencyMode: "all",
     dependencies: [
-      { dependsOnItemId: "ar_on_quote_created", showWhenValue: "checked" },
-      { dependsOnItemId: "ar_on_quote_sent", showWhenValue: "checked" },
-      { dependsOnItemId: "ar_on_quote_viewed", showWhenValue: "checked" },
+      { dependsOnItemId: "quote_auto_phone_allow_automation", showWhenValue: "checked" },
+      { dependsOnItemId: "quote_auto_phone_delivery", showWhenValue: CONV_AUTO_PHONE_TTS_OPTION },
     ],
   },
   {
-    id: "ar_use_ai_customer_message_require_approval",
+    id: "quote_auto_notify_when_qualified",
     type: "checkbox",
-    label: "Require user approval before sending AI-drafted auto-response to the customer",
+    label: "When quote status is Qualified — send notification to the customer (per contact method)",
     defaultChecked: false,
-    dependency: { dependsOnItemId: "ar_use_ai_customer_message", showWhenValue: "checked" },
+    dependency: { dependsOnItemId: "quote_auto_reply_enabled", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_qualified_criteria",
+    type: "dropdown",
+    label: "What decides Quote is Qualified",
+    options: ["Signed quote attachment returned", "Manual approval", "AI decision"],
+    dependency: { dependsOnItemId: "quote_auto_notify_when_qualified", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_scheduling_respect_calendar",
+    type: "checkbox",
+    label:
+      "When using AI for scheduling, respect calendar rules (duplicate times, job-type assignees, office-manager routing)",
+    defaultChecked: true,
+    dependency: { dependsOnItemId: "quote_auto_reply_ai", showWhenValue: "checked" },
+  },
+  {
+    id: "quote_auto_scheduling_hold_message",
+    type: "custom_field",
+    label: 'Hold message if time cannot be auto-booked (e.g. "We will reach back out to schedule…")',
+    customFieldSubtype: "textarea",
+    dependency: { dependsOnItemId: "quote_auto_reply_enabled", showWhenValue: "checked" },
   },
 ]
 
@@ -1032,6 +1188,29 @@ export const DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS: PortalSettingItem[] = [
 /** Default items for Calendar Settings (working hours / general settings) */
 export const DEFAULT_CALENDAR_WORKING_HOURS_ITEMS: PortalSettingItem[] = [
   { id: 'no_duplicate_times', type: 'checkbox', label: 'Do not allow duplicate times', defaultChecked: false },
+]
+
+/** Calendar → Job completion (receipts, permissions, notifications). Values stored in profiles.metadata.calendarCompletionValues */
+export const DEFAULT_CALENDAR_COMPLETION_ITEMS: PortalSettingItem[] = [
+  {
+    id: "calendar_completion_worker_may_message_customer",
+    type: "checkbox",
+    label: "Assigned user may send completion receipt to the customer (email/SMS through the platform)",
+    defaultChecked: false,
+  },
+  {
+    id: "calendar_completion_notify_office_manager",
+    type: "checkbox",
+    label: "Notify office manager when a job is marked complete",
+    defaultChecked: true,
+  },
+  {
+    id: "calendar_completion_om_copy_customer_receipt",
+    type: "checkbox",
+    label: "When a receipt is sent to the customer, send a copy to the office manager email (if configured)",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "calendar_completion_worker_may_message_customer", showWhenValue: "checked" },
+  },
 ]
 
 /** Default recurrence frequency options (8 items) */
@@ -1239,6 +1418,7 @@ export function getDefaultControlItems(tabId: string, controlId: string): Portal
   if (key === 'calendar:auto_response_options') return [...DEFAULT_CALENDAR_AUTO_RESPONSE_ITEMS]
   if (key === 'calendar:working_hours') return [...DEFAULT_CALENDAR_WORKING_HOURS_ITEMS]
   if (key === "calendar:receipt_template") return [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
+  if (key === "calendar:completion_settings") return [...DEFAULT_CALENDAR_COMPLETION_ITEMS]
   if (key === 'calendar:add_item_to_calendar') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'calendar:job_types') return [...DEFAULT_RECURRENCE_PORTAL_ITEMS]
   if (key === 'calendar:customize_user') return []

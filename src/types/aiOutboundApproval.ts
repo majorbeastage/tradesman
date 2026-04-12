@@ -27,6 +27,8 @@ export const PORTAL_ITEM_IDS_AI_OUTBOUND_REQUIRE_APPROVAL = [
   "conv_auto_phone_tts_require_approval",
   "ar_use_ai_customer_message_require_approval",
   "ar_customer_reminder_use_ai_require_approval",
+  "quote_auto_reply_ai_require_approval",
+  "quote_auto_phone_tts_require_approval",
 ] as const
 
 export function parsePendingAiConsumerReply(raw: unknown): PendingAiConsumerReplyV1 | null {

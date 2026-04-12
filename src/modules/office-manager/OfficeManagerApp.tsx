@@ -30,6 +30,7 @@ const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "auto_response", label: "Auto Response Options" },
   { id: "job_types", label: "Job Types" },
   { id: "settings", label: "Settings" },
+  { id: "completion_settings", label: "Job completion" },
   { id: "receipt_template", label: "Receipt template" },
   { id: "customize_user", label: "Customize user" },
 ]
@@ -45,7 +46,7 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
 
 const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_customer", label: "Add Customer to quotes" },
-  { id: "auto_response", label: "Auto Response Options" },
+  { id: "auto_response", label: "Automatic replies" },
   { id: "settings", label: "Settings" },
   { id: "estimate_template", label: "Estimate template" },
   { id: "estimate_line_items", label: "Estimate line items" },
