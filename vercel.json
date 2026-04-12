@@ -20,7 +20,8 @@
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
-    "api/platform-tools.ts": { "maxDuration": 60 }
+    "api/platform-tools.ts": { "maxDuration": 60 },
+    "api/sms-consent.ts": { "includeFiles": "public/sms-consent.html" }
   },
   "rewrites": [
     {
@@ -43,7 +44,7 @@
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
-    { "source": "/sms-consent", "destination": "/sms-consent.html" },
+    { "source": "/sms-consent", "destination": "/api/sms-consent" },
     { "source": "/about", "destination": "/" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" }
   ]
