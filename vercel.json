@@ -43,7 +43,7 @@
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
     { "source": "/privacy", "destination": "/" },
     { "source": "/terms", "destination": "/" },
-    { "source": "/sms-consent", "destination": "/" },
+    { "source": "/sms-consent", "destination": "/sms-consent.html" },
     { "source": "/about", "destination": "/" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" }
   ]
