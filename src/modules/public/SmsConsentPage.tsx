@@ -13,7 +13,7 @@ import { PublicLegalNav } from "./PublicLegalNav"
 
 /**
  * In-app SMS consent (loads optional copy from platform_settings).
- * Production https://…/sms-consent is served as static `public/sms-consent.html` via Vercel so A2P reviewers and crawlers see full text without JavaScript.
+ * Production https://…/sms-consent is rewritten to GET /api/platform-tools?__route=sms-consent, which returns `public/sms-consent.html` (no extra serverless function slot).
  */
 export default function SmsConsentPage() {
   const [content, setContent] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })

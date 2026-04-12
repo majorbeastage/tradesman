@@ -3,8 +3,11 @@
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
+ * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (A2P; bundled public/sms-consent.html)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { existsSync, readFileSync } from "fs"
+import { join } from "path"
 import { createClient } from "@supabase/supabase-js"
 import {
   createServiceSupabase,
@@ -25,6 +28,17 @@ import {
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+
+function loadSmsConsentHtml(): string {
+  const candidates = [
+    join(process.cwd(), "public", "sms-consent.html"),
+    join(process.cwd(), "dist", "sms-consent.html"),
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) return readFileSync(p, "utf8")
+  }
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>SMS consent</title></head><body><p>SMS consent document is not deployed. Ensure public/sms-consent.html exists and vercel.json includes it in api/platform-tools.ts includeFiles.</p></body></html>`
+}
 
 /** Optional body fields when Vercel has no SUPABASE_* (same public values as the app). */
 function supabasePublicFromPostBody(req: VercelRequest): { url?: string; anon?: string } {
@@ -888,10 +902,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const route = pickFirstString(req.query?.__route, req.query?.route).toLowerCase()
 
+  if (req.method === "GET" && route === "sms-consent") {
+    const html = loadSmsConsentHtml()
+    res.setHeader("Content-Type", "text/html; charset=utf-8")
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=3600")
+    res.status(200).send(html)
+    return
+  }
+
   if (req.method === "GET") {
     res.status(200).json({
       ok: true,
       route: "platform-tools",
+      getHtml: ["sms-consent"],
       post: [
         "public-lead",
         "ai-summarize",
