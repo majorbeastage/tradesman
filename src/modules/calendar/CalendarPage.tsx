@@ -5,6 +5,7 @@ import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId 
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
@@ -264,6 +265,13 @@ export default function CalendarPage() {
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
+  }, [scopeCtx?.clients, userId])
+
+  const teamMapUserIds = useMemo(() => {
+    if (scopeCtx?.clients?.length) {
+      return Array.from(new Set(scopeCtx.clients.map((c) => c.userId).filter(Boolean)))
+    }
+    return userId ? [userId] : []
   }, [scopeCtx?.clients, userId])
 
   // Add item form
@@ -2706,44 +2714,7 @@ export default function CalendarPage() {
       )}
 
       {showTeamMapModal && (
-        <>
-          <div
-            role="presentation"
-            onClick={() => setShowTeamMapModal(false)}
-            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 10000 }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              width: "min(480px, 92vw)",
-              maxHeight: "80vh",
-              overflow: "auto",
-              background: "#fff",
-              borderRadius: 10,
-              padding: 20,
-              zIndex: 10001,
-              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 10px", color: theme.text }}>Team map</h3>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-              Live technician locations are planned here: last-known GPS from users who opt in under <strong>Account → Mobile app</strong>, plus optional fleet integrations (Samsara, Geotab, etc.) configured later in admin.
-            </p>
-            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
-              Map tiles and background tracking are not enabled in this build. Office managers can still use calendar completion controls and receipt policies from <strong>Calendar → Job completion</strong> settings.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowTeamMapModal(false)}
-              style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", fontWeight: 600, cursor: "pointer" }}
-            >
-              Close
-            </button>
-          </div>
-        </>
+        <TeamLocationsMapModal userIds={teamMapUserIds} onClose={() => setShowTeamMapModal(false)} />
       )}
 
       {selectedEvent && (

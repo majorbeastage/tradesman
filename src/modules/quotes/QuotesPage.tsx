@@ -5,6 +5,8 @@ import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId 
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import TwilioBridgeCallButton from "../../components/TwilioBridgeCallButton"
+import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStatuses"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
@@ -1892,6 +1894,28 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     await persistEstimatePresetsToProfile(merged)
   }
 
+  async function persistQuoteStatus(nextStatus: string) {
+    if (!supabase || !selectedQuoteId || !selectedQuote) return
+    const prev = (selectedQuote as QuoteRow).status ?? ""
+    if (prev === nextStatus) return
+    const { error } = await supabase
+      .from("quotes")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("id", selectedQuoteId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setSelectedQuote((p: QuoteRow | null) => (p && typeof p === "object" ? { ...p, status: nextStatus } : p))
+    void loadQuotes()
+    if (session?.access_token) {
+      const { error: fnErr } = await supabase.functions.invoke("notify-quote-status", {
+        body: { quoteId: selectedQuoteId, previousStatus: prev, newStatus: nextStatus },
+      })
+      if (fnErr) console.warn("notify-quote-status:", fnErr.message)
+    }
+  }
+
   async function persistQuoteJobType(jobTypeId: string) {
     if (!supabase || !selectedQuoteId) return
     const v = jobTypeId.trim() || null
@@ -2849,10 +2873,33 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                 <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
                               </span>
                               {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
-                                <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
+                                <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                  <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
+                                  <TwilioBridgeCallButton
+                                    customerPhone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
+                                    quoteOwnerUserId={userId}
+                                    compact
+                                  />
+                                </span>
                               ) : null}
                             </p>
-                            <p style={{ margin: 0 }}><strong>Status:</strong> {selectedQuote.status ?? "—"}</p>
+                            <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
+                              <strong style={{ flexShrink: 0 }}>Status:</strong>
+                              <select
+                                value={(() => {
+                                  const raw = (selectedQuote.status ?? "draft").toLowerCase()
+                                  return QUOTE_STATUS_SELECT_OPTIONS.some((o) => o.value === raw) ? raw : "draft"
+                                })()}
+                                onChange={(e) => void persistQuoteStatus(e.target.value)}
+                                style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 160, maxWidth: "100%" }}
+                              >
+                                {QUOTE_STATUS_SELECT_OPTIONS.map((o) => (
+                                  <option key={o.value} value={o.value}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                             {showQuotesJobTypesPanel ? (
                               <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
                                 <strong style={{ flexShrink: 0 }}>Quote job type:</strong>

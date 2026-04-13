@@ -6,6 +6,12 @@ const LEAD_STATUSES = ["New", "Contacted", "Qualified", "Lost"] as const
 /** Quote / job pipeline — align with common DB values; user can add custom in UI later. */
 const QUOTE_STATUSES = ["draft", "sent", "viewed", "accepted", "declined", "expired", "scheduled", "completed"] as const
 
+/** Quote detail status `<select>` — values must match Alerts → Quotes status checkboxes (lowercase). */
+export const QUOTE_STATUS_SELECT_OPTIONS: { value: string; label: string }[] = QUOTE_STATUSES.map((s) => ({
+  value: s,
+  label: s.charAt(0).toUpperCase() + s.slice(1),
+}))
+
 const CALENDAR_STATUSES = ["Scheduled", "In progress", "Completed", "Cancelled"] as const
 
 export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {

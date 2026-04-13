@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
+import { useAuth } from "../contexts/AuthContext"
 import { requestGpsPermission, requestPushPermissionAndRegister, isNativeApp } from "../lib/capacitorMobile"
 
 const CARD = {
@@ -17,12 +18,15 @@ type Props = {
 }
 
 export default function MobileAppPreferencesCard({ profileUserId }: Props) {
+  const { user } = useAuth()
+  const canTestPushThisDevice = !!user?.id && user.id === profileUserId
   const [pushOptIn, setPushOptIn] = useState(false)
   const [gpsOptIn, setGpsOptIn] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [permMsg, setPermMsg] = useState<string | null>(null)
+  const [testPushBusy, setTestPushBusy] = useState(false)
 
   useEffect(() => {
     if (!profileUserId || !supabase) return
@@ -93,6 +97,33 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
           >
             Request push permission on this device
           </button>
+          {canTestPushThisDevice && pushOptIn ? (
+            <button
+              type="button"
+              disabled={saving || testPushBusy || !supabase}
+              onClick={async () => {
+                setPermMsg(null)
+                setTestPushBusy(true)
+                try {
+                  const { data, error } = await supabase!.functions.invoke("push-test", {
+                    body: { title: "Tradesman test", body: "Push pipeline OK." },
+                  })
+                  if (error) setPermMsg(error.message)
+                  else {
+                    const d = data as { ok?: boolean; results?: { ok: boolean; detail: string }[]; error?: string }
+                    if (d?.error) setPermMsg(d.error)
+                    else if (d?.ok) setPermMsg("Test push sent. Check this device.")
+                    else setPermMsg(d?.results?.map((r) => r.detail).join(" · ") || "Push test failed — see Supabase logs / FCM secret.")
+                  }
+                } finally {
+                  setTestPushBusy(false)
+                }
+              }}
+              style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600, background: "#ecfdf5", borderColor: "#6ee7b7" }}
+            >
+              {testPushBusy ? "Sending test…" : "Send test push (this device)"}
+            </button>
+          ) : null}
           <label style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 600, color: theme.text, cursor: "pointer" }}>
             <input
               type="checkbox"

@@ -6,11 +6,13 @@ import App from './App.tsx'
 import { ErrorBoundary } from './ErrorBoundary'
 import { AuthProvider } from './contexts/AuthContext'
 import { LocaleProvider } from './i18n/LocaleContext'
+import NativeMobilePipeline from './components/NativeMobilePipeline'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
+        <NativeMobilePipeline />
         <LocaleProvider>
           <App />
         </LocaleProvider>
