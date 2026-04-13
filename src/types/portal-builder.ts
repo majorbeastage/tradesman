@@ -5,6 +5,8 @@ export type Client = {
   slug: string | null
   created_at?: string
   updated_at?: string
+  /** Bulk-audience portal templates; keys like __all_profiles__. See supabase/clients-portal-config-templates.sql */
+  portal_config_templates?: Record<string, PortalConfig> | null
 }
 
 /** Which tabs show on User or Office Manager portal */
@@ -428,6 +430,14 @@ function isSinglePortalDependencySatisfied(
   const depId = dep.dependsOnItemId
   const depItem = allItems.find((i) => i.id === depId)
   let depValue = formValues[depId] ?? ""
+  if (depItem?.type === "checkbox") {
+    const raw = String(depValue).trim()
+    if (!raw) {
+      depValue = depItem.defaultChecked ? "checked" : "unchecked"
+    }
+  } else if (depItem?.type === "dropdown" && !String(depValue).trim() && depItem.options?.length) {
+    depValue = depItem.options[0]
+  }
   if (depItem?.type === "custom_field") depValue = (depValue || "").trim() ? "filled" : "empty"
   const { showWhenValue, showWhenValues } = dep
   if (depItem?.type === "dropdown" && Array.isArray(showWhenValues) && showWhenValues.length > 0) {
