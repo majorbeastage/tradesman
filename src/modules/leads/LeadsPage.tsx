@@ -19,6 +19,8 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { useLocale } from "../../i18n/LocaleContext"
+import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+import CustomerCallButton from "../../components/CustomerCallButton"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 
@@ -1345,6 +1347,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
           >
             Settings
           </button>
+          {userId ? <TabNotificationAlertsButton tab="leads" profileUserId={userId} /> : null}
           <button
             type="button"
             onClick={() => setShowLeadFilterPrefs(true)}
@@ -2333,8 +2336,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 <p style={{ margin: 0 }}>
                                   <strong>Name:</strong> {detailForm.customerName || "—"}
                                 </p>
-                                <p style={{ margin: 0 }}>
-                                  <strong>Phone:</strong> {detailForm.phone || "—"}
+                                <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                                  <span>
+                                    <strong>Phone:</strong> {detailForm.phone || "—"}
+                                  </span>
+                                  {detailForm.phone?.trim() ? <CustomerCallButton phone={detailForm.phone} compact /> : null}
                                 </p>
                                 <p style={{ margin: 0 }}>
                                   <strong>Email:</strong> {detailForm.email || "—"}

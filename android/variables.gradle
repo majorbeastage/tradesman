@@ -5,7 +5,9 @@ ext {
     androidxActivityVersion = '1.11.0'
     androidxAppCompatVersion = '1.7.1'
     androidxCoordinatorLayoutVersion = '1.3.0'
-    androidxCoreVersion = '1.17.0'
+    // Capacitor / AppCompat need core ≥1.13 (e.g. OnUserLeaveHintProvider). Use current stable;
+    // Windows AAPT2 issues are mitigated by pinning AGP <8.13 in android/build.gradle + postinstall align script.
+    androidxCoreVersion = '1.15.0'
     androidxFragmentVersion = '1.8.9'
     coreSplashScreenVersion = '1.2.0'
     androidxWebkitVersion = '1.14.0'

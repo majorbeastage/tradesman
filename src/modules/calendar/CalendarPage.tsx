@@ -3,6 +3,8 @@ import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
+import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+import CustomerCallButton from "../../components/CustomerCallButton"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
@@ -216,7 +218,7 @@ function normalizeCalendarEventRow(raw: unknown): CalendarEvent {
 }
 
 export default function CalendarPage() {
-  const { userId: authUserId, user: authUser } = useAuth()
+  const { userId: authUserId, user: authUser, role: authRole } = useAuth()
   const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
@@ -240,6 +242,7 @@ export default function CalendarPage() {
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
+  const [showTeamMapModal, setShowTeamMapModal] = useState(false)
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
   const [calendarCompletionProfile, setCalendarCompletionProfile] = useState<Record<string, string>>({})
@@ -1769,6 +1772,16 @@ export default function CalendarPage() {
         {customActionButtons.map((btn) => (
           <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
         ))}
+        {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
+        {(authRole === "office_manager" || authRole === "admin") && (
+          <button
+            type="button"
+            onClick={() => setShowTeamMapModal(true)}
+            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#f0fdf4", cursor: "pointer", color: theme.text, fontWeight: 600 }}
+          >
+            Team map (beta)
+          </button>
+        )}
       </div>
 
       {/* Calendar area: view switcher + expand + job types */}
@@ -2636,7 +2649,7 @@ export default function CalendarPage() {
                   <span style={{ fontSize: "12px", color: "#b45309" }}>— none on file</span>
                 )}
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", flexWrap: "wrap" }}>
                 <input type="checkbox" checked={receiptSmsCustomer} onChange={(e) => setReceiptSmsCustomer(e.target.checked)} />
                 Send receipt to customer SMS
                 {completeCustomerPhone ? (
@@ -2644,6 +2657,7 @@ export default function CalendarPage() {
                 ) : (
                   <span style={{ fontSize: "12px", color: "#b45309" }}>— none on file</span>
                 )}
+                {completeCustomerPhone?.trim() ? <CustomerCallButton phone={completeCustomerPhone} compact /> : null}
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                 <input type="checkbox" checked={receiptEmailSelf} onChange={(e) => setReceiptEmailSelf(e.target.checked)} />
@@ -2687,6 +2701,47 @@ export default function CalendarPage() {
                 {completeBusy ? "Saving…" : "Confirm complete"}
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {showTeamMapModal && (
+        <>
+          <div
+            role="presentation"
+            onClick={() => setShowTeamMapModal(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 10000 }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "min(480px, 92vw)",
+              maxHeight: "80vh",
+              overflow: "auto",
+              background: "#fff",
+              borderRadius: 10,
+              padding: 20,
+              zIndex: 10001,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 10px", color: theme.text }}>Team map</h3>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+              Live technician locations are planned here: last-known GPS from users who opt in under <strong>Account → Mobile app</strong>, plus optional fleet integrations (Samsara, Geotab, etc.) configured later in admin.
+            </p>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
+              Map tiles and background tracking are not enabled in this build. Office managers can still use calendar completion controls and receipt policies from <strong>Calendar → Job completion</strong> settings.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowTeamMapModal(false)}
+              style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", fontWeight: 600, cursor: "pointer" }}
+            >
+              Close
+            </button>
           </div>
         </>
       )}

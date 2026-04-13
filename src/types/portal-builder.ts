@@ -222,6 +222,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "profile", label: "Business profile (email, name, website, primary phone)" },
   { id: "business_address", label: "Business address" },
   { id: "service_area", label: "Service radius (miles from business address)" },
+  { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },
   { id: "business_hours", label: "Timezone & business hours" },
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
   { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },

@@ -3,6 +3,8 @@ import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
+import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+import CustomerCallButton from "../../components/CustomerCallButton"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
@@ -2385,6 +2387,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
             {customActionButtons.map((btn) => (
               <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
             ))}
+            {userId ? <TabNotificationAlertsButton tab="quotes" profileUserId={userId} /> : null}
           </div>
         </div>
 
@@ -2841,7 +2844,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                 Notes
                               </button>
                             </div>
-                            <p style={{ margin: 0 }}><strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}</p>
+                            <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                              <span>
+                                <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
+                              </span>
+                              {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
+                                <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
+                              ) : null}
+                            </p>
                             <p style={{ margin: 0 }}><strong>Status:</strong> {selectedQuote.status ?? "—"}</p>
                             {showQuotesJobTypesPanel ? (
                               <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>

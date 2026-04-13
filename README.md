@@ -1,5 +1,11 @@
 # React + TypeScript + Vite
 
+## Android app (beginner)
+
+This repo includes a **Capacitor** Android wrapper. If you are new to Android Studio, use the step-by-step guide: **[android/README.md](android/README.md)**.
+
+---
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

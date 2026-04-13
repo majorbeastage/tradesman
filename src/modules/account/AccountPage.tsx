@@ -7,6 +7,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
+import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -656,6 +657,11 @@ export function AccountProfilePanel({
               )}
             </div>
             </Fragment>
+              )
+              if (sectionId === "mobile_app") return (
+                <Fragment key={sectionId}>
+                  <MobileAppPreferencesCard profileUserId={profileUserId} />
+                </Fragment>
               )
               if (sectionId === "business_hours") return (
             <Fragment key={sectionId}>

@@ -95,7 +95,17 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
             </button>
           </div>
         )}
-        <main style={{ flex: 1, padding: isMobile ? "12px" : "20px", minWidth: 0, background: theme.charcoalSmoke }}>{children}</main>
+        <main
+          className="app-main-safe"
+          style={{
+            flex: 1,
+            padding: isMobile ? "12px calc(12px + env(safe-area-inset-right, 0)) calc(12px + env(safe-area-inset-bottom, 0)) calc(12px + env(safe-area-inset-left, 0))" : "20px",
+            minWidth: 0,
+            background: theme.charcoalSmoke,
+          }}
+        >
+          {children}
+        </main>
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
       </div>
     </div>

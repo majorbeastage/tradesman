@@ -7,7 +7,8 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.0'
+        // Pin below 8.13: bundled AAPT2 8.13.x can crash on Windows compiling androidx.core drawables.
+        classpath 'com.android.tools.build:gradle:8.10.0'
         classpath 'com.google.gms:google-services:4.4.4'
 
         // NOTE: Do not place your application dependencies here; they belong
@@ -21,6 +22,12 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+    }
+    configurations.configureEach {
+        resolutionStrategy {
+            force "androidx.core:core:${rootProject.ext.androidxCoreVersion}"
+            force "androidx.core:core-ktx:${rootProject.ext.androidxCoreVersion}"
+        }
     }
 }
 

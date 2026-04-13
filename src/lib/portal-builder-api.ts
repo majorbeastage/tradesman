@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Client, PortalTab, CustomField, CustomFieldDependency, DropdownOption } from '../types/portal-builder'
+import type { Client, PortalConfig, PortalTab, CustomField, CustomFieldDependency, DropdownOption } from '../types/portal-builder'
 
 export type { Client, PortalTab, CustomField, CustomFieldDependency, DropdownOption }
 
@@ -25,6 +25,32 @@ export async function createClient(name: string, slug: string | null = null): Pr
 export async function updateClient(id: string, updates: { name?: string; slug?: string | null }): Promise<void> {
   if (!supabase) throw new Error('Supabase not configured')
   const { error } = await supabase.from(CLIENTS).update(updates).eq('id', id)
+  if (error) throw error
+}
+
+/** Bulk-audience portal templates stored on clients (does not update profiles). */
+export async function fetchPortalConfigTemplates(clientId: string): Promise<Record<string, PortalConfig>> {
+  if (!supabase) return {}
+  const { data, error } = await supabase.from(CLIENTS).select('portal_config_templates').eq('id', clientId).maybeSingle()
+  if (error || !data) return {}
+  const raw = data.portal_config_templates
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, PortalConfig> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = v as PortalConfig
+  }
+  return out
+}
+
+export async function savePortalConfigTemplates(
+  clientId: string,
+  templates: Record<string, PortalConfig>
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { error } = await supabase
+    .from(CLIENTS)
+    .update({ portal_config_templates: templates, updated_at: new Date().toISOString() })
+    .eq('id', clientId)
   if (error) throw error
 }
 

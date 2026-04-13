@@ -1,0 +1,26 @@
+/* Capacitor / mobile WebView: safe areas + calmer typography */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  /* iOS safe area — footer/header handled in layout too */
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* Slightly tighter line length on phones */
+@media (max-width: 640px) {
+  .portal-charcoal main {
+    max-width: 100%;
+  }
+
+  .portal-charcoal main table {
+    font-size: 13px;
+  }
+}

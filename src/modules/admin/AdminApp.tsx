@@ -8,6 +8,7 @@ import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
 import { reorderByIndex } from "../../lib/reorderArray"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
+import { fetchPortalConfigTemplates, savePortalConfigTemplates } from "../../lib/portal-builder-api"
 import Sidebar from "../../components/Sidebar"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import AdminUsersSection from "./AdminUsersSection"
@@ -63,8 +64,6 @@ type ProfileRow = {
   /** From admin_users_list when available */
   email?: string | null
 }
-
-/** Batch-edit only: apply config to all profiles. Not used for login or admin auth — login uses the signed-in user's profile. */
 
 /** User dropdown label: prefer email, then display_name, then role + short id */
 function profileOptionLabel(p: ProfileRow): string {
@@ -516,13 +515,15 @@ export default function AdminApp() {
 }
 
 function AdminAppInner() {
-  const { user, signOut } = useAuth()
+  const { user, signOut, clientId } = useAuth()
   const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
+  const [audienceTemplates, setAudienceTemplates] = useState<Record<string, PortalConfig>>({})
   const [selectedId, setSelectedId] = useState<string | null>(ALL_PROFILES_ID)
   const [config, setConfig] = useState<PortalConfig>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [pushingToProfiles, setPushingToProfiles] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [previewPage, setPreviewPage] = useState("dashboard")
@@ -571,6 +572,15 @@ function AdminAppInner() {
     setProfiles(withEmail)
   }, [])
 
+  const loadAudienceTemplates = useCallback(async () => {
+    try {
+      const t = await fetchPortalConfigTemplates(clientId)
+      setAudienceTemplates(t)
+    } catch {
+      setAudienceTemplates({})
+    }
+  }, [clientId])
+
   const filteredProfiles = profiles.filter((p) =>
     profileOptionLabel(p).toLowerCase().includes(userSearchQuery.trim().toLowerCase())
   )
@@ -599,8 +609,8 @@ function AdminAppInner() {
       return
     }
     setLoading(true)
-    loadProfiles().finally(() => setLoading(false))
-  }, [])
+    Promise.all([loadProfiles(), loadAudienceTemplates()]).finally(() => setLoading(false))
+  }, [loadProfiles, loadAudienceTemplates])
 
   useEffect(() => {
     if (!selectedId) {
@@ -609,10 +619,16 @@ function AdminAppInner() {
       return
     }
     if (isBulkPortalAudienceId(selectedId)) {
-      const subset = profilesMatchingPortalAudience(profiles, selectedId)
-      const p0 = subset[0]
-      const raw = p0?.portal_config
-      setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
+      const hasStoredTemplate = Object.prototype.hasOwnProperty.call(audienceTemplates, selectedId)
+      if (hasStoredTemplate) {
+        const raw = audienceTemplates[selectedId]
+        setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {})
+      } else {
+        const subset = profilesMatchingPortalAudience(profiles, selectedId)
+        const p0 = subset[0]
+        const raw = p0?.portal_config
+        setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
+      }
       setHasRemovedSomething(false)
       return
     }
@@ -620,7 +636,7 @@ function AdminAppInner() {
     const raw = p?.portal_config
     setConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {})
     setHasRemovedSomething(false)
-  }, [selectedId, profiles])
+  }, [selectedId, profiles, audienceTemplates])
 
   // When current preview tab is hidden, switch to first visible tab
   const visibleTabIds = getVisibleTabs(config).map((t) => t.tab_id)
@@ -635,29 +651,23 @@ function AdminAppInner() {
     setError("")
     setMessage("")
     if (isBulkPortalAudienceId(selectedId)) {
-      const targets = profilesMatchingPortalAudience(profiles, selectedId)
-      if (targets.length === 0) {
-        setSaving(false)
-        setMessage("No profiles match this audience yet.")
-        return
-      }
-      let failed = 0
-      for (const p of targets) {
-        const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", p.id)
-        if (err) failed++
+      try {
+        const nextTemplates = { ...audienceTemplates, [selectedId]: config }
+        await savePortalConfigTemplates(clientId, nextTemplates)
+        setAudienceTemplates(nextTemplates)
+        setMessage(
+          `Saved template for ${labelForPortalAudience(selectedId)}. No account had their portal settings overwritten — those stay on each user until you use “Apply to matching profiles”.`
+        )
+        setHasRemovedSomething(false)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(
+          msg.includes("portal_config_templates") || msg.includes("column")
+            ? `${msg} If this mentions a missing column, run supabase/clients-portal-config-templates.sql in the Supabase SQL editor.`
+            : msg
+        )
       }
       setSaving(false)
-      const label = labelForPortalAudience(selectedId)
-      setMessage(
-        failed === 0
-          ? `Saved. Portal config applied to ${targets.length} profile(s) (${label}).`
-          : `Saved for ${targets.length - failed} of ${targets.length} profiles. ${failed} failed.`
-      )
-      if (failed === 0) {
-        const targetIds = new Set(targets.map((t) => t.id))
-        setProfiles((prev) => prev.map((p) => (targetIds.has(p.id) ? { ...p, portal_config: config } : p)))
-        setHasRemovedSomething(false)
-      }
       return
     }
     const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", selectedId)
@@ -669,6 +679,39 @@ function AdminAppInner() {
     setMessage("Saved. That user's portal will reflect these visibility settings.")
     setProfiles((prev) => prev.map((p) => (p.id === selectedId ? { ...p, portal_config: config } : p)))
     setHasRemovedSomething(false)
+  }
+
+  async function handlePushTemplateToMatchingProfiles() {
+    if (!supabase || !selectedId || !isBulkPortalAudienceId(selectedId)) return
+    const targets = profilesMatchingPortalAudience(profiles, selectedId)
+    if (targets.length === 0) {
+      setMessage("No profiles match this audience.")
+      return
+    }
+    const label = labelForPortalAudience(selectedId)
+    const ok1 = window.confirm(
+      `Overwrite portal settings for ${targets.length} account(s)?\n\nScope: ${label}\n\nThis replaces each user’s saved portal configuration with what you see in the editor now. Custom per-user settings will be lost unless you have a backup.`
+    )
+    if (!ok1) return
+    const ok2 = window.confirm("Last chance: proceed with overwrite for all matching accounts?")
+    if (!ok2) return
+    if ((hasRemovals(config) || hasRemovedSomething) && !window.confirm("Are you sure you want to remove options?")) return
+    setPushingToProfiles(true)
+    setError("")
+    setMessage("")
+    let failed = 0
+    for (const p of targets) {
+      const { error: err } = await supabase.from("profiles").update({ portal_config: config }).eq("id", p.id)
+      if (err) failed++
+    }
+    setPushingToProfiles(false)
+    if (failed === 0) {
+      const targetIds = new Set(targets.map((t) => t.id))
+      setProfiles((prev) => prev.map((p) => (targetIds.has(p.id) ? { ...p, portal_config: config } : p)))
+      setMessage(`Applied current editor config to ${targets.length} profile(s).`)
+    } else {
+      setError(`Updated ${targets.length - failed} of ${targets.length} profiles; ${failed} failed.`)
+    }
   }
 
   const toggle = (section: "tabs" | "settings" | "dropdowns", key: string) => {
@@ -1326,31 +1369,61 @@ function AdminAppInner() {
         ) : (
           <>
             <AdminSettingBlock id="admin:portal:header">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-              <h1 style={{ color: theme.text, margin: 0 }}>
-                Portal config for{" "}
-                {isBulkPortalAudienceId(selectedId ?? "")
-                  ? labelForPortalAudience(selectedId!)
-                  : selectedProfile
-                    ? profileOptionLabel(selectedProfile)
-                    : "User"}
-              </h1>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  padding: "10px 20px",
-                  background: theme.primary,
-                  color: "white",
-                  border: "none",
-                  borderRadius: 6,
-                  fontWeight: 600,
-                  cursor: saving ? "wait" : "pointer",
-                }}
-              >
-                {saving ? "Saving…" : "Save portal config"}
-              </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+              <div style={{ flex: "1 1 280px" }}>
+                <h1 style={{ color: theme.text, margin: 0 }}>
+                  Portal config for{" "}
+                  {isBulkPortalAudienceId(selectedId ?? "")
+                    ? labelForPortalAudience(selectedId!)
+                    : selectedProfile
+                      ? profileOptionLabel(selectedProfile)
+                      : "User"}
+                </h1>
+                {isBulkPortalAudienceId(selectedId ?? "") && (
+                  <p style={{ color: theme.text, opacity: 0.85, margin: "10px 0 0", fontSize: 13, lineHeight: 1.45, maxWidth: 560 }}>
+                    Saving stores a <strong>template</strong> for this scope on your client record only. It does <strong>not</strong> change
+                    existing users’ portal settings. To push what you see here onto every matching account, use{" "}
+                    <strong>Apply to matching profiles</strong> (with confirmation).
+                  </p>
+                )}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving || pushingToProfiles}
+                  style={{
+                    padding: "10px 20px",
+                    background: theme.primary,
+                    color: "white",
+                    border: "none",
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    cursor: saving || pushingToProfiles ? "wait" : "pointer",
+                  }}
+                >
+                  {saving ? "Saving…" : isBulkPortalAudienceId(selectedId ?? "") ? "Save template" : "Save portal config"}
+                </button>
+                {isBulkPortalAudienceId(selectedId ?? "") && (
+                  <button
+                    type="button"
+                    onClick={handlePushTemplateToMatchingProfiles}
+                    disabled={saving || pushingToProfiles}
+                    style={{
+                      padding: "10px 16px",
+                      background: "#b45309",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 6,
+                      fontWeight: 600,
+                      cursor: saving || pushingToProfiles ? "wait" : "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    {pushingToProfiles ? "Applying…" : "Apply to matching profiles…"}
+                  </button>
+                )}
+              </div>
             </div>
             {message && <p style={{ color: "#059669", margin: 0 }}>{message}</p>}
             {error && <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>}
@@ -1384,7 +1457,9 @@ function AdminAppInner() {
                 }}
               >
                 <div style={{ fontSize: 11, padding: "6px 12px", background: theme.charcoalSmoke, color: "rgba(255,255,255,0.8)" }}>
-                  Preview — what this user sees
+                  {isBulkPortalAudienceId(selectedId ?? "")
+                    ? "Preview — template (each user still uses their own saved settings until you apply)"
+                    : "Preview — what this user sees"}
                 </div>
                 <div style={{ display: "flex", height: 620, minHeight: 620 }}>
                   <div style={{ flexShrink: 0, height: "100%" }}>

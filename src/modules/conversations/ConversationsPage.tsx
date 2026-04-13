@@ -28,6 +28,8 @@ import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationA
 import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
+import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+import CustomerCallButton from "../../components/CustomerCallButton"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
@@ -1650,6 +1652,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 {btn.label}
               </button>
             ))}
+            {userId ? <TabNotificationAlertsButton tab="conversations" profileUserId={userId} /> : null}
           </div>
         </div>
 
@@ -2187,8 +2190,15 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     <p style={{ margin: 0 }}>
                       <strong>Customer:</strong> {selectedConversation.customers?.display_name ?? "—"}
                     </p>
-                    <p style={{ margin: 0 }}>
-                      <strong>Phone(s):</strong> {selectedConversation.customers?.customer_identifiers?.filter((i: any) => i.type === "phone").map((i: any) => i.value).join(", ") || "—"}
+                    <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                      <span>
+                        <strong>Phone(s):</strong>{" "}
+                        {selectedConversation.customers?.customer_identifiers?.filter((i: any) => i.type === "phone").map((i: any) => i.value).join(", ") || "—"}
+                      </span>
+                      {(() => {
+                        const first = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value
+                        return first?.trim() ? <CustomerCallButton phone={String(first)} compact /> : null
+                      })()}
                     </p>
                     <p style={{ margin: 0 }}>
                       <strong>Email(s):</strong> {selectedConversation.customers?.customer_identifiers?.filter((i: any) => i.type === "email").map((i: any) => i.value).join(", ") || "—"}
