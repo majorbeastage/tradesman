@@ -7,8 +7,22 @@ export type BillingProfileMetadata = {
   billing_helcim_customer_code?: string
   /** ISO timestamp of last successful payment applied by automation. */
   billing_last_success_at?: string
-  /** HTTPS URL for Helcim hosted payment / customer portal (shown in Payments tab iframe). */
+  /** Helcim hosted payment / customer portal URL (shown in Payments tab; prefer https for in-app iframe). */
   helcim_pay_portal_url?: string
+}
+
+/** Trim and add https:// when the host was pasted without a scheme. Returns null if empty or not URL-like. */
+export function normalizeHelcimPayPortalUrl(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").trim()
+  if (!t) return null
+  if (/^https?:\/\//i.test(t)) return t
+  if (/^\/\//.test(t)) return `https:${t}`
+  if (!/:\/\//.test(t) && /^[\w.-]+\.\w{2,}(\/|$)/i.test(t)) return `https://${t}`
+  return null
+}
+
+export function helcimPayPortalUrlAllowsIframe(url: string): boolean {
+  return /^https:\/\//i.test(url.trim())
 }
 
 export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata {

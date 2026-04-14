@@ -2,7 +2,11 @@ import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
-import { parseBillingMetadata } from "../../lib/billingProfileMetadata"
+import {
+  helcimPayPortalUrlAllowsIframe,
+  normalizeHelcimPayPortalUrl,
+  parseBillingMetadata,
+} from "../../lib/billingProfileMetadata"
 
 const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_PAYMENT_PORTAL_URL ?? ""
 
@@ -38,7 +42,10 @@ export default function PaymentsPage() {
     }
   }, [userId])
 
-  const safeUrl = portalUrl && /^https:\/\//i.test(portalUrl) ? portalUrl : null
+  const normalizedPortal = portalUrl ? normalizeHelcimPayPortalUrl(portalUrl) : null
+  const iframeUrl = normalizedPortal && helcimPayPortalUrlAllowsIframe(normalizedPortal) ? normalizedPortal : null
+  const openInTabUrl = normalizedPortal && !iframeUrl ? normalizedPortal : null
+  const invalidPortal = Boolean(portalUrl?.trim()) && !normalizedPortal
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -49,7 +56,7 @@ export default function PaymentsPage() {
       </p>
       {loading ? (
         <p style={{ color: "#9ca3af" }}>Loading…</p>
-      ) : safeUrl ? (
+      ) : iframeUrl ? (
         <div
           style={{
             borderRadius: 10,
@@ -61,11 +68,52 @@ export default function PaymentsPage() {
         >
           <iframe
             title="Helcim payments"
-            src={safeUrl}
+            src={iframeUrl}
             style={{ width: "100%", height: "min(78vh, 720px)", border: "none", display: "block" }}
             sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-same-origin"
             referrerPolicy="strict-origin-when-cross-origin"
           />
+        </div>
+      ) : openInTabUrl ? (
+        <div
+          style={{
+            padding: 20,
+            borderRadius: 10,
+            border: "1px solid #1d4ed8",
+            background: "#172554",
+            color: "#bfdbfe",
+            fontSize: 14,
+            lineHeight: 1.55,
+          }}
+        >
+          <p style={{ margin: "0 0 12px" }}>
+            This payment portal link is not <strong>https</strong>, so it cannot be embedded here (browser security). Open it in a
+            new tab:
+          </p>
+          <a
+            href={openInTabUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#93c5fd", fontWeight: 600, wordBreak: "break-all" }}
+          >
+            {openInTabUrl}
+          </a>
+        </div>
+      ) : invalidPortal ? (
+        <div
+          style={{
+            padding: 20,
+            borderRadius: 10,
+            border: "1px solid #92400e",
+            background: "#451a03",
+            color: "#fde68a",
+            fontSize: 14,
+            lineHeight: 1.55,
+          }}
+        >
+          <strong>Payment portal URL is not valid.</strong> Use a full URL such as{" "}
+          <code style={{ color: "#fef3c7" }}>https://pay.helcim.com/v2/pay/…</code> in Admin → Billing &amp; Helcim, or set{" "}
+          <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for the app build.
         </div>
       ) : (
         <div
@@ -79,9 +127,10 @@ export default function PaymentsPage() {
             lineHeight: 1.55,
           }}
         >
-          <strong>No payment portal URL configured.</strong> Ask your administrator to set{" "}
-          <strong>Helcim pay portal URL</strong> for your account (Admin → Billing &amp; Helcim), or configure{" "}
-          <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> in the app environment.
+          <strong>No payment portal URL configured.</strong> An admin should open{" "}
+          <strong>Admin → Billing &amp; Helcim</strong>, enter <strong>Helcim pay portal URL</strong> for your user row, and click{" "}
+          <strong>Save</strong>. Alternatively, set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> in the web or mobile build environment
+          so every account uses the same portal link.
         </div>
       )}
     </div>
