@@ -3,9 +3,11 @@ import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
+  appendHelcimCustomerQueryToPayPortalUrl,
   helcimPayPortalUrlAllowsIframe,
   normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
+  resolveHelcimPayPortalBaseUrl,
 } from "../../lib/billingProfileMetadata"
 
 const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_PAYMENT_PORTAL_URL ?? ""
@@ -13,7 +15,8 @@ const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_H
 export default function PaymentsPage() {
   /** In the office manager portal, use the "Working as" user so their Helcim URL is shown. */
   const profileUserId = useScopedUserId()
-  const [portalUrl, setPortalUrl] = useState<string | null>(null)
+  const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
+  const [customerCode, setCustomerCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -27,7 +30,8 @@ export default function PaymentsPage() {
       if (cancelled) return
       setLoading(false)
       if (error || !data) {
-        setPortalUrl(ENV_PORTAL.trim() || null)
+        setPortalBaseUrl(ENV_PORTAL.trim() || null)
+        setCustomerCode(null)
         return
       }
       const meta =
@@ -35,28 +39,35 @@ export default function PaymentsPage() {
           ? (data.metadata as Record<string, unknown>)
           : {}
       const billing = parseBillingMetadata(meta)
-      const fromProfile = billing.helcim_pay_portal_url?.trim()
-      setPortalUrl(fromProfile || ENV_PORTAL.trim() || null)
+      setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL, billing.helcim_pay_portal_url ?? null))
+      setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
     })()
     return () => {
       cancelled = true
     }
   }, [profileUserId])
 
-  const normalizedPortal = portalUrl ? normalizeHelcimPayPortalUrl(portalUrl) : null
+  const withCustomer = portalBaseUrl ? appendHelcimCustomerQueryToPayPortalUrl(portalBaseUrl, customerCode) : null
+  const normalizedPortal = withCustomer ? normalizeHelcimPayPortalUrl(withCustomer) : null
   const iframeUrl = normalizedPortal && helcimPayPortalUrlAllowsIframe(normalizedPortal) ? normalizedPortal : null
   const openInTabUrl = normalizedPortal && !iframeUrl ? normalizedPortal : null
-  const invalidPortal = Boolean(portalUrl?.trim()) && !normalizedPortal
+  const invalidPortal = Boolean(portalBaseUrl?.trim()) && !normalizedPortal
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb", marginBottom: 8 }}>Payments</h1>
       <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-        Pay invoices or manage your card on file through Helcim. The link is stored in <strong>Supabase</strong> on your profile
-        (<code>profiles.metadata.helcim_pay_portal_url</code>) via <strong>Admin → Billing &amp; Helcim</strong>, unless your build
-        defines <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / local env — not a Supabase
-        secret) as a default for everyone.
+        Helcim hosts checkout and card management. <strong>Recommended:</strong> your organization sets one pay/portal URL on the
+        app build as <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase).
+        Your <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is passed on the URL when present (confirm the
+        exact query parameter name with Helcim support). Per-user portal URL overrides are optional.
       </p>
+      {iframeUrl && !customerCode ? (
+        <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+          No Helcim customer code on file — the shared portal may not pre-select your account. Ask your admin to add it under Billing
+          &amp; Helcim.
+        </p>
+      ) : null}
       {loading ? (
         <p style={{ color: "#9ca3af" }}>Loading…</p>
       ) : iframeUrl ? (
@@ -130,10 +141,10 @@ export default function PaymentsPage() {
             lineHeight: 1.55,
           }}
         >
-          <strong>No payment portal URL configured.</strong> An admin should open{" "}
-          <strong>Admin → Billing &amp; Helcim</strong>, enter <strong>Helcim pay portal URL</strong> for your user row, and click{" "}
-          <strong>Save</strong>. Alternatively, set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> in the web or mobile build environment
-          so every account uses the same portal link.
+          <strong>No payment portal URL configured.</strong> Set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on the web or
+          mobile build (recommended — same Helcim page for everyone), or add a per-user URL in <strong>Admin → Billing &amp;
+          Helcim</strong>. Map each user&apos;s <strong>Helcim customer code</strong> there so webhooks and the pay link can tie
+          activity to the right account.
         </div>
       )}
     </div>

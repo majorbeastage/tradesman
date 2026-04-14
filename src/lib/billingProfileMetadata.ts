@@ -7,8 +7,44 @@ export type BillingProfileMetadata = {
   billing_helcim_customer_code?: string
   /** ISO timestamp of last successful payment applied by automation. */
   billing_last_success_at?: string
-  /** Helcim hosted payment / customer portal URL (shown in Payments tab; prefer https for in-app iframe). */
+  /**
+   * Optional per-user Helcim hosted pay / portal URL override.
+   * When unset, the app uses `VITE_HELCIM_PAYMENT_PORTAL_URL` from the build (one URL for the whole org).
+   */
   helcim_pay_portal_url?: string
+}
+
+/**
+ * Choose which hosted pay URL to load: **build env first** (hands-off, one URL for everyone),
+ * then optional per-profile override.
+ */
+export function resolveHelcimPayPortalBaseUrl(
+  envPortalUrl: string | null | undefined,
+  profilePortalUrl: string | null | undefined,
+): string | null {
+  const fromEnv = (envPortalUrl ?? "").trim()
+  if (fromEnv) return fromEnv
+  const fromProfile = (profilePortalUrl ?? "").trim()
+  return fromProfile || null
+}
+
+/**
+ * If Helcim’s hosted page accepts a customer in the query string, this scopes a **shared** portal URL
+ * to the right payer. **Confirm the parameter name with Helcim support** (we send `customerCode` to match API/webhooks).
+ */
+export function appendHelcimCustomerQueryToPayPortalUrl(
+  baseUrl: string,
+  customerCode: string | null | undefined,
+): string {
+  const code = (customerCode ?? "").trim()
+  if (!code) return baseUrl
+  try {
+    const u = new URL(baseUrl)
+    if (!u.searchParams.has("customerCode")) u.searchParams.set("customerCode", code)
+    return u.toString()
+  } catch {
+    return baseUrl
+  }
 }
 
 /** Trim and add https:// when the host was pasted without a scheme. Returns null if empty or not URL-like. */

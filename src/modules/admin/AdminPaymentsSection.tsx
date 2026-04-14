@@ -120,12 +120,15 @@ export default function AdminPaymentsSection() {
       <AdminSettingBlock id="admin:billing:intro">
         <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Billing &amp; Helcim</h1>
         <p style={{ color: theme.text, opacity: 0.85, margin: "0 0 12px", fontSize: 14, lineHeight: 1.5, maxWidth: 820 }}>
-          Map each Tradesman user to a <strong>Helcim customer code</strong> so payment webhooks can reactivate or deactivate the
-          portal (<code>profiles.account_disabled</code>) for <strong>user</strong> roles only —{" "}
-          <strong>admin</strong>, <strong>office_manager</strong>, and <strong>demo_user</strong> profiles are never changed by Helcim
-          (events are still logged).
-          Use <strong>Pause billing automation</strong> to stop webhooks from changing access (disputes, comps, migration). Deploy the{" "}
-          <code>billing-webhook</code> Edge Function and run <code>supabase-billing-helcim.sql</code>.
+          <strong>Hands-off billing:</strong> set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on your web/mobile build so every user
+          shares the same Helcim hosted page; you do <strong>not</strong> need a different pay URL per row. Map each Tradesman user to a{" "}
+          <strong>Helcim customer code</strong> so webhooks and the in-app pay link can associate activity with the right profile. The
+          app appends <code>customerCode=…</code> to the portal URL when supported — confirm with Helcim that your page template accepts
+          that query (or adjust after your support call). Per-user <strong>Pay portal URL</strong> below is optional override only.
+          Webhooks reactivate or deactivate the portal (<code>profiles.account_disabled</code>) for <strong>user</strong> roles only —{" "}
+          <strong>admin</strong>, <strong>office_manager</strong>, and <strong>demo_user</strong> are exempt (events still log). Use{" "}
+          <strong>Pause billing automation</strong> for grace periods. Deploy <code>billing-webhook</code> and run{" "}
+          <code>supabase-billing-helcim.sql</code>.
         </p>
         {webhookUrl ? (
           <p style={{ margin: 0, fontSize: 13, color: theme.text, opacity: 0.9 }}>
@@ -157,7 +160,7 @@ export default function AdminPaymentsSection() {
                 <tr style={{ borderBottom: `1px solid ${theme.border}`, textAlign: "left" }}>
                   <th style={{ padding: "8px 6px" }}>User</th>
                   <th style={{ padding: "8px 6px" }}>Helcim customer code</th>
-                  <th style={{ padding: "8px 6px" }}>Pay portal URL (HTTPS)</th>
+                  <th style={{ padding: "8px 6px" }}>Pay portal URL override (optional)</th>
                   <th style={{ padding: "8px 6px" }}>Pause automation</th>
                   <th style={{ padding: "8px 6px" }}>Last paid</th>
                   <th style={{ padding: "8px 6px" }}>Access</th>
@@ -186,7 +189,7 @@ export default function AdminPaymentsSection() {
                         <input
                           value={d.helcim_pay_portal_url ?? ""}
                           onChange={(e) => setDraft(r.id, { helcim_pay_portal_url: e.target.value })}
-                          placeholder="https://…"
+                          placeholder="Leave blank if using VITE_HELCIM…"
                           style={{ width: "100%", maxWidth: 320, padding: 6, borderRadius: 6, border: `1px solid ${theme.border}` }}
                         />
                       </td>
