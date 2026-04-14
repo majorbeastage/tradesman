@@ -297,28 +297,59 @@ export default function PricingPage({ onBack, onSignupWithPackage }: Props) {
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                fontSize: 13,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
+                fontSize: 14,
+                border: `1px solid #94a3b8`,
+                background: "#ffffff",
+                color: "#0f172a",
               }}
             >
               <thead>
-                <tr style={{ background: "#f3f4f6" }}>
-                  <th style={{ textAlign: "left", padding: 10, borderBottom: `1px solid ${theme.border}` }}>Type</th>
-                  <th style={{ textAlign: "left", padding: 10, borderBottom: `1px solid ${theme.border}` }}>Estimated Cost</th>
-                  <th style={{ textAlign: "left", padding: 10, borderBottom: `1px solid ${theme.border}` }}>Customer Charge</th>
+                <tr style={{ background: "#e2e8f0" }}>
+                  <th
+                    style={{
+                      textAlign: "left",
+                      padding: "12px 10px",
+                      borderBottom: "1px solid #94a3b8",
+                      color: "#0f172a",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Type
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "left",
+                      padding: "12px 10px",
+                      borderBottom: "1px solid #94a3b8",
+                      color: "#0f172a",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Estimated Cost
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "left",
+                      padding: "12px 10px",
+                      borderBottom: "1px solid #94a3b8",
+                      color: "#0f172a",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Customer Charge
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td style={{ padding: 10, borderBottom: `1px solid ${theme.border}` }}>SMS</td>
-                  <td style={{ padding: 10, borderBottom: `1px solid ${theme.border}` }}>~$0.007</td>
-                  <td style={{ padding: 10, borderBottom: `1px solid ${theme.border}` }}>$0.02–$0.03</td>
+                <tr style={{ background: "#f8fafc" }}>
+                  <td style={{ padding: "12px 10px", borderBottom: "1px solid #cbd5e1", color: "#0f172a", fontWeight: 600 }}>SMS</td>
+                  <td style={{ padding: "12px 10px", borderBottom: "1px solid #cbd5e1", color: "#0f172a" }}>~$0.007</td>
+                  <td style={{ padding: "12px 10px", borderBottom: "1px solid #cbd5e1", color: "#0f172a" }}>$0.02–$0.03</td>
                 </tr>
-                <tr>
-                  <td style={{ padding: 10 }}>Voice</td>
-                  <td style={{ padding: 10 }}>~$0.015</td>
-                  <td style={{ padding: 10 }}>$0.04–$0.06</td>
+                <tr style={{ background: "#ffffff" }}>
+                  <td style={{ padding: "12px 10px", color: "#0f172a", fontWeight: 600 }}>Voice</td>
+                  <td style={{ padding: "12px 10px", color: "#0f172a" }}>~$0.015</td>
+                  <td style={{ padding: "12px 10px", color: "#0f172a" }}>$0.04–$0.06</td>
                 </tr>
               </tbody>
             </table>
