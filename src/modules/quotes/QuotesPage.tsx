@@ -1,6 +1,12 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
+import {
+  formatDurationFieldFromMinutes,
+  parseDurationFieldToMinutes,
+  parseJobTypeDurationMinutes,
+  snapMinutesToIncrement,
+} from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
@@ -255,7 +261,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [presetSuggestOpen, setPresetSuggestOpen] = useState(false)
   const [addItemLoading, setAddItemLoading] = useState(false)
   const [quoteJtNewName, setQuoteJtNewName] = useState("")
-  const [quoteJtNewDuration, setQuoteJtNewDuration] = useState(60)
+  const [quoteJtNewDurationStr, setQuoteJtNewDurationStr] = useState("60")
   const [quoteJtNewDesc, setQuoteJtNewDesc] = useState("")
   const [quoteJtNewColor, setQuoteJtNewColor] = useState("#F97316")
   const [quoteJtSaving, setQuoteJtSaving] = useState(false)
@@ -268,7 +274,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [calTitle, setCalTitle] = useState("")
   const [calDate, setCalDate] = useState("")
   const [calTime, setCalTime] = useState("09:00")
-  const [calDuration, setCalDuration] = useState(60)
+  const [calDurationInput, setCalDurationInput] = useState("60")
   const [calJobTypeId, setCalJobTypeId] = useState("")
   const [calMileage, setCalMileage] = useState("")
   const [calNotes, setCalNotes] = useState("")
@@ -2022,13 +2028,18 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       alert("Please enter a name for the job type.")
       return
     }
+    const parsedJtDur = parseJobTypeDurationMinutes(quoteJtNewDurationStr)
+    if (parsedJtDur == null) {
+      alert("Enter duration in minutes (whole number, at least 15).")
+      return
+    }
     if (!supabase || !userId) return
     setQuoteJtSaving(true)
     try {
       let patch: Record<string, unknown> = {
         name: quoteJtNewName.trim(),
         description: quoteJtNewDesc.trim() || null,
-        duration_minutes: Math.max(15, quoteJtNewDuration),
+        duration_minutes: parsedJtDur,
         color_hex: quoteJtNewColor,
         materials_list: quoteJtMaterials.trim() || null,
         track_mileage: quoteJtTrackMileage,
@@ -2073,7 +2084,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       }
       setQuoteJtNewName("")
       setQuoteJtNewDesc("")
-      setQuoteJtNewDuration(60)
+      setQuoteJtNewDurationStr("60")
       setQuoteJtNewColor("#F97316")
       setQuoteJtTrackMileage(false)
       setEditingQuoteJtId(null)
@@ -2130,7 +2141,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   }) {
     setQuoteJtNewName(jt.name)
     setQuoteJtNewDesc(jt.description ?? "")
-    setQuoteJtNewDuration(Math.max(15, jt.duration_minutes))
+    setQuoteJtNewDurationStr(String(Math.max(15, jt.duration_minutes)))
     setQuoteJtNewColor(jt.color_hex ?? "#F97316")
     setQuoteJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setQuoteJtTrackMileage(jt.track_mileage === true)
@@ -2140,7 +2151,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   function cancelEditQuoteJobType() {
     setQuoteJtNewName("")
     setQuoteJtNewDesc("")
-    setQuoteJtNewDuration(60)
+    setQuoteJtNewDurationStr("60")
     setQuoteJtNewColor("#F97316")
     setQuoteJtMaterials("")
     setQuoteJtTrackMileage(false)
@@ -3855,7 +3866,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         ? (selectedQuote as QuoteRow).job_type_id?.trim() ?? ""
                         : ""
                     setCalJobTypeId(qjt)
-                    setCalDuration(60)
+                    setCalDurationInput(formatDurationFieldFromMinutes(60, quoteCalTimeIncrement))
                     if (qjt && supabase) {
                       void supabase
                         .from("job_types")
@@ -3864,7 +3875,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         .maybeSingle()
                         .then(({ data }) => {
                           const dm = (data as { duration_minutes?: number } | null)?.duration_minutes
-                          if (typeof dm === "number" && dm >= 15) setCalDuration(dm)
+                          if (typeof dm === "number" && dm >= 15)
+                            setCalDurationInput(formatDurationFieldFromMinutes(dm, quoteCalTimeIncrement))
                         })
                     }
                     setCalNotes("")
@@ -3963,9 +3975,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     value={quoteCalTimeIncrement}
                     onChange={(e) => {
                       const v = e.target.value === "60" ? 60 : 15
+                      const prevInc = quoteCalTimeIncrement
                       setQuoteCalTimeIncrement(v)
-                      const rounded = Math.max(v, Math.round(calDuration / v) * v)
-                      setCalDuration(rounded)
+                      const parsed = parseDurationFieldToMinutes(calDurationInput, prevInc)
+                      const base = parsed ?? 60
+                      const rounded = snapMinutesToIncrement(base, v)
+                      setCalDurationInput(formatDurationFieldFromMinutes(rounded, v))
                       try {
                         localStorage.setItem("quotes_addCalendar_timeIncrement", String(v))
                       } catch {
@@ -3986,20 +4001,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     type="number"
                     min={quoteCalTimeIncrement === 60 ? 1 : 15}
                     step={quoteCalTimeIncrement === 60 ? 0.25 : quoteCalTimeIncrement}
-                    value={
-                      quoteCalTimeIncrement === 60
-                        ? Math.round((calDuration / 60) * 1000) / 1000
-                        : calDuration
-                    }
-                    onChange={(e) => {
-                      const raw = parseFloat(e.target.value)
-                      if (!Number.isFinite(raw)) return
-                      if (quoteCalTimeIncrement === 60) {
-                        const mins = Math.max(15, Math.round(raw * 60))
-                        setCalDuration(mins)
-                      } else {
-                        setCalDuration(Math.max(15, Math.round(raw)))
-                      }
+                    value={calDurationInput}
+                    onChange={(e) => setCalDurationInput(e.target.value)}
+                    onBlur={() => {
+                      const m = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
+                      if (m != null) setCalDurationInput(formatDurationFieldFromMinutes(m, quoteCalTimeIncrement))
                     }}
                     style={{ ...theme.formInput }}
                   />
@@ -4013,11 +4019,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       setCalJobTypeId(id)
                       const jt = jobTypes.find((j) => j.id === id)
                       if (jt) {
-                        setCalDuration(
+                        const mins =
                           quoteCalTimeIncrement === 60
                             ? Math.max(60, Math.round(jt.duration_minutes / 60) * 60)
-                            : Math.max(15, jt.duration_minutes),
-                        )
+                            : Math.max(15, jt.duration_minutes)
+                        setCalDurationInput(formatDurationFieldFromMinutes(mins, quoteCalTimeIncrement))
                         if (!jt.track_mileage) setCalMileage("")
                       } else {
                         setCalMileage("")
@@ -4078,7 +4084,13 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       alert("Invalid date or time.")
                       return
                     }
-                    const durationMs = calDuration * 60 * 1000
+                    const durMinutes = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
+                    if (durMinutes == null) {
+                      setAddToCalendarLoading(false)
+                      alert("Enter a valid duration (at least 15 minutes).")
+                      return
+                    }
+                    const durationMs = durMinutes * 60 * 1000
                     const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
                     const recurrenceFromJt =
                       calJobTypeId && calendarJobTypesPortalItems.length > 0
@@ -4804,8 +4816,12 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         type="number"
                         min={15}
                         step={15}
-                        value={quoteJtNewDuration}
-                        onChange={(e) => setQuoteJtNewDuration(parseInt(e.target.value, 10) || 60)}
+                        value={quoteJtNewDurationStr}
+                        onChange={(e) => setQuoteJtNewDurationStr(e.target.value)}
+                        onBlur={() => {
+                          const m = parseJobTypeDurationMinutes(quoteJtNewDurationStr)
+                          if (m != null) setQuoteJtNewDurationStr(String(m))
+                        }}
                         style={{ ...theme.formInput, display: "block", marginTop: 4, width: 100 }}
                       />
                     </label>

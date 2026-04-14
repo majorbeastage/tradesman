@@ -1,6 +1,12 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import { supabase } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
+import {
+  formatDurationFieldFromMinutes,
+  parseDurationFieldToMinutes,
+  parseJobTypeDurationMinutes,
+  snapMinutesToIncrement,
+} from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
@@ -278,7 +284,7 @@ export default function CalendarPage() {
   const [addTitle, setAddTitle] = useState("")
   const [addStartDate, setAddStartDate] = useState("")
   const [addStartTime, setAddStartTime] = useState("09:00")
-  const [addDuration, setAddDuration] = useState(60)
+  const [addDurationStr, setAddDurationStr] = useState("60")
   const [addJobTypeId, setAddJobTypeId] = useState<string>("")
   const [addNotes, setAddNotes] = useState("")
   const [addQuoteId, setAddQuoteId] = useState<string | null>(null)
@@ -288,7 +294,7 @@ export default function CalendarPage() {
   // Job type form
   const [jtName, setJtName] = useState("")
   const [jtDescription, setJtDescription] = useState("")
-  const [jtDuration, setJtDuration] = useState(60)
+  const [jtDurationStr, setJtDurationStr] = useState("60")
   const [jtColor, setJtColor] = useState("#F97316")
   const [jtSaving, setJtSaving] = useState(false)
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
@@ -1423,7 +1429,12 @@ export default function CalendarPage() {
       setAddError("Invalid start date or time.")
       return
     }
-    const durationMs = addDuration * 60 * 1000
+    const addMin = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+    if (addMin == null) {
+      setAddError("Enter a valid duration (at least 15 minutes).")
+      return
+    }
+    const durationMs = addMin * 60 * 1000
     /** Prefer recurrence from this modal so job type + recurring still work (Job Types modal is optional). */
     const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
     const recurrenceFromJobTypes =
@@ -1537,7 +1548,7 @@ export default function CalendarPage() {
     const today = new Date().toISOString().slice(0, 10)
     setAddStartDate(today)
     setAddStartTime("09:00")
-    setAddDuration(60)
+    setAddDurationStr(formatDurationFieldFromMinutes(60, timeIncrement))
     setAddJobTypeId("")
     setAddNotes("")
     setAddQuoteId(null)
@@ -1548,6 +1559,11 @@ export default function CalendarPage() {
   async function saveJobType() {
     if (!jtName.trim()) {
       alert("Please enter a name for the job type.")
+      return
+    }
+    const jtDurParsed = parseJobTypeDurationMinutes(jtDurationStr)
+    if (jtDurParsed == null) {
+      alert("Enter duration in minutes (whole number, at least 15).")
       return
     }
     if (!supabase) {
@@ -1563,7 +1579,7 @@ export default function CalendarPage() {
     const basePayload = {
       name: jtName.trim(),
       description: jtDescription.trim() || null,
-      duration_minutes: jtDuration,
+      duration_minutes: jtDurParsed,
       color_hex: jtColor,
     }
     let patch: Record<string, unknown> = {
@@ -1623,7 +1639,7 @@ export default function CalendarPage() {
     if (jobTypeIdForPresets) await mergePresetLinksForJobTypeCal(jobTypeIdForPresets, jtModalPresetChecksCal)
     setJtName("")
     setJtDescription("")
-    setJtDuration(60)
+    setJtDurationStr("60")
     setJtColor("#F97316")
     setJtMaterials("")
     setJtTrackMileage(false)
@@ -1635,7 +1651,7 @@ export default function CalendarPage() {
   function startEditJobType(jt: JobType) {
     setJtName(jt.name)
     setJtDescription(jt.description ?? "")
-    setJtDuration(jt.duration_minutes)
+    setJtDurationStr(String(Math.max(15, jt.duration_minutes)))
     setJtColor(jt.color_hex ?? "#F97316")
     setJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setJtTrackMileage(jt.track_mileage === true)
@@ -1645,7 +1661,7 @@ export default function CalendarPage() {
   function cancelEditJobType() {
     setJtName("")
     setJtDescription("")
-    setJtDuration(60)
+    setJtDurationStr("60")
     setJtColor("#F97316")
     setJtMaterials("")
     setJtTrackMileage(false)
@@ -2112,7 +2128,8 @@ export default function CalendarPage() {
                     const jt = jobTypes.find((j) => j.id === id)
                     if (jt) {
                       const mins = jt.duration_minutes
-                      setAddDuration(timeIncrement === 60 ? Math.max(60, Math.round(mins / 60) * 60) : mins)
+                      const snapped = timeIncrement === 60 ? Math.max(60, Math.round(mins / 60) * 60) : mins
+                      setAddDurationStr(formatDurationFieldFromMinutes(snapped, timeIncrement))
                       if (!jt.track_mileage) setAddMileage("")
                     } else {
                       setAddMileage("")
@@ -2152,9 +2169,11 @@ export default function CalendarPage() {
                   value={timeIncrement}
                   onChange={(e) => {
                     const v = e.target.value === "60" ? 60 : 15
+                    const parsed = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+                    const base = parsed ?? 60
+                    const rounded = snapMinutesToIncrement(base, v)
+                    setAddDurationStr(formatDurationFieldFromMinutes(rounded, v))
                     setTimeIncrement(v)
-                    const rounded = Math.max(v, Math.round(addDuration / v) * v)
-                    setAddDuration(rounded)
                     try { localStorage.setItem("calendar_timeIncrement", String(v)) } catch { /* ignore */ }
                   }}
                   style={addInputStyle}
@@ -2171,14 +2190,11 @@ export default function CalendarPage() {
                   type="number"
                   min={timeIncrement === 60 ? 1 : timeIncrement}
                   step={timeIncrement === 60 ? 1 : timeIncrement}
-                  value={timeIncrement === 60 ? Math.max(1, Math.round(addDuration / 60)) : addDuration}
-                  onChange={(e) => {
-                    const raw = parseInt(e.target.value, 10)
-                    if (timeIncrement === 60) {
-                      setAddDuration((raw || 1) * 60)
-                    } else {
-                      setAddDuration(raw || timeIncrement)
-                    }
+                  value={addDurationStr}
+                  onChange={(e) => setAddDurationStr(e.target.value)}
+                  onBlur={() => {
+                    const m = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+                    if (m != null) setAddDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
                   }}
                   style={addInputStyle}
                 />
@@ -2257,7 +2273,19 @@ export default function CalendarPage() {
               <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
               <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <input type="number" min={15} step={15} placeholder="Duration (min)" value={jtDuration} onChange={(e) => setJtDuration(parseInt(e.target.value, 10) || 60)} style={{ ...theme.formInput, width: "120px" }} />
+                <input
+                  type="number"
+                  min={15}
+                  step={15}
+                  placeholder="Duration (min)"
+                  value={jtDurationStr}
+                  onChange={(e) => setJtDurationStr(e.target.value)}
+                  onBlur={() => {
+                    const m = parseJobTypeDurationMinutes(jtDurationStr)
+                    if (m != null) setJtDurationStr(String(m))
+                  }}
+                  style={{ ...theme.formInput, width: "120px" }}
+                />
                 <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
                 <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
               </div>
