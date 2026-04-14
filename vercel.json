@@ -45,6 +45,7 @@
     { "source": "/terms", "destination": "/" },
     { "source": "/sms-consent", "destination": "/api/platform-tools?__route=sms-consent" },
     { "source": "/about", "destination": "/" },
+    { "source": "/pricing", "destination": "/" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" }
   ]
 }

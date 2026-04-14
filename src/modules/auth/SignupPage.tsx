@@ -11,9 +11,12 @@ import {
   parseSignupRequirements,
   type SignupRequirementsValue,
 } from "../../types/signup-requirements"
+import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, type ProductPackageId } from "../../lib/productPackages"
 
 type Props = {
   onBack: () => void
+  /** Preset from Pricing page or cold load via App sessionStorage. */
+  initialProductPackage?: string | null
 }
 
 function normalizePhone(value: string): string {
@@ -106,7 +109,7 @@ function req(cfg: SignupRequirementsValue, field: keyof SignupRequirementsValue[
   return cfg.fields[field] === "required"
 }
 
-export default function SignupPage({ onBack }: Props) {
+export default function SignupPage({ onBack, initialProductPackage }: Props) {
   const [signupCfg, setSignupCfg] = useState<SignupRequirementsValue>({
     ...DEFAULT_SIGNUP_REQUIREMENTS,
     fields: { ...DEFAULT_SIGNUP_REQUIREMENTS.fields },
@@ -132,6 +135,7 @@ export default function SignupPage({ onBack }: Props) {
   /** User must explicitly allow or deny AI features (stored as `ai_assistant_visible` / edge `use_ai_automation`). */
   const [aiAutomationChoice, setAiAutomationChoice] = useState<"allow" | "deny" | null>(null)
   const [uiLanguage, setUiLanguage] = useState<"en" | "es">("en")
+  const [productPackageChoice, setProductPackageChoice] = useState<ProductPackageId | "">("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
@@ -161,6 +165,13 @@ export default function SignupPage({ onBack }: Props) {
       return next
     })
   }, [signupCfg.custom_fields])
+
+  useEffect(() => {
+    if (!initialProductPackage) return
+    if (PRODUCT_PACKAGE_IDS.includes(initialProductPackage as ProductPackageId)) {
+      setProductPackageChoice(initialProductPackage as ProductPackageId)
+    }
+  }, [initialProductPackage])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -590,6 +601,28 @@ export default function SignupPage({ onBack }: Props) {
                 </option>
               ))}
             </select>
+          </label>
+          <label style={labelStyle}>
+            Product package <span style={{ fontWeight: 400, opacity: 0.75 }}>(optional)</span>
+            <select
+              value={productPackageChoice}
+              onChange={(e) => setProductPackageChoice((e.target.value as ProductPackageId | "") || "")}
+              style={inputStyle}
+            >
+              <option value="">No selection — we&apos;ll follow up</option>
+              {PRODUCT_PACKAGES.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title} — {p.priceLine.replace(/\s*\*+\s*$/, "").trim()}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 400, display: "block", marginTop: 4 }}>
+              Lets our team know which plan you&apos;re interested in. See{" "}
+              <a href="/pricing" style={{ color: theme.primary, fontWeight: 600 }}>
+                Pricing
+              </a>{" "}
+              for full details.
+            </span>
           </label>
 
           <div

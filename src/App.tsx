@@ -17,6 +17,7 @@ import DemoPage from "./modules/demo/DemoPage"
 import SignupPage from "./modules/auth/SignupPage"
 import ResetPasswordPage from "./modules/auth/ResetPasswordPage"
 import AboutUsPage from "./modules/public/AboutUsPage"
+import PricingPage from "./modules/public/PricingPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import SmsConsentPage from "./modules/public/SmsConsentPage"
@@ -38,8 +39,9 @@ import {
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
+import { PRODUCT_PACKAGE_IDS, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 
-type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "app" | "office" | "admin"
+type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
 
 function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
@@ -206,9 +208,24 @@ function MainApp() {
 function App() {
   const { refetchProfile } = useAuth()
   const [view, setView] = useState<View>("home")
+  const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
+      if (!raw) return
+      sessionStorage.removeItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
+      if (PRODUCT_PACKAGE_IDS.includes(raw as ProductPackageId)) {
+        setSignupPackagePreset(raw)
+        setView("signup")
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
@@ -232,6 +249,23 @@ function App() {
   }
   if (pathname === "/about") {
     return <AboutUsPage onBack={() => (window.location.href = "/")} />
+  }
+  if (pathname === "/pricing") {
+    return (
+      <PricingPage
+        onBack={() => {
+          window.location.href = "/"
+        }}
+        onSignupWithPackage={(packageId) => {
+          try {
+            sessionStorage.setItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, packageId)
+          } catch {
+            /* ignore */
+          }
+          window.location.href = "/"
+        }}
+      />
+    )
   }
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
@@ -269,9 +303,13 @@ function App() {
         onLogin={() => { setLoginType("user"); setView("login"); setLoginError("") }}
         onOfficeManagerLogin={() => { setLoginType("office_manager"); setView("login"); setLoginError("") }}
         onAdminLogin={() => { setLoginType("admin"); setView("admin-login"); setLoginError("") }}
-        onSignup={() => setView("signup")}
+        onSignup={() => {
+          setSignupPackagePreset(null)
+          setView("signup")
+        }}
         onAboutUs={() => setView("about")}
         onRequestDemo={() => setView("demo")}
+        onPricing={() => setView("pricing")}
       />
     )
   }
@@ -282,7 +320,25 @@ function App() {
 
   if (view === "signup") {
     return (
-      <SignupPage onBack={() => setView("home")} />
+      <SignupPage
+        onBack={() => {
+          setSignupPackagePreset(null)
+          setView("home")
+        }}
+        initialProductPackage={signupPackagePreset}
+      />
+    )
+  }
+
+  if (view === "pricing") {
+    return (
+      <PricingPage
+        onBack={() => setView("home")}
+        onSignupWithPackage={(packageId) => {
+          setSignupPackagePreset(packageId)
+          setView("signup")
+        }}
+      />
     )
   }
 

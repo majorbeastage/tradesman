@@ -12,11 +12,12 @@ type HomePageProps = {
   onSignup: () => void
   onAboutUs: () => void
   onRequestDemo: () => void
+  onPricing: () => void
 }
 
 const FEATURE_IDS = ["clean", "automation", "leads", "comms", "quotes", "history", "custom"] as const
 
-export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo }: HomePageProps) {
+export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onPricing }: HomePageProps) {
   const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -363,6 +364,24 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                 }}
               >
                 About Us
+              </button>
+              <button
+                type="button"
+                onClick={onPricing}
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  padding: "10px 12px",
+                  background: "transparent",
+                  color: theme.primary,
+                  border: `2px solid ${theme.primary}`,
+                  borderRadius: 10,
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Pricing
               </button>
             </div>
           </div>

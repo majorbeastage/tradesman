@@ -52,7 +52,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
 
   const { data: profile, error: profErr } = await service
     .from("profiles")
-    .select("id, email, display_name, primary_phone, address_line_1, address_city, address_state, address_zip, metadata, role")
+    .select("id, email, display_name, primary_phone, address_line_1, address_city, address_state, address_zip, metadata, role, signup_extras")
     .eq("id", u.id)
     .maybeSingle()
 
@@ -72,7 +72,23 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     address_zip?: string | null
     metadata?: unknown
     role?: string | null
+    signup_extras?: unknown
   }
+
+  const signupExtras =
+    row.signup_extras && typeof row.signup_extras === "object" && !Array.isArray(row.signup_extras)
+      ? (row.signup_extras as Record<string, unknown>)
+      : {}
+  const productPackageRaw = typeof signupExtras.product_package === "string" ? signupExtras.product_package.trim() : ""
+  const productPackageLabel: Record<string, string> = {
+    base: "Base Package — $124.99/mo",
+    office_manager_entry: "Office Manager Entry Level — $159.99/mo",
+    office_manager_pro: "Office Manager Pro — $199.99/mo",
+    office_manager_elite: "Office Manager Elite — $369.99/mo",
+  }
+  const productPackageLine = productPackageRaw
+    ? productPackageLabel[productPackageRaw] ?? productPackageRaw
+    : "(not specified)"
 
   const meta =
     row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
@@ -101,6 +117,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     `Display name: ${displayStr}`,
     `User id: ${u.id}`,
     `Role: ${row.role ?? ""}`,
+    `Product package (from signup): ${productPackageLine}`,
     `Primary phone: ${row.primary_phone ?? "(none)"}`,
     `Address: ${[row.address_line_1, row.address_city, row.address_state, row.address_zip].filter(Boolean).join(", ") || "(none)"}`,
   ].join("\n")
