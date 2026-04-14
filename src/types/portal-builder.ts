@@ -735,6 +735,12 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
     label: 'Automatically update lead status from outreach and replies (AI — configure in AI settings)',
     defaultChecked: false,
   },
+  {
+    id: "lead_auto_conversation_when_qualified",
+    type: "checkbox",
+    label: "When status becomes Qualified — create a conversation for this customer (if none exists yet)",
+    defaultChecked: false,
+  },
 ]
 
 /** Controls that have options per page (for admin preview) */

@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, Fragment } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { forceRefreshAccessToken, getFreshAccessToken } from "../../lib/authPlatformApi"
+import { runQualifiedLeadToConversationsAutomation } from "../../lib/leadConversationAutomation"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -624,6 +625,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   async function saveLeadDetail() {
     if (!supabase || !userId || !selectedLead?.id || !selectedLead.customer_id) return
     setDetailSaving(true)
+    const prevLeadStatus = selectedLead.status ?? "New"
     try {
       const cid = selectedLead.customer_id as string
       const phoneT = detailForm.phone.trim()
@@ -686,6 +688,16 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
       await openLead(selectedLead.id)
       await loadLeads()
+      const prefs = mergeLeadsSettingsFormDefaults(leadsSettingsItems, leadsProfileSettings)
+      const autoConvo = await runQualifiedLeadToConversationsAutomation({
+        supabase,
+        userId,
+        customerId: cid,
+        prevStatusRaw: prevLeadStatus,
+        nextStatusRaw: detailForm.status,
+        prefs,
+      })
+      if (autoConvo.action === "error") alert(autoConvo.message)
       setDetailEditMode(false)
     } catch (err) {
       alert(formatAppError(err))

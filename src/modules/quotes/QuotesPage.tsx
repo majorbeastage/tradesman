@@ -272,6 +272,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [calJobTypeId, setCalJobTypeId] = useState("")
   const [calMileage, setCalMileage] = useState("")
   const [calNotes, setCalNotes] = useState("")
+  /** 15 = duration input in minutes; 60 = input in hours (stored as minutes for calendar math). */
+  const [quoteCalTimeIncrement, setQuoteCalTimeIncrement] = useState<15 | 60>(15)
+  const [quoteCustomerEditMode, setQuoteCustomerEditMode] = useState(false)
+  const [quoteCustomerSaving, setQuoteCustomerSaving] = useState(false)
+  const [quoteCustomerForm, setQuoteCustomerForm] = useState({ name: "", phone: "", email: "" })
   const [jobTypes, setJobTypes] = useState<CalendarPickerJobType[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
   const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
@@ -284,6 +289,15 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("quotes_addCalendar_timeIncrement")
+      if (v === "60") setQuoteCalTimeIncrement(60)
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const quoteSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "quotes", "quote_settings", { aiAutomationsEnabled }),
@@ -1265,8 +1279,74 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     }
   }
 
+  function applyQuoteCustomerFormFromCustomers(cust: CustomerRow | null | undefined) {
+    const phone = cust?.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
+    const email = cust?.customer_identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
+    setQuoteCustomerForm({
+      name: (cust?.display_name ?? "").trim(),
+      phone,
+      email: email.toLowerCase(),
+    })
+  }
+
+  async function saveQuoteCustomerDetails() {
+    if (!supabase || !selectedQuote?.customer_id || !userId) return
+    setQuoteCustomerSaving(true)
+    try {
+      const cid = selectedQuote.customer_id as string
+      const { error: u1 } = await supabase
+        .from("customers")
+        .update({ display_name: quoteCustomerForm.name.trim() || null })
+        .eq("id", cid)
+      if (u1) throw u1
+      const { error: del } = await supabase.from("customer_identifiers").delete().eq("customer_id", cid).in("type", ["phone", "email", "name"])
+      if (del) throw del
+      const phoneT = quoteCustomerForm.phone.trim()
+      const emailT = quoteCustomerForm.email.trim().toLowerCase()
+      const nameT = quoteCustomerForm.name.trim()
+      const identRows: Array<{
+        user_id: string
+        customer_id: string
+        type: string
+        value: string
+        is_primary: boolean
+        verified: boolean
+      }> = []
+      if (phoneT) identRows.push({ user_id: userId, customer_id: cid, type: "phone", value: phoneT, is_primary: true, verified: false })
+      if (emailT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "email",
+          value: emailT,
+          is_primary: identRows.length === 0,
+          verified: false,
+        })
+      if (nameT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "name",
+          value: nameT,
+          is_primary: identRows.length === 0,
+          verified: false,
+        })
+      if (identRows.length > 0) {
+        const { error: ins } = await supabase.from("customer_identifiers").insert(identRows)
+        if (ins) throw ins
+      }
+      await openQuote(selectedQuote.id)
+      setQuoteCustomerEditMode(false)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuoteCustomerSaving(false)
+    }
+  }
+
   async function openQuote(quoteId: string) {
     setSelectedQuoteId(quoteId)
+    setQuoteCustomerEditMode(false)
     setSelectedQuote(null)
     setQuoteOpenError("")
     setSelectedQuoteItems([])
@@ -1333,6 +1413,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
       return
     }
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
+    applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
     const { data: items } = await supabase
       .from("quote_items")
       .select("*")
@@ -2258,6 +2339,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
 
   async function sendQuoteCustomerEmail() {
     if (!supabase || !userId || !selectedQuote) return
+    const token = session?.access_token?.trim()
+    if (!token) {
+      alert("Sign in again to send email.")
+      return
+    }
     const email = selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.()
     if (!email) {
       alert("This customer has no email on file. Add an email identifier on the customer record.")
@@ -2277,7 +2363,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
     try {
       const res = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           to: email,
           subject,
@@ -2285,6 +2374,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
+          ...(supabaseUrl ? { supabaseUrl } : {}),
+          ...(supabaseAnonKey ? { supabaseAnonKey } : {}),
           ...(attachmentPublicUrls?.length ? { attachmentPublicUrls } : {}),
         }),
       })
@@ -2856,33 +2947,120 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                           <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                               <div style={{ fontWeight: 700 }}>Customer</div>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setNotesCustomerId(selectedQuote.customer_id ?? null)
-                                  setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
-                                }}
-                                style={{ padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-                              >
-                                Notes
-                              </button>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                {!quoteCustomerEditMode ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
+                                      setQuoteCustomerEditMode(true)
+                                    }}
+                                    style={{
+                                      padding: "4px 10px",
+                                      fontSize: "12px",
+                                      background: "#fff",
+                                      color: theme.text,
+                                      border: `1px solid ${theme.border}`,
+                                      borderRadius: "6px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Edit customer
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setNotesCustomerId(selectedQuote.customer_id ?? null)
+                                    setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
+                                  }}
+                                  style={{ padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
+                                >
+                                  Notes
+                                </button>
+                              </div>
                             </div>
-                            <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                              <span>
-                                <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
-                              </span>
-                              {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
-                                <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                  <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
-                                  <TwilioBridgeCallButton
-                                    customerPhone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
-                                    quoteOwnerUserId={userId}
-                                    compact
-                                  />
-                                </span>
-                              ) : null}
-                            </p>
+                            {quoteCustomerEditMode ? (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 420, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}
+                              >
+                                <input
+                                  placeholder="Customer name"
+                                  value={quoteCustomerForm.name}
+                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, name: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <input
+                                  placeholder="Phone"
+                                  value={quoteCustomerForm.phone}
+                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, phone: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <input
+                                  placeholder="Email"
+                                  value={quoteCustomerForm.email}
+                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
+                                  style={{ ...theme.formInput }}
+                                />
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    disabled={quoteCustomerSaving}
+                                    onClick={() => void saveQuoteCustomerDetails()}
+                                    style={{
+                                      padding: "6px 12px",
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: theme.primary,
+                                      color: "#fff",
+                                      cursor: quoteCustomerSaving ? "wait" : "pointer",
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {quoteCustomerSaving ? "Saving…" : "Save customer"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={quoteCustomerSaving}
+                                    onClick={() => {
+                                      applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
+                                      setQuoteCustomerEditMode(false)
+                                    }}
+                                    style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Name:</strong> {selectedQuote.customers?.display_name ?? "—"}
+                                </p>
+                                <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                                  <span>
+                                    <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
+                                  </span>
+                                  {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
+                                    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                      <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
+                                      <TwilioBridgeCallButton
+                                        customerPhone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
+                                        quoteOwnerUserId={userId}
+                                        compact
+                                      />
+                                    </span>
+                                  ) : null}
+                                </p>
+                                <p style={{ margin: 0 }}>
+                                  <strong>Email:</strong>{" "}
+                                  {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value ?? "—"}
+                                </p>
+                              </>
+                            )}
                             <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
                               <strong style={{ flexShrink: 0 }}>Status:</strong>
                               <select
@@ -3780,8 +3958,51 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ ...theme.formInput }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: "12px", color: theme.text }}>Duration (minutes)</label>
-                  <input type="number" min={15} step={15} value={calDuration} onChange={(e) => setCalDuration(parseInt(e.target.value, 10) || 60)} style={{ ...theme.formInput }} />
+                  <label style={{ fontSize: "12px", color: theme.text }}>Duration step</label>
+                  <select
+                    value={quoteCalTimeIncrement}
+                    onChange={(e) => {
+                      const v = e.target.value === "60" ? 60 : 15
+                      setQuoteCalTimeIncrement(v)
+                      const rounded = Math.max(v, Math.round(calDuration / v) * v)
+                      setCalDuration(rounded)
+                      try {
+                        localStorage.setItem("quotes_addCalendar_timeIncrement", String(v))
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    style={{ ...theme.formInput }}
+                  >
+                    <option value={15}>Minutes</option>
+                    <option value={60}>Hours</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>
+                    {quoteCalTimeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+                  </label>
+                  <input
+                    type="number"
+                    min={quoteCalTimeIncrement === 60 ? 1 : 15}
+                    step={quoteCalTimeIncrement === 60 ? 0.25 : quoteCalTimeIncrement}
+                    value={
+                      quoteCalTimeIncrement === 60
+                        ? Math.round((calDuration / 60) * 1000) / 1000
+                        : calDuration
+                    }
+                    onChange={(e) => {
+                      const raw = parseFloat(e.target.value)
+                      if (!Number.isFinite(raw)) return
+                      if (quoteCalTimeIncrement === 60) {
+                        const mins = Math.max(15, Math.round(raw * 60))
+                        setCalDuration(mins)
+                      } else {
+                        setCalDuration(Math.max(15, Math.round(raw)))
+                      }
+                    }}
+                    style={{ ...theme.formInput }}
+                  />
                 </div>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
@@ -3792,7 +4013,11 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                       setCalJobTypeId(id)
                       const jt = jobTypes.find((j) => j.id === id)
                       if (jt) {
-                        setCalDuration(Math.max(15, jt.duration_minutes))
+                        setCalDuration(
+                          quoteCalTimeIncrement === 60
+                            ? Math.max(60, Math.round(jt.duration_minutes / 60) * 60)
+                            : Math.max(15, jt.duration_minutes),
+                        )
                         if (!jt.track_mileage) setCalMileage("")
                       } else {
                         setCalMileage("")

@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import {
   createServiceSupabase,
   describeServerSupabaseEnvForDiagnostics,
@@ -6,6 +7,9 @@ import {
   getPrimarySmsChannelForUser,
   logCommunicationEvent,
   normalizePhone,
+  pickFirstString,
+  pickSupabaseAnonKeyForServer,
+  pickSupabaseUrlForServer,
   toTwilioE164,
 } from "./_communications.js"
 
@@ -32,6 +36,39 @@ type OutboundPayload = {
   attachmentPublicUrls?: unknown
   /** Twilio MMS: public URLs of images/files (max ~10). */
   mediaPublicUrls?: unknown
+  /** With Bearer JWT, used when Vercel has no service role (same pattern as platform-tools). */
+  supabaseUrl?: string
+  supabaseAnonKey?: string
+}
+
+async function resolveSupabaseClientForOutbound(
+  req: VercelRequest,
+  userId: string,
+  payload: OutboundPayload,
+): Promise<SupabaseClient> {
+  try {
+    return createServiceSupabase()
+  } catch {
+    /* continue */
+  }
+  const authHeader = typeof req.headers?.authorization === "string" ? req.headers.authorization.trim() : ""
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : ""
+  const supabaseUrl = pickSupabaseUrlForServer() || pickFirstString(payload.supabaseUrl)
+  const anonKey = pickSupabaseAnonKeyForServer() || pickFirstString(payload.supabaseAnonKey)
+  if (!token || !supabaseUrl || !anonKey) {
+    throw new Error(
+      "Missing server env: SUPABASE_URL (exact name, all caps — or VITE_SUPABASE_URL; case-insensitive match also tried) · SUPABASE_SERVICE_ROLE_KEY (exact name, all caps — not the anon key; case-insensitive match also tried). In Vercel: Project → Settings → Environment Variables — use names SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, All Environments, then Redeploy; or send Authorization: Bearer <JWT> plus supabaseUrl and supabaseAnonKey in the JSON body.",
+    )
+  }
+  const sb = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: userData, error: authErr } = await sb.auth.getUser(token)
+  if (authErr || !userData.user?.id || userData.user.id !== userId) {
+    throw new Error("Invalid or expired session for outbound email (sign in again).")
+  }
+  return sb
 }
 
 /** Vercel sometimes delivers `body` as a string; rewrites should still forward JSON. */
@@ -214,15 +251,16 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     })
   }
 
-  let supabase: ReturnType<typeof createServiceSupabase>
+  let supabase: SupabaseClient
   try {
-    supabase = createServiceSupabase()
+    supabase = await resolveSupabaseClientForOutbound(req, userId, payload)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return res.status(500).json({
       error: "Server email misconfiguration",
       message: msg,
-      hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel for this project.",
+      hint:
+        "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel, or call with Authorization: Bearer <Supabase JWT> and supabaseUrl + supabaseAnonKey in the JSON body.",
     })
   }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
