@@ -21,6 +21,17 @@ const BTN: CSSProperties = {
   fontWeight: 600,
 }
 
+const CALENDAR_ALERT_OPTION_LABEL: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 8,
+  cursor: "pointer",
+  fontSize: 13,
+  color: theme.text,
+  fontWeight: 500,
+}
+
 type Props = {
   tab: NotificationTabId
   profileUserId: string
@@ -171,8 +182,10 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
                 {tab === "calendar" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#f0f9ff" }}>
                     <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Calendar — customer &amp; schedule assists</div>
-                    <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 10px" }}>Used when en-route and completion flows are enabled server-side.</p>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 13 }}>
+                    <p style={{ fontSize: 12, color: "#4b5563", margin: "0 0 10px", lineHeight: 1.45 }}>
+                      Used when en-route and completion flows are enabled server-side.
+                    </p>
+                    <label style={CALENDAR_ALERT_OPTION_LABEL}>
                       <input
                         type="checkbox"
                         checked={!!prefs.calendarCustomerEnRouteEmail}
@@ -180,7 +193,7 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
                       />
                       Email customer when we are en route
                     </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 13 }}>
+                    <label style={CALENDAR_ALERT_OPTION_LABEL}>
                       <input
                         type="checkbox"
                         checked={!!prefs.calendarCustomerEnRouteSms}
@@ -188,7 +201,7 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
                       />
                       Text customer when we are en route
                     </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 13 }}>
+                    <label style={CALENDAR_ALERT_OPTION_LABEL}>
                       <input
                         type="checkbox"
                         checked={!!prefs.calendarJobEndReminder}
@@ -196,7 +209,7 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
                       />
                       Remind me before a job is scheduled to end (complete on calendar)
                     </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                    <label style={{ ...CALENDAR_ALERT_OPTION_LABEL, marginBottom: 0 }}>
                       <input
                         type="checkbox"
                         checked={!!prefs.calendarNextJobReminder}
