@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, Fragment } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
+import { forceRefreshAccessToken, getFreshAccessToken } from "../../lib/authPlatformApi"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -487,14 +488,25 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   }
 
   async function reRunLeadFit() {
-    if (!session?.access_token || !selectedLead?.id) return
+    if (!supabase || !selectedLead?.id) return
     setFitReRunBusy(true)
     try {
-      const res = await fetch("/api/platform-tools?__route=lead-evaluate-fit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: platformToolsJsonBody({ leadId: selectedLead.id, force: true }),
-      })
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=lead-evaluate-fit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+          body: platformToolsJsonBody({ leadId: selectedLead.id, force: true }),
+        })
+      let res = await run(token)
+      if (res.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) res = await run(t2)
+      }
       const raw = await res.text()
       if (!res.ok) {
         alert(formatFetchApiError(res, raw))
@@ -832,20 +844,31 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   }
 
   async function retryLeadPendingAi() {
-    if (!selectedLead?.id || !session?.access_token) {
+    if (!selectedLead?.id || !supabase) {
       alert("Sign in to regenerate this draft.")
       return
     }
     setLeadPendingAiBusy(true)
     try {
-      const response = await fetch("/api/platform-tools?__route=ai-regenerate-lead-consumer-reply", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: platformToolsJsonBody({ leadId: selectedLead.id }),
-      })
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=ai-regenerate-lead-consumer-reply", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${t}`,
+          },
+          body: platformToolsJsonBody({ leadId: selectedLead.id }),
+        })
+      let response = await run(token)
+      if (response.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) response = await run(t2)
+      }
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       const j = JSON.parse(raw) as { body?: string }
@@ -887,21 +910,32 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   }
 
   async function runLeadAiAssist() {
-    if (!selectedLead?.id || !session?.access_token) {
+    if (!selectedLead?.id || !supabase) {
       alert("Sign in and enable Allow AI automations under My T (Account).")
       return
     }
     setLeadAiBusy(true)
     setLeadSoftWarnings([])
     try {
-      const response = await fetch("/api/platform-tools?__route=ai-lead-assist", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: platformToolsJsonBody({ leadId: selectedLead.id }),
-      })
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=ai-lead-assist", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${t}`,
+          },
+          body: platformToolsJsonBody({ leadId: selectedLead.id }),
+        })
+      let response = await run(token)
+      if (response.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) response = await run(t2)
+      }
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       const j = JSON.parse(raw) as {
@@ -1212,14 +1246,26 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setInitialMessage("")
       setShowForm(false)
       if (setPage) setPage("leads")
-      if (session?.access_token) {
-        void fetch("/api/platform-tools?__route=lead-evaluate-fit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: platformToolsJsonBody({ leadId: lead.id, force: false }),
-        })
-          .then(() => loadLeads())
-          .catch(() => loadLeads())
+      if (supabase) {
+        void (async () => {
+          let token = await getFreshAccessToken(supabase, session)
+          if (!token) {
+            loadLeads()
+            return
+          }
+          const run = (t: string) =>
+            fetch("/api/platform-tools?__route=lead-evaluate-fit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+              body: platformToolsJsonBody({ leadId: lead.id, force: false }),
+            })
+          let res = await run(token)
+          if (res.status === 401) {
+            const t2 = await forceRefreshAccessToken(supabase)
+            if (t2) res = await run(t2)
+          }
+          void loadLeads()
+        })()
       } else {
         loadLeads()
       }
@@ -2235,7 +2281,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={fitReRunBusy || !session?.access_token}
+                                  disabled={fitReRunBusy || !supabase}
                                   onClick={() => void reRunLeadFit()}
                                   style={{
                                     padding: "6px 12px",

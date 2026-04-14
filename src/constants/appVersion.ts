@@ -13,6 +13,7 @@
  * **1.4.1** — Fix mobile prefs import + Supabase Promise/finally TypeScript build; version bump for release.
  * **1.4.2** — Push device rows + FCM push-test Edge, Twilio bridge call, GPS last-location + team Leaflet map, quote status → notify-quote-status (email/SMS/push per Alerts prefs).
  * **1.4.3** — Launcher icons generated from public/icon.png (browser tab); npm run icons:generate; adaptive icon background #000000.
+ * **1.4.4** — Leads re-run auto scoring: fresh JWT + optional refresh on 401; platform-tools JSON body Buffer parse; OM/admin can run lead-evaluate-fit and AI lead routes for managed users.
  *
  * @see CopyrightVersionFooter
  */

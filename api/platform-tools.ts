@@ -40,39 +40,36 @@ function loadSmsConsentHtml(): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>SMS consent</title></head><body><p>SMS consent document is not deployed. Ensure public/sms-consent.html exists and vercel.json includes it in api/platform-tools.ts includeFiles.</p></body></html>`
 }
 
-/** Optional body fields when Vercel has no SUPABASE_* (same public values as the app). */
-function supabasePublicFromPostBody(req: VercelRequest): { url?: string; anon?: string } {
-  if (req.method !== "POST") return {}
-  try {
-    const raw = req.body
-    const o = typeof raw === "string" ? (JSON.parse(raw || "{}") as unknown) : raw
-    if (!o || typeof o !== "object" || Array.isArray(o)) return {}
-    const rec = o as Record<string, unknown>
-    const url = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
-    const anon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
-    return { url: url || undefined, anon: anon || undefined }
-  } catch {
-    return {}
+/** Parse JSON POST body (Vercel may deliver `Buffer` or a pre-parsed object). */
+function bodyAsRecord(req: VercelRequest): Record<string, unknown> {
+  const raw = req.body as unknown
+  if (raw == null || raw === "") return {}
+  if (Buffer.isBuffer(raw)) {
+    try {
+      const v = JSON.parse(raw.toString("utf8")) as unknown
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
   }
+  if (typeof raw === "string") {
+    try {
+      const v = JSON.parse(raw || "{}") as unknown
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
+  return {}
 }
 
 function resolveSupabasePublicForUserJwt(req: VercelRequest): { supabaseUrl: string; anonKey: string } {
-  const fb = supabasePublicFromPostBody(req)
-  let jbUrl = ""
-  let jbAnon = ""
-  try {
-    const raw = req.body
-    const o = typeof raw === "string" ? (JSON.parse(raw || "{}") as unknown) : raw
-    if (o && typeof o === "object" && !Array.isArray(o)) {
-      const rec = o as Record<string, unknown>
-      jbUrl = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
-      jbAnon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
-    }
-  } catch {
-    /* ignore */
-  }
-  const supabaseUrl = (pickSupabaseUrlForServer() || fb.url || jbUrl || "").replace(/\/+$/, "")
-  const anonKey = pickSupabaseAnonKeyForServer() || fb.anon || jbAnon || ""
+  const rec = bodyAsRecord(req)
+  const fromBodyUrl = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
+  const fromBodyAnon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
+  const supabaseUrl = (pickSupabaseUrlForServer() || fromBodyUrl || "").replace(/\/+$/, "")
+  const anonKey = pickSupabaseAnonKeyForServer() || fromBodyAnon || ""
   return { supabaseUrl, anonKey }
 }
 
@@ -239,18 +236,24 @@ async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse
 }
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {
-  const raw = req.body
-  if (raw == null || raw === "") return {}
-  if (typeof raw === "string") {
-    try {
-      const v = JSON.parse(raw) as unknown
-      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
-    } catch {
-      return {}
-    }
-  }
-  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
-  return {}
+  return bodyAsRecord(req)
+}
+
+async function authCanAccessLeadOwner(
+  service: ReturnType<typeof createServiceSupabase>,
+  authUserId: string,
+  leadOwnerUserId: string,
+): Promise<boolean> {
+  if (authUserId === leadOwnerUserId) return true
+  const { data: prof } = await service.from("profiles").select("role").eq("id", authUserId).maybeSingle()
+  if ((prof as { role?: string } | null)?.role === "admin") return true
+  const { data: om } = await service
+    .from("office_manager_clients")
+    .select("user_id")
+    .eq("office_manager_id", authUserId)
+    .eq("user_id", leadOwnerUserId)
+    .maybeSingle()
+  return !!om
 }
 
 /** Rules-first lead fit evaluation (optional force to re-run). */
@@ -261,6 +264,7 @@ async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): P
   }
   const auth = await getUserIdFromBearer(req, res)
   if (!auth) return
+  const { userId: actorUserId } = auth
   let service: ReturnType<typeof createServiceSupabase>
   try {
     service = createServiceSupabase()
@@ -277,7 +281,11 @@ async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): P
   const force = body.force === true
   const { data: row, error } = await service.from("leads").select("id,user_id").eq("id", leadId).maybeSingle()
   const l = row as { id: string; user_id: string } | null
-  if (error || !l || l.user_id !== auth.userId) {
+  if (error || !l) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+  if (!(await authCanAccessLeadOwner(service, actorUserId, l.user_id))) {
     res.status(404).json({ error: "Lead not found" })
     return
   }
@@ -582,13 +590,6 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
     return
   }
 
-  const { data: profile } = await service.from("profiles").select("ai_assistant_visible").eq("id", userId).maybeSingle()
-  const prof = profile as { ai_assistant_visible?: boolean } | null
-  if (prof?.ai_assistant_visible === false) {
-    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
-    return
-  }
-
   const body = jsonBody(req)
   const leadId = pickFirstString(body.leadId).trim()
   if (!leadId) {
@@ -602,8 +603,19 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
     .eq("id", leadId)
     .maybeSingle()
   const row = lead as { id: string; user_id: string; customer_id: string; title?: string; description?: string; status?: string } | null
-  if (leadErr || !row || row.user_id !== userId) {
+  if (leadErr || !row) {
     res.status(404).json({ error: "Lead not found" })
+    return
+  }
+  if (!(await authCanAccessLeadOwner(service, userId, row.user_id))) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+
+  const { data: profile } = await service.from("profiles").select("ai_assistant_visible").eq("id", row.user_id).maybeSingle()
+  const prof = profile as { ai_assistant_visible?: boolean } | null
+  if (prof?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for this account (My T)." })
     return
   }
 
@@ -616,7 +628,7 @@ async function handleAiLeadAssist(req: VercelRequest, res: VercelResponse): Prom
   const { data: evs } = await service
     .from("communication_events")
     .select("event_type, direction, body, subject, created_at")
-    .eq("user_id", userId)
+    .eq("user_id", row.user_id)
     .or(`lead_id.eq.${leadId},and(customer_id.eq.${row.customer_id},conversation_id.is.null)`)
     .order("created_at", { ascending: false })
     .limit(50)
@@ -703,47 +715,15 @@ async function handleAiRegenerateLeadConsumerReply(req: VercelRequest, res: Verc
     res.status(405).json({ error: "Method not allowed" })
     return
   }
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Missing authorization" })
-    return
-  }
-  const token = authHeader.slice("Bearer ".length).trim()
-  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
-  if (!supabaseUrl || !anonKey) {
-    res.status(500).json({
-      error:
-        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or send supabaseUrl + supabaseAnonKey in the JSON body.",
-    })
-    return
-  }
-
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  })
-  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
-  if (userErr || !userData.user) {
-    res.status(401).json({ error: "Invalid session" })
-    return
-  }
-  const userId = userData.user.id
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const { userId } = auth
 
   let service: ReturnType<typeof createServiceSupabase>
   try {
     service = createServiceSupabase()
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
-    return
-  }
-
-  const { data: profile } = await service
-    .from("profiles")
-    .select("metadata, ai_assistant_visible")
-    .eq("id", userId)
-    .maybeSingle()
-  const prof = profile as { metadata?: unknown; ai_assistant_visible?: boolean } | null
-  if (prof?.ai_assistant_visible === false) {
-    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
     return
   }
 
@@ -765,8 +745,23 @@ async function handleAiRegenerateLeadConsumerReply(req: VercelRequest, res: Verc
     description?: string | null
     customers?: { display_name?: string | null } | null
   } | null
-  if (leadErr || !row || row.user_id !== userId) {
+  if (leadErr || !row) {
     res.status(404).json({ error: "Lead not found" })
+    return
+  }
+  if (!(await authCanAccessLeadOwner(service, userId, row.user_id))) {
+    res.status(404).json({ error: "Lead not found" })
+    return
+  }
+
+  const { data: profile } = await service
+    .from("profiles")
+    .select("metadata, ai_assistant_visible")
+    .eq("id", row.user_id)
+    .maybeSingle()
+  const prof = profile as { metadata?: unknown; ai_assistant_visible?: boolean } | null
+  if (prof?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for this account (My T)." })
     return
   }
 
