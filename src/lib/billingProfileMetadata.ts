@@ -1,3 +1,5 @@
+import { isBillingProductTypeId, type BillingProductTypeId } from "./billingProductTypes"
+
 /** Billing / Helcim fields stored on `profiles.metadata` (JSON). */
 
 export type BillingProfileMetadata = {
@@ -12,6 +14,10 @@ export type BillingProfileMetadata = {
    * When unset, the app uses `VITE_HELCIM_PAYMENT_PORTAL_URL` from the build (one URL for the whole org).
    */
   helcim_pay_portal_url?: string
+  /** Primary product line for billing (admin sheet). */
+  billing_product_type?: BillingProductTypeId | string
+  /** Extra product lines (same catalog as primary). */
+  billing_additional_products?: string[]
 }
 
 /**
@@ -75,6 +81,16 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
   if (typeof m.helcim_pay_portal_url === "string" && m.helcim_pay_portal_url.trim()) {
     out.helcim_pay_portal_url = m.helcim_pay_portal_url.trim()
   }
+  if (typeof m.billing_product_type === "string" && m.billing_product_type.trim()) {
+    const t = m.billing_product_type.trim()
+    if (isBillingProductTypeId(t)) out.billing_product_type = t
+  }
+  if (Array.isArray(m.billing_additional_products)) {
+    const add = m.billing_additional_products
+      .map((x) => (typeof x === "string" ? x.trim() : ""))
+      .filter((x): x is BillingProductTypeId => isBillingProductTypeId(x))
+    if (add.length) out.billing_additional_products = add
+  }
   return out
 }
 
@@ -100,6 +116,17 @@ export function mergeBillingIntoProfileMetadata(
     const t = patch.helcim_pay_portal_url.trim()
     if (t) next.helcim_pay_portal_url = t
     else delete next.helcim_pay_portal_url
+  }
+
+  if (patch.billing_product_type !== undefined) {
+    const t = typeof patch.billing_product_type === "string" ? patch.billing_product_type.trim() : ""
+    if (t && isBillingProductTypeId(t)) next.billing_product_type = t
+    else delete next.billing_product_type
+  }
+  if (patch.billing_additional_products !== undefined) {
+    const arr = patch.billing_additional_products.filter((x) => typeof x === "string" && isBillingProductTypeId(x.trim()))
+    if (arr.length) next.billing_additional_products = arr.map((x) => x.trim())
+    else delete next.billing_additional_products
   }
   return next
 }

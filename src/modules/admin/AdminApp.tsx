@@ -1104,23 +1104,6 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
-            onClick={() => setAdminPanel("billing")}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 6,
-              border: `1px solid rgba(255,255,255,0.35)`,
-              background: adminPanel === "billing" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
-              color: "white",
-              fontSize: 13,
-              cursor: "pointer",
-              fontWeight: adminPanel === "billing" ? 600 : 400,
-              textAlign: "left",
-            }}
-          >
-            Billing &amp; Helcim
-          </button>
-          <button
-            type="button"
             onClick={() => setAdminPanel("portal")}
             style={{
               padding: "8px 12px",
@@ -1152,6 +1135,23 @@ function AdminAppInner() {
             }}
           >
             Trouble tickets
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("billing")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "billing" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "billing" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Billing &amp; Helcim
           </button>
           <button
             type="button"
