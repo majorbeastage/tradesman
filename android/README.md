@@ -18,6 +18,22 @@ You are not doing anything wrong if this feels confusing. Android Studio is a bi
 
 ---
 
+## App icon (same as browser tab)
+
+The favicon / PWA icon is **`public/icon.png`** (see root **`index.html`**). Native launcher assets are generated from that file so the **home-screen icon matches the tab logo**.
+
+1. Replace **`public/icon.png`** with your updated square artwork (keep roughly **512×512** or larger, PNG).
+2. From repo root, run:
+
+   ```powershell
+   npm run icons:generate
+   ```
+
+   This overwrites Android **`mipmap-*/ic_launcher*.png`** and iOS **`AppIcon.appiconset/AppIcon-512@2x.png`** (1024×1024). Adaptive icon **background** is **`#000000`** in **`android/app/src/main/res/values/ic_launcher_background.xml`** to match the black canvas on **`icon.png`**.
+3. Then **`npm run mobile:sync`** (or your usual release build) and rebuild the APK / AAB in Android Studio.
+
+---
+
 ## One-time setup
 
 1. **Install [Android Studio](https://developer.android.com/studio)** (includes Android SDK and a bundled JDK).

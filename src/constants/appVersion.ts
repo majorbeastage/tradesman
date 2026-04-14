@@ -12,6 +12,7 @@
  * **1.4.0** — Mobile shell (safe area, viewport), MyT push/GPS prefs, per-tab Alerts (push/email/SMS + calendar extras), call button (tel:), team map placeholder (OM/admin); Capacitor push + geolocation.
  * **1.4.1** — Fix mobile prefs import + Supabase Promise/finally TypeScript build; version bump for release.
  * **1.4.2** — Push device rows + FCM push-test Edge, Twilio bridge call, GPS last-location + team Leaflet map, quote status → notify-quote-status (email/SMS/push per Alerts prefs).
+ * **1.4.3** — Launcher icons generated from public/icon.png (browser tab); npm run icons:generate; adaptive icon background #000000.
  *
  * @see CopyrightVersionFooter
  */
