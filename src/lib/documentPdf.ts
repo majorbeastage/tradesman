@@ -267,8 +267,10 @@ export async function buildReceiptPdfBytes(params: {
   if (params.templateFooter?.trim()) {
     y -= 12
     for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 15)) {
-      draw(para, 9, false, 0.45)
+      if (!para.trim()) continue
+      drawWrapped(para.trim(), 9, 0.45)
     }
+    y -= 4
   }
 
   return doc.save()

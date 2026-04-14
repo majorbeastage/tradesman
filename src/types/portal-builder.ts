@@ -1003,7 +1003,7 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "receipt_template_carry_from_estimate",
     type: "checkbox",
-    label: "When saving, copy logo from Quotes → Estimate template (if estimate has “show logo” on)",
+    label: "When saving, copy logo from Quotes → Estimate into receipt fields (optional; receipts already use the estimate logo if receipt URL is empty)",
     defaultChecked: false,
   },
   {
@@ -1021,7 +1021,7 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "receipt_template_logo_url",
     type: "custom_field",
-    label: "Logo image URL (HTTPS); can be filled from estimate via checkbox above",
+    label: "Logo URL (HTTPS), optional — leave blank to use the same upload as Quotes → Estimate template",
     customFieldSubtype: "text",
     dependency: { dependsOnItemId: "receipt_template_show_logo", showWhenValue: "checked" },
   },

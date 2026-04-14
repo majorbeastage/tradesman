@@ -54,7 +54,7 @@ import {
   prependQuoteMaterialsToEventChecklist,
   totalFromQuoteItemRows,
 } from "../../lib/quoteItemMath"
-import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
+import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "../../lib/quoteLogoImage"
 
 type JobType = {
   id: string
@@ -534,8 +534,6 @@ export default function CalendarPage() {
   const [completeCompletionNote, setCompleteCompletionNote] = useState("")
   const [calendarEventEntityRows, setCalendarEventEntityRows] = useState<EntityAttachmentRow[]>([])
   const [calendarEventEntityUploadBusy, setCalendarEventEntityUploadBusy] = useState(false)
-  const [calendarReceiptTemplate, setCalendarReceiptTemplate] = useState<string | null>(null)
-  const [calendarProfileDisplayName, setCalendarProfileDisplayName] = useState("")
   const [receiptPdfBusy, setReceiptPdfBusy] = useState(false)
   const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
   const [autoResponsePortalValues, setAutoResponsePortalValues] = useState<Record<string, string>>({})
@@ -635,6 +633,8 @@ export default function CalendarPage() {
       const intro = typeof meta.receipt_template_intro === "string" ? meta.receipt_template_intro : ""
       const showRecLogo = meta.receipt_template_show_logo === true
       const recLogoUrl = typeof meta.receipt_template_logo_url === "string" ? meta.receipt_template_logo_url : ""
+      const estLogoUrl = typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : ""
+      const receiptLogoFieldUrl = (recLogoUrl.trim() || estLogoUrl.trim()).trim()
       const carryEst = meta.receipt_template_carry_from_estimate === true
       const next: Record<string, string> = {}
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
@@ -645,7 +645,7 @@ export default function CalendarPage() {
         else if (item.id === "receipt_template_mileage_rate") next[item.id] = rateStr
         else if (item.id === "receipt_template_intro") next[item.id] = intro
         else if (item.id === "receipt_template_show_logo") next[item.id] = showRecLogo ? "checked" : "unchecked"
-        else if (item.id === "receipt_template_logo_url") next[item.id] = recLogoUrl
+        else if (item.id === "receipt_template_logo_url") next[item.id] = receiptLogoFieldUrl
         else if (item.id === "receipt_template_carry_from_estimate") next[item.id] = carryEst ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
@@ -693,7 +693,9 @@ export default function CalendarPage() {
     else delete prevMeta.receipt_template_intro
     prevMeta.receipt_template_show_logo = receiptTemplateFormValues.receipt_template_show_logo === "checked"
     const logoTrim = (receiptTemplateFormValues.receipt_template_logo_url ?? "").trim()
-    if (logoTrim) prevMeta.receipt_template_logo_url = logoTrim
+    const estUrlForLogo =
+      typeof prevMeta.estimate_template_logo_url === "string" ? prevMeta.estimate_template_logo_url.trim() : ""
+    if (logoTrim && logoTrim !== estUrlForLogo) prevMeta.receipt_template_logo_url = logoTrim
     else delete prevMeta.receipt_template_logo_url
     const { error } = await supabase
       .from("profiles")
@@ -706,7 +708,6 @@ export default function CalendarPage() {
       alert(error.message)
       return
     }
-    setCalendarReceiptTemplate(notes || null)
     setShowReceiptTemplateModal(false)
   }
 
@@ -927,9 +928,19 @@ export default function CalendarPage() {
       let itemize = false
       let mileageRatePerMile = 0
       let templateHeader: string | null = null
+      let templateFooter: string | null = null
+      let receiptBusinessLabel = "Receipt"
       let logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>> = null
       if (profileUserId) {
-        const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("metadata, document_template_receipt, display_name")
+          .eq("id", profileUserId)
+          .maybeSingle()
+        const foot = (prof as { document_template_receipt?: string | null } | null)?.document_template_receipt
+        templateFooter = typeof foot === "string" && foot.trim() ? foot.trim() : null
+        const dn = (prof as { display_name?: string | null } | null)?.display_name
+        if (typeof dn === "string" && dn.trim()) receiptBusinessLabel = dn.trim()
         const meta =
           prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
             ? (prof.metadata as Record<string, unknown>)
@@ -944,7 +955,7 @@ export default function CalendarPage() {
         const introRaw = meta.receipt_template_intro
         templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
         if (meta.receipt_template_show_logo === true) {
-          const u = typeof meta.receipt_template_logo_url === "string" ? meta.receipt_template_logo_url.trim() : ""
+          const u = resolveReceiptTemplateLogoUrl(meta)
           if (u) logo = await fetchQuoteLogoForExport(u)
         }
       }
@@ -971,14 +982,14 @@ export default function CalendarPage() {
       const amount =
         ev.quote_total != null && ev.quote_total > 0 ? `Quote total: $${Number(ev.quote_total).toFixed(2)}` : null
       const bytes = await buildReceiptPdfBytes({
-        businessLabel: calendarProfileDisplayName || "Receipt",
+        businessLabel: receiptBusinessLabel,
         customerName,
         jobTitle: ev.title,
         completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
         amountLabel: amount,
         templateHeader,
         logo,
-        templateFooter: calendarReceiptTemplate,
+        templateFooter,
         scheduledDurationLabel: sections.scheduledDurationLabel,
         quoteLineItems: sections.quoteLines,
         includeMaterialsChecklist: itemize,
@@ -1355,29 +1366,6 @@ export default function CalendarPage() {
       setCustomizeTargetUserId(userId)
       setAddTargetUserId(userId)
     })
-  }, [userId])
-
-  useEffect(() => {
-    if (!supabase || !userId) return
-    let cancelled = false
-    void (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("document_template_receipt, display_name")
-        .eq("id", userId)
-        .maybeSingle()
-      if (cancelled || error || !data) return
-      const row = data as { document_template_receipt?: string | null; display_name?: string | null }
-      setCalendarReceiptTemplate(
-        typeof row.document_template_receipt === "string" && row.document_template_receipt.trim()
-          ? row.document_template_receipt
-          : null,
-      )
-      setCalendarProfileDisplayName(typeof row.display_name === "string" ? row.display_name.trim() : "")
-    })()
-    return () => {
-      cancelled = true
-    }
   }, [userId])
 
   useEffect(() => {

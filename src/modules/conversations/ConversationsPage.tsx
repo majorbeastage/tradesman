@@ -1,6 +1,10 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
 import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
+import {
+  mergeConversationAutomaticRepliesPrefs,
+  runQualifiedConversationToQuotesAutomation,
+} from "../../lib/conversationQuoteAutomation"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { theme } from "../../styles/theme"
@@ -1112,6 +1116,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
     }
     setDetailSaving(true)
     try {
+      const statusBeforeSave = selectedConversation.status
       const cleanedIdentifiers = detailForm.identifiers
         .map((item) => ({ ...item, value: item.value.trim() }))
         .filter((item) => item.value)
@@ -1156,6 +1161,33 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         }))
         const { error: insertErr } = await supabase.from("customer_identifiers").insert(payload)
         if (insertErr) throw insertErr
+      }
+
+      const convoId = selectedConversation.id
+      const prefsMerged = mergeConversationAutomaticRepliesPrefs(conversationsAutoRepliesProfile, autoRepliesFormValues)
+      const autoQuotes = await runQualifiedConversationToQuotesAutomation({
+        supabase,
+        userId,
+        conversationId: convoId,
+        customerId: selectedConversation.customer_id,
+        prevStatusRaw: statusBeforeSave,
+        nextStatusRaw: detailForm.status,
+        prefs: prefsMerged,
+        setPage,
+      })
+      if (autoQuotes.action === "error") {
+        alert(autoQuotes.message)
+      }
+      if (autoQuotes.action === "moved") {
+        setSelectedConversation(null)
+        setSelectedConversationId(null)
+        setMessages([])
+        setCommunicationEvents([])
+        setCommAttachmentsByEvent({})
+        setConversations((prev) => prev.filter((c) => c.id !== convoId))
+        await loadConversations()
+        setDetailEditMode(false)
+        return
       }
 
       await openConversation(selectedConversation.id)
@@ -2779,6 +2811,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                   const { error } = await supabase.from("quotes").insert({
                     user_id: userId,
                     customer_id: selectedConversation.customer_id,
+                    conversation_id: selectedConversation.id,
                     status: "draft",
                   })
                   if (error) {
