@@ -135,7 +135,10 @@ export type CustomActionButton = {
   items: PortalSettingItem[]
 }
 
-/** Per-user portal config (tabs, settings, dropdowns). Missing or true = visible, false = hidden. */
+/**
+ * Per-user portal config (tabs, settings, dropdowns). Missing or true = visible, false = hidden.
+ * For users assigned to an office manager, `tabs.payments` defaults off in the UI until set to true.
+ */
 export type PortalConfig = {
   tabs?: Record<string, boolean>
   settings?: Record<string, boolean>
@@ -218,6 +221,22 @@ export function getOmPageActionVisible(
   const section = portalConfig?.om_page_actions?.[page]
   if (!section || typeof section !== "object") return true
   return section[actionId] !== false
+}
+
+export type PortalNavTab = { tab_id: string; label: string | null }
+
+/**
+ * Contractors linked to an office manager default to **no** Payments tab unless
+ * `portal_config.tabs.payments === true` (set via office manager → User portal tabs → Save).
+ */
+export function filterUserPortalTabsForManagedPaymentsPolicy(
+  tabs: PortalNavTab[],
+  portalConfig: PortalConfig | null,
+  managedByOfficeManager: boolean,
+): PortalNavTab[] {
+  if (!managedByOfficeManager) return tabs
+  if (portalConfig?.tabs?.payments === true) return tabs
+  return tabs.filter((t) => t.tab_id !== "payments")
 }
 
 /** Ordered list for portal builder + Account page visibility */

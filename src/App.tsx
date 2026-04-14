@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { ViewProvider } from "./contexts/ViewContext"
 import AppLayout from "./layout/AppLayout"
 import CustomersPage from "./modules/customers/CustomersPage"
@@ -27,8 +27,14 @@ import { useAuth } from "./contexts/AuthContext"
 import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
+import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
 import { useIsMobile } from "./hooks/useIsMobile"
-import { getPortalTabListForConfig, type PortalConfig } from "./types/portal-builder"
+import {
+  filterUserPortalTabsForManagedPaymentsPolicy,
+  getPortalTabListForConfig,
+  type PortalConfig,
+  type PortalTab,
+} from "./types/portal-builder"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
@@ -51,10 +57,26 @@ function MainApp() {
   const [connectionError, setConnectionError] = useState<string>("")
   const { clientId, portalConfig, role: authRole } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
+  const managedByOfficeManager = useManagedByOfficeManager()
   const isMobile = useIsMobile()
   const { t } = useLocale()
-  // Prefer per-user portal_config from admin (default + custom tabs, filtered by visibility)
-  const portalTabs = buildPortalTabsFromConfig(portalConfig) ?? portalTabsFromApi
+  const mergedTabs = useMemo(() => {
+    const fromConfig = buildPortalTabsFromConfig(portalConfig)
+    if (fromConfig) return fromConfig
+    if (portalTabsFromApi.length > 0) {
+      return portalTabsFromApi.map((t: PortalTab) => ({ tab_id: t.tab_id, label: t.label }))
+    }
+    return getPortalTabListForConfig({})
+  }, [portalConfig, portalTabsFromApi])
+  const portalTabs = useMemo(
+    () => filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager),
+    [mergedTabs, portalConfig, managedByOfficeManager],
+  )
+
+  useEffect(() => {
+    if (page !== "payments") return
+    if (!portalTabs.some((t) => t.tab_id === "payments")) setPage("dashboard")
+  }, [page, portalTabs])
 
   useEffect(() => {
     if (!supabase) {

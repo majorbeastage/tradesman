@@ -52,8 +52,10 @@ export default function PaymentsPage() {
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb", marginBottom: 8 }}>Payments</h1>
       <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-        Pay invoices or manage your card on file through Helcim. Your admin sets the payment portal link on your profile, or the app can use{" "}
-        <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for all users.
+        Pay invoices or manage your card on file through Helcim. The link is stored in <strong>Supabase</strong> on your profile
+        (<code>profiles.metadata.helcim_pay_portal_url</code>) via <strong>Admin → Billing &amp; Helcim</strong>, unless your build
+        defines <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / local env — not a Supabase
+        secret) as a default for everyone.
       </p>
       {loading ? (
         <p style={{ color: "#9ca3af" }}>Loading…</p>

@@ -73,7 +73,9 @@ function ManagedUserTabEditor() {
     const cfg = ctx?.scopedPortalConfig
     const next: Record<string, boolean> = {}
     for (const id of USER_PORTAL_TAB_IDS) {
-      next[id] = cfg?.tabs?.[id] !== false
+      // Managed users: Payments defaults off until explicitly enabled (matches user-portal sidebar).
+      if (id === "payments") next[id] = cfg?.tabs?.payments === true
+      else next[id] = cfg?.tabs?.[id] !== false
     }
     setLocalTabs(next)
   }, [ctx?.scopedPortalConfig, uid])
@@ -140,6 +142,9 @@ function ManagedUserTabEditor() {
         >
           <p style={{ margin: "0 0 8px", fontSize: 12, color: theme.text, opacity: 0.85 }}>
             Control which tabs this user sees in the <strong>user</strong> portal (not the office manager sidebar).
+            <strong> Payments</strong> stays hidden for assigned users until you check it and Save. The Helcim page URL itself is set
+            in <strong>Admin → Billing &amp; Helcim</strong> (or the optional app-wide <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> on
+            the web/mobile build).
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {getPortalTabListForConfig((ctx.scopedPortalConfig ?? {}) as PortalConfig).map(({ tab_id: tabId, label }) => (

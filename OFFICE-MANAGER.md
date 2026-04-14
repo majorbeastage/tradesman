@@ -29,6 +29,8 @@ Alternatively, use a **second login** with role `office_manager` only.
 
 Without step 3, the office manager dropdown can load, but Supabase will block reads on `leads`, `quotes`, etc.
 
+4. Run **`supabase-office-manager-clients-managed-user-read.sql`** so assigned users can detect their link (default **Payments** tab hidden in the user portal until enabled under **User portal tabs**).
+
 ## Assigning users in the Admin portal (Tradesman app, not Supabase)
 
 There is no **“Admin → Users”** folder in the Supabase dashboard. Use your **local app** (or deployed site):
