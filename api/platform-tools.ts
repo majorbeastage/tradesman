@@ -8,7 +8,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
-import { createClient } from "@supabase/supabase-js"
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import {
   createServiceSupabase,
   ensureOpenLeadForInbound,
@@ -71,6 +71,21 @@ function resolveSupabasePublicForUserJwt(req: VercelRequest): { supabaseUrl: str
   const supabaseUrl = (pickSupabaseUrlForServer() || fromBodyUrl || "").replace(/\/+$/, "")
   const anonKey = pickSupabaseAnonKeyForServer() || fromBodyAnon || ""
   return { supabaseUrl, anonKey }
+}
+
+/**
+ * RLS-bound client using the caller's JWT. Used when the server has no service role key
+ * (e.g. Vercel missing SUPABASE_SERVICE_ROLE_KEY) but URL + anon are available.
+ */
+function createUserJwtSupabaseClient(req: VercelRequest): SupabaseClient | null {
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) return null
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
+  if (!supabaseUrl || !anonKey) return null
+  return createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 }
 
 /** Verify Supabase JWT; returns userId or null + optional error response writer. */
@@ -265,12 +280,16 @@ async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): P
   const auth = await getUserIdFromBearer(req, res)
   if (!auth) return
   const { userId: actorUserId } = auth
-  let service: ReturnType<typeof createServiceSupabase>
+  let service: SupabaseClient
   try {
     service = createServiceSupabase()
   } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
-    return
+    const fallback = createUserJwtSupabaseClient(req)
+    if (!fallback) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+      return
+    }
+    service = fallback
   }
   const body = jsonBody(req)
   const leadId = pickFirstString(body.leadId).trim()

@@ -9,6 +9,7 @@ import WebSupportPage from "../web-support/WebSupportPage"
 import TechSupportPage from "../tech-support/TechSupportPage"
 import SettingsPage from "../settings/SettingsPage"
 import AccountPage from "../account/AccountPage"
+import PaymentsPage from "../payments/PaymentsPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   OfficeManagerScopeProvider,
@@ -477,6 +478,7 @@ function OfficeManagerAppContent() {
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}
       {hasClients && page === "settings" && <SettingsPage />}
+      {hasClients && page === "payments" && <PaymentsPage />}
       {page === "account" && <AccountPage />}
       {!hasClients && page !== "dashboard" && (
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>

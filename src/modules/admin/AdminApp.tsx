@@ -12,6 +12,7 @@ import { fetchPortalConfigTemplates, savePortalConfigTemplates } from "../../lib
 import Sidebar from "../../components/Sidebar"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import AdminUsersSection from "./AdminUsersSection"
+import AdminPaymentsSection from "./AdminPaymentsSection"
 import CalendarUserPreferencesEditor from "./CalendarUserPreferencesEditor"
 import AdminPortalAssistant from "./AdminPortalAssistant"
 import PortalItemDependencyEditor from "../../components/admin/PortalItemDependencyEditor"
@@ -549,7 +550,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "signup" | "communications" | "users" | "portal" | "tickets" | "about"
+    "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("portal")
 
   const loadProfiles = useCallback(async () => {
@@ -1103,6 +1104,23 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("billing")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "billing" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "billing" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Billing &amp; Helcim
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("portal")}
             style={{
               padding: "8px 12px",
@@ -1342,6 +1360,8 @@ function AdminAppInner() {
             </AdminSettingBlock>
             <AdminUsersSection />
           </div>
+        ) : adminPanel === "billing" ? (
+          <AdminPaymentsSection />
         ) : adminPanel === "communications" ? (
           <AdminCommunicationsSection
             mode={communicationsMode}

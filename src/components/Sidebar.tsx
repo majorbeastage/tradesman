@@ -29,7 +29,8 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     ? portalTabs
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
   const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
-  const tabs = allTabs.filter((t) => t.tab_id !== "account")
+  const showPayments = allTabs.some((t) => t.tab_id === "payments") || !portalTabs
+  const tabs = allTabs.filter((t) => t.tab_id !== "account" && t.tab_id !== "payments")
   const mainNavTabs = tabs.filter((t) => t.tab_id !== "tech-support")
   const techSupportNavTabs = tabs.filter((t) => t.tab_id === "tech-support")
 
@@ -139,6 +140,14 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           >
             {t("layout.logout")}
           </button>
+        )}
+        {showPayments && (
+          <p
+            onClick={() => { setPage("payments"); onClose?.() }}
+            style={{ ...itemStyle, marginTop: 8, marginBottom: 4, fontSize: 14, fontWeight: 600 }}
+          >
+            {t("nav.payments")}
+          </p>
         )}
         {showAccount && (
           <button

@@ -55,5 +55,7 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Tradesman sends job updates and messages when you allow notifications.</string>
 </dict>
 </plist>

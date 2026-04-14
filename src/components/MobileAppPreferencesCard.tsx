@@ -2,7 +2,12 @@ import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
-import { requestGpsPermission, requestPushPermissionAndRegister, isNativeApp } from "../lib/capacitorMobile"
+import {
+  requestGpsPermission,
+  requestPushPermissionAndRegister,
+  isNativeApp,
+  openAppSystemSettings,
+} from "../lib/capacitorMobile"
 
 const CARD = {
   padding: 16,
@@ -149,6 +154,20 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
           >
             Request location permission on this device
           </button>
+          {isNativeApp() ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={async () => {
+                setPermMsg(null)
+                const r = await openAppSystemSettings()
+                setPermMsg(r.ok ? "Opened system settings for Tradesman. Enable Location and/or Notifications, then return here." : r.message)
+              }}
+              style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600, background: "#eff6ff", borderColor: "#93c5fd" }}
+            >
+              Open system settings (Tradesman app)
+            </button>
+          ) : null}
         </>
       )}
       {msg && <p style={{ margin: 0, fontSize: 13, color: "#059669" }}>{msg}</p>}
