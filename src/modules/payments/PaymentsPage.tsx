@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
-import { useAuth } from "../../contexts/AuthContext"
+import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
   helcimPayPortalUrlAllowsIframe,
@@ -11,18 +11,19 @@ import {
 const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_PAYMENT_PORTAL_URL ?? ""
 
 export default function PaymentsPage() {
-  const { userId } = useAuth()
+  /** In the office manager portal, use the "Working as" user so their Helcim URL is shown. */
+  const profileUserId = useScopedUserId()
   const [portalUrl, setPortalUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!supabase || !userId) {
+    if (!supabase || !profileUserId) {
       setLoading(false)
       return
     }
     let cancelled = false
     void (async () => {
-      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
       if (cancelled) return
       setLoading(false)
       if (error || !data) {
@@ -40,7 +41,7 @@ export default function PaymentsPage() {
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [profileUserId])
 
   const normalizedPortal = portalUrl ? normalizeHelcimPayPortalUrl(portalUrl) : null
   const iframeUrl = normalizedPortal && helcimPayPortalUrlAllowsIframe(normalizedPortal) ? normalizedPortal : null
