@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
+import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
@@ -22,6 +23,13 @@ const ENV_JS_TOKEN = ((import.meta as { env?: Record<string, string> }).env?.VIT
 const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
 
+/** Long-form builder / env notes on Payments — only when signed in as this account. */
+const PAYMENTS_DEV_NOTES_EMAILS = new Set(["joe@tradesman-us.com"])
+
+function showPaymentsDevNotes(email: string | null | undefined): boolean {
+  return PAYMENTS_DEV_NOTES_EMAILS.has((email ?? "").trim().toLowerCase())
+}
+
 const inputStyle: CSSProperties = {
   width: "100%",
   maxWidth: 420,
@@ -35,7 +43,9 @@ const inputStyle: CSSProperties = {
 }
 
 export default function PaymentsPage() {
+  const { user: authUser } = useAuth()
   const profileUserId = useScopedUserId()
+  const devNotes = showPaymentsDevNotes(authUser?.email)
   const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
   const [customerCode, setCustomerCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -137,16 +147,24 @@ export default function PaymentsPage() {
 
       {useHelcimJs ? (
         <>
-          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-            Checkout uses <strong>Helcim.js</strong> on this page: card fields stay in your browser, Helcim tokenizes over CORS, then
-            posts results to our server inside a <strong>hidden iframe</strong> so you are not redirected away from the app. Configure
-            your <strong>Helcim.js configuration token</strong> as <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code>{" "}
-            (from Helcim → Integrations → Helcim.js). Live processing requires <strong>HTTPS</strong> on this origin.
-          </p>
-          <p style={{ color: "#9ca3af", marginBottom: 16, lineHeight: 1.45, fontSize: 13 }}>
-            Success or decline shown here is for convenience; billing automation still follows Helcim <strong>webhooks</strong> into
-            Supabase (<code>billing-webhook</code>).
-          </p>
+          {devNotes ? (
+            <>
+              <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+                Checkout uses <strong>Helcim.js</strong> on this page: card fields stay in your browser, Helcim tokenizes over CORS, then
+                posts results to our server inside a <strong>hidden iframe</strong> so you are not redirected away from the app. Configure
+                your <strong>Helcim.js configuration token</strong> as <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code>{" "}
+                (from Helcim → Integrations → Helcim.js). Live processing requires <strong>HTTPS</strong> on this origin.
+              </p>
+              <p style={{ color: "#9ca3af", marginBottom: 16, lineHeight: 1.45, fontSize: 13 }}>
+                Success or decline shown here is for convenience; billing automation still follows Helcim <strong>webhooks</strong> into
+                Supabase (<code>billing-webhook</code>).
+              </p>
+            </>
+          ) : (
+            <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+              Pay securely with your card below. You&apos;ll see whether your payment was approved right on this page.
+            </p>
+          )}
           {!helcimJsHttpsOk ? (
             <div
               style={{
@@ -159,8 +177,9 @@ export default function PaymentsPage() {
                 fontSize: 14,
               }}
             >
-              Helcim.js live mode expects HTTPS. Use a secure preview URL or production host for real cards; localhost may be limited
-              depending on your Helcim.js settings.
+              {devNotes
+                ? "Helcim.js live mode expects HTTPS. Use a secure preview URL or production host for real cards; localhost may be limited depending on your Helcim.js settings."
+                : "Card payments need a secure (https) connection. Open this app from your production link, not plain http://localhost, when using a live card."}
             </div>
           ) : null}
           {loading ? (
@@ -186,7 +205,13 @@ export default function PaymentsPage() {
                   {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
                   {lastResult.transactionId ? (
                     <div style={{ marginTop: 8, fontSize: 13, opacity: 0.95 }}>
-                      Transaction id: <code>{lastResult.transactionId}</code>
+                      {devNotes ? (
+                        <>
+                          Transaction id: <code>{lastResult.transactionId}</code>
+                        </>
+                      ) : (
+                        <>Reference: {lastResult.transactionId}</>
+                      )}
                       {lastResult.amount ? (
                         <>
                           {" "}
@@ -239,6 +264,33 @@ export default function PaymentsPage() {
                     Cardholder name
                     <input type="text" id="cardHolderName" defaultValue="" autoComplete="cc-name" style={inputStyle} />
                   </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                    Billing street address
+                    <input
+                      type="text"
+                      id="cardHolderAddress"
+                      defaultValue=""
+                      placeholder="Street address (AVS)"
+                      autoComplete="street-address"
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                    Billing postal / ZIP code
+                    <input
+                      type="text"
+                      id="cardHolderPostalCode"
+                      defaultValue=""
+                      placeholder="Postal or ZIP"
+                      autoComplete="postal-code"
+                      style={inputStyle}
+                    />
+                  </label>
+                  <p style={{ margin: 0, fontSize: 12, color: "#9ca3af", lineHeight: 1.45 }}>
+                    {devNotes
+                      ? "Your Helcim.js terminal can require these for AVS. Use the same address the card issuer has on file."
+                      : "Use the same billing address your bank has on file for this card."}
+                  </p>
 
                   <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
                     Card number
@@ -288,27 +340,37 @@ export default function PaymentsPage() {
                 </div>
               </form>
 
-              <p style={{ color: "#6b7280", fontSize: 12, marginTop: 20, lineHeight: 1.45 }}>
-                Optional: keep <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for a hosted Helcim Pay fallback (not shown while Helcim.js
-                token is set). If your mobile webview posts to a different API host than the page origin, set{" "}
-                <code>VITE_PUBLIC_APP_ORIGIN</code> to that HTTPS origin.
-              </p>
+              {devNotes ? (
+                <p style={{ color: "#6b7280", fontSize: 12, marginTop: 20, lineHeight: 1.45 }}>
+                  Optional: keep <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for a hosted Helcim Pay fallback (not shown while Helcim.js
+                  token is set). If your mobile webview posts to a different API host than the page origin, set{" "}
+                  <code>VITE_PUBLIC_APP_ORIGIN</code> to that HTTPS origin.
+                </p>
+              ) : null}
             </>
           )}
         </>
       ) : (
         <>
-          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-            This tab can load <strong>Helcim&apos;s hosted payment page</strong> in an iframe when no Helcim.js token is configured.
-            For an embedded checkout on this domain, set <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code> (see Helcim →
-            Integrations → Helcim.js).
-          </p>
-          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-            <strong>Hosted Pay setup:</strong> set one pay/portal URL on the app build as{" "}
-            <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase). Your{" "}
-            <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is appended as <code>customerCode</code> when missing
-            from the URL (confirm with Helcim for your page template). Per-user portal URL overrides are optional.
-          </p>
+          {devNotes ? (
+            <>
+              <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+                This tab can load <strong>Helcim&apos;s hosted payment page</strong> in an iframe when no Helcim.js token is configured.
+                For an embedded checkout on this domain, set <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code> (see Helcim →
+                Integrations → Helcim.js).
+              </p>
+              <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+                <strong>Hosted Pay setup:</strong> set one pay/portal URL on the app build as{" "}
+                <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase). Your{" "}
+                <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is appended as <code>customerCode</code> when missing
+                from the URL (confirm with Helcim for your page template). Per-user portal URL overrides are optional.
+              </p>
+            </>
+          ) : (
+            <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+              Your secure payment window loads below when your organization has turned on online payments.
+            </p>
+          )}
           {iframeUrl && !customerCode ? (
             <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
               No Helcim customer code on file — the shared portal may not pre-select your account. Ask your admin to add it under Billing
@@ -388,10 +450,19 @@ export default function PaymentsPage() {
                 lineHeight: 1.55,
               }}
             >
-              <strong>No payment portal URL configured.</strong> Set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on the web or
-              mobile build (recommended — same Helcim page for everyone), or add a per-user URL in <strong>Admin → Billing &amp;
-              Helcim</strong>. Map each user&apos;s <strong>Helcim customer code</strong> there so webhooks and the pay link can tie
-              activity to the right account. Or set <code>VITE_HELCIM_JS_TOKEN</code> for Helcim.js on this page.
+              <strong>Online payments aren&apos;t set up for this app yet.</strong>{" "}
+              {devNotes ? (
+                <>
+                  Set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on the web or mobile build (recommended — same Helcim page for
+                  everyone), or add a per-user URL in <strong>Admin → Billing &amp; Helcim</strong>. Map each user&apos;s{" "}
+                  <strong>Helcim customer code</strong> there so webhooks and the pay link can tie activity to the right account. Or set{" "}
+                  <code>VITE_HELCIM_JS_TOKEN</code> for Helcim.js on this page.
+                </>
+              ) : (
+                <>
+                  Your administrator still needs to finish payment setup for this site.
+                </>
+              )}
             </div>
           )}
         </>
