@@ -189,6 +189,28 @@ function formatEventDurationMinutes(startIso: string, endIso: string): string {
   return r ? `${h} h ${r} min` : `${h} h`
 }
 
+/** Readable message from /api/outbound-messages JSON error body. */
+function formatOutboundError(raw: string): string {
+  const t = raw.trim()
+  try {
+    const j = JSON.parse(t) as { error?: string; hint?: string }
+    if (typeof j.error === "string") {
+      return typeof j.hint === "string" && j.hint.trim() ? `${j.error} (${j.hint})` : j.error
+    }
+  } catch {
+    /* ignore */
+  }
+  return t.length > 280 ? `${t.slice(0, 280)}…` : t
+}
+
+function mergeCompletionMetadata(prevMeta: unknown, note: string): Record<string, unknown> {
+  const prev =
+    prevMeta && typeof prevMeta === "object" && !Array.isArray(prevMeta) ? { ...(prevMeta as Record<string, unknown>) } : {}
+  if (note) prev.completion_note = note
+  else delete prev.completion_note
+  return prev
+}
+
 /** Legacy recurring rows (no recurrence_series_id): same owner, title, job, quote, customer — treat as a set for remove-all in the current loaded window. */
 function legacyRecurringCohortIds(selected: CalendarEvent, all: CalendarEvent[], scopedUserId: string): string[] | null {
   if (selected.recurrence_series_id) return null
@@ -537,6 +559,17 @@ export default function CalendarPage() {
   })
   const [addError, setAddError] = useState("")
   const [completeFlowEvent, setCompleteFlowEvent] = useState<CalendarEvent | null>(null)
+  const completeFlowLegacyIds = useMemo(() => {
+    if (!completeFlowEvent) return null
+    return legacyRecurringCohortIds(completeFlowEvent, events, userId)
+  }, [completeFlowEvent, events, userId])
+  const completeFlowSeriesCount = useMemo(() => {
+    if (!completeFlowEvent) return 0
+    if (completeFlowEvent.recurrence_series_id) {
+      return events.filter((e) => e.recurrence_series_id === completeFlowEvent.recurrence_series_id && !e.removed_at).length
+    }
+    return completeFlowLegacyIds && completeFlowLegacyIds.length >= 2 ? completeFlowLegacyIds.length : 0
+  }, [completeFlowEvent, events, completeFlowLegacyIds])
   const [receiptEmailCustomer, setReceiptEmailCustomer] = useState(false)
   const [receiptSmsCustomer, setReceiptSmsCustomer] = useState(false)
   const [receiptEmailSelf, setReceiptEmailSelf] = useState(false)
@@ -545,6 +578,8 @@ export default function CalendarPage() {
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
   const [completeCompletionNote, setCompleteCompletionNote] = useState("")
+  /** When true, mark every occurrence in the recurrence (same series id or legacy cohort) complete. */
+  const [completeEntireSeries, setCompleteEntireSeries] = useState(false)
   const [calendarEventEntityRows, setCalendarEventEntityRows] = useState<EntityAttachmentRow[]>([])
   const [calendarEventEntityUploadBusy, setCalendarEventEntityUploadBusy] = useState(false)
   const [receiptPdfBusy, setReceiptPdfBusy] = useState(false)
@@ -848,21 +883,40 @@ export default function CalendarPage() {
     }
 
     setCompleteBusy(true)
-    const prevEvMeta =
-      completeFlowEvent.metadata && typeof completeFlowEvent.metadata === "object" && !Array.isArray(completeFlowEvent.metadata)
-        ? { ...(completeFlowEvent.metadata as Record<string, unknown>) }
-        : {}
-    if (note) prevEvMeta.completion_note = note
-    else delete prevEvMeta.completion_note
+    const completedIso = new Date().toISOString()
 
-    const { error } = await sb
-      .from("calendar_events")
-      .update({ completed_at: new Date().toISOString(), metadata: prevEvMeta })
-      .eq("id", completeFlowEvent.id)
-    if (error) {
+    const seriesIds: string[] = (() => {
+      if (!completeEntireSeries) return [completeFlowEvent.id]
+      if (completeFlowEvent.recurrence_series_id) {
+        return events
+          .filter((e) => e.recurrence_series_id === completeFlowEvent.recurrence_series_id && !e.removed_at)
+          .map((e) => e.id)
+      }
+      const leg = completeFlowLegacyIds
+      return leg && leg.length >= 2 ? [...leg] : [completeFlowEvent.id]
+    })()
+
+    const { data: metaRows, error: metaSelErr } = await sb.from("calendar_events").select("id, metadata").in("id", seriesIds)
+    if (metaSelErr) {
       setCompleteBusy(false)
-      alert(error.message)
+      alert(metaSelErr.message)
       return
+    }
+    if ((metaRows?.length ?? 0) !== seriesIds.length) {
+      setCompleteBusy(false)
+      alert(
+        "Could not load every occurrence in this series to mark complete (permissions or calendar range). Complete one occurrence at a time, or widen the calendar view and try again.",
+      )
+      return
+    }
+    for (const row of metaRows ?? []) {
+      const nextMeta = mergeCompletionMetadata((row as { metadata?: unknown }).metadata, note)
+      const { error: upErr } = await sb.from("calendar_events").update({ completed_at: completedIso, metadata: nextMeta }).eq("id", (row as { id: string }).id)
+      if (upErr) {
+        setCompleteBusy(false)
+        alert(upErr.message)
+        return
+      }
     }
 
     const sendErrs: string[] = []
@@ -891,7 +945,7 @@ export default function CalendarPage() {
             body,
           })
           const raw = await res.text()
-          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+          if (!res.ok) sendErrs.push(formatOutboundError(raw))
         }
       }
       if (receiptSmsCustomer) {
@@ -905,7 +959,7 @@ export default function CalendarPage() {
             body,
           })
           const raw = await res.text()
-          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+          if (!res.ok) sendErrs.push(formatOutboundError(raw))
         }
       }
       if (receiptEmailSelf) {
@@ -919,7 +973,7 @@ export default function CalendarPage() {
             body,
           })
           const raw = await res.text()
-          if (!res.ok) sendErrs.push(raw.slice(0, 500))
+          if (!res.ok) sendErrs.push(formatOutboundError(raw))
         }
       }
     } catch (e) {
@@ -927,7 +981,13 @@ export default function CalendarPage() {
     }
 
     setCompleteBusy(false)
-    if (sendErrs.length) alert(`Job marked complete. Sending notes:\n${sendErrs.join("\n")}`)
+    if (sendErrs.length) {
+      alert(
+        `Job marked complete${completeEntireSeries ? " (entire series)" : ""}. Sending notes:\n${sendErrs.join("\n")}\n\n` +
+          "To send email from Tradesman, set RESEND_API_KEY and RESEND_FROM_EMAIL on your Vercel project (Environment Variables).",
+      )
+    }
+    setCompleteEntireSeries(false)
     setCompleteFlowEvent(null)
     setSelectedEvent(null)
     setCompleteCompletionNote("")
@@ -2639,7 +2699,12 @@ export default function CalendarPage() {
       {completeFlowEvent && (
         <>
           <div
-            onClick={() => !completeBusy && setCompleteFlowEvent(null)}
+            onClick={() => {
+              if (!completeBusy) {
+                setCompleteEntireSeries(false)
+                setCompleteFlowEvent(null)
+              }
+            }}
             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 10000 }}
           />
           <div
@@ -2661,6 +2726,19 @@ export default function CalendarPage() {
             <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#6b7280" }}>
               Mark <strong>{completeFlowEvent.title}</strong> complete. Receipt email/SMS uses your Tradesman communications channels (same as Conversations/Quotes), not your device mail app.
             </p>
+            {completeFlowSeriesCount > 1 ? (
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 12, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={completeEntireSeries}
+                  onChange={(e) => setCompleteEntireSeries(e.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                <span>
+                  Mark <strong>all {completeFlowSeriesCount} dates</strong> in this recurring series complete (same completion note on each; one receipt send if enabled below).
+                </span>
+              </label>
+            ) : null}
             <label style={{ display: "block", marginBottom: 10, fontSize: 13, color: theme.text }}>
               <span style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Completion note (optional)</span>
               <textarea
@@ -2719,8 +2797,19 @@ export default function CalendarPage() {
               <button
                 type="button"
                 disabled={completeBusy}
-                onClick={() => setCompleteFlowEvent(null)}
-                style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: completeBusy ? "wait" : "pointer", color: theme.text }}
+                onClick={() => {
+                  setCompleteEntireSeries(false)
+                  setCompleteFlowEvent(null)
+                }}
+                style={{
+                  padding: "8px 14px",
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: "6px",
+                  background: "white",
+                  cursor: completeBusy ? "wait" : "pointer",
+                  color: theme.charcoal,
+                  fontWeight: 600,
+                }}
               >
                 Cancel
               </button>
@@ -3279,6 +3368,7 @@ export default function CalendarPage() {
                       setReceiptSmsCustomer(false)
                       setReceiptEmailSelf(false)
                       setCompleteCompletionNote("")
+                      setCompleteEntireSeries(false)
                       setCompleteFlowEvent(selectedEvent)
                       setSelectedEvent(null)
                     }}

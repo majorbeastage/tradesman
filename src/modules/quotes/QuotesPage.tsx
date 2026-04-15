@@ -210,6 +210,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const quoteAutoRepliesMediaRecorderRef = useRef<MediaRecorder | null>(null)
   const quoteAutoRepliesRecordedChunksRef = useRef<Blob[]>([])
   const quoteAutoRepliesMediaStreamRef = useRef<MediaStream | null>(null)
+  /** After interacting with customer edit (incl. browser autofill UI), ignore stray clicks on the summary row briefly. */
+  const skipQuoteRowToggleUntilRef = useRef(0)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
   const [sortField, setSortField] = useState<string>("name")
@@ -2865,6 +2867,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
               <input
                 type="text"
                 placeholder="By name..."
+                name="quotes_filter_name"
+                autoComplete="off"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
@@ -2872,6 +2876,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
               <input
                 type="text"
                 placeholder="By phone..."
+                name="quotes_filter_phone"
+                autoComplete="off"
                 value={filterPhone}
                 onChange={(e) => setFilterPhone(e.target.value)}
                 style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
@@ -2936,7 +2942,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
               return (
                 <Fragment key={q.id}>
                   <tr
-                    onClick={() => toggleQuoteRow(q.id)}
+                    onClick={() => {
+                      if (Date.now() < skipQuoteRowToggleUntilRef.current) return
+                      toggleQuoteRow(q.id)
+                    }}
                     style={{
                       cursor: "pointer",
                       borderBottom: "1px solid #eee",
@@ -2962,8 +2971,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       </td>
                     </tr>
                   ) : isRowSelected && selectedQuote?.id === q.id ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid #e5e7eb", background: "#f8fafc", verticalAlign: "top" }}>
+                    <tr data-quote-detail-row="1">
+                      <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid #e5e7eb", background: "#f8fafc", verticalAlign: "top", color: theme.text }}>
                         <div
                           onClick={(e) => e.stopPropagation()}
                           style={{ padding: "16px 18px 20px", maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}
@@ -3035,23 +3044,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             </div>
                             {quoteCustomerEditMode ? (
                               <div
+                                data-quote-customer-editor="1"
+                                onPointerDownCapture={() => {
+                                  skipQuoteRowToggleUntilRef.current = Date.now() + 1000
+                                }}
                                 onClick={(e) => e.stopPropagation()}
                                 style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 420, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}
                               >
                                 <input
                                   placeholder="Customer name"
+                                  name="quote_customer_display_name"
+                                  autoComplete="section-quote-customer name"
                                   value={quoteCustomerForm.name}
                                   onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, name: e.target.value }))}
                                   style={{ ...theme.formInput }}
                                 />
                                 <input
                                   placeholder="Phone"
+                                  name="quote_customer_phone"
+                                  autoComplete="section-quote-customer tel"
                                   value={quoteCustomerForm.phone}
                                   onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, phone: e.target.value }))}
                                   style={{ ...theme.formInput }}
                                 />
                                 <input
                                   placeholder="Email"
+                                  name="quote_customer_email"
+                                  autoComplete="section-quote-customer email"
                                   value={quoteCustomerForm.email}
                                   onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
                                   style={{ ...theme.formInput }}
@@ -3080,7 +3099,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
                                       setQuoteCustomerEditMode(false)
                                     }}
-                                    style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}
+                                    style={{
+                                      padding: "6px 12px",
+                                      borderRadius: 6,
+                                      border: `1px solid ${theme.border}`,
+                                      background: "#fff",
+                                      cursor: "pointer",
+                                      color: theme.charcoal,
+                                      fontWeight: 600,
+                                    }}
                                   >
                                     Cancel
                                   </button>
@@ -4311,7 +4338,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 >
                   {addToCalendarLoading ? "Adding..." : "Add to calendar"}
                 </button>
-                <button onClick={() => setShowAddToCalendar(false)} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddToCalendar(false)}
+                  style={{
+                    padding: "8px 16px",
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: "6px",
+                    background: "white",
+                    cursor: "pointer",
+                    color: theme.charcoal,
+                    fontWeight: 600,
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </>

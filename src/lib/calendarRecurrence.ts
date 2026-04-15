@@ -112,11 +112,14 @@ export function applyRecurrenceEndLimitsFromPortal(
   )
   const modeRaw = modeItem ? String(values[modeItem.id] ?? modeItem.options?.[0] ?? "").toLowerCase() : ""
 
+  /** Avoid matching unrelated “how many …” fields (e.g. crew size) that happen to contain digits like 15. */
   const countItem = items.find(
     (i) =>
       (i.type === "custom_field" && i.customFieldSubtype !== "dropdown") &&
       (i.id === "recurrence_occurrence_count" ||
-        /number of (occurrence|instance)|occurrence count|instance count|how many/i.test(i.label))
+        /^recurrence[_-]?(occurrence|instance)/i.test(i.id) ||
+        /series[_-]?(count|length|occurrence)/i.test(i.id) ||
+        (/occurrence|instance/i.test(i.label) && /(count|number|max|total)/i.test(i.label) && !/hour|minute|mile|crew|people|employee/i.test(i.label)))
   )
   const untilItem = items.find(
     (i) =>
@@ -126,7 +129,9 @@ export function applyRecurrenceEndLimitsFromPortal(
   const spanAmtItem = items.find(
     (i) =>
       (i.type === "custom_field" && i.customFieldSubtype !== "dropdown") &&
-      (i.id === "recurrence_period_amount" || /^period (length|amount|count)$/i.test(i.label) || /for how many/i.test(i.label))
+      (i.id === "recurrence_period_amount" ||
+        /^recurrence[_-]?period/i.test(i.id) ||
+        (/^period (length|amount|count)$/i.test(i.label) && /recur|series|repeat/i.test(`${i.id} ${i.label}`)))
   )
   const spanUnitItem = items.find(
     (i) =>
