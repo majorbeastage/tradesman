@@ -226,8 +226,8 @@ export default function AdminPaymentsSection() {
   return (
     <div>
       <AdminSettingBlock id="admin:billing:intro">
-        <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Billing &amp; Helcim</h1>
-        <p style={{ color: theme.text, opacity: 0.85, margin: "0 0 12px", fontSize: 14, lineHeight: 1.5, maxWidth: 820 }}>
+        <h1 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Billing &amp; Helcim</h1>
+        <p style={{ color: theme.charcoal, margin: "0 0 12px", fontSize: 14, lineHeight: 1.55, maxWidth: 820, opacity: 0.95 }}>
           <strong>Hands-off billing:</strong> set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on your web/mobile build so every user
           shares the same Helcim hosted page (or set <code>VITE_HELCIM_JS_TOKEN</code> for an embedded Helcim.js checkout on the Payments
           tab); you do <strong>not</strong> need a different pay URL per row. Map each Tradesman user to a{" "}
@@ -242,12 +242,12 @@ export default function AdminPaymentsSection() {
           profile or dashboard payment alerts.
         </p>
         {webhookUrl ? (
-          <p style={{ margin: 0, fontSize: 13, color: theme.text, opacity: 0.9 }}>
+          <p style={{ margin: 0, fontSize: 13, color: theme.charcoal, opacity: 0.95 }}>
             <strong>Helcim webhook URL:</strong>{" "}
             <code style={{ wordBreak: "break-all", fontSize: 12 }}>{webhookUrl}</code>
           </p>
         ) : null}
-        <p style={{ margin: "12px 0 0", fontSize: 12, color: theme.text, opacity: 0.75, lineHeight: 1.45 }}>
+        <p style={{ margin: "12px 0 0", fontSize: 12, color: theme.charcoal, opacity: 0.9, lineHeight: 1.45 }}>
           Paste the URL above into the processor webhook &quot;Deliver URL&quot; field (path is <code>billing-webhook</code> so the URL does not
           contain their brand name — otherwise their API returns <strong>400</strong> and save fails). Set <code>HELCIM_WEBHOOK_VERIFIER_TOKEN</code>{" "}
           and <code>HELCIM_API_TOKEN</code> on the Edge function. If the verifier won&apos;t copy from their UI, select-all in the dialog, paste into
@@ -262,7 +262,7 @@ export default function AdminPaymentsSection() {
       ) : null}
 
       <AdminSettingBlock id="admin:billing:table">
-        <label style={{ display: "block", marginBottom: 12, fontSize: 13, fontWeight: 600, color: theme.text }}>
+        <label style={{ display: "block", marginBottom: 12, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
           Search users
           <input
             type="search"
@@ -283,7 +283,7 @@ export default function AdminPaymentsSection() {
             }}
           />
         </label>
-        <p style={{ margin: "0 0 14px", fontSize: 12, color: theme.text, opacity: 0.75 }}>
+        <p style={{ margin: "0 0 14px", fontSize: 12, color: theme.charcoal, fontWeight: 500, opacity: 0.88 }}>
           {loading ? "Loading…" : `${filteredRows.length} of ${rows.length} profile(s) shown`}
         </p>
 
@@ -319,33 +319,48 @@ export default function AdminPaymentsSection() {
                       cursor: "pointer",
                       textAlign: "left",
                       fontSize: 14,
-                      color: theme.text,
+                      color: theme.charcoal,
                     }}
                   >
                     <span style={{ fontSize: 12, width: 18, flexShrink: 0 }} aria-hidden>
                       {isOpen ? "▼" : "▶"}
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700 }}>{r.display_name?.trim() || "—"}</div>
-                      <div style={{ fontSize: 12, opacity: 0.8 }}>{r.email ?? r.id.slice(0, 8) + "…"}</div>
-                      <div style={{ fontSize: 11, opacity: 0.65 }}>{r.role}</div>
+                      <div style={{ fontWeight: 800, color: theme.charcoal }}>{r.display_name?.trim() || "—"}</div>
+                      <div style={{ fontSize: 12, color: theme.charcoal, opacity: 0.88, fontWeight: 500 }}>
+                        {r.email ?? r.id.slice(0, 8) + "…"}
+                      </div>
+                      <div style={{ fontSize: 11, color: theme.charcoal, opacity: 0.78, fontWeight: 600, textTransform: "capitalize" }}>
+                        {r.role}
+                      </div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: 11, opacity: 0.75, textTransform: "uppercase", letterSpacing: 0.04 }}>Sum (est. / mo)</div>
-                      <div style={{ fontWeight: 800, fontSize: 16, color: theme.charcoal }}>{formatUsdMonthly(sum)}</div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: theme.charcoal,
+                          opacity: 0.88,
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.04,
+                        }}
+                      >
+                        Sum (est. / mo)
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 17, color: theme.charcoal }}>{formatUsdMonthly(sum)}</div>
                     </div>
                   </button>
 
                   {isOpen ? (
                     <div style={{ padding: "16px 14px 18px", borderTop: `1px solid ${theme.border}` }}>
                       <div style={{ display: "grid", gap: 14, maxWidth: 900 }}>
-                        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
                           Product type
                           {productSelect(d.billing_product_type, (v) => setDraft(r.id, { billing_product_type: v }), `primary-${r.id}`)}
                         </label>
 
                         <div>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 8 }}>Additional products</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: theme.charcoal, marginBottom: 8 }}>Additional products</div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {d.billing_additional_products.map((ap, idx) => (
                               <div key={`${r.id}-add-${idx}`} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -402,9 +417,20 @@ export default function AdminPaymentsSection() {
                           }}
                         >
                           <div>
-                            <div style={{ fontSize: 11, opacity: 0.75, textTransform: "uppercase" }}>Monthly sum (selected products)</div>
-                            <div style={{ fontSize: 20, fontWeight: 800, color: theme.charcoal }}>{formatUsdMonthly(sum)}</div>
-                            <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: theme.charcoal,
+                                opacity: 0.88,
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: 0.03,
+                              }}
+                            >
+                              Monthly sum (selected products)
+                            </div>
+                            <div style={{ fontSize: 22, fontWeight: 800, color: theme.charcoal, marginTop: 2 }}>{formatUsdMonthly(sum)}</div>
+                            <div style={{ fontSize: 12, color: theme.charcoal, opacity: 0.88, marginTop: 6, fontWeight: 500 }}>
                               Primary:{" "}
                               {d.billing_product_type
                                 ? `${formatUsdMonthly(monthlyUsdForBillingProductType(d.billing_product_type))} · ${d.billing_product_type}`
@@ -428,7 +454,7 @@ export default function AdminPaymentsSection() {
                         </label>
 
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
-                          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+                          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
                             Helcim customer code
                             <input
                               value={d.billing_helcim_customer_code}
@@ -437,7 +463,7 @@ export default function AdminPaymentsSection() {
                               style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}` }}
                             />
                           </label>
-                          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+                          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
                             Pay portal URL override (optional)
                             <input
                               value={d.helcim_pay_portal_url}
@@ -447,7 +473,17 @@ export default function AdminPaymentsSection() {
                             />
                           </label>
                         </div>
-                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: theme.charcoal,
+                            cursor: "pointer",
+                          }}
+                        >
                           <input
                             type="checkbox"
                             checked={d.billing_automation_paused === true}
@@ -455,8 +491,8 @@ export default function AdminPaymentsSection() {
                           />
                           Pause billing automation
                         </label>
-                        <div style={{ fontSize: 13, color: theme.charcoal }}>
-                          <strong>Last paid:</strong> {r.billing.billing_last_success_at?.trim() || "—"}
+                        <div style={{ fontSize: 14, color: theme.charcoal, fontWeight: 500 }}>
+                          <strong style={{ fontWeight: 800 }}>Last paid:</strong> {r.billing.billing_last_success_at?.trim() || "—"}
                           {r.billing.billing_payment_due_date ? (
                             <>
                               {" "}
@@ -464,12 +500,16 @@ export default function AdminPaymentsSection() {
                             </>
                           ) : null}
                         </div>
-                        <div style={{ fontSize: 13 }}>
-                          <strong>Access:</strong>{" "}
-                          {r.account_disabled ? <span style={{ color: "#b91c1c" }}>Inactive</span> : <span style={{ color: "#047857" }}>Active</span>}
+                        <div style={{ fontSize: 14, color: theme.charcoal, fontWeight: 500 }}>
+                          <strong style={{ fontWeight: 800 }}>Access:</strong>{" "}
+                          {r.account_disabled ? (
+                            <span style={{ color: "#b91c1c", fontWeight: 800 }}>Inactive</span>
+                          ) : (
+                            <span style={{ color: "#047857", fontWeight: 800 }}>Active</span>
+                          )}
                           {r.client_id ? (
-                            <span style={{ marginLeft: 12, opacity: 0.85 }}>
-                              · Client id: <code style={{ fontSize: 12 }}>{r.client_id}</code>
+                            <span style={{ marginLeft: 12, color: theme.charcoal, opacity: 0.9, fontWeight: 500 }}>
+                              · Client id: <code style={{ fontSize: 12, color: theme.charcoal }}>{r.client_id}</code>
                             </span>
                           ) : null}
                         </div>

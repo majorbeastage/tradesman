@@ -23,11 +23,19 @@ const ENV_JS_TOKEN = ((import.meta as { env?: Record<string, string> }).env?.VIT
 const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
 
-/** Long-form builder / env notes on Payments — only when signed in as this account. */
+/** When `VITE_SHOW_PAYMENTS_DEV_NOTES=true` on a deployed build, only these accounts see long builder copy. */
 const PAYMENTS_DEV_NOTES_EMAILS = new Set(["joe@tradesman-us.com"])
 
-function showPaymentsDevNotes(email: string | null | undefined): boolean {
-  return PAYMENTS_DEV_NOTES_EMAILS.has((email ?? "").trim().toLowerCase())
+/**
+ * Long Helcim / env builder copy: **on for everyone** in `vite` dev; **off** on normal production builds.
+ * For a Vercel preview where you still want internals: set `VITE_SHOW_PAYMENTS_DEV_NOTES=true` **and** sign in with an allowlisted email.
+ */
+function showPaymentsDevNotes(_email: string | null | undefined): boolean {
+  if (import.meta.env.DEV === true) return true
+  if (import.meta.env.VITE_SHOW_PAYMENTS_DEV_NOTES === "true") {
+    return PAYMENTS_DEV_NOTES_EMAILS.has((_email ?? "").trim().toLowerCase())
+  }
+  return false
 }
 
 const inputStyle: CSSProperties = {
@@ -56,8 +64,11 @@ export default function PaymentsPage() {
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
   const formAction = useMemo(() => {
+    const fromWindow = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
+    const fromState = origin.replace(/\/+$/, "")
     const envOrigin = (import.meta.env.VITE_PUBLIC_APP_ORIGIN as string | undefined)?.replace(/\/+$/, "").trim()
-    const base = envOrigin || origin
+    /** Prefer the page you are actually on (custom domain, www, etc.) so the iframe return URL matches `postMessage` origin. */
+    const base = fromWindow || fromState || envOrigin
     return base ? `${base}/api/helcim-js-return` : ""
   }, [origin])
 
