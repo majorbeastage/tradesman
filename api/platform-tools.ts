@@ -1,8 +1,9 @@
 /**
- * Merged serverless routes (Hobby-friendly): public lead capture, AI thread summary.
+ * Merged serverless routes (Hobby-friendly): public lead capture, AI thread summary, Helcim.js return, etc.
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
+ * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (A2P; bundled public/sms-consent.html)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
@@ -28,6 +29,75 @@ import {
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+
+/** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
+function parseHelcimJsUrlEncodedBody(req: VercelRequest): Record<string, string> {
+  const raw = req.body as unknown
+  if (raw == null || raw === "") return {}
+  if (Buffer.isBuffer(raw)) {
+    return Object.fromEntries(new URLSearchParams(raw.toString("utf8")))
+  }
+  if (typeof raw === "string") {
+    return Object.fromEntries(new URLSearchParams(raw))
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string") out[k] = v
+      else if (Array.isArray(v) && typeof v[0] === "string") out[k] = v[0]
+    }
+    return out
+  }
+  return {}
+}
+
+function pickHelcimField(fields: Record<string, string>, key: string): string {
+  const v = fields[key]
+  return typeof v === "string" ? v : ""
+}
+
+function handleHelcimJsReturn(req: VercelRequest, res: VercelResponse): void {
+  if (req.method !== "POST") {
+    res.status(405).setHeader("Allow", "POST, OPTIONS").json({ error: "Method not allowed" })
+    return
+  }
+  const fields = parseHelcimJsUrlEncodedBody(req)
+  const responseRaw = pickHelcimField(fields, "response")
+  const responseNum = responseRaw === "" ? null : Number(responseRaw)
+  const payload = {
+    source: "tradesman-helcim-js" as const,
+    response: Number.isFinite(responseNum as number) ? (responseNum as number) : null,
+    responseMessage: pickHelcimField(fields, "responseMessage"),
+    noticeMessage: pickHelcimField(fields, "noticeMessage"),
+    transactionId: pickHelcimField(fields, "transactionId"),
+    type: pickHelcimField(fields, "type"),
+    amount: pickHelcimField(fields, "amount"),
+    currency: pickHelcimField(fields, "currency"),
+    cardType: pickHelcimField(fields, "cardType"),
+    cardExpiry: pickHelcimField(fields, "cardExpiry"),
+    cardNumberMasked: pickHelcimField(fields, "cardNumber"),
+    cardToken: pickHelcimField(fields, "cardToken"),
+    approvalCode: pickHelcimField(fields, "approvalCode"),
+    orderNumber: pickHelcimField(fields, "orderNumber"),
+    customerCode: pickHelcimField(fields, "customerCode"),
+    date: pickHelcimField(fields, "date"),
+    time: pickHelcimField(fields, "time"),
+  }
+  const json = JSON.stringify(payload).replace(/</g, "\\u003c")
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="robots" content="noindex"/><title>Payment result</title></head>
+<body><script>
+(function(){
+  try {
+    var p = ${json};
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(p, "*");
+    }
+  } catch (e) {}
+})();
+<\/script></body></html>`
+  res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").setHeader("Cache-Control", "no-store").send(html)
+}
 
 function loadSmsConsentHtml(): string {
   const candidates = [
@@ -939,12 +1009,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "estimate-legal-draft",
         "quote-estimate-review",
         "lead-evaluate-fit",
+        "helcim-js-return",
       ],
     })
     return
   }
 
   try {
+    if (route === "helcim-js-return") {
+      handleHelcimJsReturn(req, res)
+      return
+    }
     if (route === "public-lead") {
       await handlePublicLead(req, res)
       return

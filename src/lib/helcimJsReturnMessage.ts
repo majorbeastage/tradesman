@@ -1,4 +1,4 @@
-/** Payload posted back via hidden iframe from `/api/helcim-js-return` (see `api/helcim-js-return.ts`). */
+/** Payload posted back via hidden iframe from `/api/helcim-js-return` (rewrites to `platform-tools?__route=helcim-js-return`). */
 export type HelcimJsReturnMessage = {
   source: "tradesman-helcim-js"
   response: number | null

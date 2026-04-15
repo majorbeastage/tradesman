@@ -20,10 +20,13 @@
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
-    "api/platform-tools.ts": { "maxDuration": 60, "includeFiles": "public/sms-consent.html" },
-    "api/helcim-js-return.ts": { "maxDuration": 30 }
+    "api/platform-tools.ts": { "maxDuration": 60, "includeFiles": "public/sms-consent.html" }
   },
   "rewrites": [
+    {
+      "source": "/api/helcim-js-return",
+      "destination": "/api/platform-tools?__route=helcim-js-return"
+    },
     {
       "source": "/api/notify-admin-verified-signup",
       "destination": "/api/platform-tools?__route=notify-admin-verified-signup"
