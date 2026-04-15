@@ -57,10 +57,16 @@ export default function PaymentsPage() {
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb", marginBottom: 8 }}>Payments</h1>
       <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-        Helcim hosts checkout and card management. <strong>Recommended:</strong> your organization sets one pay/portal URL on the
-        app build as <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase).
-        Your <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is passed on the URL when present (confirm the
-        exact query parameter name with Helcim support). Per-user portal URL overrides are optional.
+        This tab loads <strong>Helcim&apos;s hosted payment page</strong> (card fields and processing live on Helcim&apos;s domain), not{" "}
+        <strong>Helcim.js</strong> on our own HTML form. Helcim.js is a different integration: you add named inputs on your site, their script
+        tokenizes cards via CORS, then typically <strong>POSTs results back to a URL you control</strong> — useful for fully custom checkout;
+        here we avoid maintaining that surface and PCI scope inside Tradesman.
+      </p>
+      <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+        <strong>Setup:</strong> set one pay/portal URL on the app build as{" "}
+        <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase). Your{" "}
+        <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is appended as <code>customerCode</code> when missing from the
+        URL (confirm the parameter name with Helcim for your exact page template). Per-user portal URL overrides are optional.
       </p>
       {iframeUrl && !customerCode ? (
         <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
