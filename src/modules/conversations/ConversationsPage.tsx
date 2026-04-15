@@ -353,7 +353,8 @@ function ExpandableTimelineRow({
   )
 }
 
-export default function ConversationsPage({ setPage }: ConversationsPageProps) {
+export default function ConversationsPage(_props: ConversationsPageProps) {
+  void _props
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()

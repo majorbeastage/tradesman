@@ -831,6 +831,7 @@ export default function CalendarPage() {
 
   async function confirmCompleteCalendarEvent() {
     if (!supabase || !completeFlowEvent?.id) return
+    const sb = supabase
     const ownerUserId = completeFlowEvent.user_id ?? userId
     const bodyBase = buildCalendarReceiptBody(completeFlowEvent)
     const note = completeCompletionNote.trim()
@@ -854,7 +855,7 @@ export default function CalendarPage() {
     if (note) prevEvMeta.completion_note = note
     else delete prevEvMeta.completion_note
 
-    const { error } = await supabase
+    const { error } = await sb
       .from("calendar_events")
       .update({ completed_at: new Date().toISOString(), metadata: prevEvMeta })
       .eq("id", completeFlowEvent.id)
@@ -866,7 +867,7 @@ export default function CalendarPage() {
 
     const sendErrs: string[] = []
     const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
-      const { data: sessionData } = await supabase.auth.getSession()
+      const { data: sessionData } = await sb.auth.getSession()
       const token = sessionData.session?.access_token
       return fetch(`/api/outbound-messages?__channel=${channel}`, {
         method: "POST",
