@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import { supabase } from "../../lib/supabase"
+import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
   formatDurationFieldFromMinutes,
@@ -279,6 +280,12 @@ export default function CalendarPage() {
     }
     return userId ? [userId] : []
   }, [scopeCtx?.clients, userId])
+
+  /** OM portal has scope with loaded clients; keep map visible if auth `role` is briefly null after token refresh. */
+  const showTeamMapButton =
+    authRole === "office_manager" ||
+    authRole === "admin" ||
+    (scopeCtx != null && !scopeCtx.loadingClients && scopeCtx.clients.length > 0)
 
   // Add item form
   const [addTitle, setAddTitle] = useState("")
@@ -858,21 +865,29 @@ export default function CalendarPage() {
     }
 
     const sendErrs: string[] = []
+    const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      return fetch(`/api/outbound-messages?__channel=${channel}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: outboundMessagesJsonBody(payload),
+      })
+    }
     try {
       if (receiptEmailCustomer) {
         if (!completeCustomerEmail) {
           sendErrs.push("No customer email on file.")
         } else {
-          const res = await fetch("/api/outbound-messages?__channel=email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: ownerUserId,
-              customerId: completeFlowEvent.customer_id ?? undefined,
-              to: completeCustomerEmail,
-              subject: `Receipt: ${completeFlowEvent.title}`,
-              body,
-            }),
+          const res = await postOutbound("email", {
+            userId: ownerUserId,
+            customerId: completeFlowEvent.customer_id ?? undefined,
+            to: completeCustomerEmail,
+            subject: `Receipt: ${completeFlowEvent.title}`,
+            body,
           })
           const raw = await res.text()
           if (!res.ok) sendErrs.push(raw.slice(0, 500))
@@ -882,15 +897,11 @@ export default function CalendarPage() {
         if (!completeCustomerPhone?.trim()) {
           sendErrs.push("No customer phone on file.")
         } else {
-          const res = await fetch("/api/outbound-messages?__channel=sms", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: ownerUserId,
-              customerId: completeFlowEvent.customer_id ?? undefined,
-              to: completeCustomerPhone.trim(),
-              body,
-            }),
+          const res = await postOutbound("sms", {
+            userId: ownerUserId,
+            customerId: completeFlowEvent.customer_id ?? undefined,
+            to: completeCustomerPhone.trim(),
+            body,
           })
           const raw = await res.text()
           if (!res.ok) sendErrs.push(raw.slice(0, 500))
@@ -900,15 +911,11 @@ export default function CalendarPage() {
         const selfEmail = authUser?.email
         if (!selfEmail) sendErrs.push("Your account has no email for “send receipt to myself”.")
         else {
-          const res = await fetch("/api/outbound-messages?__channel=email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: ownerUserId,
-              to: selfEmail,
-              subject: `Receipt copy: ${completeFlowEvent.title}`,
-              body,
-            }),
+          const res = await postOutbound("email", {
+            userId: ownerUserId,
+            to: selfEmail,
+            subject: `Receipt copy: ${completeFlowEvent.title}`,
+            body,
           })
           const raw = await res.text()
           if (!res.ok) sendErrs.push(raw.slice(0, 500))
@@ -1785,7 +1792,7 @@ export default function CalendarPage() {
           <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
         ))}
         {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
-        {(authRole === "office_manager" || authRole === "admin") && (
+        {showTeamMapButton && (
           <button
             type="button"
             onClick={() => setShowTeamMapModal(true)}

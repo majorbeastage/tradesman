@@ -4,7 +4,7 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { createUserViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
-import { getDefaultPortalConfigForNewUser } from "../../types/portal-builder"
+import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
@@ -188,6 +188,13 @@ export default function AdminUsersSection() {
         portal_config?: Record<string, unknown>
       } = { role: nextRole, updated_at: new Date().toISOString() }
       if (nextRole === "demo_user") payload.portal_config = {}
+      if (prevRole === "new_user" && nextRole === "user") {
+        const { data: prof, error: cfgErr } = await supabase.from("profiles").select("portal_config").eq("id", userId).maybeSingle()
+        if (!cfgErr) {
+          const prevCfg = (prof?.portal_config as PortalConfig | null | undefined) ?? undefined
+          payload.portal_config = upgradePortalConfigFromNewUserToUser(prevCfg) as Record<string, unknown>
+        }
+      }
       const { error: err } = await supabase.from("profiles").update(payload).eq("id", userId)
       if (err) {
         setError(err.message)

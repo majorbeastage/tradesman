@@ -10,7 +10,6 @@ import {
 } from "../../lib/billingProfileMetadata"
 import {
   BILLING_PRODUCT_OPTIONS,
-  billingProductLabel,
   formatUsdMonthly,
   isBillingProductTypeId,
   monthlyUsdForBillingProductType,

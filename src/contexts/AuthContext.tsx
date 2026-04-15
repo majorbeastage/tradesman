@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react"
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react"
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { revokeOtherAuthSessions } from "../lib/authSingleSession"
@@ -43,6 +43,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [portalConfig, setPortalConfig] = useState<PortalConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
+  /** Last user id from auth session; used to avoid clearing `role` on TOKEN_REFRESHED (same user). */
+  const authSessionUserIdRef = useRef<string | null>(null)
 
   const clearAccessBlockedReason = useCallback(() => setAccountAccessBlocked(false), [])
 
@@ -53,8 +55,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
-      setUser(session?.user ?? null)
-      setRole(null)
+      const nextUser = session?.user ?? null
+      const nextId = nextUser?.id ?? null
+      const prevId = authSessionUserIdRef.current
+      if (nextId == null) {
+        setRole(null)
+        authSessionUserIdRef.current = null
+      } else if (prevId != null && prevId !== nextId) {
+        setRole(null)
+        authSessionUserIdRef.current = nextId
+      } else {
+        authSessionUserIdRef.current = nextId
+      }
+      setUser(nextUser)
       setLoading(false)
       if (
         (event === "SIGNED_IN" || event === "INITIAL_SESSION") &&
@@ -71,7 +84,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
-      setUser(session?.user ?? null)
+      const u = session?.user ?? null
+      authSessionUserIdRef.current = u?.id ?? null
+      setUser(u)
       setLoading(false)
     })
     return () => subscription.unsubscribe()

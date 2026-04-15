@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
+import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
 
 async function openAiJsonAssist(system: string, user: string): Promise<string | null> {
   const key = firstEnv("OPENAI_API_KEY")
@@ -168,7 +169,7 @@ export async function evaluateAndPersistLeadFit(
   const { data: leadRow, error: leadErr } = await supabase
     .from("leads")
     .select(
-      "id, user_id, title, description, estimated_value, fit_manually_overridden, fit_evaluated_at, metadata",
+      "id, user_id, customer_id, title, description, estimated_value, fit_manually_overridden, fit_evaluated_at, metadata, fit_classification",
     )
     .eq("id", leadId)
     .maybeSingle()
@@ -179,12 +180,15 @@ export async function evaluateAndPersistLeadFit(
   const lead = leadRow as {
     id: string
     user_id: string
+    customer_id?: string | null
     title?: string | null
     description?: string | null
     estimated_value?: number | null
     fit_manually_overridden?: boolean | null
     fit_evaluated_at?: string | null
+    fit_classification?: string | null
   }
+  const prevFitForPersist = lead.fit_classification ?? null
 
   const force = opts?.force === true
   if (!force && lead.fit_manually_overridden) return null
@@ -238,7 +242,7 @@ export async function evaluateAndPersistLeadFit(
       reason: "Job type does not match the types you said you accept.",
       source,
     }
-    await persistFit(supabase, leadId, lead.user_id, result, { force })
+    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
     return result
   }
 
@@ -250,7 +254,7 @@ export async function evaluateAndPersistLeadFit(
       reason: `Stated or estimated job size ($${Math.round(effectiveValue)}) is below your minimum ($${Math.round(minSize)}).`,
       source: "rules",
     }
-    await persistFit(supabase, leadId, lead.user_id, result, { force })
+    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
     return result
   }
 
@@ -268,7 +272,7 @@ export async function evaluateAndPersistLeadFit(
       reason: "Budget is unclear; AI suggests a smaller job — follow up before deprioritizing.",
       source: "hybrid",
     }
-    await persistFit(supabase, leadId, lead.user_id, result, { force })
+    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
     return result
   }
 
@@ -285,7 +289,7 @@ export async function evaluateAndPersistLeadFit(
         reason: "You prefer ASAP jobs; timing in this lead is unclear — worth a quick call.",
         source: aiSignals ? "hybrid" : "rules",
       }
-      await persistFit(supabase, leadId, lead.user_id, result, { force })
+      await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
       return result
     }
     const result: EvaluateLeadFitResult = {
@@ -296,7 +300,7 @@ export async function evaluateAndPersistLeadFit(
         : "Matches your filters; follow up to confirm scope and schedule.",
       source: aiSignals ? "hybrid" : "rules",
     }
-    await persistFit(supabase, leadId, lead.user_id, result, { force })
+    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
     return result
   }
 
@@ -306,7 +310,7 @@ export async function evaluateAndPersistLeadFit(
     reason: "Not enough detail to confirm fit — we kept this in your queue for manual review.",
     source: aiSignals ? "hybrid" : "rules",
   }
-  await persistFit(supabase, leadId, lead.user_id, result, { force })
+  await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
   return result
 }
 
@@ -315,7 +319,7 @@ async function persistFit(
   leadId: string,
   userId: string,
   result: EvaluateLeadFitResult,
-  ctx: { force: boolean },
+  ctx: { force: boolean; prevFit: string | null },
 ): Promise<void> {
   const evaluatedAt = new Date().toISOString()
   const up: Record<string, unknown> = {
@@ -347,4 +351,11 @@ async function persistFit(
   if (logErr) {
     console.warn("[leadFit] log insert", logErr.message)
   }
+
+  void maybeCreateConversationAfterLeadFitHot(supabase, {
+    userId,
+    leadId,
+    prevFit: ctx.prevFit,
+    nextFit: result.classification,
+  }).catch((e) => console.warn("[leadFit] qualified convo side effect", e instanceof Error ? e.message : e))
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, Fragment } from "react"
-import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
+import { supabase } from "../../lib/supabase"
+import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { forceRefreshAccessToken, getFreshAccessToken } from "../../lib/authPlatformApi"
 import { runQualifiedLeadToConversationsAutomation } from "../../lib/leadConversationAutomation"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -81,17 +82,6 @@ function formatAppError(err: unknown): string {
     if (parts.length) return parts.join(" — ")
   }
   return String(err)
-}
-
-/** Lets /api/platform-tools validate the JWT when server env omits Supabase URL/anon (e.g. Vercel). */
-function platformToolsJsonBody(payload: Record<string, unknown>): string {
-  const url = supabaseUrl.trim() || String(import.meta.env.VITE_SUPABASE_URL ?? "").trim()
-  const anon = supabaseAnonKey.trim() || String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim()
-  return JSON.stringify({
-    ...payload,
-    ...(url ? { supabaseUrl: url } : {}),
-    ...(anon ? { supabaseAnonKey: anon } : {}),
-  })
 }
 
 function mergeLeadsSettingsFormDefaults(
@@ -246,7 +236,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       const saved =
         raw && typeof raw === "object" && !Array.isArray(raw)
           ? Object.fromEntries(
-              Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+              Object.entries(raw as Record<string, unknown>).map(([k, v]) => {
+                if (v === true) return [k, "checked"]
+                if (v === false) return [k, "unchecked"]
+                return [k, typeof v === "string" ? v : String(v ?? "")]
+              }),
             )
           : {}
       delete saved.embed_lead_enabled
@@ -442,6 +436,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   async function applyManualFitOverride() {
     if (!supabase || !userId || !selectedLead?.id || !manualFitChoice) return
+    const prevFit = (selectedLead.fit_classification as string | null | undefined) ?? null
+    const customerIdForConvo = selectedLead.customer_id as string | undefined
     setFitOverrideBusy(true)
     try {
       const now = new Date().toISOString()
@@ -483,6 +479,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       )
       loadLeads()
       void openLead(selectedLead.id)
+      if (customerIdForConvo) {
+        const prefs = mergeLeadsSettingsFormDefaults(leadsSettingsItems, leadsProfileSettings)
+        const autoConvo = await runQualifiedLeadToConversationsAutomation({
+          supabase,
+          userId,
+          customerId: customerIdForConvo,
+          prefs,
+          trigger: { type: "lead_fit_hot", prevFit, nextFit: manualFitChoice },
+        })
+        if (autoConvo.action === "error") alert(autoConvo.message)
+      }
     } finally {
       setFitOverrideBusy(false)
     }
@@ -693,9 +700,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         supabase,
         userId,
         customerId: cid,
-        prevStatusRaw: prevLeadStatus,
-        nextStatusRaw: detailForm.status,
         prefs,
+        trigger: { type: "lead_status_qualified", prevStatus: prevLeadStatus, nextStatus: detailForm.status },
       })
       if (autoConvo.action === "error") alert(autoConvo.message)
       setDetailEditMode(false)
@@ -1023,7 +1029,6 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setMessages([])
     setLeadCommEvents([])
     setLeadAttachmentsByEvent({})
-    if (setPage) setPage("conversations")
   }
 
   async function openLead(leadId: string) {

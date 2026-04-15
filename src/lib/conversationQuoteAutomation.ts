@@ -13,7 +13,7 @@ export function mergeConversationAutomaticRepliesPrefs(
 export type QualifiedToQuotesAutomationResult =
   | { action: "none" }
   | { action: "error"; message: string }
-  | { action: "moved"; navigated: boolean }
+  | { action: "moved" }
 
 /**
  * When conversation status becomes Qualified and portal prefs request it,
@@ -27,7 +27,6 @@ export async function runQualifiedConversationToQuotesAutomation(params: {
   prevStatusRaw: string | null | undefined
   nextStatusRaw: string | null | undefined
   prefs: Record<string, string>
-  setPage?: (page: string) => void
 }): Promise<QualifiedToQuotesAutomationResult> {
   const prev = normalizeConversationStatus(params.prevStatusRaw)
   const next = normalizeConversationStatus(params.nextStatusRaw)
@@ -60,9 +59,5 @@ export async function runQualifiedConversationToQuotesAutomation(params: {
     .eq("user_id", params.userId)
   if (rmErr) return { action: "error", message: rmErr.message }
 
-  if (params.setPage) {
-    params.setPage("quotes")
-    return { action: "moved", navigated: true }
-  }
-  return { action: "moved", navigated: false }
+  return { action: "moved" }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent } from "react"
+import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent, type CSSProperties } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
@@ -128,7 +128,7 @@ type QuoteRow = {
   conversations?: { messages?: MessageRow[] | null } | null
 }
 
-type QuotesPageProps = { setPage?: (page: string) => void }
+type QuotesPageProps = { /** @deprecated Tab changes after workflow actions are no longer used */ setPage?: (page: string) => void }
 
 /** Job type row for calendar picker + Job types modal (columns vary with DB migration). */
 type QuoteJobTypeListRow = {
@@ -149,7 +149,46 @@ type CalendarPickerJobType = {
   track_mileage?: boolean | null
 }
 
-export default function QuotesPage({ setPage }: QuotesPageProps) {
+/** Text + decimal so users can clear the field and type without a stuck leading 0 (number inputs fight empty). Remount via `key` when `numValue` changes from outside. */
+function DecimalDraftInput({
+  numValue,
+  onCommit,
+  placeholder,
+  style,
+  title,
+  disabled,
+}: {
+  numValue: number
+  onCommit: (n: number) => void
+  placeholder?: string
+  style?: CSSProperties
+  title?: string
+  disabled?: boolean
+}) {
+  const [text, setText] = useState(() => (Number.isFinite(numValue) && numValue !== 0 ? String(numValue) : ""))
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      disabled={disabled}
+      title={title}
+      placeholder={placeholder}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        const raw = text.replace(/,/g, "").trim()
+        const n = raw === "" ? 0 : Number.parseFloat(raw)
+        const next = Number.isFinite(n) ? n : 0
+        onCommit(next)
+        setText(next === 0 ? "" : String(next))
+      }}
+      style={style}
+    />
+  )
+}
+
+export default function QuotesPage(_props: QuotesPageProps) {
+  void _props
   const isMobile = useIsMobile()
   const { userId: authUserId, session } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
@@ -273,6 +312,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
   const [calTitle, setCalTitle] = useState("")
   const [calDate, setCalDate] = useState("")
+  const addToCalendarDateInputRef = useRef<HTMLInputElement>(null)
   const [calTime, setCalTime] = useState("09:00")
   const [calDurationInput, setCalDurationInput] = useState("60")
   const [calJobTypeId, setCalJobTypeId] = useState("")
@@ -1587,7 +1627,7 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
         const built = {
           description: String(desc),
           quantity: String(qty),
-          unit_price: String(typeof up === "number" ? up : 0),
+          unit_price: Number.isFinite(up) && up !== 0 ? String(up) : "",
           manpower: String(crew),
           minimum: minStr,
           job_type_id: jt,
@@ -3512,7 +3552,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     const showMpRow = estimateLineTemplateOffered("eli_show_manpower")
                     const baseMetaRow = parseQuoteItemMetadata(item.metadata)
                     const qtyLive = Number.parseFloat(String(dr?.quantity ?? item.quantity ?? 0)) || 0
-                    const upLive = Number.parseFloat(String(dr?.unit_price ?? item.unit_price ?? 0)) || 0
+                    const upDraft = String(dr?.unit_price ?? "").trim()
+                    const upLive = upDraft === "" ? 0 : Number.parseFloat(upDraft.replace(/,/g, "")) || 0
                     const crewLive = showMpRow
                       ? Math.max(1, Number.parseInt(String(dr?.manpower ?? baseMetaRow.manpower ?? 1), 10) || 1)
                       : Math.max(1, baseMetaRow.manpower ?? 1)
@@ -3634,10 +3675,10 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                         </td>
                         <td style={{ padding: "6px 8px", fontSize: 13 }}>
                           <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={dr?.unit_price ?? String(typeof up === "number" ? up : 0)}
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={dr?.unit_price ?? (Number.isFinite(up) && up !== 0 ? String(up) : "")}
                             onChange={(e) => {
                               const v = e.target.value
                               setQuoteLineDrafts((prev) => {
@@ -3647,8 +3688,14 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                               })
                             }}
                             onBlur={(e) => {
-                              const n = Number.parseFloat(e.target.value) || 0
+                              const raw = e.target.value.replace(/,/g, "").trim()
+                              const n = raw === "" ? 0 : Number.parseFloat(raw) || 0
                               if (Math.abs(n - serverUp) > 1e-9) void persistQuoteItemUpdate(item.id, { unit_price: n })
+                              setQuoteLineDrafts((prev) => {
+                                const cur = prev[item.id]
+                                if (!cur) return prev
+                                return { ...prev, [item.id]: { ...cur, unit_price: n === 0 ? "" : String(n) } }
+                              })
                             }}
                             style={{ ...theme.formInput, padding: "6px 8px", width: 88 }}
                           />
@@ -3825,9 +3872,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   />
                 </label>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="Unit price"
                   value={newItemUnitPrice}
                   onChange={(e) => setNewItemUnitPrice(e.target.value)}
@@ -3965,10 +4011,56 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   </select>
                 </div>
                 <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ ...theme.formInput }} />
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} style={{ ...theme.formInput, flex: 1 }} />
-                  <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ ...theme.formInput }} />
+                <div style={{ display: "flex", gap: "8px", alignItems: "stretch", flexWrap: "wrap" }}>
+                  <input
+                    ref={addToCalendarDateInputRef}
+                    type="date"
+                    value={calDate}
+                    onChange={(e) => setCalDate(e.target.value)}
+                    onClick={() => {
+                      const el = addToCalendarDateInputRef.current
+                      if (el && typeof (el as HTMLInputElement & { showPicker?: () => void }).showPicker === "function") {
+                        try {
+                          ;(el as HTMLInputElement & { showPicker: () => void }).showPicker()
+                        } catch {
+                          /* some browsers require a user gesture or do not support showPicker */
+                        }
+                      }
+                    }}
+                    style={{ ...theme.formInput, flex: 1, minWidth: 140, colorScheme: "light" }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Open date calendar"
+                    onClick={() => {
+                      const el = addToCalendarDateInputRef.current
+                      if (el && typeof (el as HTMLInputElement & { showPicker?: () => void }).showPicker === "function") {
+                        try {
+                          ;(el as HTMLInputElement & { showPicker: () => void }).showPicker()
+                        } catch {
+                          el.focus()
+                        }
+                      } else el?.focus()
+                    }}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: theme.text,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Pick date
+                  </button>
+                  <input type="time" value={calTime} onChange={(e) => setCalTime(e.target.value)} style={{ ...theme.formInput, minWidth: 120 }} />
                 </div>
+                <p style={{ margin: 0, fontSize: 11, color: theme.text, opacity: 0.75 }}>
+                  Click the date field or &quot;Pick date&quot; to open your browser&apos;s calendar. Type a date only if you prefer.
+                </p>
                 <div>
                   <label style={{ fontSize: "12px", color: theme.text }}>Duration step</label>
                   <select
@@ -4214,7 +4306,6 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                     setSelectedQuote(null)
                     setSelectedQuoteId(null)
                     loadQuotes()
-                    if (setPage) setPage("calendar")
                   }}
                   style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
                 >
@@ -4346,9 +4437,8 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                   <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
                     $ / unit
                     <input
-                      type="number"
-                      min={0}
-                      step={0.01}
+                      type="text"
+                      inputMode="decimal"
                       value={eliSimplePrice}
                       onChange={(e) => setEliSimplePrice(e.target.value)}
                       placeholder="0"
@@ -4532,16 +4622,13 @@ export default function QuotesPage({ setPage }: QuotesPageProps) {
                                 }}
                                 style={theme.formInput}
                               />
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.01}
-                                placeholder="$/unit"
-                                value={row.unit_price}
-                                onChange={(e) => {
-                                  const p = Number.parseFloat(e.target.value) || 0
+                              <DecimalDraftInput
+                                key={`${row.id}-${row.unit_price}`}
+                                numValue={row.unit_price}
+                                onCommit={(p) =>
                                   setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
-                                }}
+                                }
+                                placeholder="$/unit"
                                 style={theme.formInput}
                               />
                               <input

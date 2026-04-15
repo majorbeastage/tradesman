@@ -12,6 +12,7 @@ export function parseLeadsSettingsFromMetadata(metadata: unknown): LeadsSettings
   const out: LeadsSettingsValues = {}
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     if (typeof val === "string") out[k] = val
+    else if (typeof val === "boolean") out[k] = val ? "checked" : "unchecked"
   }
   return out
 }

@@ -187,7 +187,7 @@ function MainApp() {
       {page === "customers" && <CustomersPage />}
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage setPage={setPage} />}
-      {page === "quotes" && <QuotesPage setPage={setPage} />}
+      {page === "quotes" && <QuotesPage />}
       {page === "calendar" && <CalendarPage />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}

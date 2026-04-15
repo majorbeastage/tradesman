@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
+import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
 import {
   mergeConversationAutomaticRepliesPrefs,
@@ -75,6 +76,27 @@ type ConversationRow = {
   customers: CustomerRow | null
   messages?: MessageRow[] | null
   communication_events?: CommEventListRow[] | null
+}
+
+function ConversationsSmsComplianceNotice() {
+  return (
+    <div
+      role="note"
+      style={{
+        marginBottom: 12,
+        padding: "10px 12px",
+        borderRadius: 8,
+        border: "1px solid #fcd34d",
+        background: "#fffbeb",
+        color: "#92400e",
+        fontSize: 12,
+        lineHeight: 1.55,
+      }}
+    >
+      <strong>SMS and automated calls:</strong> You cannot send text messages or automated phone messages to customers through this platform until they have already contacted you here and, where applicable, accepted SMS consent.{" "}
+      <strong>First SMS</strong> you send to a customer through Tradesman Systems may require the customer to accept an opt-in SMS consent message before your message is delivered.
+    </div>
+  )
 }
 
 function lastReceivedAtIso(convo: ConversationRow): string | null {
@@ -1173,7 +1195,6 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
         prevStatusRaw: statusBeforeSave,
         nextStatusRaw: detailForm.status,
         prefs: prefsMerged,
-        setPage,
       })
       if (autoQuotes.action === "error") {
         alert(autoQuotes.message)
@@ -1532,7 +1553,7 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ conversationId: selectedConversation.id }),
+        body: platformToolsJsonBody({ conversationId: selectedConversation.id }),
       })
       const raw = await res.text()
       if (!res.ok) {
@@ -2256,6 +2277,8 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                 )}
               </div>
 
+              <ConversationsSmsComplianceNotice />
+
               <div style={{ display: "flex", flexDirection: "column", gap: 0, width: "100%", maxWidth: 720 }}>
               <ConvoCollapsible
                 key={`${selectedConversation.id}-activity`}
@@ -2284,7 +2307,9 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                     >
                       {threadSummaryBusy ? "Summarizing…" : "Summarize thread (AI)"}
                     </button>
-                    <span style={{ fontSize: 11, color: "#9ca3af" }}>Uses server OpenAI when configured.</span>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                      Uses server OpenAI when configured. An empty thread returns “no messages to summarize” — that is different from missing server keys.
+                    </span>
                   </div>
                 ) : null}
                 {threadSummaryText ? (
@@ -2841,7 +2866,6 @@ export default function ConversationsPage({ setPage }: ConversationsPageProps) {
                         updateErr.message +
                         "\n\nRun the full supabase-run-this.sql in Supabase (including the RLS policy at the end)."
                     )
-                  if (setPage) setPage("quotes")
                 }}
                 style={{
                   marginTop: 8,

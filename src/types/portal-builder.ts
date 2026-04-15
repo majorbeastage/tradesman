@@ -199,6 +199,20 @@ export function getDefaultPortalConfigForNewUser(): PortalConfig {
   return { tabs }
 }
 
+/**
+ * When an admin changes `new_user` → `user`, merge portal config so standard tabs are no longer forced off.
+ * Preserves custom tabs, pageActions, controlItems, etc.; sets every `USER_PORTAL_TAB_IDS` entry to visible.
+ */
+export function upgradePortalConfigFromNewUserToUser(prev: PortalConfig | null | undefined): PortalConfig {
+  const base: PortalConfig =
+    prev && typeof prev === "object" && !Array.isArray(prev) ? { ...prev } : {}
+  const mergedTabs: Record<string, boolean> = { ...(base.tabs ?? {}) }
+  for (const id of USER_PORTAL_TAB_IDS) {
+    mergedTabs[id] = true
+  }
+  return { ...base, tabs: mergedTabs }
+}
+
 /** True if a standard page action should show (default visible). */
 export function getPageActionVisible(
   portalConfig: PortalConfig | null,
@@ -738,7 +752,7 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
   {
     id: "lead_auto_conversation_when_qualified",
     type: "checkbox",
-    label: "When status becomes Qualified — create a conversation for this customer (if none exists yet)",
+    label: 'When a lead is qualified (status "Qualified" or fit "Hot"), move the customer to Conversations if they are not there yet',
     defaultChecked: false,
   },
 ]
