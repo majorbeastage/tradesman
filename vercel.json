@@ -20,7 +20,8 @@
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
-    "api/platform-tools.ts": { "maxDuration": 60, "includeFiles": "public/sms-consent.html" }
+    "api/platform-tools.ts": { "maxDuration": 60, "includeFiles": "public/sms-consent.html" },
+    "api/helcim-js-return.ts": { "maxDuration": 30 }
   },
   "rewrites": [
     {

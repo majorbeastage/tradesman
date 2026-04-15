@@ -223,7 +223,8 @@ export default function AdminPaymentsSection() {
         <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Billing &amp; Helcim</h1>
         <p style={{ color: theme.text, opacity: 0.85, margin: "0 0 12px", fontSize: 14, lineHeight: 1.5, maxWidth: 820 }}>
           <strong>Hands-off billing:</strong> set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on your web/mobile build so every user
-          shares the same Helcim hosted page; you do <strong>not</strong> need a different pay URL per row. Map each Tradesman user to a{" "}
+          shares the same Helcim hosted page (or set <code>VITE_HELCIM_JS_TOKEN</code> for an embedded Helcim.js checkout on the Payments
+          tab); you do <strong>not</strong> need a different pay URL per row. Map each Tradesman user to a{" "}
           <strong>Helcim customer code</strong> so webhooks and the in-app pay link can associate activity with the right profile. The
           app appends <code>customerCode=…</code> to the portal URL when supported — confirm with Helcim that your page template accepts
           that query (or adjust after your support call). Per-user <strong>Pay portal URL</strong> below is optional override only.

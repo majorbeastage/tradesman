@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
@@ -9,15 +9,62 @@ import {
   parseBillingMetadata,
   resolveHelcimPayPortalBaseUrl,
 } from "../../lib/billingProfileMetadata"
+import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
+
+declare global {
+  interface Window {
+    helcimProcess?: () => void
+  }
+}
 
 const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_PAYMENT_PORTAL_URL ?? ""
+const ENV_JS_TOKEN = ((import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_JS_TOKEN ?? "").trim()
+const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
+const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
+
+const inputStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 420,
+  boxSizing: "border-box",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #374151",
+  background: "#0f172a",
+  color: "#f9fafb",
+  fontSize: 15,
+}
 
 export default function PaymentsPage() {
-  /** In the office manager portal, use the "Working as" user so their Helcim URL is shown. */
   const profileUserId = useScopedUserId()
   const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
   const [customerCode, setCustomerCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [origin, setOrigin] = useState("")
+  const [scriptReady, setScriptReady] = useState(false)
+  const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
+
+  const useHelcimJs = Boolean(ENV_JS_TOKEN)
+
+  const formAction = useMemo(() => {
+    const envOrigin = (import.meta.env.VITE_PUBLIC_APP_ORIGIN as string | undefined)?.replace(/\/+$/, "").trim()
+    const base = envOrigin || origin
+    return base ? `${base}/api/helcim-js-return` : ""
+  }, [origin])
+
+  /** Origin that loads in the hidden iframe after POST (must match postMessage `ev.origin`). */
+  const helcimReturnOrigin = useMemo(() => {
+    if (!formAction) return ""
+    try {
+      return new URL(formAction).origin
+    } catch {
+      return ""
+    }
+  }, [formAction])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setOrigin(window.location.origin)
+  }, [])
 
   useEffect(() => {
     if (!supabase || !profileUserId) {
@@ -47,111 +94,307 @@ export default function PaymentsPage() {
     }
   }, [profileUserId])
 
+  useEffect(() => {
+    if (!useHelcimJs) return
+    const sel = "script[data-tradesman-helcim-js]"
+    const existing = document.querySelector(sel) as HTMLScriptElement | null
+    if (existing) {
+      setScriptReady(typeof window.helcimProcess === "function")
+      return
+    }
+    const s = document.createElement("script")
+    s.src = HELCIM_SCRIPT_SRC
+    s.async = true
+    s.dataset.tradesmanHelcimJs = "1"
+    s.onload = () => {
+      setScriptReady(typeof window.helcimProcess === "function")
+    }
+    document.body.appendChild(s)
+  }, [useHelcimJs])
+
+  useEffect(() => {
+    if (!useHelcimJs || !helcimReturnOrigin) return
+    const onHelcimMessage = (ev: MessageEvent) => {
+      if (ev.origin !== helcimReturnOrigin) return
+      if (!isHelcimJsReturnMessage(ev.data)) return
+      setLastResult(ev.data)
+    }
+    window.addEventListener("message", onHelcimMessage)
+    return () => window.removeEventListener("message", onHelcimMessage)
+  }, [useHelcimJs, helcimReturnOrigin])
+
   const withCustomer = portalBaseUrl ? appendHelcimCustomerQueryToPayPortalUrl(portalBaseUrl, customerCode) : null
   const normalizedPortal = withCustomer ? normalizeHelcimPayPortalUrl(withCustomer) : null
   const iframeUrl = normalizedPortal && helcimPayPortalUrlAllowsIframe(normalizedPortal) ? normalizedPortal : null
   const openInTabUrl = normalizedPortal && !iframeUrl ? normalizedPortal : null
   const invalidPortal = Boolean(portalBaseUrl?.trim()) && !normalizedPortal
 
+  const helcimJsHttpsOk = typeof window !== "undefined" && window.location.protocol === "https:"
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb", marginBottom: 8 }}>Payments</h1>
-      <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-        This tab loads <strong>Helcim&apos;s hosted payment page</strong> (card fields and processing live on Helcim&apos;s domain), not{" "}
-        <strong>Helcim.js</strong> on our own HTML form. Helcim.js is a different integration: you add named inputs on your site, their script
-        tokenizes cards via CORS, then typically <strong>POSTs results back to a URL you control</strong> — useful for fully custom checkout;
-        here we avoid maintaining that surface and PCI scope inside Tradesman.
-      </p>
-      <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-        <strong>Setup:</strong> set one pay/portal URL on the app build as{" "}
-        <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase). Your{" "}
-        <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is appended as <code>customerCode</code> when missing from the
-        URL (confirm the parameter name with Helcim for your exact page template). Per-user portal URL overrides are optional.
-      </p>
-      {iframeUrl && !customerCode ? (
-        <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
-          No Helcim customer code on file — the shared portal may not pre-select your account. Ask your admin to add it under Billing
-          &amp; Helcim.
-        </p>
-      ) : null}
-      {loading ? (
-        <p style={{ color: "#9ca3af" }}>Loading…</p>
-      ) : iframeUrl ? (
-        <div
-          style={{
-            borderRadius: 10,
-            overflow: "hidden",
-            border: "1px solid #374151",
-            background: "#111827",
-            minHeight: 560,
-          }}
-        >
-          <iframe
-            title="Helcim payments"
-            src={iframeUrl}
-            style={{ width: "100%", height: "min(78vh, 720px)", border: "none", display: "block" }}
-            sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-same-origin"
-            referrerPolicy="strict-origin-when-cross-origin"
-          />
-        </div>
-      ) : openInTabUrl ? (
-        <div
-          style={{
-            padding: 20,
-            borderRadius: 10,
-            border: "1px solid #1d4ed8",
-            background: "#172554",
-            color: "#bfdbfe",
-            fontSize: 14,
-            lineHeight: 1.55,
-          }}
-        >
-          <p style={{ margin: "0 0 12px" }}>
-            This payment portal link is not <strong>https</strong>, so it cannot be embedded here (browser security). Open it in a
-            new tab:
+
+      {useHelcimJs ? (
+        <>
+          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+            Checkout uses <strong>Helcim.js</strong> on this page: card fields stay in your browser, Helcim tokenizes over CORS, then
+            posts results to our server inside a <strong>hidden iframe</strong> so you are not redirected away from the app. Configure
+            your <strong>Helcim.js configuration token</strong> as <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code>{" "}
+            (from Helcim → Integrations → Helcim.js). Live processing requires <strong>HTTPS</strong> on this origin.
           </p>
-          <a
-            href={openInTabUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: "#93c5fd", fontWeight: 600, wordBreak: "break-all" }}
-          >
-            {openInTabUrl}
-          </a>
-        </div>
-      ) : invalidPortal ? (
-        <div
-          style={{
-            padding: 20,
-            borderRadius: 10,
-            border: "1px solid #92400e",
-            background: "#451a03",
-            color: "#fde68a",
-            fontSize: 14,
-            lineHeight: 1.55,
-          }}
-        >
-          <strong>Payment portal URL is not valid.</strong> Use a full URL such as{" "}
-          <code style={{ color: "#fef3c7" }}>https://pay.helcim.com/v2/pay/…</code> in Admin → Billing &amp; Helcim, or set{" "}
-          <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for the app build.
-        </div>
+          <p style={{ color: "#9ca3af", marginBottom: 16, lineHeight: 1.45, fontSize: 13 }}>
+            Success or decline shown here is for convenience; billing automation still follows Helcim <strong>webhooks</strong> into
+            Supabase (<code>billing-webhook</code>).
+          </p>
+          {!helcimJsHttpsOk ? (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 14,
+                borderRadius: 10,
+                border: "1px solid #92400e",
+                background: "#451a03",
+                color: "#fde68a",
+                fontSize: 14,
+              }}
+            >
+              Helcim.js live mode expects HTTPS. Use a secure preview URL or production host for real cards; localhost may be limited
+              depending on your Helcim.js settings.
+            </div>
+          ) : null}
+          {loading ? (
+            <p style={{ color: "#9ca3af" }}>Loading…</p>
+          ) : !formAction ? (
+            <p style={{ color: "#9ca3af" }}>Preparing checkout…</p>
+          ) : (
+            <>
+              {lastResult ? (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: 14,
+                    borderRadius: 10,
+                    border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
+                    background: lastResult.response === 1 ? "#064e3b" : "#450a0a",
+                    color: lastResult.response === 1 ? "#d1fae5" : "#fecaca",
+                    fontSize: 14,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong>{lastResult.response === 1 ? "Approved" : "Not approved"}</strong>
+                  {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
+                  {lastResult.transactionId ? (
+                    <div style={{ marginTop: 8, fontSize: 13, opacity: 0.95 }}>
+                      Transaction id: <code>{lastResult.transactionId}</code>
+                      {lastResult.amount ? (
+                        <>
+                          {" "}
+                          · Amount: {lastResult.amount} {lastResult.currency || ""}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {lastResult.noticeMessage ? (
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>{lastResult.noticeMessage}</div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <iframe
+                name={HELCIM_RETURN_IFRAME_NAME}
+                title="Helcim payment result"
+                style={{ position: "absolute", width: 0, height: 0, border: "none", visibility: "hidden" }}
+                aria-hidden
+              />
+
+              <form
+                name="helcimForm"
+                id="helcimForm"
+                method="POST"
+                action={formAction}
+                target={HELCIM_RETURN_IFRAME_NAME}
+                style={{
+                  maxWidth: 520,
+                  padding: 20,
+                  borderRadius: 12,
+                  border: "1px solid #374151",
+                  background: "#111827",
+                }}
+              >
+                <div id="helcimResults" style={{ marginBottom: 16, minHeight: 4, fontSize: 13, color: "#fca5a5" }} />
+
+                <input type="hidden" id="token" value={ENV_JS_TOKEN} />
+
+                <div style={{ display: "grid", gap: 14 }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                    Amount
+                    <input type="text" id="amount" defaultValue="" placeholder="0.00" autoComplete="off" style={inputStyle} />
+                    <span style={{ fontWeight: 400, fontSize: 12, color: "#9ca3af" }}>
+                      For Verify-only flows your Helcim.js config may ignore amount.
+                    </span>
+                  </label>
+
+                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                    Cardholder name
+                    <input type="text" id="cardHolderName" defaultValue="" autoComplete="cc-name" style={inputStyle} />
+                  </label>
+
+                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                    Card number
+                    <input type="text" id="cardNumber" defaultValue="" inputMode="numeric" autoComplete="cc-number" style={inputStyle} />
+                  </label>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
+                      Expiry (MM)
+                      <input type="text" id="cardExpiryMonth" defaultValue="" placeholder="MM" autoComplete="cc-exp-month" style={inputStyle} />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
+                      Expiry (YY)
+                      <input type="text" id="cardExpiryYear" defaultValue="" placeholder="YY" autoComplete="cc-exp-year" style={inputStyle} />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
+                      CVV
+                      <input type="text" id="cardCVV" defaultValue="" inputMode="numeric" autoComplete="cc-csc" style={inputStyle} />
+                    </label>
+                  </div>
+
+                  <input type="hidden" id="customerCode" value={customerCode ?? ""} />
+                  <input type="hidden" id="orderNumber" value={profileUserId ? `TM-${profileUserId}` : ""} />
+
+                  <input
+                    type="button"
+                    id="buttonProcess"
+                    value={scriptReady ? "Pay with Helcim" : "Loading Helcim…"}
+                    disabled={!scriptReady}
+                    onClick={() => {
+                      setLastResult(null)
+                      window.helcimProcess?.()
+                    }}
+                    style={{
+                      marginTop: 4,
+                      padding: "12px 20px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: scriptReady ? theme.primary : "#4b5563",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 15,
+                      cursor: scriptReady ? "pointer" : "not-allowed",
+                      width: "fit-content",
+                    }}
+                  />
+                </div>
+              </form>
+
+              <p style={{ color: "#6b7280", fontSize: 12, marginTop: 20, lineHeight: 1.45 }}>
+                Optional: keep <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for a hosted Helcim Pay fallback (not shown while Helcim.js
+                token is set). If your mobile webview posts to a different API host than the page origin, set{" "}
+                <code>VITE_PUBLIC_APP_ORIGIN</code> to that HTTPS origin.
+              </p>
+            </>
+          )}
+        </>
       ) : (
-        <div
-          style={{
-            padding: 20,
-            borderRadius: 10,
-            border: "1px solid #92400e",
-            background: "#451a03",
-            color: "#fde68a",
-            fontSize: 14,
-            lineHeight: 1.55,
-          }}
-        >
-          <strong>No payment portal URL configured.</strong> Set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on the web or
-          mobile build (recommended — same Helcim page for everyone), or add a per-user URL in <strong>Admin → Billing &amp;
-          Helcim</strong>. Map each user&apos;s <strong>Helcim customer code</strong> there so webhooks and the pay link can tie
-          activity to the right account.
-        </div>
+        <>
+          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+            This tab can load <strong>Helcim&apos;s hosted payment page</strong> in an iframe when no Helcim.js token is configured.
+            For an embedded checkout on this domain, set <code style={{ color: theme.primary }}>VITE_HELCIM_JS_TOKEN</code> (see Helcim →
+            Integrations → Helcim.js).
+          </p>
+          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+            <strong>Hosted Pay setup:</strong> set one pay/portal URL on the app build as{" "}
+            <code style={{ color: theme.primary }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> (Vercel / mobile env — not Supabase). Your{" "}
+            <strong>Helcim customer code</strong> from Admin → Billing &amp; Helcim is appended as <code>customerCode</code> when missing
+            from the URL (confirm with Helcim for your page template). Per-user portal URL overrides are optional.
+          </p>
+          {iframeUrl && !customerCode ? (
+            <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+              No Helcim customer code on file — the shared portal may not pre-select your account. Ask your admin to add it under Billing
+              &amp; Helcim.
+            </p>
+          ) : null}
+          {loading ? (
+            <p style={{ color: "#9ca3af" }}>Loading…</p>
+          ) : iframeUrl ? (
+            <div
+              style={{
+                borderRadius: 10,
+                overflow: "hidden",
+                border: "1px solid #374151",
+                background: "#111827",
+                minHeight: 560,
+              }}
+            >
+              <iframe
+                title="Helcim payments"
+                src={iframeUrl}
+                style={{ width: "100%", height: "min(78vh, 720px)", border: "none", display: "block" }}
+                sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+          ) : openInTabUrl ? (
+            <div
+              style={{
+                padding: 20,
+                borderRadius: 10,
+                border: "1px solid #1d4ed8",
+                background: "#172554",
+                color: "#bfdbfe",
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <p style={{ margin: "0 0 12px" }}>
+                This payment portal link is not <strong>https</strong>, so it cannot be embedded here (browser security). Open it in a
+                new tab:
+              </p>
+              <a
+                href={openInTabUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "#93c5fd", fontWeight: 600, wordBreak: "break-all" }}
+              >
+                {openInTabUrl}
+              </a>
+            </div>
+          ) : invalidPortal ? (
+            <div
+              style={{
+                padding: 20,
+                borderRadius: 10,
+                border: "1px solid #92400e",
+                background: "#451a03",
+                color: "#fde68a",
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <strong>Payment portal URL is not valid.</strong> Use a full URL such as{" "}
+              <code style={{ color: "#fef3c7" }}>https://pay.helcim.com/v2/pay/…</code> in Admin → Billing &amp; Helcim, or set{" "}
+              <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> for the app build.
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: 20,
+                borderRadius: 10,
+                border: "1px solid #92400e",
+                background: "#451a03",
+                color: "#fde68a",
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <strong>No payment portal URL configured.</strong> Set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on the web or
+              mobile build (recommended — same Helcim page for everyone), or add a per-user URL in <strong>Admin → Billing &amp;
+              Helcim</strong>. Map each user&apos;s <strong>Helcim customer code</strong> there so webhooks and the pay link can tie
+              activity to the right account. Or set <code>VITE_HELCIM_JS_TOKEN</code> for Helcim.js on this page.
+            </div>
+          )}
+        </>
       )}
     </div>
   )
