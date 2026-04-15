@@ -1,5 +1,18 @@
 apply plugin: 'com.android.application'
 
+// versionName follows repo root package.json (single source of truth with the web app).
+// Google Play requires a higher versionCode on every upload — bump the integer below each time you ship to Play.
+def tradesmanPackageJson = file("${rootDir}/../package.json")
+def appVersionName = "1.0.0"
+try {
+    def parsed = new groovy.json.JsonSlurper().parse(tradesmanPackageJson)
+    if (parsed?.version != null) {
+        appVersionName = parsed.version.toString()
+    }
+} catch (Throwable ignored) {
+    logger.warn("Could not read ../package.json (from android/) for versionName; using ${appVersionName}")
+}
+
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
@@ -13,8 +26,8 @@ android {
         applicationId "com.tradesman.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "1.4.6"
+        versionCode 9
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -37,6 +50,7 @@ android {
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
             }
+            debuggable false
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

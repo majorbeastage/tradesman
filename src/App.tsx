@@ -31,11 +31,13 @@ import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
 import { useIsMobile } from "./hooks/useIsMobile"
 import {
+  endUserHasSeparateBillingPortal,
   filterUserPortalTabsForManagedPaymentsPolicy,
   getPortalTabListForConfig,
   type PortalConfig,
   type PortalTab,
 } from "./types/portal-builder"
+import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
@@ -57,7 +59,7 @@ function MainApp() {
   const [page, setPage] = useState("dashboard")
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
-  const { clientId, portalConfig, role: authRole } = useAuth()
+  const { clientId, portalConfig, role: authRole, user } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
   const managedByOfficeManager = useManagedByOfficeManager()
   const isMobile = useIsMobile()
@@ -74,6 +76,8 @@ function MainApp() {
     () => filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager),
     [mergedTabs, portalConfig, managedByOfficeManager],
   )
+  const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
+  const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
 
   useEffect(() => {
     if (page !== "payments") return
@@ -151,6 +155,12 @@ function MainApp() {
       {page === "dashboard" && (
         <>
           <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>{t("dashboard.title")}</h1>
+          <BillingDueDashboardBanner
+            profileUserId={user?.id}
+            separateBillingProfile={separateBillingProfile}
+            paymentsTabAvailable={paymentsTabAvailable}
+            onOpenPayments={paymentsTabAvailable ? () => setPage("payments") : undefined}
+          />
           <div
             style={{
               display: "grid",

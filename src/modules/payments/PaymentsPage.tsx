@@ -275,6 +275,30 @@ export default function PaymentsPage() {
                       style={inputStyle}
                     />
                   </label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 180px" }}>
+                      Billing city
+                      <input
+                        type="text"
+                        id="billing_city"
+                        defaultValue=""
+                        placeholder="City"
+                        autoComplete="address-level2"
+                        style={inputStyle}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 140px" }}>
+                      Billing state / province
+                      <input
+                        type="text"
+                        id="billing_province"
+                        defaultValue=""
+                        placeholder="State or province"
+                        autoComplete="address-level1"
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
                   <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
                     Billing postal / ZIP code
                     <input

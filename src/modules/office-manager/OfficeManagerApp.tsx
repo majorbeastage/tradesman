@@ -25,6 +25,7 @@ import {
   TAB_ID_LABELS,
   type PortalConfig,
 } from "../../types/portal-builder"
+import BillingDueDashboardBanner from "../../components/BillingDueDashboardBanner"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -447,11 +448,16 @@ function ManagedUserBar() {
 
 function OfficeManagerAppContent() {
   const [page, setPage] = useState("dashboard")
-  const { clientId } = useAuth()
+  const { clientId, user } = useAuth()
   const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
   const scope = useOfficeManagerScopeOptional()
   const hasClients = (scope?.clients.length ?? 0) > 0
   const resolvedPortalTabs = buildPortalTabsFromConfig(scope?.scopedPortalConfig ?? null) ?? portalTabs
+  const selectedRow = scope?.clients.find((c) => c.userId === scope.selectedUserId) ?? null
+  /** Bundled managed users (no Payments tab) do not get separate Helcim / dashboard billing alerts. */
+  const separateBillingForScope =
+    Boolean(scope?.selectedUserId) && (selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
+  const omPaymentsTabAvailable = hasClients && resolvedPortalTabs.some((t) => t.tab_id === "payments")
 
   return (
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
@@ -460,6 +466,12 @@ function OfficeManagerAppContent() {
       {page === "dashboard" && (
         <>
           <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>Office manager</h1>
+          <BillingDueDashboardBanner
+            profileUserId={scope?.selectedUserId ?? user?.id}
+            separateBillingProfile={separateBillingForScope}
+            paymentsTabAvailable={omPaymentsTabAvailable}
+            onOpenPayments={omPaymentsTabAvailable ? () => setPage("payments") : undefined}
+          />
           <p style={{ marginTop: 12, lineHeight: 1.65, color: "#e5e7eb" }}>
             Use the sidebar for the same areas as your team. You can work as <strong>office manager (me)</strong> or switch to
             any assigned user to load their leads, quotes, calendar, and customers. Calendar <strong>team view</strong> and

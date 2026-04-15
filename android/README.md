@@ -18,6 +18,16 @@ You are not doing anything wrong if this feels confusing. Android Studio is a bi
 
 ---
 
+## Google Play (first release)
+
+1. Put production **`VITE_*`** values in place, then **`npm run mobile:sync`** (the shipped `dist` is what users get until you upload a new build).
+2. Add **`android/keystore.properties`** + your **`.jks`** (see **`keystore.properties.example`**), then **`npm run mobile:build:android`** — output **`app/build/outputs/bundle/release/app-release.aab`** for Play Console.
+3. Before each new Play upload, bump **`versionCode`** in **`app/build.gradle`** (Play rejects repeats). **`versionName`** tracks **`package.json`** automatically.
+
+Full checklist: **`google-play-app-todos.txt`** at repo root.
+
+---
+
 ## App icon (same as browser tab)
 
 The favicon / PWA icon is **`public/icon.png`** (see root **`index.html`**). Native launcher assets are generated from that file so the **home-screen icon matches the tab logo**.

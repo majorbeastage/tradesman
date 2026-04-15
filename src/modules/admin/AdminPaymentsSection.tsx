@@ -33,6 +33,8 @@ type BillingDraft = {
   billing_automation_paused: boolean
   billing_product_type: string
   billing_additional_products: string[]
+  /** `YYYY-MM-DD` for dashboard “due today / past due” alerts */
+  billing_payment_due_date: string
 }
 
 function emptyDraft(): BillingDraft {
@@ -42,6 +44,7 @@ function emptyDraft(): BillingDraft {
     billing_automation_paused: false,
     billing_product_type: "",
     billing_additional_products: [],
+    billing_payment_due_date: "",
   }
 }
 
@@ -56,6 +59,7 @@ function draftFromBilling(b: BillingProfileMetadata): BillingDraft {
     billing_automation_paused: b.billing_automation_paused === true,
     billing_product_type: primary,
     billing_additional_products: add,
+    billing_payment_due_date: b.billing_payment_due_date?.trim() ?? "",
   }
 }
 
@@ -157,6 +161,7 @@ export default function AdminPaymentsSection() {
       const additionalClean = d.billing_additional_products
         .map((x) => (typeof x === "string" ? x.trim() : ""))
         .filter((x): x is BillingProductTypeId => isBillingProductTypeId(x))
+      const dueRaw = d.billing_payment_due_date?.trim() ?? ""
       const nextMeta = mergeBillingIntoProfileMetadata(prev, {
         billing_helcim_customer_code: d.billing_helcim_customer_code?.trim() ?? "",
         helcim_pay_portal_url: d.helcim_pay_portal_url?.trim() ?? "",
@@ -165,6 +170,7 @@ export default function AdminPaymentsSection() {
           ? d.billing_product_type.trim()
           : "",
         billing_additional_products: additionalClean,
+        billing_payment_due_date: /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : "",
       })
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
       if (upErr) throw upErr
@@ -231,7 +237,9 @@ export default function AdminPaymentsSection() {
           Webhooks reactivate or deactivate the portal (<code>profiles.account_disabled</code>) for <strong>user</strong> roles only —{" "}
           <strong>admin</strong>, <strong>office_manager</strong>, and <strong>demo_user</strong> are exempt (events still log). Use{" "}
           <strong>Pause billing automation</strong> for grace periods. Deploy <code>billing-webhook</code> and run{" "}
-          <code>supabase-billing-helcim.sql</code>.
+          <code>supabase-billing-helcim.sql</code>. Contractors on an office manager <strong>bundled</strong> plan should keep the
+          Payments tab off for their login and leave <strong>Helcim customer code</strong> empty so they do not get a separate billing
+          profile or dashboard payment alerts.
         </p>
         {webhookUrl ? (
           <p style={{ margin: 0, fontSize: 13, color: theme.text, opacity: 0.9 }}>
@@ -405,6 +413,20 @@ export default function AdminPaymentsSection() {
                           </div>
                         </div>
 
+                        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.charcoal }}>
+                          Payment due date (optional)
+                          <input
+                            type="date"
+                            value={d.billing_payment_due_date}
+                            onChange={(e) => setDraft(r.id, { billing_payment_due_date: e.target.value })}
+                            style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, maxWidth: 280 }}
+                          />
+                          <span style={{ fontWeight: 400, fontSize: 11, color: theme.charcoal, opacity: 0.85 }}>
+                            User dashboard shows an alert on this date (or after) until a successful webhook updates last paid and you
+                            advance this date for the next cycle.
+                          </span>
+                        </label>
+
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
                           <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
                             Helcim customer code
@@ -433,8 +455,14 @@ export default function AdminPaymentsSection() {
                           />
                           Pause billing automation
                         </label>
-                        <div style={{ fontSize: 13, color: theme.text }}>
+                        <div style={{ fontSize: 13, color: theme.charcoal }}>
                           <strong>Last paid:</strong> {r.billing.billing_last_success_at?.trim() || "—"}
+                          {r.billing.billing_payment_due_date ? (
+                            <>
+                              {" "}
+                              · <strong>Due date:</strong> {r.billing.billing_payment_due_date}
+                            </>
+                          ) : null}
                         </div>
                         <div style={{ fontSize: 13 }}>
                           <strong>Access:</strong>{" "}

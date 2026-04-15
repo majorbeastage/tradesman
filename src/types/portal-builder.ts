@@ -253,6 +253,16 @@ export function filterUserPortalTabsForManagedPaymentsPolicy(
   return tabs.filter((t) => t.tab_id !== "payments")
 }
 
+/**
+ * When a contractor is linked to an office manager, they are on a **bundled** plan unless the OM explicitly turns on
+ * the Payments tab (`portal_config.tabs.payments === true`). Only then should they see separate Helcim billing,
+ * dashboard payment alerts, etc.
+ */
+export function endUserHasSeparateBillingPortal(portalConfig: PortalConfig | null, managedByOfficeManager: boolean): boolean {
+  if (!managedByOfficeManager) return true
+  return portalConfig?.tabs?.payments === true
+}
+
 /** Ordered list for portal builder + Account page visibility */
 export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "profile", label: "Business profile (email, name, website, primary phone)" },

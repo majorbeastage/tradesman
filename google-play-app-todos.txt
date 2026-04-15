@@ -1,15 +1,17 @@
 Tradesman — Google Play (Android) release checklist
 ====================================================
 
-CODEBASE (this repo)
-- Run `npm run mobile:sync` after each web release so `dist` copies into `android/`.
+CODEBASE (this repo) — locked in for first Play upload
+- Run `npm run mobile:sync` after each web release so `dist` copies into `android/` (set production `VITE_*` in `.env` / CI before this so the bundle talks to prod Supabase, Helcim, etc.).
 - Open Android Studio: `npm run mobile:open:android` (or `npx cap open android`).
-- In `android/`, set applicationId if you change from `com.tradesman.app` (must match Play Console package name).
-- Point the embedded WebView at production: ensure the app loads your real HTTPS origin (Capacitor loads bundled `dist` by default; for live site use `server.url` in `capacitor.config.ts` only if intentional).
-- Add adaptive launcher icons and splash (Android 12+); replace default Capacitor placeholders in `android/app/src/main/res`.
-- Configure `AndroidManifest.xml`: INTERNET, any permissions (camera/mic/storage) only if the web app uses them.
-- ProGuard / minify: test release builds with R8 enabled before upload.
-- Target API level: meet Google’s current targetSdk requirement (update when Play Console warns).
+- Package / app id: `com.tradesman.app` (`applicationId`, `capacitor.config.ts` appId, Play Console must match).
+- WebView content: bundled `dist` only (no `server.url`); cleartext HTTP disabled on `<application android:usesCleartextTraffic="false">`.
+- `android/app/build.gradle`: `versionName` is read from repo root `package.json`; bump `versionCode` for every Play upload.
+- Release type: `debuggable false`, signing via `android/keystore.properties` + `.jks` (see `keystore.properties.example`); `npm run mobile:build:android` produces `app-release.aab` when the keystore exists.
+- Icons / splash: adaptive launcher + splash theme in `android/app/src/main/res` (regenerate with `npm run icons:generate` after changing `icon.png`).
+- Manifest permissions: INTERNET, location (maps), POST_NOTIFICATIONS, FCM-related — align Play “Data safety” with what you actually collect (Supabase profile, push token, optional GPS per user opt-in).
+- Minify: currently off (`minifyEnabled false`); enable R8 only after testing — not required for Play.
+- targetSdk / compileSdk: see `android/variables.gradle` (keep meeting Play’s floor when Console warns).
 
 GOOGLE PLAY CONSOLE
 - Create app; package name must match `applicationId` / `appId`.

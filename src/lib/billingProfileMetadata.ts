@@ -9,6 +9,8 @@ export type BillingProfileMetadata = {
   billing_helcim_customer_code?: string
   /** ISO timestamp of last successful payment applied by automation. */
   billing_last_success_at?: string
+  /** Next (or current) payment due date as `YYYY-MM-DD` (local calendar); set in Admin → Billing. */
+  billing_payment_due_date?: string
   /**
    * Optional per-user Helcim hosted pay / portal URL override.
    * When unset, the app uses `VITE_HELCIM_PAYMENT_PORTAL_URL` from the build (one URL for the whole org).
@@ -78,6 +80,9 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
   if (typeof m.billing_last_success_at === "string" && m.billing_last_success_at.trim()) {
     out.billing_last_success_at = m.billing_last_success_at.trim()
   }
+  if (typeof m.billing_payment_due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.billing_payment_due_date.trim())) {
+    out.billing_payment_due_date = m.billing_payment_due_date.trim()
+  }
   if (typeof m.helcim_pay_portal_url === "string" && m.helcim_pay_portal_url.trim()) {
     out.helcim_pay_portal_url = m.helcim_pay_portal_url.trim()
   }
@@ -111,6 +116,11 @@ export function mergeBillingIntoProfileMetadata(
     const t = patch.billing_last_success_at.trim()
     if (t) next.billing_last_success_at = t
     else delete next.billing_last_success_at
+  }
+  if (patch.billing_payment_due_date !== undefined) {
+    const t = typeof patch.billing_payment_due_date === "string" ? patch.billing_payment_due_date.trim() : ""
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) next.billing_payment_due_date = t
+    else delete next.billing_payment_due_date
   }
   if (patch.helcim_pay_portal_url != null) {
     const t = patch.helcim_pay_portal_url.trim()

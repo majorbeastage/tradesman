@@ -35,6 +35,13 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.kicker.pipeline": "Pipeline",
     "dashboard.kicker.comm": "Communication",
     "dashboard.kicker.schedule": "Scheduling",
+    "dashboard.billingDueTitleToday": "Payment due today",
+    "dashboard.billingDueBodyToday":
+      "Your billing date is {{due}}. If you have not paid yet, open Payments to complete your subscription.",
+    "dashboard.billingDueTitlePast": "Payment past due",
+    "dashboard.billingDueBodyPast":
+      "Your payment was due on {{due}} ({{days}} days ago). Open Payments to bring your account current, or contact support if you believe this is an error.",
+    "dashboard.billingDueCtaPayments": "Open Payments",
     "account.language": "Site language",
     "account.languageHint": "Controls navigation and shared labels. More screens will follow your choice over time.",
     "account.aiSignupNote":
@@ -74,6 +81,13 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.kicker.pipeline": "Embudo",
     "dashboard.kicker.comm": "Comunicación",
     "dashboard.kicker.schedule": "Programación",
+    "dashboard.billingDueTitleToday": "Pago vence hoy",
+    "dashboard.billingDueBodyToday":
+      "Su fecha de facturación es {{due}}. Si aún no ha pagado, abra Pagos para completar su suscripción.",
+    "dashboard.billingDueTitlePast": "Pago vencido",
+    "dashboard.billingDueBodyPast":
+      "Su pago vencía el {{due}} (hace {{days}} días). Abra Pagos para poner su cuenta al día, o contacte a soporte si cree que es un error.",
+    "dashboard.billingDueCtaPayments": "Abrir Pagos",
     "account.language": "Idioma del sitio",
     "account.languageHint": "Controla la navegación y textos comunes. Más pantallas seguirán esta opción con el tiempo.",
     "account.aiSignupNote":
