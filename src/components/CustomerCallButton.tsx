@@ -2,6 +2,7 @@ import { theme } from "../styles/theme"
 import { openPhoneDialer } from "../lib/telDial"
 import { useAuth } from "../contexts/AuthContext"
 import TwilioBridgeCallButton from "./TwilioBridgeCallButton"
+import { isNativeApp } from "../lib/capacitorMobile"
 
 type Props = {
   phone: string
@@ -21,6 +22,9 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
   if (!trimmed) return null
 
   const showTwilioFirst = Boolean(bridgeOwnerUserId?.trim() && session?.access_token)
+  const native = isNativeApp()
+  /** In the Capacitor shell, lead with one clear “Call” that uses Twilio (customer sees TWILIO_FROM_NUMBER). */
+  const twilioPrimaryNative = Boolean(showTwilioFirst && native)
 
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
@@ -30,9 +34,13 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
             customerPhone={trimmed}
             quoteOwnerUserId={bridgeOwnerUserId!.trim()}
             compact={compact}
+            label={twilioPrimaryNative ? "Call" : undefined}
+            variant={twilioPrimaryNative ? "primary" : "default"}
           />
           <span style={{ fontSize: 11, color: "#047857", maxWidth: 300, lineHeight: 1.35, fontWeight: 600 }}>
-            Recommended: Twilio rings your phone first; customer sees your Twilio business caller ID.
+            {twilioPrimaryNative
+              ? "Rings your phone first; when you answer, the customer sees your Twilio business number on caller ID."
+              : "Recommended: Twilio rings your phone first; customer sees your Twilio business caller ID."}
           </span>
         </>
       ) : null}
@@ -54,15 +62,21 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
           fontSize: compact ? 12 : 14,
         }}
       >
-        {showTwilioFirst ? "Call from my phone (dialer)" : "Call"}
+        {showTwilioFirst
+          ? twilioPrimaryNative
+            ? "Phone dialer (personal caller ID)"
+            : "Call from my phone (dialer)"
+          : "Call"}
       </button>
       {hint ? (
         <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 280, lineHeight: 1.35 }}>{hint}</span>
       ) : (
         <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 280, lineHeight: 1.35 }}>
           {showTwilioFirst
-            ? "The dialer button uses your personal cell as caller ID."
-            : "Opens the device dialer — the customer usually sees your mobile number. Use Twilio when the app shows it above."}
+            ? twilioPrimaryNative
+              ? "Only the top button uses Twilio; the dialer uses your own number."
+              : "The dialer button uses your personal cell as caller ID."
+            : "Opens the device dialer — the customer usually sees your mobile number. Sign in to use Twilio when available."}
         </span>
       )}
     </div>

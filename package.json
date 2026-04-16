@@ -1,7 +1,7 @@
 {
   "name": "tradesman",
   "private": true,
-  "version": "1.4.11",
+  "version": "1.4.12",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"

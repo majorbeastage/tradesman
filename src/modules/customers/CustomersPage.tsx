@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
+import CustomerCallButton from "../../components/CustomerCallButton"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
 type CustomerRow = {
@@ -247,7 +248,17 @@ export default function CustomersPage() {
           </button>
           <h3 style={{ marginTop: 0 }}>Customer</h3>
           <p><strong>Name:</strong> {selectedCustomer.display_name || "—"}</p>
-          <p><strong>Phone:</strong> {selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value ?? "—"}</p>
+          <div style={{ margin: "8px 0" }}>
+            <strong>Phone:</strong>{" "}
+            {(() => {
+              const ph = selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
+              return ph.trim() ? (
+                <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact />
+              ) : (
+                "—"
+              )
+            })()}
+          </div>
           <p><strong>Email:</strong> {selectedCustomer.customer_identifiers?.find((i) => i.type === "email")?.value ?? "—"}</p>
           <button
             type="button"

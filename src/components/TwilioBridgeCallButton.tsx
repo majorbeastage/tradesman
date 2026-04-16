@@ -8,13 +8,23 @@ type Props = {
   /** Quote / record owner (scoped user). When OM acts for another user, pass their profile id for access checks. */
   quoteOwnerUserId?: string
   compact?: boolean
+  /** Button label; default explains Twilio. Use short "Call" on native when this is the primary CTA. */
+  label?: string
+  /** `primary` = main app-style CTA (e.g. Capacitor shell). */
+  variant?: "default" | "primary"
 }
 
 /**
  * Twilio two-leg call: rings your Account cell first; on answer, connects to the customer with TWILIO_FROM_NUMBER as caller ID.
  * Requires Edge Function twilio-bridge-call + Twilio secrets on Supabase.
  */
-export default function TwilioBridgeCallButton({ customerPhone, quoteOwnerUserId, compact }: Props) {
+export default function TwilioBridgeCallButton({
+  customerPhone,
+  quoteOwnerUserId,
+  compact,
+  label,
+  variant = "default",
+}: Props) {
   const { session } = useAuth()
   const [busy, setBusy] = useState(false)
 
@@ -54,15 +64,15 @@ export default function TwilioBridgeCallButton({ customerPhone, quoteOwnerUserId
       style={{
         padding: compact ? "6px 12px" : "8px 14px",
         borderRadius: 8,
-        border: `1px solid ${theme.border}`,
-        background: "#fff",
-        color: theme.text,
+        border: variant === "primary" ? `1px solid ${theme.primary}` : `1px solid ${theme.border}`,
+        background: variant === "primary" ? theme.primary : "#fff",
+        color: variant === "primary" ? "#fff" : theme.text,
         fontWeight: 700,
         cursor: busy ? "wait" : "pointer",
         fontSize: compact ? 12 : 14,
       }}
     >
-      {busy ? "Calling…" : "Call via Twilio"}
+      {busy ? "Calling…" : (label ?? "Call via Twilio")}
     </button>
   )
 }
