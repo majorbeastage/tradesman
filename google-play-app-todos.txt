@@ -22,6 +22,7 @@ GOOGLE PLAY CONSOLE
 - Internal testing track first, then closed/open production.
 
 COMPLIANCE & OPS
+- Google Play “Delete account URL”: public `https://<production-host>/account-deletion` (see app route + `LEGAL_LINKS.accountDeletion`; optional `VITE_PUBLIC_ACCOUNT_DELETION_URL` if hosted off the main app domain).
 - Privacy policy hosted URL (web) covering mobile data use, third parties, retention.
 - If you use SMS/voice: carrier and regional rules are separate from Play; still disclose in listing and policy.
 - Crash reporting (optional): Firebase Crashlytics or similar — declare in data safety.
