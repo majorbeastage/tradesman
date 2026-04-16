@@ -42,6 +42,9 @@ if (keystorePropertiesFile.exists()) {
     if (!tradesmanReleaseStoreFile.exists()) {
         throw new GradleException("Keystore file not found: ${tradesmanReleaseStoreFile.absolutePath} (storeFile=${storePath} in keystore.properties)")
     }
+    if (project.hasProperty("tradesmanPrintKeystore")) {
+        logger.lifecycle("[tradesman] Release keystore: ${tradesmanReleaseStoreFile.absolutePath} (${tradesmanReleaseStoreFile.length()} bytes), alias=${keystoreProperties.getProperty("keyAlias", "")}")
+    }
     tradesmanReleaseStorePassword = keystoreProperties.getProperty("storePassword", "").trim()
     tradesmanReleaseKeyAlias = keystoreProperties.getProperty("keyAlias", "").trim()
     tradesmanReleaseKeyPassword = keystoreProperties.getProperty("keyPassword", "").trim()
