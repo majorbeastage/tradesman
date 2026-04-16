@@ -21,20 +21,26 @@ def tradesmanReleaseStorePassword = ""
 def tradesmanReleaseKeyAlias = ""
 def tradesmanReleaseKeyPassword = ""
 if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new java.io.InputStreamReader(new FileInputStream(keystorePropertiesFile), java.nio.charset.StandardCharsets.UTF_8))
+    def propsRaw = keystorePropertiesFile.getText("UTF-8")
+    // Strip UTF-8 BOM so the first key is "storeFile" not "\uFEFFstoreFile" (empty storePath → wrong signing / DER errors).
+    if (propsRaw.length() > 0 && propsRaw.charAt(0) == '\uFEFF') {
+        propsRaw = propsRaw.substring(1)
+    }
+    keystoreProperties.load(new java.io.StringReader(propsRaw))
     def storePath = keystoreProperties.getProperty("storeFile", "").trim()
-    if (storePath) {
-        def lower = storePath.toLowerCase().replace("\\", "/")
-        if (lower.endsWith("keystore.properties")) {
-            throw new GradleException(
-                "android/keystore.properties: storeFile must be your binary keystore (e.g. upload-keystore.jks), not keystore.properties. " +
-                "Using the properties file causes: toDerInputStream rejects tag type 35."
-            )
-        }
-        tradesmanReleaseStoreFile = rootProject.file(storePath)
-        if (!tradesmanReleaseStoreFile.exists()) {
-            throw new GradleException("Keystore file not found: ${tradesmanReleaseStoreFile.absolutePath} (storeFile=${storePath} in keystore.properties)")
-        }
+    if (!storePath) {
+        throw new GradleException("keystore.properties must set storeFile=upload-keystore.jks (if you used Notepad, save as UTF-8 without BOM or re-type the storeFile line).")
+    }
+    def lower = storePath.toLowerCase().replace("\\", "/")
+    if (lower.endsWith("keystore.properties")) {
+        throw new GradleException(
+            "android/keystore.properties: storeFile must be your binary keystore (e.g. upload-keystore.jks), not keystore.properties. " +
+            "Using the properties file causes: toDerInputStream rejects tag type 35."
+        )
+    }
+    tradesmanReleaseStoreFile = rootProject.file(storePath)
+    if (!tradesmanReleaseStoreFile.exists()) {
+        throw new GradleException("Keystore file not found: ${tradesmanReleaseStoreFile.absolutePath} (storeFile=${storePath} in keystore.properties)")
     }
     tradesmanReleaseStorePassword = keystoreProperties.getProperty("storePassword", "").trim()
     tradesmanReleaseKeyAlias = keystoreProperties.getProperty("keyAlias", "").trim()
