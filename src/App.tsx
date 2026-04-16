@@ -22,6 +22,7 @@ import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import SmsConsentPage from "./modules/public/SmsConsentPage"
 import PrivacyPage from "./modules/public/PrivacyPage"
+import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import { useAuth } from "./contexts/AuthContext"
@@ -252,6 +253,9 @@ function App() {
 
   if (pathname === "/privacy") {
     return <PrivacyPage />
+  }
+  if (pathname === "/account-deletion") {
+    return <AccountDeletionPage />
   }
   if (pathname === "/terms") {
     return <TermsPage />

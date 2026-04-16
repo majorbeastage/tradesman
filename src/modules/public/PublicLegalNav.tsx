@@ -38,6 +38,12 @@ export function PublicLegalNav() {
       <a href={LEGAL_LINKS.smsConsent} style={linkStyle}>
         SMS consent &amp; messaging
       </a>
+      <span style={{ color: "#9ca3af" }} aria-hidden>
+        |
+      </span>
+      <a href={LEGAL_LINKS.accountDeletion} style={linkStyle}>
+        Delete account
+      </a>
     </nav>
   )
 }

@@ -6,3 +6,9 @@ export function techSupportMailtoDeactivatedAccount(): string {
   const subject = encodeURIComponent("Tradesman — account access / deactivated account")
   return `mailto:${TRADESMAN_TECH_SUPPORT_EMAIL}?subject=${subject}`
 }
+
+/** mailto: for account deletion requests (linked from public `/account-deletion` for app stores). */
+export function techSupportMailtoDeleteAccount(): string {
+  const subject = encodeURIComponent("Tradesman — delete my account")
+  return `mailto:${TRADESMAN_TECH_SUPPORT_EMAIL}?subject=${subject}`
+}

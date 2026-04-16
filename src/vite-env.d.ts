@@ -7,4 +7,5 @@ interface ImportMetaEnv {
   readonly VITE_HELCIM_PAYMENT_PORTAL_URL?: string
   readonly VITE_HELCIM_JS_TOKEN?: string
   readonly VITE_PUBLIC_APP_ORIGIN?: string
+  readonly VITE_PUBLIC_ACCOUNT_DELETION_URL?: string
 }
