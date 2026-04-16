@@ -74,6 +74,9 @@ export default function AdminPaymentsSection() {
   const [searchQuery, setSearchQuery] = useState("")
   /** When true, row shows full billing fields. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [helcimMatchBusy, setHelcimMatchBusy] = useState(false)
+  const [helcimMatchMsg, setHelcimMatchMsg] = useState<string | null>(null)
+  const [helcimOverwriteCodes, setHelcimOverwriteCodes] = useState(false)
 
   const webhookUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, "")}/functions/v1/billing-webhook` : ""
 
@@ -144,6 +147,29 @@ export default function AdminPaymentsSection() {
       )
     })
   }, [rows, drafts, searchQuery])
+
+  async function recordManualPaymentReceived(userId: string) {
+    if (!supabase) return
+    setSavingId(userId)
+    setError("")
+    try {
+      const { data: row, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) throw fetchErr
+      const prev =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const nowIso = new Date().toISOString()
+      const nextMeta = mergeBillingIntoProfileMetadata(prev, { billing_last_success_at: nowIso })
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
+      if (upErr) throw upErr
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingId(null)
+    }
+  }
 
   async function saveRow(userId: string) {
     if (!supabase) return
@@ -253,6 +279,66 @@ export default function AdminPaymentsSection() {
           and <code>HELCIM_API_TOKEN</code> on the Edge function. If the verifier won&apos;t copy from their UI, select-all in the dialog, paste into
           Notes, then copy from there.
         </p>
+      </AdminSettingBlock>
+
+      <AdminSettingBlock id="admin:billing:helcim-sync">
+        <h2 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 17, fontWeight: 800 }}>Helcim customer codes (bulk)</h2>
+        <p style={{ color: theme.charcoal, margin: "0 0 12px", fontSize: 13, lineHeight: 1.55, maxWidth: 820, opacity: 0.95 }}>
+          Fetches customers from the Helcim API and fills <code>billing_helcim_customer_code</code> on Tradesman profiles when the profile{" "}
+          <strong>email</strong> matches the Helcim customer&apos;s email (same spelling, case ignored). Requires{" "}
+          <code>HELCIM_API_TOKEN</code> on the <code>helcim-match-customers</code> Edge function (same token family as{" "}
+          <code>billing-webhook</code>). By default only rows with an <strong>empty</strong> code are updated.
+        </p>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: theme.charcoal, cursor: "pointer", marginBottom: 10 }}>
+          <input type="checkbox" checked={helcimOverwriteCodes} onChange={(e) => setHelcimOverwriteCodes(e.target.checked)} />
+          Overwrite existing Helcim customer codes when email matches
+        </label>
+        <button
+          type="button"
+          disabled={helcimMatchBusy || !supabase}
+          onClick={async () => {
+            if (!supabase) return
+            setHelcimMatchBusy(true)
+            setHelcimMatchMsg(null)
+            try {
+              const { data, error } = await supabase.functions.invoke("helcim-match-customers", {
+                body: { overwriteExisting: helcimOverwriteCodes },
+              })
+              if (error) {
+                setHelcimMatchMsg(error.message)
+                return
+              }
+              const d = data as {
+                updated?: number
+                helcimCustomerCount?: number
+                skippedHasCode?: number
+                skippedNoMatch?: number
+                note?: string
+              }
+              setHelcimMatchMsg(
+                `Updated ${d?.updated ?? 0} profile(s). Helcim customers loaded: ${d?.helcimCustomerCount ?? "?"}. Skipped (already had code): ${d?.skippedHasCode ?? "?"}. No email match: ${d?.skippedNoMatch ?? "?"}. ${d?.note ?? ""}`,
+              )
+              await load()
+            } finally {
+              setHelcimMatchBusy(false)
+            }
+          }}
+          style={{
+            padding: "10px 18px",
+            borderRadius: 8,
+            border: "none",
+            background: theme.primary,
+            color: "white",
+            cursor: helcimMatchBusy ? "wait" : "pointer",
+            fontWeight: 700,
+            fontSize: 14,
+          }}
+        >
+          {helcimMatchBusy ? "Running…" : "Match Helcim customer codes from Helcim (by email)"}
+        </button>
+        {helcimMatchMsg ? (
+          <p style={{ margin: "12px 0 0", fontSize: 13, color: theme.charcoal, whiteSpace: "pre-wrap", maxWidth: 900 }}>{helcimMatchMsg}</p>
+        ) : null}
       </AdminSettingBlock>
 
       {error ? (
@@ -500,6 +586,29 @@ export default function AdminPaymentsSection() {
                             </>
                           ) : null}
                         </div>
+                        <p style={{ margin: "6px 0 8px", fontSize: 12, color: theme.charcoal, opacity: 0.88, lineHeight: 1.45, maxWidth: 720 }}>
+                          Helcim webhooks update <strong>Last paid</strong> automatically when a card charge matches this user&apos;s{" "}
+                          <strong>Helcim customer code</strong>. Use the button below for checks, wire, or in-person card runs that
+                          won&apos;t hit the webhook.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={savingId === r.id}
+                          onClick={() => void recordManualPaymentReceived(r.id)}
+                          style={{
+                            padding: "8px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                            color: theme.charcoal,
+                            cursor: savingId === r.id ? "wait" : "pointer",
+                            fontWeight: 700,
+                            fontSize: 13,
+                            width: "fit-content",
+                          }}
+                        >
+                          {savingId === r.id ? "Saving…" : "Record payment received (now)"}
+                        </button>
                         <div style={{ fontSize: 14, color: theme.charcoal, fontWeight: 500 }}>
                           <strong style={{ fontWeight: 800 }}>Access:</strong>{" "}
                           {r.account_disabled ? (

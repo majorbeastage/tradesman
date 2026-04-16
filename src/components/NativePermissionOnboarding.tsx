@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { isNativeApp, requestGpsPermission, requestPushPermissionAndRegister } from "../lib/capacitorMobile"
 
@@ -22,7 +23,7 @@ export default function NativePermissionOnboarding() {
     } catch {
       return
     }
-    const t = window.setTimeout(() => setOpen(true), 1200)
+    const t = window.setTimeout(() => setOpen(true), 2800)
     return () => window.clearTimeout(t)
   }, [user?.id])
 
@@ -39,10 +40,12 @@ export default function NativePermissionOnboarding() {
     setBusy("both")
     setNote(null)
     try {
-      const p = await requestPushPermissionAndRegister()
+      const p = await requestPushPermissionAndRegister(supabase, user?.id ?? null)
       const g = await requestGpsPermission()
       setNote([p.message, g.message].filter(Boolean).join(" · "))
       if (p.ok && g.ok) dismiss()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
@@ -52,8 +55,11 @@ export default function NativePermissionOnboarding() {
     setBusy("push")
     setNote(null)
     try {
-      const p = await requestPushPermissionAndRegister()
+      await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
+      const p = await requestPushPermissionAndRegister(supabase, user?.id ?? null)
       setNote(p.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
@@ -63,8 +69,11 @@ export default function NativePermissionOnboarding() {
     setBusy("loc")
     setNote(null)
     try {
+      await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
       const g = await requestGpsPermission()
       setNote(g.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
@@ -132,10 +141,12 @@ export default function NativePermissionOnboarding() {
                 flex: "1 1 140px",
                 padding: "10px 12px",
                 borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#f9fafb",
-                fontWeight: 600,
+                border: "1px solid #1f2937",
+                background: "#e5e7eb",
+                color: "#111827",
+                fontWeight: 700,
                 cursor: busy ? "wait" : "pointer",
+                fontSize: 14,
               }}
             >
               {busy === "push" ? "…" : "Notifications only"}
@@ -148,10 +159,12 @@ export default function NativePermissionOnboarding() {
                 flex: "1 1 140px",
                 padding: "10px 12px",
                 borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#f9fafb",
-                fontWeight: 600,
+                border: "1px solid #1f2937",
+                background: "#e5e7eb",
+                color: "#111827",
+                fontWeight: 700,
                 cursor: busy ? "wait" : "pointer",
+                fontSize: 14,
               }}
             >
               {busy === "loc" ? "…" : "Location only"}

@@ -1,5 +1,5 @@
 -- Mobile push device tokens + last-known GPS for team map (run in Supabase SQL Editor).
--- Deploy Edge Functions: push-test, twilio-bridge-call, notify-quote-status
+-- Deploy Edge Functions: push-test, twilio-bridge-call, notify-quote-status, notify-calendar-status
 -- Secrets: FCM_SERVICE_ACCOUNT_JSON (Firebase service account JSON for FCM HTTP v1), RESEND_* , TWILIO_*
 
 -- ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ CREATE POLICY "user_push_devices_delete_own"
   ON public.user_push_devices FOR DELETE TO authenticated
   USING (user_id = (SELECT auth.uid()));
 
-COMMENT ON TABLE public.user_push_devices IS 'Capacitor push registration tokens; used by push-test and notify-quote-status Edge Functions.';
+COMMENT ON TABLE public.user_push_devices IS 'Capacitor push registration tokens; used by push-test, notify-quote-status, and notify-calendar-status Edge Functions.';
 
 -- ---------------------------------------------------------------------------
 -- user_last_locations: one row per user (upsert from mobile when GPS opt-in on)

@@ -1,4 +1,4 @@
-/* Capacitor / mobile WebView: safe areas + calmer typography */
+/* Capacitor / mobile WebView: safe areas, no whole-app horizontal pan, calmer typography */
 
 html {
   -webkit-text-size-adjust: 100%;
@@ -6,7 +6,6 @@ html {
 
 body {
   margin: 0;
-  /* iOS safe area — footer/header handled in layout too */
   padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
 }
 
@@ -14,13 +13,64 @@ body {
   min-height: 100dvh;
 }
 
-/* Slightly tighter line length on phones */
-@media (max-width: 640px) {
+/* Phones / narrow WebView: full-bleed portal, kill Vite default body centering that causes side drag */
+@media (max-width: 900px) {
+  body {
+    display: block;
+    place-items: unset;
+    min-width: 0;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  .portal-charcoal {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
   .portal-charcoal main {
     max-width: 100%;
   }
 
   .portal-charcoal main table {
     font-size: 13px;
+  }
+
+  /* Let wide tables scroll inside their card, not the whole viewport */
+  .portal-charcoal main [style*="overflowX"] {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .portal-charcoal .app-main-safe {
+    font-size: 15px;
+    line-height: 1.45;
+  }
+
+  .portal-charcoal .app-main-safe h1 {
+    font-size: clamp(1.15rem, 4.2vw, 1.5rem);
+    line-height: 1.25;
+  }
+
+  .portal-charcoal .app-main-safe button:not([disabled]),
+  .portal-charcoal .app-main-safe [role="button"] {
+    min-height: 44px;
+  }
+
+  .portal-charcoal .app-main-safe input[type="text"],
+  .portal-charcoal .app-main-safe input[type="search"],
+  .portal-charcoal .app-main-safe input[type="email"],
+  .portal-charcoal .app-main-safe input[type="tel"],
+  .portal-charcoal .app-main-safe select,
+  .portal-charcoal .app-main-safe textarea {
+    font-size: 16px; /* Reduces iOS zoom-on-focus */
   }
 }

@@ -170,7 +170,8 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
               Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()} record&apos;s status
-              changes. Delivery requires backend automation (being wired to these preferences).
+              changes. Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs{" "}
+              <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
             </p>
             {loading ? (
               <p style={{ color: theme.text }}>Loading…</p>

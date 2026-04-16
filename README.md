@@ -2,7 +2,7 @@
 
 ## Android app (beginner)
 
-This repo includes a **Capacitor** Android wrapper. If you are new to Android Studio, use the step-by-step guide: **[android/README.md](android/README.md)**.
+This repo includes **Capacitor** native shells for **Android** and **iOS** (same `dist/` web app in both). If you are new to Android Studio, use **[android/README.md](android/README.md)**. After web changes, run `npm run mobile:sync`, then build/run on **each** platform you ship (Play Store + App Store).
 
 ---
 

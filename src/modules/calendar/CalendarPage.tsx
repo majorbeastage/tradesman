@@ -49,6 +49,9 @@ import {
   type ReceiptAdditionalLine,
   type ReceiptQuoteOverride,
 } from "../../lib/calendarReceiptMetadata"
+import { calendarEventEffectiveStatus } from "../../lib/calendarEventStatus"
+import { shareCalendarEventsToDevice } from "../../lib/shareCalendarIcs"
+import { isNativeApp } from "../../lib/capacitorMobile"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
@@ -575,6 +578,8 @@ export default function CalendarPage() {
   const [receiptEmailSelf, setReceiptEmailSelf] = useState(false)
   const [completeBusy, setCompleteBusy] = useState(false)
   const [calendarEventActionBusy, setCalendarEventActionBusy] = useState(false)
+  const [calendarShareBusy, setCalendarShareBusy] = useState(false)
+  const [calendarShareMsg, setCalendarShareMsg] = useState<string | null>(null)
   const [completeCustomerEmail, setCompleteCustomerEmail] = useState<string | null>(null)
   const [completeCustomerPhone, setCompleteCustomerPhone] = useState<string | null>(null)
   const [completeCompletionNote, setCompleteCompletionNote] = useState("")
@@ -844,6 +849,45 @@ export default function CalendarPage() {
     setEvents([])
   }
 
+  async function invokeNotifyCalendarStatus(calendarEventIds: string[], previousStatus: string, newStatus: string) {
+    if (!supabase || calendarEventIds.length === 0) return
+    const { data } = await supabase.auth.getSession()
+    if (!data.session) return
+    const { error } = await supabase.functions.invoke("notify-calendar-status", {
+      body: { calendarEventIds, previousStatus, newStatus },
+    })
+    if (error) console.warn("notify-calendar-status:", error.message)
+  }
+
+  async function shareActiveJobsToDeviceCalendar() {
+    if (!userId) return
+    const horizon = Date.now() + 60 * 86400000
+    const list = events
+      .filter(
+        (e) =>
+          (e.user_id ?? userId) === userId &&
+          !e.removed_at &&
+          !e.completed_at &&
+          new Date(e.start_at).getTime() < horizon,
+      )
+      .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
+      .slice(0, 120)
+      .map((e) => ({ id: e.id, title: e.title, start_at: e.start_at, end_at: e.end_at, notes: e.notes }))
+    setCalendarShareMsg(null)
+    if (list.length === 0) {
+      setCalendarShareMsg("No active upcoming jobs in the next 60 days to export.")
+      return
+    }
+    setCalendarShareBusy(true)
+    try {
+      const r = await shareCalendarEventsToDevice(list)
+      setCalendarShareMsg(r.message || (r.ok ? "Done." : "Could not export."))
+      if (!r.ok) alert(r.message || "Could not export calendar.")
+    } finally {
+      setCalendarShareBusy(false)
+    }
+  }
+
   useEffect(() => {
     const ev = completeFlowEvent
     if (!ev?.customer_id || !supabase) {
@@ -918,6 +962,9 @@ export default function CalendarPage() {
         return
       }
     }
+
+    const prevCalStatus = calendarEventEffectiveStatus(completeFlowEvent)
+    void invokeNotifyCalendarStatus(seriesIds, prevCalStatus, "Completed")
 
     const sendErrs: string[] = []
     const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
@@ -1591,10 +1638,12 @@ export default function CalendarPage() {
       [false, false],
     ]
     let error: { message: string } | null = null
+    let insertedEventIds: string[] = []
     for (const [incMat, incMile] of attempts) {
-      const r = await supabase.from("calendar_events").insert(buildRows(incMat, incMile))
-      if (!r.error) {
+      const r = await supabase.from("calendar_events").insert(buildRows(incMat, incMile)).select("id")
+      if (!r.error && r.data) {
         error = null
+        insertedEventIds = (r.data as { id: string }[]).map((row) => row.id)
         break
       }
       error = r.error
@@ -1606,6 +1655,7 @@ export default function CalendarPage() {
       setAddError(error.message)
       return
     }
+    if (insertedEventIds.length > 0) void invokeNotifyCalendarStatus(insertedEventIds, "", "Scheduled")
     setShowAddItem(false)
     resetAddForm()
     loadEvents()
@@ -1789,6 +1839,55 @@ export default function CalendarPage() {
         Calendar
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
+
+      {userId ? (
+        <section
+          aria-labelledby="calendar-phone-sync-heading"
+          style={{
+            borderRadius: 12,
+            border: `2px solid ${theme.primary}`,
+            background: "linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)",
+            padding: "16px 18px",
+            boxShadow: "0 4px 14px rgba(15, 23, 42, 0.08)",
+          }}
+        >
+          <h2 id="calendar-phone-sync-heading" style={{ margin: "0 0 8px", fontSize: 17, fontWeight: 800, color: theme.text }}>
+            Sync jobs to your phone calendar
+          </h2>
+          <p style={{ margin: "0 0 14px", fontSize: 14, color: "#374151", lineHeight: 1.55, maxWidth: 820 }}>
+            Put your upcoming Tradesman jobs on Apple Calendar or Google Calendar. We build a standard calendar file (
+            <strong>.ics</strong>) from jobs shown for this account (active work in the next 60 days). On the{" "}
+            <strong>Tradesman phone app</strong>, tap the button below, then choose <strong>Calendar</strong> (or your calendar app) from
+            the system share sheet — you do <strong>not</strong> need a separate &quot;allow calendar access&quot; permission for that. In a
+            <strong> desktop browser</strong>, the same button downloads the file; open it to import.
+          </p>
+          <button
+            type="button"
+            disabled={calendarShareBusy}
+            onClick={() => void shareActiveJobsToDeviceCalendar()}
+            style={{
+              padding: "14px 22px",
+              borderRadius: 10,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 800,
+              fontSize: 16,
+              cursor: calendarShareBusy ? "wait" : "pointer",
+              boxShadow: "0 2px 8px rgba(37, 99, 235, 0.35)",
+            }}
+          >
+            {calendarShareBusy
+              ? "Preparing calendar file…"
+              : isNativeApp()
+                ? "Send jobs to my phone calendar"
+                : "Download calendar file for my phone (.ics)"}
+          </button>
+          {calendarShareMsg ? (
+            <p style={{ margin: "12px 0 0", fontSize: 13, color: "#1e293b", fontWeight: 600, maxWidth: 820 }}>{calendarShareMsg}</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
         {showCalAddItem && (
@@ -2767,7 +2866,15 @@ export default function CalendarPage() {
                 ) : (
                   <span style={{ fontSize: "12px", color: "#b45309" }}>— none on file</span>
                 )}
-                {completeCustomerPhone?.trim() ? <CustomerCallButton phone={completeCustomerPhone} compact /> : null}
+                {completeCustomerPhone?.trim() ? (
+                  <span style={{ marginLeft: 8 }}>
+                    <CustomerCallButton
+                      phone={completeCustomerPhone}
+                      bridgeOwnerUserId={completeFlowEvent.user_id ?? userId}
+                      compact
+                    />
+                  </span>
+                ) : null}
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                 <input type="checkbox" checked={receiptEmailSelf} onChange={(e) => setReceiptEmailSelf(e.target.checked)} />
@@ -3384,6 +3491,7 @@ export default function CalendarPage() {
                       disabled={calendarEventActionBusy}
                       onClick={async () => {
                         if (!supabase || !selectedEvent.id) return
+                        const prevCal = calendarEventEffectiveStatus(selectedEvent)
                         setCalendarEventActionBusy(true)
                         const { error: err } = await supabase
                           .from("calendar_events")
@@ -3392,6 +3500,7 @@ export default function CalendarPage() {
                         setCalendarEventActionBusy(false)
                         if (err) alert(err.message)
                         else {
+                          void invokeNotifyCalendarStatus([selectedEvent.id], prevCal, "Cancelled")
                           setSelectedEvent(null)
                           loadEvents()
                         }
@@ -3422,6 +3531,10 @@ export default function CalendarPage() {
                           ? "Remove the entire series? Every date in this recurrence will be removed. This cannot be undone."
                           : `Remove all ${legacyIds!.length} matching dates currently shown for this recurring set? This cannot be undone.`
                         if (!window.confirm(msg)) return
+                        const prevCal = calendarEventEffectiveStatus(selectedEvent)
+                        const idsToNotify = scopeId
+                          ? events.filter((e) => e.recurrence_series_id === scopeId && !e.removed_at).map((e) => e.id)
+                          : legacyIds!
                         setCalendarEventActionBusy(true)
                         const res = scopeId
                           ? await supabase
@@ -3438,6 +3551,7 @@ export default function CalendarPage() {
                         setCalendarEventActionBusy(false)
                         if (res.error) alert(res.error.message)
                         else {
+                          void invokeNotifyCalendarStatus(idsToNotify, prevCal, "Cancelled")
                           setSelectedEvent(null)
                           loadEvents()
                         }
@@ -3462,6 +3576,7 @@ export default function CalendarPage() {
                     disabled={calendarEventActionBusy}
                     onClick={async () => {
                       if (!supabase || !selectedEvent.id) return
+                      const prevCal = calendarEventEffectiveStatus(selectedEvent)
                       setCalendarEventActionBusy(true)
                       const { error: err } = await supabase
                         .from("calendar_events")
@@ -3470,6 +3585,7 @@ export default function CalendarPage() {
                       setCalendarEventActionBusy(false)
                       if (err) alert(err.message)
                       else {
+                        void invokeNotifyCalendarStatus([selectedEvent.id], prevCal, "Cancelled")
                         setSelectedEvent(null)
                         loadEvents()
                       }

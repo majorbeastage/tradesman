@@ -1,6 +1,7 @@
 import { useState } from "react"
 import Sidebar from "../components/Sidebar"
 import { CopyrightVersionFooter } from "../components/CopyrightVersionFooter"
+import mytIcon from "../assets/MyT.png"
 import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
@@ -81,17 +82,24 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
             <button
               type="button"
               onClick={() => setPage("account")}
+              aria-label={t("layout.account")}
+              title={t("layout.account")}
               style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.2)",
-                background: "rgba(255,255,255,0.08)",
+                padding: "6px 10px",
+                minWidth: 48,
+                minHeight: 48,
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.25)",
+                background: "rgba(255,255,255,0.1)",
                 color: "#fff",
                 fontWeight: 700,
                 cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
-              {t("layout.account")}
+              <img src={mytIcon} alt="" width={40} height={28} style={{ objectFit: "contain", display: "block" }} />
             </button>
           </div>
         )}
@@ -99,8 +107,10 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
           className="app-main-safe"
           style={{
             flex: 1,
-            padding: isMobile ? "12px calc(12px + env(safe-area-inset-right, 0)) calc(12px + env(safe-area-inset-bottom, 0)) calc(12px + env(safe-area-inset-left, 0))" : "20px",
+            padding: isMobile ? "10px calc(10px + env(safe-area-inset-right, 0)) calc(14px + env(safe-area-inset-bottom, 0)) calc(10px + env(safe-area-inset-left, 0))" : "20px",
             minWidth: 0,
+            maxWidth: "100%",
+            overflowX: isMobile ? "hidden" : undefined,
             background: theme.charcoalSmoke,
           }}
         >

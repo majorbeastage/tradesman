@@ -8,3 +8,4 @@ alwaysApply: true
 - **Project root:** `C:\Users\snyde\tradesman`. Use this directory for **all** work by default—code, edits, terminal commands, file paths, and git operations.
 - **Unless the user says otherwise**, always use `C:\Users\snyde\tradesman`; do not use `tradesman-systems` or any other folder.
 - This folder is the single source of truth for the app. When the user says "push", "deploy", "run", "build", or similar, use `C:\Users\snyde\tradesman` as the working directory.
+- **Mobile (Capacitor):** the React app in `dist/` is bundled into **both** Android and **iPhone (iOS)**. After meaningful mobile or permission work, run `npm run mobile:sync` and verify **both** platforms; native manifests (`android/`, `ios/`) may need matching changes (e.g. calendar, notifications).

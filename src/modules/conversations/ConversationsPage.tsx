@@ -2251,7 +2251,9 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                       </span>
                       {(() => {
                         const first = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value
-                        return first?.trim() ? <CustomerCallButton phone={String(first)} compact /> : null
+                        return first?.trim() ? (
+                          <CustomerCallButton phone={String(first)} bridgeOwnerUserId={userId} compact />
+                        ) : null
                       })()}
                     </p>
                     <p style={{ margin: 0 }}>

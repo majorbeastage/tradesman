@@ -11,7 +11,6 @@ import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId 
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
-import TwilioBridgeCallButton from "../../components/TwilioBridgeCallButton"
 import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStatuses"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -3123,14 +3122,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
                                   </span>
                                   {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
-                                    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                      <CustomerCallButton phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)} compact />
-                                      <TwilioBridgeCallButton
-                                        customerPhone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
-                                        quoteOwnerUserId={userId}
-                                        compact
-                                      />
-                                    </span>
+                                    <CustomerCallButton
+                                      phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
+                                      bridgeOwnerUserId={userId}
+                                      compact
+                                    />
                                   ) : null}
                                 </p>
                                 <p style={{ margin: 0 }}>

@@ -18,8 +18,16 @@ type SidebarProps = {
 }
 
 const DEFAULT_TABS = [
-  "dashboard", "leads", "conversations", "quotes", "calendar",
-  "customers", "web-support", "tech-support", "settings",
+  "dashboard",
+  "leads",
+  "conversations",
+  "quotes",
+  "calendar",
+  "customers",
+  "payments",
+  "web-support",
+  "tech-support",
+  "settings",
 ]
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
@@ -30,7 +38,8 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
   const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
   const showPayments = allTabs.some((t) => t.tab_id === "payments") || !portalTabs
-  const tabs = allTabs.filter((t) => t.tab_id !== "account" && t.tab_id !== "payments")
+  /** Keep Payments in the same ordered list as the portal (was previously only at the bottom — easy to miss on phone). */
+  const tabs = allTabs.filter((t) => t.tab_id !== "account")
   const mainNavTabs = tabs.filter((t) => t.tab_id !== "tech-support")
   const techSupportNavTabs = tabs.filter((t) => t.tab_id === "tech-support")
 
@@ -43,11 +52,11 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
   const sidebarBody = (
     <div
       style={{
-        width: isMobile ? "min(86vw, 320px)" : "240px",
+        width: isMobile ? "min(88vw, 300px)" : "240px",
         background: theme.charcoalSmoke,
         backgroundImage: grainUrl,
         color: theme.primary,
-        padding: "20px",
+        padding: isMobile ? "16px 14px 20px" : "20px",
         display: "flex",
         flexDirection: "column",
         height: "100%",
@@ -85,10 +94,78 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
       `}</style>
       <div className="logo-glow-wrapper">
         <div className="logo-glow" aria-hidden />
-        <img src={logo} alt="Tradesman" style={{ maxHeight: "128px", width: "100%", maxWidth: "240px", display: "block" }} />
+        <img
+          src={logo}
+          alt="Tradesman"
+          style={{
+            maxHeight: isMobile ? "72px" : "128px",
+            width: "100%",
+            maxWidth: "240px",
+            display: "block",
+          }}
+        />
       </div>
 
-      <div style={{ marginTop: "30px", flex: 1 }}>
+      {isMobile && (showAccount || showPayments) ? (
+        <div
+          style={{
+            marginTop: 14,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
+          {showAccount ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPage("account")
+                onClose?.()
+              }}
+              title={t("layout.account")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: 48,
+                minWidth: 48,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1px solid rgba(249,115,22,0.45)`,
+                background: "rgba(249,115,22,0.12)",
+                cursor: "pointer",
+              }}
+            >
+              <img src={accountIcon} alt="" style={{ width: 44, height: 30, display: "block", objectFit: "contain" }} />
+            </button>
+          ) : null}
+          {showPayments ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPage("payments")
+                onClose?.()
+              }}
+              style={{
+                minHeight: 48,
+                padding: "0 14px",
+                borderRadius: 10,
+                border: `1px solid rgba(249,115,22,0.45)`,
+                background: "rgba(249,115,22,0.12)",
+                color: theme.primary,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              {t("nav.payments")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
         {mainNavTabs.map((tab) => (
           <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
             {formatPortalTabLabel(tab.tab_id, tab.label, t)}
@@ -141,15 +218,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             {t("layout.logout")}
           </button>
         )}
-        {showPayments && (
-          <p
-            onClick={() => { setPage("payments"); onClose?.() }}
-            style={{ ...itemStyle, marginTop: 8, marginBottom: 4, fontSize: 14, fontWeight: 600 }}
-          >
-            {t("nav.payments")}
-          </p>
-        )}
-        {showAccount && (
+        {!isMobile && showAccount ? (
           <button
             type="button"
             onClick={() => { setPage("account"); onClose?.() }}
@@ -166,7 +235,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           >
             <img src={accountIcon} alt={t("layout.account")} style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   )

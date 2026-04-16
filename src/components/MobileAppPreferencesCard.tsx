@@ -92,16 +92,21 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
           </label>
           <button
             type="button"
-            disabled={saving}
+            disabled={saving || !user?.id || user.id !== profileUserId}
             onClick={async () => {
               setPermMsg(null)
-              const r = await requestPushPermissionAndRegister()
+              const r = await requestPushPermissionAndRegister(supabase, user?.id ?? null)
               setPermMsg(r.message)
             }}
             style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600 }}
           >
             Request push permission on this device
           </button>
+          {user?.id && user.id !== profileUserId ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+              Sign in as this user on this device to register push for their account.
+            </p>
+          ) : null}
           {canTestPushThisDevice && pushOptIn ? (
             <button
               type="button"

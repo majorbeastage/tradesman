@@ -13,6 +13,12 @@ export type QuotesTabPrefs = {
   sms?: StatusChannelPrefs
 }
 
+export type CalendarTabPrefs = {
+  push?: StatusChannelPrefs
+  email?: StatusChannelPrefs
+  sms?: StatusChannelPrefs
+}
+
 export function normStatus(s: string): string {
   return s.trim().toLowerCase()
 }
@@ -24,6 +30,15 @@ export function parseQuotesTabPrefs(metadata: Record<string, unknown> | null): Q
   const quotes = inner.quotes as QuotesTabPrefs | undefined
   if (!quotes || typeof quotes !== "object") return null
   return quotes
+}
+
+export function parseCalendarTabPrefs(metadata: Record<string, unknown> | null): CalendarTabPrefs | null {
+  if (!metadata || typeof metadata !== "object") return null
+  const inner = metadata[NOTIFICATION_METADATA_KEY] as Record<string, unknown> | undefined
+  if (!inner || typeof inner !== "object") return null
+  const calendar = inner.calendar as CalendarTabPrefs | undefined
+  if (!calendar || typeof calendar !== "object") return null
+  return calendar
 }
 
 export function shouldNotifyChannel(

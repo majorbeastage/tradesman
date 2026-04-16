@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
-import { Capacitor } from "@capacitor/core"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
-import { isNativeApp } from "../lib/capacitorMobile"
+import { attachPushTokenUpsertListeners, detachPushTokenUpsertListeners, isNativeApp } from "../lib/capacitorMobile"
 
 /**
  * Native only: registers push token rows and (when GPS opt-in) periodically upserts user_last_locations.
@@ -28,40 +27,10 @@ export default function NativeMobilePipeline() {
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return
-
-    let cancelled = false
-    const cleanups: Array<() => void> = []
-
-    void (async () => {
-      try {
-        const { PushNotifications } = await import("@capacitor/push-notifications")
-        const h1 = await PushNotifications.addListener("registration", async (t) => {
-          if (!supabase || !user?.id || cancelled) return
-          const platform = Capacitor.getPlatform() === "ios" ? "ios" : "android"
-          const { error } = await supabase.from("user_push_devices").upsert(
-            {
-              user_id: user.id,
-              token: t.value,
-              platform,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id,token" },
-          )
-          if (error) console.warn("[push] user_push_devices upsert:", error.message)
-        })
-        cleanups.push(() => h1.remove())
-        const h2 = await PushNotifications.addListener("registrationError", (err) => {
-          console.warn("[push] registrationError", err.error)
-        })
-        cleanups.push(() => h2.remove())
-      } catch (e) {
-        console.warn("[push] listener setup failed", e)
-      }
-    })()
-
+    const t = window.setTimeout(() => void attachPushTokenUpsertListeners(supabase, user.id), 400)
     return () => {
-      cancelled = true
-      for (const c of cleanups) try { c() } catch { /* ignore */ }
+      window.clearTimeout(t)
+      void detachPushTokenUpsertListeners()
     }
   }, [user?.id])
 

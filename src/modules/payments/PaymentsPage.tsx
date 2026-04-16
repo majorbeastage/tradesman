@@ -8,7 +8,9 @@ import {
   normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
   resolveHelcimPayPortalBaseUrl,
+  type BillingProfileMetadata,
 } from "../../lib/billingProfileMetadata"
+import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
 
 declare global {
@@ -42,8 +44,23 @@ export default function PaymentsPage() {
   const [origin, setOrigin] = useState("")
   const [scriptReady, setScriptReady] = useState(false)
   const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
+  const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
+
+  const suggestedPaymentAmount = useMemo(() => {
+    const s = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
+    return s > 0 ? s.toFixed(2) : ""
+  }, [billingForPayments.billing_product_type, billingForPayments.billing_additional_products])
+
+  const monthlyPlanTotal = useMemo(
+    () => sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products),
+    [billingForPayments.billing_product_type, billingForPayments.billing_additional_products],
+  )
+  const hasBillingPlanSignals =
+    monthlyPlanTotal > 0 ||
+    Boolean(billingForPayments.billing_helcim_customer_code?.trim()) ||
+    Boolean(billingForPayments.billing_payment_due_date?.trim())
 
   const formAction = useMemo(() => {
     const fromWindow = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
@@ -76,11 +93,19 @@ export default function PaymentsPage() {
     }
     let cancelled = false
     void (async () => {
+      let portalFromEdge = ""
+      if (!ENV_PORTAL.trim()) {
+        const { data: cfg } = await supabase.functions.invoke("billing-portal-config", { body: {} })
+        if (!cancelled && cfg && typeof (cfg as { portalUrl?: string }).portalUrl === "string") {
+          portalFromEdge = (cfg as { portalUrl: string }).portalUrl.trim()
+        }
+      }
       const { data, error } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
       if (cancelled) return
       setLoading(false)
       if (error || !data) {
-        setPortalBaseUrl(ENV_PORTAL.trim() || null)
+        setBillingForPayments({})
+        setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL.trim() || portalFromEdge || null, null))
         setCustomerCode(null)
         return
       }
@@ -89,7 +114,9 @@ export default function PaymentsPage() {
           ? (data.metadata as Record<string, unknown>)
           : {}
       const billing = parseBillingMetadata(meta)
-      setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL, billing.helcim_pay_portal_url ?? null))
+      setBillingForPayments(billing)
+      const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
+      setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null))
       setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
     })()
     return () => {
@@ -224,7 +251,15 @@ export default function PaymentsPage() {
                 <div style={{ display: "grid", gap: 14 }}>
                   <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
                     Amount
-                    <input type="text" id="amount" defaultValue="" placeholder="0.00" autoComplete="off" style={inputStyle} />
+                    <input
+                      type="text"
+                      id="amount"
+                      key={`amt-${profileUserId}-${suggestedPaymentAmount}`}
+                      defaultValue={suggestedPaymentAmount || ""}
+                      placeholder="0.00"
+                      autoComplete="off"
+                      style={inputStyle}
+                    />
                     <span style={{ fontWeight: 400, fontSize: 12, color: "#9ca3af" }}>
                       For Verify-only flows your Helcim.js config may ignore amount.
                     </span>
@@ -406,6 +441,46 @@ export default function PaymentsPage() {
               <strong>Payment portal URL is not valid.</strong> Ask your administrator to update the payment link under Admin → Billing
               &amp; Helcim (it must be a full <code style={{ color: "#fef3c7" }}>https://</code> address).
             </div>
+          ) : hasBillingPlanSignals ? (
+            <div
+              style={{
+                padding: 20,
+                borderRadius: 10,
+                border: "1px solid #1d4ed8",
+                background: "#172554",
+                color: "#bfdbfe",
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <strong>Your billing plan is on file, but the Helcim checkout URL isn&apos;t available in this app build yet.</strong>
+              <ul style={{ margin: "12px 0 0", paddingLeft: 20 }}>
+                <li style={{ marginBottom: 8 }}>
+                  Set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> on Vercel (or your host) to your hosted pay
+                  link, then redeploy / rebuild the app and mobile shell.
+                </li>
+                <li style={{ marginBottom: 8 }}>
+                  Or add a per-user <strong>Pay portal URL override</strong> in Admin → Billing &amp; Helcim (saved on this profile).
+                </li>
+                <li>
+                  Optional embedded card form: set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_JS_TOKEN</code> and keep the return URL
+                  on the same origin as the app.
+                </li>
+              </ul>
+              {monthlyPlanTotal > 0 ? (
+                <p style={{ margin: "14px 0 0", fontWeight: 600 }}>
+                  Catalog monthly total (before tax): {formatUsdMonthly(monthlyPlanTotal)}
+                  {billingForPayments.billing_payment_due_date ? (
+                    <> · Next due date on file: {billingForPayments.billing_payment_due_date}</>
+                  ) : null}
+                </p>
+              ) : null}
+              <p style={{ margin: "12px 0 0", fontSize: 13, opacity: 0.95 }}>
+                Helcim charges that match your <strong>Helcim customer code</strong> should call the Supabase{" "}
+                <code style={{ color: "#fef3c7" }}>billing-webhook</code> (see Admin → Billing copy) so <strong>Last paid</strong> updates
+                automatically. Admin can also use <strong>Record payment received (now)</strong> for offline payments.
+              </p>
+            </div>
           ) : (
             <div
               style={{
@@ -419,7 +494,7 @@ export default function PaymentsPage() {
               }}
             >
               <strong>Online payments aren&apos;t set up for this app yet.</strong> Your administrator still needs to finish payment setup
-              for this site.
+              for this site (Helcim portal URL on the host + customer codes in Admin).
             </div>
           )}
         </>

@@ -24,7 +24,9 @@ verify_jwt = false
 # inside index.ts, so gateway JWT verification is disabled here.
 verify_jwt = false
 
-# Mobile / notifications (default verify_jwt = true): push-test, twilio-bridge-call, notify-quote-status
+# billing-portal-config: signed-in users read HELCIM_PAYMENT_PORTAL_URL from Edge secrets (Payments tab fallback).
+# helcim-match-customers: admin-only; matches Helcim customers to profiles by email (HELCIM_API_TOKEN).
+# Mobile / notifications (default verify_jwt = true): push-test, twilio-bridge-call, notify-quote-status, notify-calendar-status
 # Secrets: FCM_SERVICE_ACCOUNT_JSON (Firebase service account JSON for FCM HTTP v1),
 #   RESEND_API_KEY, RESEND_FROM_EMAIL (quote status email), TWILIO_* (SMS + bridge call).
 # SQL: supabase/user-push-devices-and-locations.sql

@@ -2403,7 +2403,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   <span>
                                     <strong>Phone:</strong> {detailForm.phone || "—"}
                                   </span>
-                                  {detailForm.phone?.trim() ? <CustomerCallButton phone={detailForm.phone} compact /> : null}
+                                  {detailForm.phone?.trim() ? (
+                                    <CustomerCallButton phone={detailForm.phone} bridgeOwnerUserId={userId} compact />
+                                  ) : null}
                                 </p>
                                 <p style={{ margin: 0 }}>
                                   <strong>Email:</strong> {detailForm.email || "—"}

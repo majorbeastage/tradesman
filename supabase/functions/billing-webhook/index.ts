@@ -1,5 +1,6 @@
 // Supabase Edge: card-processor webhooks (e.g. Helcim) → billing_events + profiles.account_disabled
-// Profiles with role admin, office_manager, or demo_user are exempt: no account_disabled or billing metadata changes from Helcim.
+// Profiles with role admin, office_manager, or demo_user are exempt from account_disabled automation only.
+// billing_last_success_at is updated on approved charges for all roles (dashboard / Payments).
 // IMPORTANT: Deliver URL must NOT contain the substring "Helcim" (processor rule). This function is named billing-webhook.
 // Deploy: supabase functions deploy billing-webhook --no-verify-jwt
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
@@ -242,28 +243,24 @@ Deno.serve(async (req) => {
 
   const nowIso = new Date().toISOString()
   let accountAutomationApplied = false
-  if (!exemptFromHelcimProfileUpdates) {
-    if (approved === true) {
-      const nextMeta = mergeBillingMeta(meta, { billing_last_success_at: nowIso })
-      await admin
-        .from("profiles")
-        .update({
-          account_disabled: false,
-          metadata: nextMeta,
-          updated_at: nowIso,
-        })
-        .eq("id", profileId)
-      accountAutomationApplied = true
-    } else if (approved === false && !paused) {
-      await admin
-        .from("profiles")
-        .update({
-          account_disabled: true,
-          updated_at: nowIso,
-        })
-        .eq("id", profileId)
-      accountAutomationApplied = true
+  /** Last successful payment date is useful for every role (dashboard, Payments context). Account lock/unlock stays exempt for staff. */
+  if (approved === true) {
+    const nextMeta = mergeBillingMeta(meta, { billing_last_success_at: nowIso })
+    const patch: Record<string, unknown> = { metadata: nextMeta, updated_at: nowIso }
+    if (!exemptFromHelcimProfileUpdates) {
+      patch.account_disabled = false
     }
+    await admin.from("profiles").update(patch).eq("id", profileId)
+    accountAutomationApplied = true
+  } else if (approved === false && !paused && !exemptFromHelcimProfileUpdates) {
+    await admin
+      .from("profiles")
+      .update({
+        account_disabled: true,
+        updated_at: nowIso,
+      })
+      .eq("id", profileId)
+    accountAutomationApplied = true
   }
 
   return new Response(

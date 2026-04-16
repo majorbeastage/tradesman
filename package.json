@@ -1,7 +1,7 @@
 {
   "name": "tradesman",
   "private": true,
-  "version": "1.4.9",
+  "version": "1.4.10",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -24,9 +24,11 @@
     "@capacitor/android": "^8.3.0",
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
+    "@capacitor/filesystem": "^8.1.2",
     "@capacitor/geolocation": "^8.2.0",
     "@capacitor/ios": "^8.3.0",
     "@capacitor/push-notifications": "^8.0.3",
+    "@capacitor/share": "^8.0.1",
     "@supabase/supabase-js": "^2.98.0",
     "capacitor-native-settings": "^8.1.0",
     "docx": "^9.6.1",

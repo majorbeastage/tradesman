@@ -42,6 +42,7 @@ import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
+import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
@@ -216,6 +217,7 @@ function MainApp() {
 }
 
 function App() {
+  if (typeof window !== "undefined") normalizePasswordRecoveryUrlInBrowser()
   const { refetchProfile } = useAuth()
   const [view, setView] = useState<View>("home")
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
