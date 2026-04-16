@@ -85,3 +85,18 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+// Google Play rejects unsigned .aab files. Without keystore.properties, release has no signingConfig — fail early.
+afterEvaluate {
+    def br = tasks.findByName("bundleRelease")
+    if (br != null) {
+        br.doFirst {
+            if (!keystorePropertiesFile.exists()) {
+                throw new GradleException(
+                    "Missing android/keystore.properties — release App Bundle would be unsigned and Google Play will reject it. " +
+                    "Copy keystore.properties.example to keystore.properties, add upload-keystore.jks + passwords, then rebuild."
+                )
+            }
+        }
+    }
+}
