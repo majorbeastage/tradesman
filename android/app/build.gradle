@@ -17,6 +17,20 @@ def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+    def storePath = keystoreProperties.getProperty("storeFile", "").trim()
+    if (storePath) {
+        def lower = storePath.toLowerCase().replace("\\", "/")
+        if (lower.endsWith("keystore.properties")) {
+            throw new GradleException(
+                "android/keystore.properties: storeFile must be your binary keystore (e.g. upload-keystore.jks), not keystore.properties. " +
+                "Using the properties file causes: toDerInputStream rejects tag type 35."
+            )
+        }
+        def ksFile = rootProject.file(storePath)
+        if (!ksFile.exists()) {
+            throw new GradleException("Keystore file not found: ${ksFile.absolutePath} (storeFile=${storePath} in keystore.properties)")
+        }
+    }
 }
 
 android {
