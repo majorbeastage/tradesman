@@ -38,8 +38,9 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
   const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
   const showPayments = allTabs.some((t) => t.tab_id === "payments") || !portalTabs
-  /** Keep Payments in the same ordered list as the portal (was previously only at the bottom — easy to miss on phone). */
-  const tabs = allTabs.filter((t) => t.tab_id !== "account")
+  const paymentsTabEntry = allTabs.find((t) => t.tab_id === "payments")
+  /** Account + Payments: pinned in the footer (desktop) or header stack (mobile), not in the long scroll list — Payments sits right above My T. */
+  const tabs = allTabs.filter((t) => t.tab_id !== "account" && t.tab_id !== "payments")
   const mainNavTabs = tabs.filter((t) => t.tab_id !== "tech-support")
   const techSupportNavTabs = tabs.filter((t) => t.tab_id === "tech-support")
 
@@ -111,11 +112,33 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           style={{
             marginTop: 14,
             display: "flex",
-            flexWrap: "wrap",
+            flexDirection: "column",
             gap: 10,
-            alignItems: "center",
+            alignItems: "flex-start",
           }}
         >
+          {showPayments ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPage("payments")
+                onClose?.()
+              }}
+              style={{
+                minHeight: 48,
+                padding: "0 14px",
+                borderRadius: 10,
+                border: `1px solid rgba(249,115,22,0.45)`,
+                background: "rgba(249,115,22,0.12)",
+                color: theme.primary,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              {formatPortalTabLabel("payments", paymentsTabEntry?.label ?? null, t)}
+            </button>
+          ) : null}
           {showAccount ? (
             <button
               type="button"
@@ -138,28 +161,6 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
               }}
             >
               <img src={accountIcon} alt="" style={{ width: 44, height: 30, display: "block", objectFit: "contain" }} />
-            </button>
-          ) : null}
-          {showPayments ? (
-            <button
-              type="button"
-              onClick={() => {
-                setPage("payments")
-                onClose?.()
-              }}
-              style={{
-                minHeight: 48,
-                padding: "0 14px",
-                borderRadius: 10,
-                border: `1px solid rgba(249,115,22,0.45)`,
-                background: "rgba(249,115,22,0.12)",
-                color: theme.primary,
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: "pointer",
-              }}
-            >
-              {t("nav.payments")}
             </button>
           ) : null}
         </div>
@@ -218,12 +219,23 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             {t("layout.logout")}
           </button>
         )}
+        {!isMobile && showPayments ? (
+          <p
+            onClick={() => {
+              setPage("payments")
+              onClose?.()
+            }}
+            style={{ ...itemStyle, margin: "10px 0 6px", fontSize: 14, fontWeight: 600 }}
+          >
+            {formatPortalTabLabel("payments", paymentsTabEntry?.label ?? null, t)}
+          </p>
+        ) : null}
         {!isMobile && showAccount ? (
           <button
             type="button"
             onClick={() => { setPage("account"); onClose?.() }}
             style={{
-              marginTop: 4,
+              marginTop: 2,
               marginBottom: "16px",
               padding: "4px",
               border: "none",

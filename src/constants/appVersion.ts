@@ -17,6 +17,7 @@
  * **1.4.5** — Helcim Payments tab: OM-scoped portal URL; managed users default-hide Payments until User portal tabs; optional RLS for self-read on office_manager_clients; portal URL normalization.
  * **1.4.6** — Lead Hot/Qualified → Conversations automation (client + server); Quotes calendar date picker + decimal unit prices; no auto tab-switch after workflow actions; calendar completion receipts send JWT + Supabase URL/anon to outbound-messages; AI summarize + platform-tools shared body helper; Conversations SMS consent notice; pricing expandable cards + Best Value on Pro.
  * **1.4.10** — Password reset: normalize `/` + recovery hash to `/reset-password`; billing portal config Edge + Payments fallback; Helcim bulk customer-code match (admin); billing webhook last-success for all roles; Twilio-first call button with dialer fallback; calendar status helpers + notify-calendar-status Edge; mobile prefs / native pipeline tweaks; env and Supabase function config docs.
+ * **1.4.11** — Payments: read `VITE_HELCIM_*` via `import.meta.env` so Vite embeds the Helcim portal URL in production builds (indirect access left it empty). Sidebar: Payments pinned above My T.
  *
  * @see CopyrightVersionFooter
  */

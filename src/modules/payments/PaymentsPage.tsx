@@ -19,8 +19,9 @@ declare global {
   }
 }
 
-const ENV_PORTAL = (import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_PAYMENT_PORTAL_URL ?? ""
-const ENV_JS_TOKEN = ((import.meta as { env?: Record<string, string> }).env?.VITE_HELCIM_JS_TOKEN ?? "").trim()
+/** Must use `import.meta.env.VITE_*` directly so Vite inlines values at build time (cast/indirect access is left empty in production). */
+const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").trim()
+const ENV_JS_TOKEN = String(import.meta.env.VITE_HELCIM_JS_TOKEN ?? "").trim()
 const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
 
@@ -45,6 +46,8 @@ export default function PaymentsPage() {
   const [scriptReady, setScriptReady] = useState(false)
   const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
+  /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
+  const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -94,8 +97,12 @@ export default function PaymentsPage() {
     let cancelled = false
     void (async () => {
       let portalFromEdge = ""
+      if (!cancelled) setBillingPortalConfigError(null)
       if (!ENV_PORTAL.trim()) {
-        const { data: cfg } = await supabase.functions.invoke("billing-portal-config", { body: {} })
+        const { data: cfg, error: cfgErr } = await supabase.functions.invoke("billing-portal-config", { body: {} })
+        if (!cancelled && cfgErr) {
+          setBillingPortalConfigError(cfgErr.message || "Could not reach billing-portal-config.")
+        }
         if (!cancelled && cfg && typeof (cfg as { portalUrl?: string }).portalUrl === "string") {
           portalFromEdge = (cfg as { portalUrl: string }).portalUrl.trim()
         }
@@ -453,14 +460,26 @@ export default function PaymentsPage() {
                 lineHeight: 1.55,
               }}
             >
-              <strong>Your billing plan is on file, but the Helcim checkout URL isn&apos;t available in this app build yet.</strong>
+              <strong>Your billing plan is on file, but no valid Helcim hosted pay URL was found for this session.</strong>
+              {billingPortalConfigError ? (
+                <p style={{ margin: "10px 0 0", fontSize: 13, opacity: 0.95 }}>
+                  Portal config request: {billingPortalConfigError}
+                </p>
+              ) : null}
               <ul style={{ margin: "12px 0 0", paddingLeft: 20 }}>
                 <li style={{ marginBottom: 8 }}>
-                  Set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> on Vercel (or your host) to your hosted pay
-                  link, then redeploy / rebuild the app and mobile shell.
+                  <strong>No rebuild:</strong> set Supabase secret{" "}
+                  <code style={{ color: "#fef3c7" }}>HELCIM_PAYMENT_PORTAL_URL</code> to your full <code style={{ color: "#fef3c7" }}>https://</code>{" "}
+                  hosted pay link, deploy the <code style={{ color: "#fef3c7" }}>billing-portal-config</code> Edge function, then reload
+                  this page.
                 </li>
                 <li style={{ marginBottom: 8 }}>
-                  Or add a per-user <strong>Pay portal URL override</strong> in Admin → Billing &amp; Helcim (saved on this profile).
+                  <strong>Or</strong> set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> on Vercel (or your host)
+                  and redeploy / rebuild the app and mobile shell.
+                </li>
+                <li style={{ marginBottom: 8 }}>
+                  <strong>Or</strong> add a per-user <strong>Pay portal URL override</strong> in Admin → Billing &amp; Helcim (saved on this
+                  profile).
                 </li>
                 <li>
                   Optional embedded card form: set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_JS_TOKEN</code> and keep the return URL
