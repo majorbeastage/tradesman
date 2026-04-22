@@ -13,6 +13,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
+import { geocodeAddressToLatLng, mergeJobSiteIntoMetadata, parseJobSiteFromEventMetadata } from "../../lib/jobSiteLocation"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
@@ -94,7 +95,12 @@ type CalendarEvent = {
   mileage_miles?: number | null
   metadata?: unknown
   job_types?: JobType | null
-  customers?: { display_name: string | null } | null
+  customers?: {
+    display_name: string | null
+    service_address?: string | null
+    service_lat?: number | null
+    service_lng?: number | null
+  } | null
 }
 
 type QuoteItemReceiptRow = {
@@ -337,6 +343,9 @@ export default function CalendarPage() {
   const [eventMaterialsSaving, setEventMaterialsSaving] = useState(false)
   const [eventMileageDraft, setEventMileageDraft] = useState("")
   const [eventMileageSaving, setEventMileageSaving] = useState(false)
+  const [jobSiteDraft, setJobSiteDraft] = useState({ address: "", lat: "", lng: "" })
+  const [jobSiteSaving, setJobSiteSaving] = useState(false)
+  const [jobGeocodeBusy, setJobGeocodeBusy] = useState(false)
   const [addMileage, setAddMileage] = useState("")
   const [jtTrackMileage, setJtTrackMileage] = useState(false)
   const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
@@ -797,6 +806,7 @@ export default function CalendarPage() {
       canViewOrgEvents ? baseQuery(selectStr).in("user_id", orgUserIds) : baseQuery(selectStr).eq("user_id", userId)
 
     const selectTiers = [
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, customers ( display_name, service_address, service_lat, service_lng ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, customers ( display_name ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
@@ -837,6 +847,9 @@ export default function CalendarPage() {
         em.includes("metadata") ||
         em.includes("track_mileage") ||
         em.includes("job_types") ||
+        em.includes("service_address") ||
+        em.includes("service_lat") ||
+        em.includes("service_lng") ||
         (em.includes("column") && em.includes("does not exist"))
       if (!retry) {
         setLoadError(error.message)
@@ -1176,6 +1189,48 @@ export default function CalendarPage() {
     loadEvents()
   }
 
+  async function saveEventJobSite() {
+    if (!supabase || !selectedEvent?.id) return
+    setJobSiteSaving(true)
+    try {
+      const prevMeta = selectedEvent.metadata
+      const nextMeta = mergeJobSiteIntoMetadata(prevMeta, {
+        job_site_address: jobSiteDraft.address,
+        job_site_lat: jobSiteDraft.lat,
+        job_site_lng: jobSiteDraft.lng,
+      })
+      const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", selectedEvent.id)
+      if (error) throw new Error(error.message)
+      setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
+      await loadEvents()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setJobSiteSaving(false)
+    }
+  }
+
+  async function geocodeJobSiteDraft() {
+    const q = jobSiteDraft.address.trim()
+    if (!q) {
+      alert("Enter a job site address to look up coordinates.")
+      return
+    }
+    setJobGeocodeBusy(true)
+    try {
+      const coords = await geocodeAddressToLatLng(q)
+      if (!coords) {
+        alert("Could not find coordinates for that address. Try a fuller street + city + state.")
+        return
+      }
+      setJobSiteDraft((d) => ({ ...d, lat: String(coords.lat), lng: String(coords.lng) }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setJobGeocodeBusy(false)
+    }
+  }
+
   async function saveEventReceiptLines() {
     if (!supabase || !selectedEvent?.id) return
     setReceiptLinesSaving(true)
@@ -1388,6 +1443,30 @@ export default function CalendarPage() {
     if (m != null && Number.isFinite(Number(m))) setEventMileageDraft(String(Number(m)))
     else setEventMileageDraft("")
   }, [selectedEvent?.id, selectedEvent?.mileage_miles])
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setJobSiteDraft({ address: "", lat: "", lng: "" })
+      return
+    }
+    const jp = parseJobSiteFromEventMetadata(selectedEvent.metadata)
+    const cust = selectedEvent.customers
+    const custAddr = typeof cust?.service_address === "string" ? cust.service_address.trim() : ""
+    const custLat = cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : ""
+    const custLng = cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : ""
+    setJobSiteDraft({
+      address: jp.address || custAddr,
+      lat: jp.lat != null ? String(jp.lat) : custLat,
+      lng: jp.lng != null ? String(jp.lng) : custLng,
+    })
+  }, [
+    selectedEvent?.id,
+    selectedEvent?.customer_id,
+    selectedEvent?.metadata == null ? "" : JSON.stringify(selectedEvent.metadata),
+    selectedEvent?.customers?.service_address,
+    selectedEvent?.customers?.service_lat,
+    selectedEvent?.customers?.service_lng,
+  ])
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -2934,7 +3013,11 @@ export default function CalendarPage() {
       )}
 
       {showTeamMapModal && (
-        <TeamLocationsMapModal userIds={teamMapUserIds} onClose={() => setShowTeamMapModal(false)} />
+        <TeamLocationsMapModal
+          members={selectableUsers.map((u) => ({ userId: u.userId, label: u.label, isSelf: u.isSelf }))}
+          orgUserIdsForJobs={teamMapUserIds}
+          onClose={() => setShowTeamMapModal(false)}
+        />
       )}
 
       {selectedEvent && (
@@ -2989,6 +3072,17 @@ export default function CalendarPage() {
                   <strong>Customer:</strong> {selectedEvent.customers.display_name}
                 </p>
               )}
+              {(selectedEvent.customers?.service_address?.trim() ||
+                selectedEvent.customers?.service_lat != null ||
+                selectedEvent.customers?.service_lng != null) && (
+                <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                  <strong>Customer service address:</strong>{" "}
+                  {selectedEvent.customers?.service_address?.trim() || "—"}
+                  {selectedEvent.customers?.service_lat != null && selectedEvent.customers?.service_lng != null
+                    ? ` · ${Number(selectedEvent.customers.service_lat).toFixed(5)}, ${Number(selectedEvent.customers.service_lng).toFixed(5)}`
+                    : ""}
+                </p>
+              )}
               {selectedEvent.quote_id && (
                 <div style={{ margin: 0 }}>
                   <p style={{ margin: 0 }}>
@@ -3030,6 +3124,76 @@ export default function CalendarPage() {
                 <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
               </p>
             )}
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Job site (maps &amp; team map)</p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                Saved on this calendar event. Fills from the customer&apos;s service address when empty; override here for a one-off site.
+                Set latitude/longitude (manually or via lookup) so this job can appear as a <strong>next job</strong> pin on the team map.
+              </p>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 12, color: theme.text, fontWeight: 600 }}>Address</label>
+              <textarea
+                value={jobSiteDraft.address}
+                onChange={(e) => setJobSiteDraft((p) => ({ ...p, address: e.target.value }))}
+                rows={2}
+                placeholder="Street, city, state"
+                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13, marginBottom: 8 }}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                  <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lat</span>
+                  <input
+                    value={jobSiteDraft.lat}
+                    onChange={(e) => setJobSiteDraft((p) => ({ ...p, lat: e.target.value }))}
+                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                    placeholder="e.g. 40.7128"
+                  />
+                </label>
+                <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                  <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lng</span>
+                  <input
+                    value={jobSiteDraft.lng}
+                    onChange={(e) => setJobSiteDraft((p) => ({ ...p, lng: e.target.value }))}
+                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                    placeholder="e.g. -74.0060"
+                  />
+                </label>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={jobGeocodeBusy}
+                  onClick={() => void geocodeJobSiteDraft()}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    cursor: jobGeocodeBusy ? "wait" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  {jobGeocodeBusy ? "Looking up…" : "Look up coordinates"}
+                </button>
+                <button
+                  type="button"
+                  disabled={jobSiteSaving || !supabase}
+                  onClick={() => void saveEventJobSite()}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: jobSiteSaving ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  {jobSiteSaving ? "Saving…" : "Save job site"}
+                </button>
+              </div>
+            </div>
             <div style={{ marginBottom: 14 }}>
               <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Materials</p>
               <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>

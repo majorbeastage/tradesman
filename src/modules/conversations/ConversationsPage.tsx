@@ -37,7 +37,13 @@ import TabNotificationAlertsButton from "../../components/TabNotificationAlertsB
 import CustomerCallButton from "../../components/CustomerCallButton"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
-type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
+type CustomerRow = {
+  display_name: string | null
+  customer_identifiers: CustomerIdentifier[] | null
+  service_address?: string | null
+  service_lat?: number | null
+  service_lng?: number | null
+}
 type MessageRow = { content: string | null; created_at: string | null; sender?: string | null }
 type CommEventListRow = { created_at: string | null; direction: string | null; event_type: string | null }
 type CommEventRow = {
@@ -418,6 +424,9 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const [convoPendingAiBusy, setConvoPendingAiBusy] = useState(false)
   const [detailForm, setDetailForm] = useState<ConversationDetailForm>({
     customerName: "",
+    serviceAddress: "",
+    serviceLat: "",
+    serviceLng: "",
     channel: "sms",
     status: "Open",
     identifiers: [],
@@ -678,8 +687,12 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       else if (item.type === "dropdown" && item.options?.length) portalValues[item.id] = savedPortalValues[item.id] ?? item.options[0]
       else portalValues[item.id] = savedPortalValues[item.id] ?? ""
     })
+    const cust = convo?.customers as CustomerRow | null | undefined
     return {
       customerName: convo?.customers?.display_name ?? "",
+      serviceAddress: typeof cust?.service_address === "string" ? cust.service_address : "",
+      serviceLat: cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : "",
+      serviceLng: cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : "",
       channel: convo?.channel ?? "sms",
       status: normalizeConversationStatus(convo?.status),
       identifiers,
@@ -867,6 +880,9 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     const customersBlock = `
       customers (
         display_name,
+        service_address,
+        service_lat,
+        service_lng,
         customer_identifiers (
           type,
           value
@@ -883,37 +899,55 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         direction,
         event_type
       )`
-    function buildSelect(opts: { removedAt: boolean; embedCommEvents: boolean }): string {
+    const customersBlockBasic = `
+      customers (
+        display_name,
+        customer_identifiers (
+          type,
+          value
+        )
+      ),
+      messages (
+        content,
+        created_at,
+        sender
+      )`
+    function buildSelect(opts: { removedAt: boolean; embedCommEvents: boolean; customersBasic: boolean }): string {
       const ra = opts.removedAt ? ",\n      removed_at" : ""
       const ev = opts.embedCommEvents ? commEventsBlock : ""
+      const cb = (opts.customersBasic ? customersBlockBasic : customersBlock).trim()
       return `
       id,
       channel,
       status,
       created_at${ra},
-      ${customersBlock.trim()}${ev}
+      ${cb}${ev}
     `
     }
 
-    async function runQuery(removedAt: boolean, embedCommEvents: boolean) {
+    async function runQuery(removedAt: boolean, embedCommEvents: boolean, customersBasic: boolean) {
       let q = sb
         .from("conversations")
-        .select(buildSelect({ removedAt, embedCommEvents }))
+        .select(buildSelect({ removedAt, embedCommEvents, customersBasic }))
         .eq("user_id", uid)
         .order("created_at", { ascending: false })
       if (removedAt) q = q.is("removed_at", null)
       return q
     }
 
-    const attempts: { removedAt: boolean; embedCommEvents: boolean }[] = [
-      { removedAt: true, embedCommEvents: true },
-      { removedAt: false, embedCommEvents: true },
-      { removedAt: true, embedCommEvents: false },
-      { removedAt: false, embedCommEvents: false },
+    const attempts: { removedAt: boolean; embedCommEvents: boolean; customersBasic: boolean }[] = [
+      { removedAt: true, embedCommEvents: true, customersBasic: false },
+      { removedAt: true, embedCommEvents: true, customersBasic: true },
+      { removedAt: false, embedCommEvents: true, customersBasic: false },
+      { removedAt: false, embedCommEvents: true, customersBasic: true },
+      { removedAt: true, embedCommEvents: false, customersBasic: false },
+      { removedAt: true, embedCommEvents: false, customersBasic: true },
+      { removedAt: false, embedCommEvents: false, customersBasic: false },
+      { removedAt: false, embedCommEvents: false, customersBasic: true },
     ]
     let lastError: unknown
     for (const opts of attempts) {
-      const res = await runQuery(opts.removedAt, opts.embedCommEvents)
+      const res = await runQuery(opts.removedAt, opts.embedCommEvents, opts.customersBasic)
       if (!res.error) {
         let rows = (res.data || []) as any[]
         if (!opts.removedAt) rows = rows.map((c: any) => ({ ...c, removed_at: c.removed_at ?? null }))
@@ -1023,6 +1057,24 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       metadata,
       customers (
         display_name,
+        service_address,
+        service_lat,
+        service_lng,
+        customer_identifiers (
+          type,
+          value
+        )
+      )
+    `
+    const selectWithMetadataBasic = `
+      id,
+      channel,
+      status,
+      created_at,
+      customer_id,
+      metadata,
+      customers (
+        display_name,
         customer_identifiers (
           type,
           value
@@ -1030,6 +1082,23 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       )
     `
     const selectWithoutMetadata = `
+      id,
+      channel,
+      status,
+      created_at,
+      customer_id,
+      customers (
+        display_name,
+        service_address,
+        service_lat,
+        service_lng,
+        customer_identifiers (
+          type,
+          value
+        )
+      )
+    `
+    const selectWithoutMetadataBasic = `
       id,
       channel,
       status,
@@ -1049,12 +1118,17 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       .eq("id", convoId)
       .single()
 
+    if (error && String(error.message || "").toLowerCase().includes("service_")) {
+      const r = await supabase.from("conversations").select(selectWithMetadataBasic).eq("id", convoId).single()
+      data = r.data
+      error = r.error
+    }
+
     if (error && String(error.message || "").includes("metadata")) {
-      const fallback = await supabase
-        .from("conversations")
-        .select(selectWithoutMetadata)
-        .eq("id", convoId)
-        .single()
+      let fallback = await supabase.from("conversations").select(selectWithoutMetadata).eq("id", convoId).single()
+      if (fallback.error && String(fallback.error.message || "").toLowerCase().includes("service_")) {
+        fallback = await supabase.from("conversations").select(selectWithoutMetadataBasic).eq("id", convoId).single()
+      }
       data = fallback.data ? { ...fallback.data, metadata: {} } : null
       error = fallback.error
     }
@@ -1160,10 +1234,22 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         .eq("id", selectedConversation.id)
       if (convoErr) throw convoErr
 
-      const { error: customerErr } = await supabase
-        .from("customers")
-        .update({ display_name: detailForm.customerName.trim() || null })
-        .eq("id", selectedConversation.customer_id)
+      const latRaw = detailForm.serviceLat.trim()
+      const lngRaw = detailForm.serviceLng.trim()
+      const latN = latRaw ? Number.parseFloat(latRaw) : Number.NaN
+      const lngN = lngRaw ? Number.parseFloat(lngRaw) : Number.NaN
+      const custPatch: Record<string, unknown> = {
+        display_name: detailForm.customerName.trim() || null,
+        service_address: detailForm.serviceAddress.trim() || null,
+        service_lat: Number.isFinite(latN) ? latN : null,
+        service_lng: Number.isFinite(lngN) ? lngN : null,
+      }
+      let { error: customerErr } = await supabase.from("customers").update(custPatch).eq("id", selectedConversation.customer_id)
+      if (customerErr && String(customerErr.message || "").toLowerCase().includes("service_")) {
+        const { service_address: _a, service_lat: _la, service_lng: _ln, ...rest } = custPatch
+        const r = await supabase.from("customers").update(rest).eq("id", selectedConversation.customer_id)
+        customerErr = r.error
+      }
       if (customerErr) throw customerErr
 
       const { error: deleteErr } = await supabase
@@ -2172,6 +2258,25 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                       <span style={{ fontSize: 12, fontWeight: 700 }}>Customer</span>
                       <input value={detailForm.customerName} onChange={(e) => setDetailForm((prev) => ({ ...prev, customerName: e.target.value }))} style={theme.formInput} />
                     </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700 }}>Service / job site address</span>
+                      <textarea
+                        value={detailForm.serviceAddress}
+                        onChange={(e) => setDetailForm((prev) => ({ ...prev, serviceAddress: e.target.value }))}
+                        rows={2}
+                        style={{ ...theme.formInput, resize: "vertical" }}
+                      />
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>Lat</span>
+                        <input value={detailForm.serviceLat} onChange={(e) => setDetailForm((prev) => ({ ...prev, serviceLat: e.target.value }))} style={theme.formInput} />
+                      </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>Lng</span>
+                        <input value={detailForm.serviceLng} onChange={(e) => setDetailForm((prev) => ({ ...prev, serviceLng: e.target.value }))} style={theme.formInput} />
+                      </label>
+                    </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                       <label style={{ display: "grid", gap: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 700 }}>Channel</span>
@@ -2244,6 +2349,16 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                     <p style={{ margin: 0 }}>
                       <strong>Customer:</strong> {selectedConversation.customers?.display_name ?? "—"}
                     </p>
+                    {(selectedConversation.customers as CustomerRow | null)?.service_address?.trim() ||
+                    (selectedConversation.customers as CustomerRow | null)?.service_lat != null ? (
+                      <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
+                        <strong>Service address:</strong> {(selectedConversation.customers as CustomerRow)?.service_address?.trim() || "—"}
+                        {(selectedConversation.customers as CustomerRow)?.service_lat != null &&
+                        (selectedConversation.customers as CustomerRow)?.service_lng != null
+                          ? ` · ${Number((selectedConversation.customers as CustomerRow).service_lat).toFixed(5)}, ${Number((selectedConversation.customers as CustomerRow).service_lng).toFixed(5)}`
+                          : ""}
+                      </p>
+                    ) : null}
                     <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                       <span>
                         <strong>Phone(s):</strong>{" "}

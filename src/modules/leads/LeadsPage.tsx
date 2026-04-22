@@ -28,7 +28,13 @@ import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprova
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
-type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
+type CustomerRow = {
+  display_name: string | null
+  customer_identifiers: CustomerIdentifier[] | null
+  service_address?: string | null
+  service_lat?: number | null
+  service_lng?: number | null
+}
 const LEAD_STATUS_OPTIONS = ["New", "Contacted", "Qualified", "Lost"] as const
 
 type LeadFit = "hot" | "maybe" | "bad" | null
@@ -136,6 +142,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     customerName: "",
     phone: "",
     email: "",
+    serviceAddress: "",
+    serviceLat: "",
+    serviceLng: "",
     title: "",
     description: "",
     status: "New",
@@ -358,10 +367,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
     const customerIds = [...new Set(rows.map((r: any) => r.customer_id).filter(Boolean))]
     if (customerIds.length > 0) {
-      const { data: custData } = await supabase
+      let custRes = await supabase
         .from("customers")
-        .select("id, display_name, customer_identifiers(type, value, is_primary)")
+        .select("id, display_name, service_address, service_lat, service_lng, customer_identifiers(type, value, is_primary)")
         .in("id", customerIds)
+      if (custRes.error && String(custRes.error.message || "").toLowerCase().includes("service_")) {
+        custRes = await supabase
+          .from("customers")
+          .select("id, display_name, customer_identifiers(type, value, is_primary)")
+          .in("id", customerIds)
+      }
+      const custData = custRes.data
       const custMap = new Map((custData || []).map((c: any) => [c.id, c]))
       rows.forEach((r: any) => {
         if (r.customer_id && custMap.has(r.customer_id)) r.customers = custMap.get(r.customer_id)
@@ -613,10 +629,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     const phone = idents.find((i) => i.type === "phone")?.value ?? ""
     const email = idents.find((i) => i.type === "email")?.value ?? ""
     const st = String(data.status ?? "").trim() || "New"
+    const cust = data.customers as CustomerRow | undefined
     setDetailForm({
       customerName: data.customers?.display_name ?? "",
       phone,
       email,
+      serviceAddress: typeof cust?.service_address === "string" ? cust.service_address : "",
+      serviceLat: cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : "",
+      serviceLng: cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : "",
       title: data.title ?? "",
       description: data.description ?? "",
       status: st,
@@ -639,10 +659,22 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       const emailT = detailForm.email.trim().toLowerCase()
       const nameT = detailForm.customerName.trim()
 
-      const { error: custErr } = await supabase
-        .from("customers")
-        .update({ display_name: nameT || null })
-        .eq("id", cid)
+      const latRaw = detailForm.serviceLat.trim()
+      const lngRaw = detailForm.serviceLng.trim()
+      const latN = latRaw ? Number.parseFloat(latRaw) : Number.NaN
+      const lngN = lngRaw ? Number.parseFloat(lngRaw) : Number.NaN
+      const custPatch: Record<string, unknown> = {
+        display_name: nameT || null,
+        service_address: detailForm.serviceAddress.trim() || null,
+        service_lat: Number.isFinite(latN) ? latN : null,
+        service_lng: Number.isFinite(lngN) ? lngN : null,
+      }
+      let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", cid)
+      if (custErr && String(custErr.message || "").toLowerCase().includes("service_")) {
+        const { service_address: _a, service_lat: _la, service_lng: _ln, ...rest } = custPatch
+        const r = await supabase.from("customers").update(rest).eq("id", cid)
+        custErr = r.error
+      }
       if (custErr) throw custErr
 
       const { error: delErr } = await supabase.from("customer_identifiers").delete().eq("customer_id", cid).in("type", ["phone", "email", "name"])
@@ -1035,9 +1067,28 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setSelectedLeadId(leadId)
     if (!supabase || !userId) return
 
-    const { data, error } = await supabase
-      .from("leads")
-      .select(`
+    const custBlockFull = `
+        customers (
+          display_name,
+          service_address,
+          service_lat,
+          service_lng,
+          customer_identifiers (
+            type,
+            value
+          )
+        )
+      `
+    const custBlockBasic = `
+        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        )
+      `
+    const leadCore = `
         id,
         title,
         description,
@@ -1051,16 +1102,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         fit_source,
         fit_manually_overridden,
         fit_evaluated_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `)
+      `
+    let { data, error } = await supabase
+      .from("leads")
+      .select(`${leadCore}${custBlockFull}`)
       .eq("id", leadId)
       .single()
+    if (error && String(error.message || "").toLowerCase().includes("service_")) {
+      const r = await supabase.from("leads").select(`${leadCore}${custBlockBasic}`).eq("id", leadId).single()
+      data = r.data
+      error = r.error
+    }
 
     if (error) {
       console.error(error)
@@ -2364,6 +2416,34 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   onChange={(e) => setDetailForm((p) => ({ ...p, email: e.target.value }))}
                                   style={{ ...theme.formInput }}
                                 />
+                                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Service / job site address</label>
+                                <textarea
+                                  value={detailForm.serviceAddress}
+                                  onChange={(e) => setDetailForm((p) => ({ ...p, serviceAddress: e.target.value }))}
+                                  rows={2}
+                                  placeholder="Shown on calendar and team map when coordinates are set"
+                                  style={{ ...theme.formInput, resize: "vertical" }}
+                                />
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <label style={{ flex: "1 1 140px", fontSize: 12, fontWeight: 600, color: theme.text }}>
+                                    Lat
+                                    <input
+                                      value={detailForm.serviceLat}
+                                      onChange={(e) => setDetailForm((p) => ({ ...p, serviceLat: e.target.value }))}
+                                      style={{ ...theme.formInput, marginTop: 4 }}
+                                      placeholder="optional"
+                                    />
+                                  </label>
+                                  <label style={{ flex: "1 1 140px", fontSize: 12, fontWeight: 600, color: theme.text }}>
+                                    Lng
+                                    <input
+                                      value={detailForm.serviceLng}
+                                      onChange={(e) => setDetailForm((p) => ({ ...p, serviceLng: e.target.value }))}
+                                      style={{ ...theme.formInput, marginTop: 4 }}
+                                      placeholder="optional"
+                                    />
+                                  </label>
+                                </div>
                                 <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Title</label>
                                 <input
                                   value={detailForm.title}
@@ -2410,6 +2490,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 <p style={{ margin: 0 }}>
                                   <strong>Email:</strong> {detailForm.email || "—"}
                                 </p>
+                                {(detailForm.serviceAddress?.trim() || detailForm.serviceLat?.trim() || detailForm.serviceLng?.trim()) ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
+                                    <strong>Service address:</strong> {detailForm.serviceAddress?.trim() || "—"}
+                                    {(detailForm.serviceLat?.trim() && detailForm.serviceLng?.trim())
+                                      ? ` · ${detailForm.serviceLat}, ${detailForm.serviceLng}`
+                                      : ""}
+                                  </p>
+                                ) : null}
                                 <p style={{ margin: 0 }}>
                                   <strong>Title:</strong> {detailForm.title || "—"}
                                 </p>

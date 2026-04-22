@@ -113,7 +113,13 @@ function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): bool
 }
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
-type CustomerRow = { display_name: string | null; customer_identifiers: CustomerIdentifier[] | null }
+type CustomerRow = {
+  display_name: string | null
+  customer_identifiers: CustomerIdentifier[] | null
+  service_address?: string | null
+  service_lat?: number | null
+  service_lng?: number | null
+}
 type MessageRow = { content: string | null; created_at: string | null }
 type QuoteRow = {
   id: string
@@ -323,7 +329,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteCalTimeIncrement, setQuoteCalTimeIncrement] = useState<15 | 60>(15)
   const [quoteCustomerEditMode, setQuoteCustomerEditMode] = useState(false)
   const [quoteCustomerSaving, setQuoteCustomerSaving] = useState(false)
-  const [quoteCustomerForm, setQuoteCustomerForm] = useState({ name: "", phone: "", email: "" })
+  const [quoteCustomerForm, setQuoteCustomerForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    serviceAddress: "",
+    serviceLat: "",
+    serviceLng: "",
+  })
   const [jobTypes, setJobTypes] = useState<CalendarPickerJobType[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
   const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
@@ -1333,6 +1346,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       name: (cust?.display_name ?? "").trim(),
       phone,
       email: email.toLowerCase(),
+      serviceAddress: typeof cust?.service_address === "string" ? cust.service_address : "",
+      serviceLat: cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : "",
+      serviceLng: cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : "",
     })
   }
 
@@ -1341,10 +1357,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setQuoteCustomerSaving(true)
     try {
       const cid = selectedQuote.customer_id as string
-      const { error: u1 } = await supabase
-        .from("customers")
-        .update({ display_name: quoteCustomerForm.name.trim() || null })
-        .eq("id", cid)
+      const latRaw = quoteCustomerForm.serviceLat.trim()
+      const lngRaw = quoteCustomerForm.serviceLng.trim()
+      const latN = latRaw ? Number.parseFloat(latRaw) : Number.NaN
+      const lngN = lngRaw ? Number.parseFloat(lngRaw) : Number.NaN
+      const custPatch: Record<string, unknown> = {
+        display_name: quoteCustomerForm.name.trim() || null,
+        service_address: quoteCustomerForm.serviceAddress.trim() || null,
+        service_lat: Number.isFinite(latN) ? latN : null,
+        service_lng: Number.isFinite(lngN) ? lngN : null,
+      }
+      let { error: u1 } = await supabase.from("customers").update(custPatch).eq("id", cid)
+      if (u1 && String(u1.message || "").toLowerCase().includes("service_")) {
+        const { service_address: _a, service_lat: _la, service_lng: _ln, ...rest } = custPatch
+        const r = await supabase.from("customers").update(rest).eq("id", cid)
+        u1 = r.error
+      }
       if (u1) throw u1
       const { error: del } = await supabase.from("customer_identifiers").delete().eq("customer_id", cid).in("type", ["phone", "email", "name"])
       if (del) throw del
@@ -1413,6 +1441,26 @@ export default function QuotesPage(_props: QuotesPageProps) {
         scheduled_at,
         customers (
           display_name,
+          service_address,
+          service_lat,
+          service_lng,
+          customer_identifiers (
+            type,
+            value
+          )
+        )
+      `
+    const quoteDetailSelectBasic = `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+        job_type_id,
+        scheduled_at,
+        customers (
+          display_name,
           customer_identifiers (
             type,
             value
@@ -1429,18 +1477,43 @@ export default function QuotesPage(_props: QuotesPageProps) {
         scheduled_at,
         customers (
           display_name,
+          service_address,
+          service_lat,
+          service_lng,
           customer_identifiers (
             type,
             value
           )
         )
       `
-    const detailFirst = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+    const quoteDetailSelectNoJobTypeBasic = `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+        scheduled_at,
+        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        )
+      `
+    let detailFirst = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+    if (detailFirst.error && String(detailFirst.error.message || "").toLowerCase().includes("service_")) {
+      detailFirst = await supabase.from("quotes").select(quoteDetailSelectBasic).eq("id", quoteId).single()
+    }
     let row: any = detailFirst.data
     let error = detailFirst.error
 
     if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
-      const r = await supabase.from("quotes").select(quoteDetailSelectNoJobType).eq("id", quoteId).single()
+      let r = await supabase.from("quotes").select(quoteDetailSelectNoJobType).eq("id", quoteId).single()
+      if (r.error && String(r.error.message || "").toLowerCase().includes("service_")) {
+        r = await supabase.from("quotes").select(quoteDetailSelectNoJobTypeBasic).eq("id", quoteId).single()
+      }
       row = r.data
       error = r.error
     }
@@ -3074,6 +3147,28 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
                                   style={{ ...theme.formInput }}
                                 />
+                                <textarea
+                                  placeholder="Service / job site address (optional, for maps)"
+                                  name="quote_customer_service_address"
+                                  value={quoteCustomerForm.serviceAddress}
+                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceAddress: e.target.value }))}
+                                  rows={2}
+                                  style={{ ...theme.formInput, resize: "vertical" }}
+                                />
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <input
+                                    placeholder="Lat"
+                                    value={quoteCustomerForm.serviceLat}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLat: e.target.value }))}
+                                    style={{ ...theme.formInput, flex: "1 1 120px" }}
+                                  />
+                                  <input
+                                    placeholder="Lng"
+                                    value={quoteCustomerForm.serviceLng}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLng: e.target.value }))}
+                                    style={{ ...theme.formInput, flex: "1 1 120px" }}
+                                  />
+                                </div>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   <button
                                     type="button"
@@ -3133,6 +3228,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   <strong>Email:</strong>{" "}
                                   {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value ?? "—"}
                                 </p>
+                                {(selectedQuote.customers as CustomerRow | null)?.service_address?.trim() ||
+                                (selectedQuote.customers as CustomerRow | null)?.service_lat != null ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
+                                    <strong>Service address:</strong> {(selectedQuote.customers as CustomerRow)?.service_address?.trim() || "—"}
+                                    {(selectedQuote.customers as CustomerRow)?.service_lat != null &&
+                                    (selectedQuote.customers as CustomerRow)?.service_lng != null
+                                      ? ` · ${Number((selectedQuote.customers as CustomerRow).service_lat).toFixed(5)}, ${Number((selectedQuote.customers as CustomerRow).service_lng).toFixed(5)}`
+                                      : ""}
+                                  </p>
+                                ) : null}
                               </>
                             )}
                             <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
