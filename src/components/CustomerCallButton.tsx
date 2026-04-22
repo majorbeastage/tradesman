@@ -6,12 +6,12 @@ import { isNativeApp } from "../lib/capacitorMobile"
 
 type Props = {
   phone: string
-  /** Shown under button on mobile — Twilio / business line is carrier-side when using VoIP. */
+  /** Shown under button on mobile — business line is carrier-side when using VoIP. */
   hint?: string
   compact?: boolean
   /**
    * Tradesman profile id for the business context (scoped user / quote owner). When set and you are signed in,
-   * shows **Call via Twilio** first so the customer sees TWILIO_FROM_NUMBER; device dialer is secondary.
+   * shows **Call from Business number** first so the customer sees your Twilio business caller ID; device dialer is secondary.
    */
   bridgeOwnerUserId?: string | null
 }
@@ -39,8 +39,8 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
           />
           <span style={{ fontSize: 11, color: "#047857", maxWidth: 300, lineHeight: 1.35, fontWeight: 600 }}>
             {twilioPrimaryNative
-              ? "Rings your phone first; when you answer, the customer sees your Twilio business number on caller ID."
-              : "Recommended: Twilio rings your phone first; customer sees your Twilio business caller ID."}
+              ? "Rings your phone first; when you answer, the customer sees your business number on caller ID."
+              : "Recommended: we ring your phone first; the customer sees your business caller ID."}
           </span>
         </>
       ) : null}
@@ -74,9 +74,9 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
         <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 280, lineHeight: 1.35 }}>
           {showTwilioFirst
             ? twilioPrimaryNative
-              ? "Only the top button uses Twilio; the dialer uses your own number."
+              ? "Only the top button uses your business line; the dialer uses your own number."
               : "The dialer button uses your personal cell as caller ID."
-            : "Opens the device dialer — the customer usually sees your mobile number. Sign in to use Twilio when available."}
+            : "Opens the device dialer — the customer usually sees your mobile number. Sign in to use the business-line call when available."}
         </span>
       )}
     </div>

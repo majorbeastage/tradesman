@@ -8,15 +8,15 @@ type Props = {
   /** Quote / record owner (scoped user). When OM acts for another user, pass their profile id for access checks. */
   quoteOwnerUserId?: string
   compact?: boolean
-  /** Button label; default explains Twilio. Use short "Call" on native when this is the primary CTA. */
+  /** Button label; default is business-line wording. Use short "Call" on native when this is the primary CTA. */
   label?: string
   /** `primary` = main app-style CTA (e.g. Capacitor shell). */
   variant?: "default" | "primary"
 }
 
 /**
- * Twilio two-leg call: rings your Account cell first; on answer, connects to the customer with TWILIO_FROM_NUMBER as caller ID.
- * Requires Edge Function twilio-bridge-call + Twilio secrets on Supabase.
+ * Business-line bridge call: rings your profile phone first; on answer, connects to the customer with your Twilio number as caller ID.
+ * Requires Edge Function `twilio-bridge-call` and Twilio secrets on Supabase (see function header comments).
  */
 export default function TwilioBridgeCallButton({
   customerPhone,
@@ -37,7 +37,7 @@ export default function TwilioBridgeCallButton({
       disabled={busy || !session}
       onClick={async () => {
         if (!supabase || !session?.access_token) {
-          alert("Sign in to use Twilio calling.")
+          alert("Sign in to use the business-line call.")
           return
         }
         setBusy(true)
@@ -48,13 +48,21 @@ export default function TwilioBridgeCallButton({
               ...(quoteOwnerUserId ? { quote_owner_user_id: quoteOwnerUserId } : {}),
             },
           })
+          const body = data as { ok?: boolean; message?: string; error?: string; detail?: string; hint?: string } | null
           if (error) {
-            alert(error.message || "Twilio call failed")
+            const parts = [body?.error, body?.hint, body?.detail, error.message || "Call failed"].filter(Boolean) as string[]
+            const deduped = [...new Set(parts)]
+            alert(
+              deduped.join("\n\n") +
+                (deduped.length && !body?.error
+                  ? "\n\nIf this is unclear, open Supabase → Edge Functions → twilio-bridge-call → Logs for the request."
+                  : ""),
+            )
             return
           }
-          const d = data as { ok?: boolean; message?: string; error?: string; detail?: string }
+          const d = body ?? {}
           if (d?.ok) alert(d.message ?? "Calling your phone — answer to reach the customer.")
-          else alert(d?.error || d?.detail || "Twilio call failed")
+          else alert([d?.error, d?.hint, d?.detail].filter(Boolean).join("\n\n") || "Call failed")
         } catch (e) {
           alert(e instanceof Error ? e.message : String(e))
         } finally {
@@ -72,7 +80,7 @@ export default function TwilioBridgeCallButton({
         fontSize: compact ? 12 : 14,
       }}
     >
-      {busy ? "Calling…" : (label ?? "Call via Twilio")}
+      {busy ? "Calling…" : (label ?? "Call from Business number")}
     </button>
   )
 }

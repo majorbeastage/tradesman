@@ -35,6 +35,7 @@ import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprova
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = {
@@ -424,6 +425,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
+  const [convoServiceGeocodeBusy, setConvoServiceGeocodeBusy] = useState(false)
   const [convoPendingAiBusy, setConvoPendingAiBusy] = useState(false)
   const [detailForm, setDetailForm] = useState<ConversationDetailForm>({
     customerName: "",
@@ -1201,6 +1203,27 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     const { error } = await supabase.from("conversations").update({ metadata }).eq("id", selectedConversation.id)
     if (error) console.error(error)
     else setSelectedConversation((c: any) => (c && c.id === selectedConversation.id ? { ...c, metadata } : c))
+  }
+
+  async function geocodeConversationServiceAddress() {
+    const q = detailForm.serviceAddress.trim()
+    if (!q) {
+      alert("Enter a street address first (include city and state when you can).")
+      return
+    }
+    setConvoServiceGeocodeBusy(true)
+    try {
+      const coords = await geocodeAddressToLatLng(q)
+      if (!coords) {
+        alert("Could not find coordinates for that address. Try a fuller street + city + state.")
+        return
+      }
+      setDetailForm((prev) => ({ ...prev, serviceLat: String(coords.lat), serviceLng: String(coords.lng) }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setConvoServiceGeocodeBusy(false)
+    }
   }
 
   async function saveConversationDetails() {
@@ -2266,9 +2289,31 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                         value={detailForm.serviceAddress}
                         onChange={(e) => setDetailForm((prev) => ({ ...prev, serviceAddress: e.target.value }))}
                         rows={2}
+                        placeholder="Street, city, state"
                         style={{ ...theme.formInput, resize: "vertical" }}
                       />
                     </label>
+                    <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                      Look up coordinates from this address for calendar and team map pins (optional).
+                    </p>
+                    <button
+                      type="button"
+                      disabled={convoServiceGeocodeBusy || detailSaving}
+                      onClick={() => void geocodeConversationServiceAddress()}
+                      style={{
+                        justifySelf: "start",
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        cursor: convoServiceGeocodeBusy || detailSaving ? "wait" : "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "#111827",
+                      }}
+                    >
+                      {convoServiceGeocodeBusy ? "Looking up…" : "Look up coordinates from address"}
+                    </button>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
                       <label style={{ display: "grid", gap: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 700 }}>Lat</span>

@@ -26,6 +26,7 @@ import TabNotificationAlertsButton from "../../components/TabNotificationAlertsB
 import CustomerCallButton from "../../components/CustomerCallButton"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
+import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = {
@@ -138,6 +139,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [leadEmbedProfile, setLeadEmbedProfile] = useState<{ enabled: boolean; slug: string } | null>(null)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
+  const [serviceGeocodeBusy, setServiceGeocodeBusy] = useState(false)
   const [detailForm, setDetailForm] = useState({
     customerName: "",
     phone: "",
@@ -648,6 +650,27 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setLeadReplySms("")
     setDetailEditMode(false)
     setLeadSoftWarnings([])
+  }
+
+  async function geocodeLeadServiceAddress() {
+    const q = detailForm.serviceAddress.trim()
+    if (!q) {
+      alert("Enter a street address first (include city and state when you can).")
+      return
+    }
+    setServiceGeocodeBusy(true)
+    try {
+      const coords = await geocodeAddressToLatLng(q)
+      if (!coords) {
+        alert("Could not find coordinates for that address. Try a fuller street + city + state.")
+        return
+      }
+      setDetailForm((p) => ({ ...p, serviceLat: String(coords.lat), serviceLng: String(coords.lng) }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setServiceGeocodeBusy(false)
+    }
   }
 
   async function saveLeadDetail() {
@@ -2423,9 +2446,30 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   value={detailForm.serviceAddress}
                                   onChange={(e) => setDetailForm((p) => ({ ...p, serviceAddress: e.target.value }))}
                                   rows={2}
-                                  placeholder="Shown on calendar and team map when coordinates are set"
+                                  placeholder="Street, city, state — used on calendar and team map"
                                   style={{ ...theme.formInput, resize: "vertical" }}
                                 />
+                                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                  Enter a normal address, then look up coordinates so the job pins correctly (you can still edit lat/lng by hand).
+                                </p>
+                                <button
+                                  type="button"
+                                  disabled={serviceGeocodeBusy || detailSaving}
+                                  onClick={() => void geocodeLeadServiceAddress()}
+                                  style={{
+                                    alignSelf: "flex-start",
+                                    padding: "8px 12px",
+                                    borderRadius: 6,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    cursor: serviceGeocodeBusy || detailSaving ? "wait" : "pointer",
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: theme.text,
+                                  }}
+                                >
+                                  {serviceGeocodeBusy ? "Looking up…" : "Look up coordinates from address"}
+                                </button>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   <label style={{ flex: "1 1 140px", fontSize: 12, fontWeight: 600, color: theme.text }}>
                                     Lat

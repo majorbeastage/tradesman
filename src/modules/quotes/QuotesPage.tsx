@@ -37,6 +37,7 @@ import {
 import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
 import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
+import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -329,6 +330,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteCalTimeIncrement, setQuoteCalTimeIncrement] = useState<15 | 60>(15)
   const [quoteCustomerEditMode, setQuoteCustomerEditMode] = useState(false)
   const [quoteCustomerSaving, setQuoteCustomerSaving] = useState(false)
+  const [quoteCustomerGeocodeBusy, setQuoteCustomerGeocodeBusy] = useState(false)
   const [quoteCustomerForm, setQuoteCustomerForm] = useState({
     name: "",
     phone: "",
@@ -1350,6 +1352,27 @@ export default function QuotesPage(_props: QuotesPageProps) {
       serviceLat: cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : "",
       serviceLng: cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : "",
     })
+  }
+
+  async function geocodeQuoteCustomerServiceAddress() {
+    const q = quoteCustomerForm.serviceAddress.trim()
+    if (!q) {
+      alert("Enter a street address first (include city and state when you can).")
+      return
+    }
+    setQuoteCustomerGeocodeBusy(true)
+    try {
+      const coords = await geocodeAddressToLatLng(q)
+      if (!coords) {
+        alert("Could not find coordinates for that address. Try a fuller street + city + state.")
+        return
+      }
+      setQuoteCustomerForm((p) => ({ ...p, serviceLat: String(coords.lat), serviceLng: String(coords.lng) }))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuoteCustomerGeocodeBusy(false)
+    }
   }
 
   async function saveQuoteCustomerDetails() {
@@ -3148,13 +3171,34 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   style={{ ...theme.formInput }}
                                 />
                                 <textarea
-                                  placeholder="Service / job site address (optional, for maps)"
+                                  placeholder="Street, city, state (optional, for maps)"
                                   name="quote_customer_service_address"
                                   value={quoteCustomerForm.serviceAddress}
                                   onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceAddress: e.target.value }))}
                                   rows={2}
                                   style={{ ...theme.formInput, resize: "vertical" }}
                                 />
+                                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                  Use the button below to fill latitude and longitude from the address.
+                                </p>
+                                <button
+                                  type="button"
+                                  disabled={quoteCustomerGeocodeBusy || quoteCustomerSaving}
+                                  onClick={() => void geocodeQuoteCustomerServiceAddress()}
+                                  style={{
+                                    alignSelf: "flex-start",
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    cursor: quoteCustomerGeocodeBusy || quoteCustomerSaving ? "wait" : "pointer",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: theme.charcoal,
+                                  }}
+                                >
+                                  {quoteCustomerGeocodeBusy ? "Looking up…" : "Look up coordinates from address"}
+                                </button>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   <input
                                     placeholder="Lat"

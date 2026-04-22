@@ -1,9 +1,12 @@
 // Rings the signed-in user's cell first; when they answer, connects the call to the customer.
-// Caller ID on the customer leg uses TWILIO_FROM_NUMBER (your Twilio / business number).
+// Caller ID on the customer leg: that user's Twilio **public number** from Admin → Communications (client_communication_channels),
+// else optional platform fallback secret TWILIO_FROM_NUMBER (one per Supabase project, not per caller).
+// Uses Twilio REST Calls API + inline TwiML — you do NOT configure a Voice webhook URL in Twilio for this flow.
 // Deploy: supabase functions deploy twilio-bridge-call
-// Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER (E.164)
+// Secrets (Supabase Dashboard or CLI): TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN; optional TWILIO_FROM_NUMBER as default when a user has no channel row.
+// Auto on hosted projects: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (Edge runtime).
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { getTwilioCredentials, getTwilioFromNumber, twilioAccountBasicAuth } from "../_shared/twilio-env.ts"
 import { userCanAccessQuoteUser } from "../_shared/quote-access.ts"
 
@@ -22,6 +25,35 @@ function toE164(input: string): string | null {
 
 function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+/** Prefer this business user's Twilio public line (same table as SMS routing); no per-user Supabase secrets. */
+async function pickCallerIdFromCommunicationChannels(
+  admin: SupabaseClient,
+  businessUserId: string,
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("client_communication_channels")
+    .select("public_address, voice_enabled, sms_enabled")
+    .eq("user_id", businessUserId)
+    .eq("active", true)
+    .or("voice_enabled.eq.true,sms_enabled.eq.true")
+    .order("updated_at", { ascending: false })
+    .limit(25)
+  if (error) {
+    console.error("[twilio-bridge-call] client_communication_channels:", error.message)
+    return null
+  }
+  const rows = (data ?? []) as { public_address?: string | null; voice_enabled?: boolean | null; sms_enabled?: boolean | null }[]
+  const score = (r: { voice_enabled?: boolean | null; sms_enabled?: boolean | null }) =>
+    (r.voice_enabled === true ? 2 : 0) + (r.sms_enabled === true ? 1 : 0)
+  const sorted = [...rows].sort((a, b) => score(b) - score(a))
+  for (const r of sorted) {
+    const raw = typeof r.public_address === "string" ? r.public_address.trim() : ""
+    const e164 = toE164(raw)
+    if (e164) return e164
+  }
+  return null
 }
 
 Deno.serve(async (req) => {
@@ -71,6 +103,22 @@ Deno.serve(async (req) => {
     })
   }
 
+  /** Whose business line appears on the customer leg (scoped quote owner, else the signed-in user). */
+  const qOwnerTrim = typeof body.quote_owner_user_id === "string" ? body.quote_owner_user_id.trim() : ""
+  let businessUserIdForCallerId = user.id
+  if (qOwnerTrim) {
+    if (qOwnerTrim !== user.id) {
+      const ok = await userCanAccessQuoteUser(admin, user.id, qOwnerTrim)
+      if (!ok) {
+        return new Response(JSON.stringify({ error: "Not allowed for this account" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+    }
+    businessUserIdForCallerId = qOwnerTrim
+  }
+
   /** Staff phone: always the signed-in user's profile (the person tapping Call). */
   const { data: profile, error: profErr } = await admin
     .from("profiles")
@@ -96,17 +144,6 @@ Deno.serve(async (req) => {
     )
   }
 
-  /** Optional: when office manager calls for a scoped quote, ensure they manage that user. */
-  if (typeof body.quote_owner_user_id === "string" && body.quote_owner_user_id !== user.id) {
-    const ok = await userCanAccessQuoteUser(admin, user.id, body.quote_owner_user_id)
-    if (!ok) {
-      return new Response(JSON.stringify({ error: "Not allowed for this account" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
-    }
-  }
-
   let creds: { accountSid: string; authToken: string }
   try {
     creds = getTwilioCredentials()
@@ -117,12 +154,15 @@ Deno.serve(async (req) => {
     })
   }
 
-  const fromNum = getTwilioFromNumber()
+  const fromChannel = await pickCallerIdFromCommunicationChannels(admin, businessUserIdForCallerId)
+  const fromNum = fromChannel ?? getTwilioFromNumber()
   if (!fromNum) {
     return new Response(
       JSON.stringify({
-        error: "TWILIO_FROM_NUMBER is not set",
-        hint: "supabase secrets set TWILIO_FROM_NUMBER=+1yourVerifiedTwilioNumber",
+        error: "No outbound business number for this account",
+        hint:
+          "Add the user's Twilio number in Admin → Communications (active channel with Public number — same as SMS). " +
+          "Optional platform default for accounts without a channel: supabase secrets set TWILIO_FROM_NUMBER=+1…",
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     )
@@ -148,10 +188,22 @@ Deno.serve(async (req) => {
   })
   const text = await res.text()
   if (!res.ok) {
-    return new Response(
-      JSON.stringify({ ok: false, error: `Twilio HTTP ${res.status}`, detail: text.slice(0, 1500) }),
-      { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    )
+    let detail = text.slice(0, 1500)
+    try {
+      const j = JSON.parse(text) as { message?: string; code?: number }
+      if (typeof j?.message === "string" && j.message.trim()) detail = j.message.trim()
+    } catch {
+      /* keep raw slice */
+    }
+    const hint =
+      "Twilio account: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN on Supabase; From number must be on that Twilio account. " +
+      "Per-user numbers come from Admin → Communications (no per-user secrets). " +
+      "Your profile: Best contact phone or Primary phone (Twilio rings you first). " +
+      "Twilio trial: verify your cell and the customer number. See Twilio Console → Monitor → Errors."
+    return new Response(JSON.stringify({ ok: false, error: `Twilio rejected the call (HTTP ${res.status})`, detail, hint }), {
+      status: 502,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
   }
 
   return new Response(
