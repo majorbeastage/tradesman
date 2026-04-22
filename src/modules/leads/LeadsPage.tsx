@@ -367,16 +367,17 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
     const customerIds = [...new Set(rows.map((r: any) => r.customer_id).filter(Boolean))]
     if (customerIds.length > 0) {
-      let custRes = await supabase
+      const custPrimary = await supabase
         .from("customers")
         .select("id, display_name, service_address, service_lat, service_lng, customer_identifiers(type, value, is_primary)")
         .in("id", customerIds)
-      if (custRes.error && String(custRes.error.message || "").toLowerCase().includes("service_")) {
-        custRes = await supabase
-          .from("customers")
-          .select("id, display_name, customer_identifiers(type, value, is_primary)")
-          .in("id", customerIds)
-      }
+      const custRes =
+        custPrimary.error && String(custPrimary.error.message || "").toLowerCase().includes("service_")
+          ? await supabase
+              .from("customers")
+              .select("id, display_name, customer_identifiers(type, value, is_primary)")
+              .in("id", customerIds)
+          : custPrimary
       const custData = custRes.data
       const custMap = new Map((custData || []).map((c: any) => [c.id, c]))
       rows.forEach((r: any) => {
@@ -1103,21 +1104,22 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         fit_manually_overridden,
         fit_evaluated_at,
       `
-    let { data, error } = await supabase
+    const leadPrimary = await supabase
       .from("leads")
       .select(`${leadCore}${custBlockFull}`)
       .eq("id", leadId)
       .single()
-    if (error && String(error.message || "").toLowerCase().includes("service_")) {
-      const r = await supabase.from("leads").select(`${leadCore}${custBlockBasic}`).eq("id", leadId).single()
-      data = r.data
-      error = r.error
-    }
+    const leadRes =
+      leadPrimary.error && String(leadPrimary.error.message || "").toLowerCase().includes("service_")
+        ? await supabase.from("leads").select(`${leadCore}${custBlockBasic}`).eq("id", leadId).single()
+        : leadPrimary
+    const { data, error } = leadRes
 
     if (error) {
       console.error(error)
       return
     }
+    if (!data) return
 
     setSelectedLead(data)
     applyDetailFormFromLeadRow(data)

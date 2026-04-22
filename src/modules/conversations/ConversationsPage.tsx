@@ -69,6 +69,9 @@ type SmsPanelTimelineItem =
 type DetailIdentifier = { id: string; type: "phone" | "email"; value: string }
 type ConversationDetailForm = {
   customerName: string
+  serviceAddress: string
+  serviceLat: string
+  serviceLng: string
   channel: string
   status: string
   identifiers: DetailIdentifier[]
@@ -1112,33 +1115,32 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         )
       )
     `
-    let { data, error } = await supabase
-      .from("conversations")
-      .select(selectWithMetadata)
-      .eq("id", convoId)
-      .single()
+    const metaPrimary = await supabase.from("conversations").select(selectWithMetadata).eq("id", convoId).single()
+    const metaRes =
+      metaPrimary.error && String(metaPrimary.error.message || "").toLowerCase().includes("service_")
+        ? await supabase.from("conversations").select(selectWithMetadataBasic).eq("id", convoId).single()
+        : metaPrimary
 
-    if (error && String(error.message || "").toLowerCase().includes("service_")) {
-      const r = await supabase.from("conversations").select(selectWithMetadataBasic).eq("id", convoId).single()
-      data = r.data
-      error = r.error
-    }
+    let data = metaRes.data
+    let error = metaRes.error
 
     if (error && String(error.message || "").includes("metadata")) {
-      let fallback = await supabase.from("conversations").select(selectWithoutMetadata).eq("id", convoId).single()
-      if (fallback.error && String(fallback.error.message || "").toLowerCase().includes("service_")) {
-        fallback = await supabase.from("conversations").select(selectWithoutMetadataBasic).eq("id", convoId).single()
-      }
-      data = fallback.data ? { ...fallback.data, metadata: {} } : null
-      error = fallback.error
+      const fbPrimary = await supabase.from("conversations").select(selectWithoutMetadata).eq("id", convoId).single()
+      const fb =
+        fbPrimary.error && String(fbPrimary.error.message || "").toLowerCase().includes("service_")
+          ? await supabase.from("conversations").select(selectWithoutMetadataBasic).eq("id", convoId).single()
+          : fbPrimary
+      data = fb.data ? { ...fb.data, metadata: {} } : null
+      error = fb.error
     }
 
     if (error) {
       console.error(error)
       return
     }
+    if (!data) return
 
-    setSelectedConversation(data)
+    setSelectedConversation(data as unknown as ConversationRow)
     setDetailForm(buildDetailFormFromConversation(data))
     setDetailEditMode(false)
 

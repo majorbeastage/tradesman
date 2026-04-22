@@ -115,7 +115,7 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
             display_name
           )
         `
-        let jr = await supabase
+        const jrPrimary = await supabase
           .from("calendar_events")
           .select(jobSelect)
           .in("user_id", orgUserIdsForJobs)
@@ -124,17 +124,18 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
           .gte("start_at", nowIso)
           .order("start_at", { ascending: true })
           .limit(120)
-        if (jr.error && String(jr.error.message || "").toLowerCase().includes("service_")) {
-          jr = await supabase
-            .from("calendar_events")
-            .select(jobSelectFallback)
-            .in("user_id", orgUserIdsForJobs)
-            .is("removed_at", null)
-            .is("completed_at", null)
-            .gte("start_at", nowIso)
-            .order("start_at", { ascending: true })
-            .limit(120)
-        }
+        const jr =
+          jrPrimary.error && String(jrPrimary.error.message || "").toLowerCase().includes("service_")
+            ? await supabase
+                .from("calendar_events")
+                .select(jobSelectFallback)
+                .in("user_id", orgUserIdsForJobs)
+                .is("removed_at", null)
+                .is("completed_at", null)
+                .gte("start_at", nowIso)
+                .order("start_at", { ascending: true })
+                .limit(120)
+            : jrPrimary
         if (!cancelled && !jr.error && jr.data) {
           jobRows = (jr.data as CalendarJobRow[]).map((row) => ({
             ...row,
