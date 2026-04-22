@@ -24,7 +24,13 @@ verify_jwt = false
 # inside index.ts, so gateway JWT verification is disabled here.
 verify_jwt = false
 
-# billing-portal-config: signed-in users read HELCIM_PAYMENT_PORTAL_URL from Edge secrets (Payments tab fallback).
+# Payments tab: returns HELCIM_PAYMENT_PORTAL_URL from Edge secrets when the web bundle has no VITE_* URL.
+# Same rationale as portal-assistant — gateway verify_jwt can fail without CORS on the error response,
+# which the browser reports as "Failed to send a request to the Edge Function". Bearer + getUser() are
+# validated inside the function.
+[functions.billing-portal-config]
+verify_jwt = false
+
 # helcim-match-customers: admin-only; matches Helcim customers to profiles by email (HELCIM_API_TOKEN).
 # Mobile / notifications (default verify_jwt = true): push-test, twilio-bridge-call, notify-quote-status, notify-calendar-status
 # Secrets: FCM_SERVICE_ACCOUNT_JSON (Firebase service account JSON for FCM HTTP v1),

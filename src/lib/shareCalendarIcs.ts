@@ -22,7 +22,7 @@ export function buildCalendarIcs(events: CalendarIcsRow[]): string {
   const stamp = toIcsUtcDateTime(new Date().toISOString())
   for (const ev of events) {
     lines.push("BEGIN:VEVENT")
-    lines.push(`UID:tradesman-${ev.id}@com.tradesman.app`)
+    lines.push(`UID:tradesman-${ev.id}@com.tradesmanus.com`)
     lines.push(`DTSTAMP:${stamp}`)
     lines.push(`DTSTART:${toIcsUtcDateTime(ev.start_at)}`)
     lines.push(`DTEND:${toIcsUtcDateTime(ev.end_at)}`)

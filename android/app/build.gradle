@@ -51,13 +51,13 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.tradesman.app"
+    namespace = "com.tradesmanus.com"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.tradesman.app"
+        applicationId "com.tradesmanus.com"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 9
+        versionCode 10
         versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

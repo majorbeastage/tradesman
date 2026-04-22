@@ -6,7 +6,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
  * Native-only pieces (Info.plist, AndroidManifest, entitlements, CocoaPods plugins) must be updated on **each** platform when adding permissions or native APIs.
  */
 const config: CapacitorConfig = {
-  appId: 'com.tradesman.app',
+  appId: 'com.tradesmanus.com',
   appName: 'Tradesman',
   webDir: 'dist'
 };

@@ -1,4 +1,4 @@
-package com.tradesman.app;
+package com.tradesmanus.com;
 
 import com.getcapacitor.BridgeActivity;
 

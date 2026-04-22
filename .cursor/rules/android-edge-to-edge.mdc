@@ -1,0 +1,18 @@
+---
+description: Android 15+ edge-to-edge / window insets — follow-up work for Capacitor shell
+globs: android/**/*
+alwaysApply: false
+---
+
+# Edge-to-edge (defer until dedicated pass)
+
+Google Play flags apps **targeting SDK 35+**: from **Android 15**, edge-to-edge is default; UI must respect **system bars / display cutout / IME** insets or content looks clipped or underlaps the status/navigation bars.
+
+This repo uses **Capacitor** (`BridgeActivity`, WebView). When returning to optimize:
+
+1. **Native entry**: In `MainActivity` (or theme), consider **`EdgeToEdge.enable()`** (AndroidX Activity 1.8+) or **`enableEdgeToEdge()`** for consistent backward-compatible behavior; align with [Android edge-to-edge](https://developer.android.com/develop/ui/views/layout/edge-to-edge) guidance.
+2. **Insets**: Ensure the **WebView** and any native overlays consume **`WindowInsetsCompat`** (padding/margin on the root that hosts the WebView, or `setOnApplyWindowInsetsListener`) so taps and text are not hidden behind bars.
+3. **Web layer**: Use **safe-area** CSS (`env(safe-area-inset-*)`), viewport meta, and Capacitor **StatusBar** / **Keyboard** plugins where relevant so the SPA matches native inset behavior.
+4. **Test**: Physical or emulator **API 35+**, light/dark, gesture vs 3-button nav, landscape, keyboard open.
+
+`compileSdk` / `targetSdk` live in `android/variables.gradle` — bumping target increases Play Console expectations; coordinate edge-to-edge work with any SDK bump.
