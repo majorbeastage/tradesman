@@ -32,6 +32,16 @@ function toE164(input: string): string | null {
   return null
 }
 
+/** Same physical line if digits match (handles +1 vs 10-digit). */
+function sameE164Line(a: string, b: string): boolean {
+  const da = a.replace(/\D/g, "")
+  const db = b.replace(/\D/g, "")
+  if (!da || !db) return false
+  const na = da.length === 11 && da.startsWith("1") ? da.slice(1) : da
+  const nb = db.length === 11 && db.startsWith("1") ? db.slice(1) : db
+  return na === nb
+}
+
 function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
@@ -89,18 +99,12 @@ Deno.serve(async (req) => {
   try {
     body = await req.json()
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return json({ ok: false, error: "Invalid JSON" })
   }
 
   const customer = toE164(typeof body?.customer_phone === "string" ? body.customer_phone : "")
   if (!customer) {
-    return new Response(JSON.stringify({ error: "Invalid customer_phone (need 10+ digits)" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return json({ ok: false, error: "Invalid customer_phone (need 10+ digits)" })
   }
 
   /** Whose business line appears on the customer leg (scoped quote owner, else the signed-in user). */
@@ -137,6 +141,13 @@ Deno.serve(async (req) => {
     })
   }
 
+  if (sameE164Line(staff, customer)) {
+    return json({
+      ok: false,
+      error: "Best contact / Primary phone cannot be the same as the customer number you are calling.",
+    })
+  }
+
   let creds: { accountSid: string; authToken: string }
   try {
     creds = getTwilioCredentials()
@@ -154,6 +165,39 @@ Deno.serve(async (req) => {
         "Add the user's Twilio number in Admin → Communications (active channel with Public number — same as SMS). " +
         "Optional platform default for accounts without a channel: supabase secrets set TWILIO_FROM_NUMBER=+1…",
     })
+  }
+
+  /**
+   * If the number Twilio rings first (your profile phone) is the SAME line as the business caller ID,
+   * the call hits your Twilio inbound flow and often goes straight to Tradesman voicemail — not your cell.
+   * Use a personal mobile in Account → Best contact phone, not your Twilio public number.
+   */
+  if (sameE164Line(staff, fromNum)) {
+    return json({
+      ok: false,
+      error:
+        "Your Best contact phone (or Primary phone) matches your Twilio business number. Twilio would ring your business line first and you would hear your Tradesman voicemail instead of answering on your cell.",
+      hint:
+        "In Account, set Best contact phone to your personal mobile — a number that is NOT the same as Admin → Communications → Public number / TWILIO_FROM_NUMBER.",
+    })
+  }
+
+  /** Also block ringing any other Twilio channel line you own (multi-number accounts). */
+  const { data: addrRows } = await admin
+    .from("client_communication_channels")
+    .select("public_address")
+    .eq("user_id", businessUserIdForCallerId)
+    .eq("active", true)
+  for (const row of (addrRows ?? []) as { public_address?: string | null }[]) {
+    const pub = typeof row.public_address === "string" ? toE164(row.public_address.trim()) : null
+    if (pub && sameE164Line(staff, pub)) {
+      return json({
+        ok: false,
+        error:
+          "Your Best contact / Primary phone matches a Communications Public number on this account. Twilio would ring that business line first and route into your inbound voicemail.",
+        hint: "Use your personal cell for Best contact phone, not a Twilio number listed under Admin → Communications.",
+      })
+    }
   }
 
   const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(creds.accountSid)}/Calls.json`

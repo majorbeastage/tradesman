@@ -39,8 +39,8 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
           />
           <span style={{ fontSize: 11, color: "#047857", maxWidth: 300, lineHeight: 1.35, fontWeight: 600 }}>
             {twilioPrimaryNative
-              ? "Rings your phone first; when you answer, the customer sees your business number on caller ID."
-              : "Recommended: we ring your phone first; the customer sees your business caller ID."}
+              ? "Rings your Account Best contact / Primary phone first (must be your personal cell, not your Twilio business number). Customer sees your business caller ID."
+              : "Rings your Account Best contact / Primary phone first — use a personal cell, not the same number as your Twilio business line, or you may hit voicemail."}
           </span>
         </>
       ) : null}
