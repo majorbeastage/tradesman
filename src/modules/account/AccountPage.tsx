@@ -34,6 +34,8 @@ type ProfileForm = {
   timezone: string
   call_forwarding_enabled: boolean
   call_forwarding_outside_business_hours: boolean
+  /** Inbound forward leg: whose caller ID your cell sees (profiles.forward_dial_caller_id_mode). */
+  forward_dial_caller_id_mode: "caller_number" | "twilio_number"
   business_hours: BusinessHours
   voicemail_greeting_mode: "ai_text" | "recorded"
   voicemail_greeting_text: string
@@ -204,6 +206,7 @@ export function AccountProfilePanel({
     timezone: "America/New_York",
     call_forwarding_enabled: true,
     call_forwarding_outside_business_hours: false,
+    forward_dial_caller_id_mode: "caller_number",
     business_hours: defaultBusinessHours(),
     voicemail_greeting_mode: "ai_text",
     voicemail_greeting_text: "Sorry we missed your call. Please leave a message after the tone.",
@@ -239,7 +242,7 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible, metadata")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, forward_dial_caller_id_mode, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible, metadata")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
@@ -272,6 +275,10 @@ export function AccountProfilePanel({
           timezone: data?.timezone ?? "America/New_York",
           call_forwarding_enabled: data?.call_forwarding_enabled !== false,
           call_forwarding_outside_business_hours: data?.call_forwarding_outside_business_hours === true,
+          forward_dial_caller_id_mode:
+            (data as { forward_dial_caller_id_mode?: string }).forward_dial_caller_id_mode === "twilio_number"
+              ? "twilio_number"
+              : "caller_number",
           business_hours: parseBusinessHours(data?.business_hours),
           voicemail_greeting_mode: data?.voicemail_greeting_mode === "recorded" ? "recorded" : "ai_text",
           voicemail_greeting_text: data?.voicemail_greeting_text ?? "Sorry we missed your call. Please leave a message after the tone.",
@@ -364,6 +371,7 @@ export function AccountProfilePanel({
         business_hours: form.business_hours,
         call_forwarding_enabled: form.call_forwarding_enabled,
         call_forwarding_outside_business_hours: form.call_forwarding_outside_business_hours,
+        forward_dial_caller_id_mode: form.forward_dial_caller_id_mode,
         voicemail_greeting_mode: form.voicemail_greeting_mode,
         voicemail_greeting_text: form.voicemail_greeting_text.trim() || "Sorry we missed your call. Please leave a message after the tone.",
         voicemail_greeting_recording_url: form.voicemail_greeting_recording_url.trim() || null,
@@ -754,6 +762,24 @@ export function AccountProfilePanel({
                 {t("account.forward.outsideHours")}
               </label>
               <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>{t("account.forward.outsideHelp")}</p>
+
+              <label style={{ display: "grid", gap: 6, marginTop: 14, color: theme.text }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{t("account.forward.callerIdLabel")}</span>
+                <select
+                  value={form.forward_dial_caller_id_mode}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      forward_dial_caller_id_mode: e.target.value === "twilio_number" ? "twilio_number" : "caller_number",
+                    }))
+                  }
+                  style={{ ...theme.formInput, maxWidth: 420 }}
+                >
+                  <option value="caller_number">{t("account.forward.callerIdInbound")}</option>
+                  <option value="twilio_number">{t("account.forward.callerIdTwilio")}</option>
+                </select>
+                <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.callerIdHelp")}</span>
+              </label>
 
               <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.forward.whisperHeading")}</span>

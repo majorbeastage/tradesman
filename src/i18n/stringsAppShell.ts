@@ -143,6 +143,11 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.forward.outsideHours": "Turn forwarding off outside of business hours",
     "account.forward.outsideHelp":
       "When checked, calls only forward during the business hours you set above. When unchecked, calls may still forward on closed days or outside those hours. If forwarding is off entirely, unanswered calls use Tradesman voicemail.",
+    "account.forward.callerIdLabel": "Caller ID on my phone when a call is forwarded",
+    "account.forward.callerIdInbound": "Show the inbound caller’s number (default)",
+    "account.forward.callerIdTwilio": "Show my Tradesman / Twilio business number",
+    "account.forward.callerIdHelp":
+      "If your carrier often marks forwarded calls as busy or spam when the customer’s real caller ID is shown, choose your business number so your cell sees a familiar caller ID.",
     "account.forward.whisperHeading": "Call screening (whisper)",
     "account.forward.whisperOffWarn":
       "Forwarding is off. Whisper and press-1/2 screening only run when a call is forwarded to your phone. With forwarding unchecked, inbound calls go straight to Tradesman voicemail — you will not hear the announcement on your cell. Turn on Call forwarding above (and set your forward number on the channel in Admin → Communications) to use screening.",
@@ -369,6 +374,11 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.forward.outsideHours": "Desactivar desvío fuera del horario comercial",
     "account.forward.outsideHelp":
       "Si está marcado, las llamadas solo se desvían en el horario indicado arriba. Si no, pueden desviarse también fuera de esas horas. Si el desvío está totalmente desactivado, las llamadas sin respuesta van al buzón de Tradesman.",
+    "account.forward.callerIdLabel": "Identificador en mi teléfono cuando se desvía una llamada",
+    "account.forward.callerIdInbound": "Mostrar el número del llamante entrante (predeterminado)",
+    "account.forward.callerIdTwilio": "Mostrar mi número de negocio Tradesman / Twilio",
+    "account.forward.callerIdHelp":
+      "Si su operadora suele marcar las llamadas desviadas como ocupadas o spam cuando se muestra el ID real del cliente, elija su número de negocio para que su móvil vea un identificador conocido.",
     "account.forward.whisperHeading": "Filtrado de llamadas (aviso)",
     "account.forward.whisperOffWarn":
       "El desvío está apagado. El aviso y la opción de pulsar 1/2 solo funcionan cuando la llamada se desvía a su teléfono. Sin desvío, las llamadas van directo al buzón de Tradesman y no oirá el anuncio en su móvil. Active Desvío de llamadas arriba (y el número en Admin → Communications) para usar el filtrado.",

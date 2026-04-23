@@ -46,6 +46,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
   const dialCallSid = pickFirstString(req.body?.DialCallSid, req.query?.DialCallSid)
 
+  console.info("[dial-result] twilio callback", {
+    dialCallStatus: dialCallStatus || null,
+    dialBridged: dialBridgedRaw || null,
+    channelId: channelId || null,
+    to: to || null,
+    from: from || null,
+    callSid: callSid || null,
+    dialCallSid: dialCallSid || null,
+  })
+
   // Forward-whisper decline (or Gather timeout → Hangup) ends the callee leg before A–B bridge → DialCallStatus completed + DialBridged false. Send caller to voicemail.
   const screeningDeclinedOrNeverBridged = dialCallStatus === "completed" && dialNotBridged
 
@@ -56,6 +66,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     dialCallStatus === "canceled" ||
     screeningDeclinedOrNeverBridged
   ) {
+    console.info("[dial-result] route_to_voicemail", {
+      dialCallStatus: dialCallStatus || null,
+      screeningDeclinedOrNeverBridged,
+    })
     const origin = requestPublicOrigin(req)
     const params = new URLSearchParams()
     if (channelId) params.set("channelId", channelId)
