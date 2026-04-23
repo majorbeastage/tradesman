@@ -245,10 +245,20 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: `Twilio rejected the call (HTTP ${attempt.status})`, detail, hint })
   }
 
+  let twilioCallSid: string | null = null
+  try {
+    const j = JSON.parse(attempt.text) as { sid?: string }
+    if (typeof j?.sid === "string" && j.sid.startsWith("CA")) twilioCallSid = j.sid
+  } catch {
+    /* non-JSON success is unexpected */
+  }
+
   return json({
     ok: true,
-    message: "Calling your phone first; answer to connect to the customer.",
+    message: "Twilio accepted the call — your phone should ring in a few seconds. Answer, then you will be connected to the customer.",
+    twilio_call_sid: twilioCallSid,
     twilio: attempt.text.slice(0, 500),
     from_number: usedFrom,
+    rings_first: staff,
   })
 })
