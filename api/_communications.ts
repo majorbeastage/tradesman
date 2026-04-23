@@ -100,6 +100,40 @@ export function toTwilioE164(phone: unknown): string {
   return `+${digits}`
 }
 
+/**
+ * Values to match `client_communication_channels.public_address` against Twilio's `To` / UI-entered numbers.
+ * Twilio webhooks use +E.164; Admin may save 10-digit or 11-digit US numbers — strict .eq() missed the row and skipped forward-to-phone.
+ */
+export function publicPhoneAddressLookupVariants(publicAddress: string): string[] {
+  const trimmed = publicAddress.trim()
+  if (!trimmed || trimmed.includes("@")) return trimmed ? [trimmed.toLowerCase()] : []
+  const e164 = toTwilioE164(trimmed)
+  const np = normalizePhone(trimmed)
+  const digits = trimmed.replace(/\D/g, "")
+  const out = new Set<string>()
+  if (trimmed) out.add(trimmed)
+  if (np) out.add(np)
+  if (e164) {
+    out.add(e164)
+    const noPlus = e164.replace(/^\+/, "")
+    out.add(noPlus)
+    if (noPlus.length === 11 && noPlus.startsWith("1")) {
+      out.add(noPlus.slice(1))
+    }
+  }
+  if (digits.length === 10) {
+    out.add(digits)
+    out.add(`1${digits}`)
+    out.add(`+1${digits}`)
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    out.add(digits)
+    out.add(`+${digits}`)
+    out.add(digits.slice(1))
+  }
+  return [...out].filter((s) => s.length > 0)
+}
+
 /** ILIKE pattern for exact match (escapes %, _, \\). */
 function escapeIlikeExact(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
@@ -475,9 +509,13 @@ export async function lookupChannelByPublicAddress(
     .from("client_communication_channels")
     .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
     .eq("active", true)
-  q = isEmail
-    ? q.ilike("public_address", escapeIlikeExact(normalized))
-    : q.eq("public_address", normalized)
+  if (isEmail) {
+    q = q.ilike("public_address", escapeIlikeExact(normalized))
+  } else {
+    const variants = publicPhoneAddressLookupVariants(publicAddress)
+    if (variants.length === 0) return null
+    q = q.in("public_address", variants.slice(0, 24)).order("updated_at", { ascending: false })
+  }
   const { data, error } = await q.limit(1).maybeSingle()
   if (error) throw error
   return (data as CommunicationChannel | null) ?? null

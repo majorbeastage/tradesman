@@ -13,6 +13,7 @@ import {
   lookupCustomerDisplayNameByPhone,
   normalizePhone,
   pickFirstString,
+  toTwilioE164,
 } from "./_communications.js"
 
 function xmlEscape(value: string): string {
@@ -49,7 +50,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const channel = to ? await lookupChannelByPublicAddress(supabase, to) : null
   const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
   const forwardingAllowed = isWithinBusinessHours(routingProfile)
-  const forwardTo = channel?.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
+  const forwardRaw = channel?.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
+  const forwardTo =
+    forwardRaw && typeof forwardRaw === "string" && forwardRaw.trim()
+      ? toTwilioE164(forwardRaw.trim()) || normalizePhone(forwardRaw.trim()) || forwardRaw.trim()
+      : null
   if (channel?.user_id) {
     const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
     const inConversations =

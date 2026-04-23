@@ -37,17 +37,17 @@ async function pickCallerIdFromCommunicationChannels(
     .select("public_address, voice_enabled, sms_enabled")
     .eq("user_id", businessUserId)
     .eq("active", true)
-    .or("voice_enabled.eq.true,sms_enabled.eq.true")
     .order("updated_at", { ascending: false })
-    .limit(25)
+    .limit(40)
   if (error) {
     console.error("[twilio-bridge-call] client_communication_channels:", error.message)
     return null
   }
   const rows = (data ?? []) as { public_address?: string | null; voice_enabled?: boolean | null; sms_enabled?: boolean | null }[]
+  const usable = rows.filter((r) => r.voice_enabled === true || r.sms_enabled === true)
   const score = (r: { voice_enabled?: boolean | null; sms_enabled?: boolean | null }) =>
     (r.voice_enabled === true ? 2 : 0) + (r.sms_enabled === true ? 1 : 0)
-  const sorted = [...rows].sort((a, b) => score(b) - score(a))
+  const sorted = [...usable].sort((a, b) => score(b) - score(a))
   for (const r of sorted) {
     const raw = typeof r.public_address === "string" ? r.public_address.trim() : ""
     const e164 = toE164(raw)
@@ -168,39 +168,55 @@ Deno.serve(async (req) => {
     )
   }
 
-  const twiml =
-    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${xmlEscape(fromNum)}">${xmlEscape(customer)}</Dial></Response>`
-
   const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(creds.accountSid)}/Calls.json`
-  const form = new URLSearchParams({
-    To: staff,
-    From: fromNum,
-    Twiml: twiml,
-  })
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: twilioAccountBasicAuth(creds.accountSid, creds.authToken),
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: form.toString(),
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    let detail = text.slice(0, 1500)
+  async function twilioCreateCall(fromNumber: string): Promise<{ ok: boolean; status: number; text: string }> {
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${xmlEscape(fromNumber)}">${xmlEscape(customer)}</Dial></Response>`
+    const form = new URLSearchParams({ To: staff, From: fromNumber, Twiml: twiml })
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: twilioAccountBasicAuth(creds.accountSid, creds.authToken),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    })
+    const text = await res.text()
+    return { ok: res.ok, status: res.status, text }
+  }
+
+  let usedFrom = fromNum
+  let attempt = await twilioCreateCall(usedFrom)
+  const envFallback = getTwilioFromNumber()
+  if (
+    !attempt.ok &&
+    fromChannel &&
+    envFallback &&
+    envFallback.trim() !== usedFrom.trim() &&
+    /21205|21210|21211|21606|invalid/i.test(attempt.text)
+  ) {
+    const retry = await twilioCreateCall(envFallback.trim())
+    if (retry.ok) {
+      usedFrom = envFallback.trim()
+      attempt = retry
+    }
+  }
+
+  if (!attempt.ok) {
+    let detail = attempt.text.slice(0, 1500)
     try {
-      const j = JSON.parse(text) as { message?: string; code?: number }
+      const j = JSON.parse(attempt.text) as { message?: string; code?: number }
       if (typeof j?.message === "string" && j.message.trim()) detail = j.message.trim()
     } catch {
       /* keep raw slice */
     }
     const hint =
       "Twilio account: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN on Supabase; From number must be on that Twilio account. " +
-      "Per-user numbers come from Admin → Communications (no per-user secrets). " +
+      "If Communications shows a number that is not on this Twilio account (or is SMS-only), set TWILIO_FROM_NUMBER as a voice-capable fallback or fix the Public number. " +
       "Your profile: Best contact phone or Primary phone (Twilio rings you first). " +
       "Twilio trial: verify your cell and the customer number. See Twilio Console → Monitor → Errors."
-    return new Response(JSON.stringify({ ok: false, error: `Twilio rejected the call (HTTP ${res.status})`, detail, hint }), {
+    return new Response(JSON.stringify({ ok: false, error: `Twilio rejected the call (HTTP ${attempt.status})`, detail, hint }), {
       status: 502,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -210,7 +226,8 @@ Deno.serve(async (req) => {
     JSON.stringify({
       ok: true,
       message: "Calling your phone first; answer to connect to the customer.",
-      twilio: text.slice(0, 500),
+      twilio: attempt.text.slice(0, 500),
+      from_number: usedFrom,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   )
