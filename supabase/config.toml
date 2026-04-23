@@ -31,8 +31,12 @@ verify_jwt = false
 [functions.billing-portal-config]
 verify_jwt = false
 
+# twilio-bridge-call: validates Bearer with getUser() inside the function; gateway verify_jwt off avoids opaque failures.
+[functions.twilio-bridge-call]
+verify_jwt = false
+
 # helcim-match-customers: admin-only; matches Helcim customers to profiles by email (HELCIM_API_TOKEN).
-# Mobile / notifications (default verify_jwt = true): push-test, twilio-bridge-call, notify-quote-status, notify-calendar-status
+# Mobile / notifications (default verify_jwt = true): push-test, notify-quote-status, notify-calendar-status
 # Secrets: FCM_SERVICE_ACCOUNT_JSON (Firebase service account JSON for FCM HTTP v1),
 #   RESEND_API_KEY, RESEND_FROM_EMAIL (quote status email), TWILIO_* (SMS + bridge call).
 # SQL: supabase/user-push-devices-and-locations.sql

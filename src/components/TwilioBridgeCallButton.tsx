@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { FunctionsHttpError } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
@@ -48,7 +49,15 @@ export default function TwilioBridgeCallButton({
               ...(quoteOwnerUserId ? { quote_owner_user_id: quoteOwnerUserId } : {}),
             },
           })
-          const body = data as { ok?: boolean; message?: string; error?: string; detail?: string; hint?: string } | null
+          let body = data as { ok?: boolean; message?: string; error?: string; detail?: string; hint?: string } | null
+          if (error instanceof FunctionsHttpError) {
+            try {
+              const parsed = (await error.context.json()) as typeof body
+              if (parsed && typeof parsed === "object") body = { ...body, ...parsed }
+            } catch {
+              /* ignore */
+            }
+          }
           if (error) {
             const parts = [body?.error, body?.hint, body?.detail, error.message || "Call failed"].filter(Boolean) as string[]
             const deduped = [...new Set(parts)]
