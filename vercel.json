@@ -31,6 +31,10 @@
       "source": "/api/notify-admin-verified-signup",
       "destination": "/api/platform-tools?__route=notify-admin-verified-signup"
     },
+    {
+      "source": "/api/billing-portal-config",
+      "destination": "/api/platform-tools?__route=billing-portal-config"
+    },
     { "source": "/api/help-desk-voice", "destination": "/api/help-desk?__route=voice" },
     { "source": "/api/help-desk-greeting-save", "destination": "/api/help-desk?__route=greeting-save" },
     {

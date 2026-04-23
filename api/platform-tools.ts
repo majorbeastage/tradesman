@@ -3,6 +3,7 @@
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
+ * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (A2P; bundled public/sms-consent.html)
  */
@@ -29,6 +30,7 @@ import {
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
 function parseHelcimJsUrlEncodedBody(req: VercelRequest): Record<string, string> {
@@ -1010,6 +1012,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "quote-estimate-review",
         "lead-evaluate-fit",
         "helcim-js-return",
+        "billing-portal-config",
       ],
     })
     return
@@ -1054,6 +1057,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "lead-evaluate-fit") {
       await handleLeadEvaluateFit(req, res)
+      return
+    }
+    if (route === "billing-portal-config") {
+      await handleBillingPortalConfigVercel(req, res)
       return
     }
     res.status(400).json({
