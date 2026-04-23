@@ -43,8 +43,11 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
               : "Rings your Account Best contact / Primary phone first — use a personal cell, not the same number as your Twilio business line, or you may hit voicemail."}
           </span>
           <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 320, lineHeight: 1.35 }}>
-            If this never rings your cell: Account → Call forwarding → turn off{" "}
-            <strong>Announce caller before I connect</strong> and save (some carriers decline screened forwards). Check the message under the Call button for a Twilio Call SID.
+            <strong>Which number rings first:</strong> Account uses <strong>Best contact phone</strong> if it is filled; otherwise <strong>Primary phone</strong>. Put your <strong>mobile</strong> in Best contact for bridge calls to ring your cell — if Best contact is your home line, the home phone rings, not your cell.
+            {" "}
+            Inbound calls use <strong>Admin → Communications → Forward to phone</strong> (set that to your cell if you want the business line to ring there).
+            {" "}
+            If the cell never rings: turn off <strong>Announce caller before I connect</strong> under Call forwarding and save. Check the message under the Call button for a Twilio Call SID.
           </span>
         </>
       ) : null}

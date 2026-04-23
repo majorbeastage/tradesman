@@ -131,7 +131,10 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: profErr.message })
   }
 
-  const staffRaw = (profile?.best_contact_phone ?? profile?.primary_phone ?? "").trim()
+  /** Prefer non-empty best contact; blank string must fall through to primary (DB often stores "" not null). */
+  const rawBest = typeof profile?.best_contact_phone === "string" ? profile.best_contact_phone.trim() : ""
+  const rawPrimary = typeof profile?.primary_phone === "string" ? profile.primary_phone.trim() : ""
+  const staffRaw = (rawBest || rawPrimary).trim()
   const staff = toE164(staffRaw)
   if (!staff) {
     return json({
