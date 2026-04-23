@@ -100,7 +100,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const transcribeUrl = `${voicemailActionUrl}${q ? "&" : "?"}phase=transcribe`
   if (!forwardTo) {
     const hasForwardPhone = Boolean(channel?.forward_to_phone?.trim())
+    /** Single string for Vercel logs — CRM `skipCrmForSelfLeg` does NOT affect this branch. */
+    let voicemailReason = "unknown"
+    if (!channel) voicemailReason = "no_channel_for_to (Admin → Communications public number must match Twilio To)"
+    else if (!channel.voice_enabled) voicemailReason = "voice_disabled_on_channel"
+    else if (!hasForwardPhone) voicemailReason = "no_forward_to_phone_on_channel"
+    else if (!forwardingAllowed) {
+      voicemailReason =
+        routingProfile && routingProfile.call_forwarding_enabled === false
+          ? "call_forwarding_disabled (Account → Call forwarding & whisper — turn on)"
+          : "outside_schedule (timezone/business hours, or enable forward outside business hours)"
+    }
     console.warn("[incoming-call] direct_voicemail", {
+      reason: voicemailReason,
       callSid,
       to,
       from,
