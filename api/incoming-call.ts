@@ -48,6 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const from = normalizePhone(pickFirstString(req.body?.From, req.query?.From))
   const to = normalizePhone(pickFirstString(req.body?.To, req.query?.To))
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
+  /** Always log once per request so Vercel Runtime Logs are searchable (stderr deprecation noise is unrelated). */
+  console.info("[incoming-call] twilio webhook", { callSid: callSid || null, to: to || null, from: from || null })
   const supabase = createServiceSupabase()
   let channel: CommunicationChannel | null = null
   if (to) {
