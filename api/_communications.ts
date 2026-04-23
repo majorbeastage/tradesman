@@ -100,6 +100,31 @@ export function toTwilioE164(phone: unknown): string {
   return `+${digits}`
 }
 
+/** Same physical line (handles +1 vs 10-digit, optional leading +). */
+export function samePhoneDigits(a: string, b: string): boolean {
+  const da = String(a).replace(/\D/g, "")
+  const db = String(b).replace(/\D/g, "")
+  if (!da || !db) return false
+  const na = da.length === 11 && da.startsWith("1") ? da.slice(1) : da
+  const nb = db.length === 11 && db.startsWith("1") ? db.slice(1) : db
+  return na === nb
+}
+
+/**
+ * Inbound `From` matches our Twilio DID (or equals `To`) — not a real external customer (bridge loop, internal leg, etc.).
+ * Creating a customer/lead from this pollutes CRM with your own business number.
+ */
+export function isInboundCallerOurBusinessNumber(
+  from: string,
+  to: string,
+  channel: { public_address: string } | null,
+): boolean {
+  if (!from.trim() || !channel?.public_address) return false
+  if (samePhoneDigits(from, channel.public_address)) return true
+  if (to.trim() && samePhoneDigits(from, to)) return true
+  return false
+}
+
 /**
  * Values to match `client_communication_channels.public_address` against Twilio's `To` / UI-entered numbers.
  * Twilio webhooks use +E.164; Admin may save 10-digit or 11-digit US numbers — strict .eq() missed the row and skipped forward-to-phone.

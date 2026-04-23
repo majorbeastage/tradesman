@@ -9,6 +9,7 @@ import {
   getUserRoutingProfile,
   logCommunicationEvent,
   lookupChannelById,
+  isInboundCallerOurBusinessNumber,
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
@@ -67,7 +68,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const supabase = createServiceSupabase()
       const channel = channelId ? await lookupChannelById(supabase, channelId) : null
       const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
-      if (channel?.user_id) {
+      const skipCrm = Boolean(channel && from && isInboundCallerOurBusinessNumber(from, to, channel))
+      if (channel?.user_id && !skipCrm) {
         const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
         const inConversations =
           customer ? await customerHasOpenConversation(supabase, channel.user_id, customer.customerId) : false

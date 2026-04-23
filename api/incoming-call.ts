@@ -8,6 +8,7 @@ import {
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
   getUserRoutingProfile,
+  isInboundCallerOurBusinessNumber,
   isWithinBusinessHours,
   logCommunicationEvent,
   lookupChannelByPublicAddress,
@@ -64,7 +65,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     forwardRaw && typeof forwardRaw === "string" && forwardRaw.trim()
       ? toTwilioE164(forwardRaw.trim()) || normalizePhone(forwardRaw.trim()) || forwardRaw.trim()
       : null
-  if (channel?.user_id) {
+  const skipCrmForSelfLeg = Boolean(channel && from && isInboundCallerOurBusinessNumber(from, to, channel))
+  if (channel?.user_id && !skipCrmForSelfLeg) {
     const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
     const inConversations =
       customer ? await customerHasOpenConversation(supabase, channel.user_id, customer.customerId) : false

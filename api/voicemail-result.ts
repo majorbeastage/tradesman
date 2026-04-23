@@ -7,6 +7,7 @@ import {
   getOrCreateCustomerByPhone,
   logCommunicationEvent,
   lookupChannelById,
+  isInboundCallerOurBusinessNumber,
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
@@ -115,7 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let leadId: string | null = null
         let customerId: string | null = null
         let previousCustomer = false
-        if (from) {
+        if (from && !(to && samePhoneDigits(from, to))) {
           const customer = await getOrCreateCustomerByPhone(supabase, userId, from)
           customerId = customer.customerId
           previousCustomer = customer.previousCustomer
@@ -162,7 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = createServiceSupabase()
     const channel = channelId ? await lookupChannelById(supabase, channelId) : null
-    if (channel?.user_id && from) {
+    if (channel?.user_id && from && !isInboundCallerOurBusinessNumber(from, to, channel)) {
       const customer = await getOrCreateCustomerByPhone(supabase, channel.user_id, from)
       const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customer.customerId)
       const conversationId = inConversations
