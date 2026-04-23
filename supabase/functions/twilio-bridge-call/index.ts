@@ -204,7 +204,9 @@ Deno.serve(async (req) => {
 
   async function twilioCreateCall(fromNumber: string): Promise<{ ok: boolean; status: number; text: string }> {
     const twiml =
-      `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${xmlEscape(fromNumber)}">${xmlEscape(customer)}</Dial></Response>`
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="45" callerId="${xmlEscape(fromNumber)}"><Number>${xmlEscape(
+        customer,
+      )}</Number></Dial></Response>`
     const form = new URLSearchParams({ To: staff, From: fromNumber, Twiml: twiml })
     const res = await fetch(url, {
       method: "POST",
@@ -252,6 +254,14 @@ Deno.serve(async (req) => {
   } catch {
     /* non-JSON success is unexpected */
   }
+
+  console.info("[twilio-bridge-call] created", {
+    twilioCallSid,
+    staff,
+    customer,
+    from_number: usedFrom,
+    user_id: user.id,
+  })
 
   return json({
     ok: true,

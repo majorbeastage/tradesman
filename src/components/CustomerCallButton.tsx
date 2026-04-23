@@ -37,10 +37,14 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
             label={twilioPrimaryNative ? "Call" : undefined}
             variant={twilioPrimaryNative ? "primary" : "default"}
           />
-          <span style={{ fontSize: 11, color: "#047857", maxWidth: 300, lineHeight: 1.35, fontWeight: 600 }}>
+          <span style={{ fontSize: 11, color: "#047857", maxWidth: 320, lineHeight: 1.35, fontWeight: 600 }}>
             {twilioPrimaryNative
               ? "Rings your Account Best contact / Primary phone first (must be your personal cell, not your Twilio business number). Customer sees your business caller ID."
               : "Rings your Account Best contact / Primary phone first — use a personal cell, not the same number as your Twilio business line, or you may hit voicemail."}
+          </span>
+          <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 320, lineHeight: 1.35 }}>
+            If this never rings your cell: Account → Call forwarding → turn off{" "}
+            <strong>Announce caller before I connect</strong> and save (some carriers decline screened forwards). Check the message under the Call button for a Twilio Call SID.
           </span>
         </>
       ) : null}

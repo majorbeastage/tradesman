@@ -162,11 +162,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
     : `<Number>${xmlEscape(forwardTo)}</Number>`
 
-  // answerOnBridge: caller stays on ringback until callee finishes whisper / accepts; required for screening + correct DialBridged on decline.
+  /** Whisper: must stay true so ringback + DialBridged behave for screening. Plain forward: false can reduce odd PSTN “decline” on some carriers. */
+  const answerOnBridge = useWhisper ? "true" : "false"
+  const dialTimeoutSec = useWhisper ? 25 : 32
+
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
-    `<Dial answerOnBridge="true" timeout="20" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
+    `<Dial answerOnBridge="${answerOnBridge}" timeout="${dialTimeoutSec}" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
     dialInner +
     `</Dial>` +
     `</Response>`
