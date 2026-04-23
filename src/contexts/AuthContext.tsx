@@ -69,8 +69,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setUser(nextUser)
       setLoading(false)
+      /** USER_UPDATED: e.g. admin confirmed email in Dashboard while session is open — still ping ops once. */
       if (
-        (event === "SIGNED_IN" || event === "INITIAL_SESSION") &&
+        (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") &&
         session?.user?.email_confirmed_at &&
         session.access_token
       ) {

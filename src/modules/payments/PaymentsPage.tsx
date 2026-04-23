@@ -101,10 +101,33 @@ export default function PaymentsPage() {
       if (!ENV_PORTAL.trim()) {
         const { data: cfg, error: cfgErr } = await supabase.functions.invoke("billing-portal-config", { body: {} })
         if (!cancelled && cfgErr) {
-          setBillingPortalConfigError(cfgErr.message || "Could not reach billing-portal-config.")
+          setBillingPortalConfigError(cfgErr.message || "Could not reach billing-portal-config Edge function.")
         }
         if (!cancelled && cfg && typeof (cfg as { portalUrl?: string }).portalUrl === "string") {
           portalFromEdge = (cfg as { portalUrl: string }).portalUrl.trim()
+        }
+        /** Same URL as Edge secret, read from Vercel server env — works when Edge is not deployed or gateway/CORS fails. */
+        if (!portalFromEdge.trim()) {
+          const { data: sess } = await supabase.auth.getSession()
+          const tok = sess.session?.access_token
+          if (tok && typeof window !== "undefined") {
+            try {
+              const r = await fetch(`${window.location.origin.replace(/\/+$/, "")}/api/billing-portal-config`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+                body: "{}",
+              })
+              if (r.ok) {
+                const j = (await r.json()) as { portalUrl?: string | null }
+                if (typeof j.portalUrl === "string" && j.portalUrl.trim()) {
+                  portalFromEdge = j.portalUrl.trim()
+                  if (!cancelled) setBillingPortalConfigError(null)
+                }
+              }
+            } catch {
+              /* keep cfgErr message */
+            }
+          }
         }
       }
       const { data, error } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()

@@ -505,20 +505,39 @@ export async function lookupChannelByPublicAddress(
   const normalized =
     trimmed.includes("@") ? trimmed.toLowerCase() : normalizePhone(publicAddress) || trimmed
   const isEmail = trimmed.includes("@")
-  let q = supabase
-    .from("client_communication_channels")
-    .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
-    .eq("active", true)
   if (isEmail) {
-    q = q.ilike("public_address", escapeIlikeExact(normalized))
-  } else {
-    const variants = publicPhoneAddressLookupVariants(publicAddress)
-    if (variants.length === 0) return null
-    q = q.in("public_address", variants.slice(0, 24)).order("updated_at", { ascending: false })
+    const { data, error } = await supabase
+      .from("client_communication_channels")
+      .select(
+        "id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active",
+      )
+      .eq("active", true)
+      .ilike("public_address", escapeIlikeExact(normalized))
+      .limit(1)
+      .maybeSingle()
+    if (error) throw error
+    return (data as CommunicationChannel | null) ?? null
   }
-  const { data, error } = await q.limit(1).maybeSingle()
-  if (error) throw error
-  return (data as CommunicationChannel | null) ?? null
+
+  /** One `.eq` per variant avoids PostgREST / URL-encoding issues with large `in.(…)` filters and `+` in E.164. */
+  const variants = [...new Set(publicPhoneAddressLookupVariants(publicAddress))]
+  if (variants.length === 0) return null
+  for (const v of variants) {
+    const { data, error } = await supabase
+      .from("client_communication_channels")
+      .select(
+        "id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active",
+      )
+      .eq("active", true)
+      .eq("public_address", v)
+      .maybeSingle()
+    if (error) {
+      console.error("[lookupChannelByPublicAddress] variant query", v.slice(0, 24), error.message)
+      continue
+    }
+    if (data) return data as CommunicationChannel
+  }
+  return null
 }
 
 /** Inbound email: must be an active email channel (not a Twilio voice row). */

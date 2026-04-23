@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import type { CommunicationChannel } from "./_communications.js"
 import {
   buildVoicemailTwiml,
   createLeadForInboundCall,
@@ -47,7 +48,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const to = normalizePhone(pickFirstString(req.body?.To, req.query?.To))
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
   const supabase = createServiceSupabase()
-  const channel = to ? await lookupChannelByPublicAddress(supabase, to) : null
+  let channel: CommunicationChannel | null = null
+  if (to) {
+    try {
+      channel = await lookupChannelByPublicAddress(supabase, to)
+    } catch (e) {
+      console.error("[incoming-call] channel lookup failed", e instanceof Error ? e.message : e)
+      channel = null
+    }
+  }
   const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
   const forwardingAllowed = isWithinBusinessHours(routingProfile)
   const forwardRaw = channel?.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
