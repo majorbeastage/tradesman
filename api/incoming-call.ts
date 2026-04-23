@@ -99,6 +99,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const voicemailActionUrl = `${origin}/api/voicemail-result${q}`
   const transcribeUrl = `${voicemailActionUrl}${q ? "&" : "?"}phase=transcribe`
   if (!forwardTo) {
+    const hasForwardPhone = Boolean(channel?.forward_to_phone?.trim())
+    console.warn("[incoming-call] direct_voicemail", {
+      callSid,
+      to,
+      from,
+      matchedChannel: Boolean(channel),
+      voice_enabled: channel?.voice_enabled ?? null,
+      hasForwardPhone,
+      forwardingAllowed,
+      call_forwarding_enabled: routingProfile?.call_forwarding_enabled ?? null,
+    })
     return sendTwiml(
       res,
       buildVoicemailTwiml({

@@ -2,8 +2,6 @@ import { useState } from "react"
 import { FunctionsHttpError } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
-import { useAuth } from "../contexts/AuthContext"
-
 type Props = {
   customerPhone: string
   /** Quote / record owner (scoped user). When OM acts for another user, pass their profile id for access checks. */
@@ -26,7 +24,6 @@ export default function TwilioBridgeCallButton({
   label,
   variant = "default",
 }: Props) {
-  const { session } = useAuth()
   const [busy, setBusy] = useState(false)
 
   const trimmed = customerPhone.trim()
@@ -35,15 +32,29 @@ export default function TwilioBridgeCallButton({
   return (
     <button
       type="button"
-      disabled={busy || !session}
+      disabled={busy || !supabase}
       onClick={async () => {
-        if (!supabase || !session?.access_token) {
-          alert("Sign in to use the business-line call.")
+        if (!supabase) return
+        /** Context `session` can lag storage; Edge needs a fresh user JWT on the wire. */
+        let { data: authData, error: authErr } = await supabase.auth.getSession()
+        let accessToken: string | undefined = authData.session?.access_token
+        if (!accessToken) {
+          const refreshed = await supabase.auth.refreshSession()
+          authErr = refreshed.error
+          accessToken = refreshed.data.session?.access_token ?? undefined
+        }
+        if (!accessToken) {
+          alert(
+            authErr?.message?.includes("session")
+              ? "Your sign-in session expired. Sign out and sign in again, then try Call."
+              : "Sign in to use the business-line call.",
+          )
           return
         }
         setBusy(true)
         try {
           const { data, error } = await supabase.functions.invoke("twilio-bridge-call", {
+            headers: { Authorization: `Bearer ${accessToken}` },
             body: {
               customer_phone: trimmed,
               ...(quoteOwnerUserId ? { quote_owner_user_id: quoteOwnerUserId } : {}),

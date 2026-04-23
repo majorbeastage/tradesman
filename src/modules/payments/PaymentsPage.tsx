@@ -99,7 +99,15 @@ export default function PaymentsPage() {
       let portalFromEdge = ""
       if (!cancelled) setBillingPortalConfigError(null)
       if (!ENV_PORTAL.trim()) {
-        const { data: cfg, error: cfgErr } = await supabase.functions.invoke("billing-portal-config", { body: {} })
+        let edgeTok = (await supabase.auth.getSession()).data.session?.access_token
+        if (!edgeTok) {
+          const r = await supabase.auth.refreshSession()
+          edgeTok = r.data.session?.access_token ?? undefined
+        }
+        const { data: cfg, error: cfgErr } = await supabase.functions.invoke("billing-portal-config", {
+          body: {},
+          ...(edgeTok ? { headers: { Authorization: `Bearer ${edgeTok}` } } : {}),
+        })
         if (!cancelled && cfgErr) {
           setBillingPortalConfigError(cfgErr.message || "Could not reach billing-portal-config Edge function.")
         }
