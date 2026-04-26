@@ -540,15 +540,13 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
   }
   const userId = userData.user.id
 
-  let service: ReturnType<typeof createServiceSupabase>
-  try {
-    service = createServiceSupabase()
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
-    return
-  }
+  /** Same access model as the SPA: JWT + anon (no service role on Vercel required for read-only summarize). */
+  const userDb: SupabaseClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 
-  const { data: profile } = await service
+  const { data: profile } = await userDb
     .from("profiles")
     .select("ai_thread_summary_enabled, ai_assistant_visible")
     .eq("id", userId)
@@ -571,24 +569,29 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
     return
   }
 
-  const { data: convo, error: convoErr } = await service
+  const { data: convo, error: convoErr } = await userDb
     .from("conversations")
     .select("id, user_id")
     .eq("id", conversationId)
     .maybeSingle()
-  if (convoErr || !convo || (convo as { user_id: string }).user_id !== userId) {
+  if (convoErr || !convo) {
+    res.status(404).json({ error: "Conversation not found" })
+    return
+  }
+  const convoRow = convo as { user_id: string }
+  if (convoRow.user_id !== userId) {
     res.status(404).json({ error: "Conversation not found" })
     return
   }
 
-  const { data: msgs } = await service
+  const { data: msgs } = await userDb
     .from("messages")
     .select("sender, content, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(80)
 
-  const { data: evs } = await service
+  const { data: evs } = await userDb
     .from("communication_events")
     .select("event_type, direction, body, subject, created_at")
     .eq("conversation_id", conversationId)
