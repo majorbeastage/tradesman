@@ -45,8 +45,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
   /** Last user id from auth session; used to avoid clearing `role` on TOKEN_REFRESHED (same user). */
   const authSessionUserIdRef = useRef<string | null>(null)
+  /** Dedupe notify POST when both INITIAL_SESSION and getSession() run back-to-back. */
+  const verifiedNotifyDedupeRef = useRef<{ userId: string; at: number } | null>(null)
 
   const clearAccessBlockedReason = useCallback(() => setAccountAccessBlocked(false), [])
+
+  const postVerifiedSignupNotify = useCallback((session: Session | null) => {
+    if (!session?.user?.email_confirmed_at || !session.access_token) return
+    const uid = session.user.id
+    const now = Date.now()
+    const prev = verifiedNotifyDedupeRef.current
+    if (prev && prev.userId === uid && now - prev.at < 4000) return
+    verifiedNotifyDedupeRef.current = { userId: uid, at: now }
+    void fetch("/api/notify-admin-verified-signup", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    }).catch(() => {
+      /* best-effort; server is idempotent */
+    })
+  }, [])
 
   useEffect(() => {
     if (!supabase) {
@@ -70,28 +87,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(nextUser)
       setLoading(false)
       /** USER_UPDATED: e.g. admin confirmed email in Dashboard while session is open — still ping ops once. */
-      if (
-        (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") &&
-        session?.user?.email_confirmed_at &&
-        session.access_token
-      ) {
-        void fetch("/api/notify-admin-verified-signup", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        }).catch(() => {
-          /* best-effort; server is idempotent */
-        })
+      if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") {
+        postVerifiedSignupNotify(session)
       }
     })
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    void supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       const u = session?.user ?? null
       authSessionUserIdRef.current = u?.id ?? null
       setUser(u)
       setLoading(false)
+      /** Same notify as onAuthStateChange — covers loads where INITIAL_SESSION does not fire before hydration. */
+      postVerifiedSignupNotify(session)
     })
     return () => subscription.unsubscribe()
-  }, [])
+  }, [postVerifiedSignupNotify])
 
   useEffect(() => {
     if (!supabase || !user?.id) {

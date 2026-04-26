@@ -8,6 +8,47 @@ import { createServiceSupabase, firstEnv } from "./_communications.js"
 
 const META_KEY = "verified_signup_admin_notified_at"
 
+const DEFAULT_OPS_INBOXES = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
+
+function parseAdminRecipients(): string[] {
+  const raw = firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL").trim()
+  if (!raw) return [...DEFAULT_OPS_INBOXES]
+  const parts = raw
+    .split(/[,;]+/g)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.includes("@"))
+  return parts.length > 0 ? [...new Set(parts)] : [...DEFAULT_OPS_INBOXES]
+}
+
+type ProfileRow = {
+  id: string
+  email?: string | null
+  display_name?: string | null
+  primary_phone?: string | null
+  address_line_1?: string | null
+  address_city?: string | null
+  address_state?: string | null
+  address_zip?: string | null
+  metadata?: unknown
+  role?: string | null
+  signup_extras?: unknown
+}
+
+async function loadProfileWithRetry(
+  service: ReturnType<typeof createServiceSupabase>,
+  userId: string,
+): Promise<{ row: ProfileRow | null; error: string | null }> {
+  const select =
+    "id, email, display_name, primary_phone, address_line_1, address_city, address_state, address_zip, metadata, role, signup_extras"
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, error } = await service.from("profiles").select(select).eq("id", userId).maybeSingle()
+    if (error) return { row: null, error: error.message }
+    if (data) return { row: data as ProfileRow, error: null }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 450))
+  }
+  return { row: null, error: null }
+}
+
 export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" })
@@ -50,30 +91,59 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     return
   }
 
-  const { data: profile, error: profErr } = await service
-    .from("profiles")
-    .select("id, email, display_name, primary_phone, address_line_1, address_city, address_state, address_zip, metadata, role, signup_extras")
-    .eq("id", u.id)
-    .maybeSingle()
-
-  if (profErr || !profile) {
-    res.status(404).json({ error: "Profile not found" })
+  const { row: profile, error: profErr } = await loadProfileWithRetry(service, u.id)
+  if (profErr) {
+    res.status(500).json({ error: profErr })
     return
   }
 
-  const row = profile as {
-    id: string
-    email?: string | null
-    display_name?: string | null
-    primary_phone?: string | null
-    address_line_1?: string | null
-    address_city?: string | null
-    address_state?: string | null
-    address_zip?: string | null
-    metadata?: unknown
-    role?: string | null
-    signup_extras?: unknown
+  const adminRecipients = parseAdminRecipients()
+  const apiKey = firstEnv("RESEND_API_KEY")
+  const from = firstEnv("RESEND_FROM_EMAIL")
+
+  if (!apiKey || !from) {
+    res.status(200).json({ ok: true, notifyDisabled: true, hint: "Set RESEND_API_KEY and RESEND_FROM_EMAIL on Vercel" })
+    return
   }
+
+  /** Profile still missing (trigger lag): still email ops so signups are not silent. */
+  if (!profile) {
+    const emailStr = String(u.email ?? "")
+    const text = [
+      "A user verified their email in Supabase, but no profiles row was found yet after retries.",
+      "Check trigger / complete-signup and profiles table.",
+      "",
+      `Auth email: ${emailStr}`,
+      `User id: ${u.id}`,
+    ].join("\n")
+    try {
+      const sendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from,
+          to: adminRecipients,
+          subject: `Email verified — profile missing: ${emailStr || u.id}`,
+          text,
+        }),
+      })
+      if (!sendRes.ok) {
+        const t = await sendRes.text()
+        console.error("[notify-admin-verified-signup] Resend (no profile)", sendRes.status, t)
+        res.status(502).json({ error: "Resend rejected the send" })
+        return
+      }
+      console.info("[notify-admin-verified-signup] emailed (profile pending)", { to: adminRecipients, userId: u.id })
+    } catch (e) {
+      console.error("[notify-admin-verified-signup]", e instanceof Error ? e.message : e)
+      res.status(502).json({ error: "Resend request failed" })
+      return
+    }
+    res.status(200).json({ ok: true, emailed: true, profilePending: true })
+    return
+  }
+
+  const row = profile
 
   const signupExtras =
     row.signup_extras && typeof row.signup_extras === "object" && !Array.isArray(row.signup_extras)
@@ -99,15 +169,6 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     return
   }
 
-  const apiKey = firstEnv("RESEND_API_KEY")
-  const from = firstEnv("RESEND_FROM_EMAIL")
-  const adminTo = (firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL") || "admin@tradesman-us.com").trim().toLowerCase()
-
-  if (!apiKey || !from) {
-    res.status(200).json({ ok: true, notifyDisabled: true, hint: "Set RESEND_API_KEY and RESEND_FROM_EMAIL on Vercel" })
-    return
-  }
-
   const emailStr = String(row.email ?? u.email ?? "")
   const displayStr = String(row.display_name ?? "").trim() || emailStr
   const text = [
@@ -129,7 +190,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from,
-        to: [adminTo],
+        to: adminRecipients,
         subject: `Email verified — new user: ${displayStr} (${emailStr})`,
         text,
       }),
@@ -155,5 +216,6 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     return
   }
 
+  console.info("[notify-admin-verified-signup] emailed", { to: adminRecipients, userId: u.id })
   res.status(200).json({ ok: true, emailed: true })
 }
