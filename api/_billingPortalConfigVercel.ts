@@ -4,7 +4,17 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
-import { firstEnv, pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
+import { firstEnv, firstEnvCaseInsensitive, pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
+
+function pickHelcimPaymentPortalUrlForServer(): string | null {
+  const direct = firstEnv("HELCIM_PAYMENT_PORTAL_URL", "VITE_HELCIM_PAYMENT_PORTAL_URL").trim()
+  if (direct) return direct
+  const ci1 = firstEnvCaseInsensitive("HELCIM_PAYMENT_PORTAL_URL").trim()
+  if (ci1) return ci1
+  const ci2 = firstEnvCaseInsensitive("VITE_HELCIM_PAYMENT_PORTAL_URL").trim()
+  if (ci2) return ci2
+  return null
+}
 
 export async function handleBillingPortalConfigVercel(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -44,6 +54,6 @@ export async function handleBillingPortalConfigVercel(req: VercelRequest, res: V
     return
   }
 
-  const portalUrl = firstEnv("HELCIM_PAYMENT_PORTAL_URL", "VITE_HELCIM_PAYMENT_PORTAL_URL").trim() || null
+  const portalUrl = pickHelcimPaymentPortalUrlForServer()
   res.status(200).json({ portalUrl: portalUrl || null, source: "vercel" })
 }
