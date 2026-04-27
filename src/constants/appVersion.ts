@@ -20,6 +20,7 @@
  * **1.4.11** — Payments: read `VITE_HELCIM_*` via `import.meta.env` so Vite embeds the Helcim portal URL in production builds (indirect access left it empty). Sidebar: Payments pinned above My T.
  * **1.4.12** — Native app: primary “Call” uses Twilio bridge (business caller ID); dialer labeled as personal line. TwilioBridgeCallButton `label`/`variant`. Customers detail uses CustomerCallButton + bridge.
  * **1.4.13** — Public `/account-deletion` page + `LEGAL_LINKS.accountDeletion` (Play delete-account URL); nav link; optional `VITE_PUBLIC_ACCOUNT_DELETION_URL`.
+ * **1.4.14** — Inbound Twilio: return Dial/voicemail TwiML before CRM (`waitUntil`); native Supabase session via Capacitor Preferences; safer push/GPS permission timing; Quotes estimate-legal-draft sends Supabase URL/anon in body when server env missing.
  *
  * @see CopyrightVersionFooter
  */
