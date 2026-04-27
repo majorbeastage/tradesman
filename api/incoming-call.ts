@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions"
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import type { CommunicationChannel } from "./_communications.js"
 import {
@@ -68,29 +69,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? toTwilioE164(forwardRaw.trim()) || normalizePhone(forwardRaw.trim()) || forwardRaw.trim()
       : null
   const skipCrmForSelfLeg = Boolean(channel && from && isInboundCallerOurBusinessNumber(from, to, channel))
-  if (channel?.user_id && !skipCrmForSelfLeg) {
-    const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
-    const inConversations =
-      customer ? await customerHasOpenConversation(supabase, channel.user_id, customer.customerId) : false
-    const conversationId =
-      customer && inConversations
-        ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
-        : null
-    const leadId =
-      customer && !inConversations ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
-    await logCommunicationEvent(supabase, {
-      user_id: channel.user_id,
-      customer_id: customer?.customerId ?? null,
-      conversation_id: conversationId,
-      lead_id: leadId,
-      channel_id: channel.id,
-      event_type: "call",
-      direction: "inbound",
-      external_id: callSid || null,
-      unread: true,
-      previous_customer: customer?.previousCustomer ?? false,
-      metadata: { from, to, provider: channel.provider },
-    })
+  /** CRM + customer rows can take 10s+ on cold DB; Twilio holds the line with no ringback until TwiML returns. */
+  const crmPromise = (async () => {
+    if (!channel?.user_id || skipCrmForSelfLeg) return
+    try {
+      const customer = from ? await getOrCreateCustomerByPhone(supabase, channel.user_id, from) : null
+      const inConversations =
+        customer ? await customerHasOpenConversation(supabase, channel.user_id, customer.customerId) : false
+      const conversationId =
+        customer && inConversations
+          ? await getOrCreateConversation(supabase, channel.user_id, customer.customerId, "phone")
+          : null
+      const leadId =
+        customer && !inConversations ? await createLeadForInboundCall(supabase, channel.user_id, customer.customerId, from) : null
+      await logCommunicationEvent(supabase, {
+        user_id: channel.user_id,
+        customer_id: customer?.customerId ?? null,
+        conversation_id: conversationId,
+        lead_id: leadId,
+        channel_id: channel.id,
+        event_type: "call",
+        direction: "inbound",
+        external_id: callSid || null,
+        unread: true,
+        previous_customer: customer?.previousCustomer ?? false,
+        metadata: { from, to, provider: channel.provider },
+      })
+    } catch (e) {
+      console.error("[incoming-call] deferred CRM failed", e instanceof Error ? e.message : e)
+    }
+  })()
+  void crmPromise.catch((e) => console.error("[incoming-call] crm promise", e))
+  try {
+    waitUntil(crmPromise)
+  } catch {
+    /* waitUntil unavailable outside Vercel — crmPromise still runs best-effort */
   }
   const origin = requestPublicOrigin(req)
   const query = new URLSearchParams()

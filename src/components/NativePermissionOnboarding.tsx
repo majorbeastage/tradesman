@@ -41,7 +41,14 @@ export default function NativePermissionOnboarding() {
     setNote(null)
     try {
       const p = await requestPushPermissionAndRegister(supabase, user?.id ?? null)
-      const g = await requestGpsPermission()
+      /** Back-to-back native permission + GPS right after FCM register can crash some Android WebViews. */
+      await new Promise<void>((r) => window.setTimeout(r, 700))
+      let g: { ok: boolean; message: string }
+      try {
+        g = await requestGpsPermission()
+      } catch (e) {
+        g = { ok: false, message: e instanceof Error ? e.message : String(e) }
+      }
       setNote([p.message, g.message].filter(Boolean).join(" · "))
       if (p.ok && g.ok) dismiss()
     } catch (e) {

@@ -53,6 +53,7 @@ import {
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
 import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
+import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
@@ -722,7 +723,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ businessName: profileDisplayNameForPdf }),
+        body: platformToolsJsonBody({ businessName: profileDisplayNameForPdf }),
       })
       const j = (await res.json()) as { ok?: boolean; legalText?: string; cancellationText?: string; error?: string }
       if (!res.ok) throw new Error(j.error || "Request failed")

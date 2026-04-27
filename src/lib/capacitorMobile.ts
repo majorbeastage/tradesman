@@ -121,9 +121,11 @@ export async function requestPushPermissionAndRegister(
           "Notification permission was not granted. You can enable it under Settings → Apps → Tradesman → Notifications, or use “Open system settings” below.",
       }
     }
-    // Brief yield so native FCM / listener wiring can settle (reduces rare crashes right after the OS dialog).
+    // Let the OS dialog / WebView settle before touching FCM (reduces native crashes on some devices).
+    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
+    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
     await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 150)
+      window.setTimeout(resolve, 450)
     })
     await PushNotifications.register()
     return { ok: true, message: "Registered for push notifications on this device." }
