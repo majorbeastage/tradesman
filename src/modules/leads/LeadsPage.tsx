@@ -118,6 +118,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
+  const [leadSourceConfigs, setLeadSourceConfigs] = useState<Record<string, Record<string, string>>>({})
+  const [expandedLeadSourceKey, setExpandedLeadSourceKey] = useState<string | null>(null)
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [search, setSearch] = useState("")
@@ -183,6 +185,10 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     () => getLeadsSettingsItemsForUser(portalConfig, { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
+  const leadSourceOptions = useMemo(() => {
+    const item = leadsSettingsItems.find((i) => i.id === "lead_source_settings")
+    return item?.options?.length ? item.options : ["Email", "Text", "Phone call", "Other"]
+  }, [leadsSettingsItems])
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
     const out: Record<string, string> = {}
@@ -257,6 +263,23 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       delete saved.embed_lead_enabled
       delete saved.embed_lead_slug
       setLeadsProfileSettings(saved)
+      const sourceRaw = meta.leadsSourceSettings
+      if (sourceRaw && typeof sourceRaw === "object" && !Array.isArray(sourceRaw)) {
+        const parsed: Record<string, Record<string, string>> = {}
+        Object.entries(sourceRaw as Record<string, unknown>).forEach(([k, v]) => {
+          if (!v || typeof v !== "object" || Array.isArray(v)) return
+          const next: Record<string, string> = {}
+          Object.entries(v as Record<string, unknown>).forEach(([ik, iv]) => {
+            if (iv === true) next[ik] = "checked"
+            else if (iv === false) next[ik] = "unchecked"
+            else next[ik] = typeof iv === "string" ? iv : String(iv ?? "")
+          })
+          parsed[k] = next
+        })
+        setLeadSourceConfigs(parsed)
+      } else {
+        setLeadSourceConfigs({})
+      }
 
       const lf = meta.lead_filter_preferences
       if (lf && typeof lf === "object" && !Array.isArray(lf)) {
@@ -296,11 +319,42 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       base.embed_lead_enabled = leadEmbedProfile.enabled ? "checked" : "unchecked"
       base.embed_lead_slug = leadEmbedProfile.slug
     }
+    const selectedSource = base.lead_source_settings || leadSourceOptions[0] || "Email"
+    const sourceSaved = leadSourceConfigs[selectedSource] ?? {}
+    if (sourceSaved.send_auto_response != null) base.send_auto_response = sourceSaved.send_auto_response
+    if (sourceSaved.auto_response_message != null) base.auto_response_message = sourceSaved.auto_response_message
+    if (sourceSaved.auto_response_use_ai != null) base.auto_response_use_ai = sourceSaved.auto_response_use_ai
+    if (sourceSaved.auto_response_use_ai_require_approval != null) {
+      base.auto_response_use_ai_require_approval = sourceSaved.auto_response_use_ai_require_approval
+    }
     setSettingsFormValues(base)
-  }, [showSettings, leadsSettingsItems, leadsProfileSettings, leadEmbedProfile])
+  }, [showSettings, leadsSettingsItems, leadsProfileSettings, leadEmbedProfile, leadSourceConfigs, leadSourceOptions])
 
   function setSettingValue(itemId: string, value: string) {
-    setSettingsFormValues((prev) => ({ ...prev, [itemId]: value }))
+    setSettingsFormValues((prev) => {
+      const next = { ...prev, [itemId]: value }
+      if (itemId === "lead_source_settings") {
+        const sourceSaved = leadSourceConfigs[value] ?? {}
+        next.send_auto_response = sourceSaved.send_auto_response ?? "unchecked"
+        next.auto_response_message = sourceSaved.auto_response_message ?? ""
+        next.auto_response_use_ai = sourceSaved.auto_response_use_ai ?? "unchecked"
+        next.auto_response_use_ai_require_approval = sourceSaved.auto_response_use_ai_require_approval ?? "unchecked"
+      }
+      return next
+    })
+  }
+
+  function saveCurrentLeadSourceConfig() {
+    const source = (settingsFormValues.lead_source_settings || leadSourceOptions[0] || "Email").trim()
+    if (!source) return
+    const nextForSource: Record<string, string> = {
+      send_auto_response: settingsFormValues.send_auto_response ?? "unchecked",
+      auto_response_message: settingsFormValues.auto_response_message ?? "",
+      auto_response_use_ai: settingsFormValues.auto_response_use_ai ?? "unchecked",
+      auto_response_use_ai_require_approval: settingsFormValues.auto_response_use_ai_require_approval ?? "unchecked",
+    }
+    setLeadSourceConfigs((prev) => ({ ...prev, [source]: nextForSource }))
+    setExpandedLeadSourceKey(source)
   }
 
   function isSettingItemVisible(item: PortalSettingItem, items: PortalSettingItem[], formValues: Record<string, string>): boolean {
@@ -599,8 +653,31 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
-    const { embed_lead_enabled: _ee, embed_lead_slug: _es, ...valuesForMeta } = settingsFormValues
+    const {
+      embed_lead_enabled: _ee,
+      embed_lead_slug: _es,
+      send_auto_response: _sar,
+      auto_response_message: _arm,
+      auto_response_use_ai: _arau,
+      auto_response_use_ai_require_approval: _arreq,
+      ...valuesForMeta
+    } = settingsFormValues
+    const selectedSource = (settingsFormValues.lead_source_settings || leadSourceOptions[0] || "Email").trim()
+    const sourceSettingsToSave: Record<string, Record<string, string>> = {
+      ...leadSourceConfigs,
+      ...(selectedSource
+        ? {
+            [selectedSource]: {
+              send_auto_response: settingsFormValues.send_auto_response ?? "unchecked",
+              auto_response_message: settingsFormValues.auto_response_message ?? "",
+              auto_response_use_ai: settingsFormValues.auto_response_use_ai ?? "unchecked",
+              auto_response_use_ai_require_approval: settingsFormValues.auto_response_use_ai_require_approval ?? "unchecked",
+            },
+          }
+        : {}),
+    }
     prevMeta.leadsSettingsValues = { ...valuesForMeta }
+    prevMeta.leadsSourceSettings = sourceSettingsToSave
     const slugClean = String(settingsFormValues.embed_lead_slug ?? "")
       .trim()
       .toLowerCase()
@@ -620,6 +697,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     }
     const nextMeta = { ...valuesForMeta }
     setLeadsProfileSettings(nextMeta)
+    setLeadSourceConfigs(sourceSettingsToSave)
     setLeadEmbedProfile({
       enabled: settingsFormValues.embed_lead_enabled === "checked",
       slug: slugClean,
@@ -1809,6 +1887,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 <p style={{ fontSize: "14px", color: theme.text, opacity: 0.8 }}>No settings configured. Your admin can add items in the portal config.</p>
               )}
               {leadsSettingsItems.map((item) => {
+                if (
+                  item.id === "send_auto_response" ||
+                  item.id === "auto_response_message" ||
+                  item.id === "auto_response_use_ai" ||
+                  item.id === "auto_response_use_ai_require_approval"
+                ) {
+                  return null
+                }
                 if (!isSettingItemVisible(item, leadsSettingsItems, settingsFormValues)) return null
                 if (item.type === "checkbox") {
                   const checked = settingsFormValues[item.id] === "checked"
@@ -1867,6 +1953,123 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 }
                 return null
               })}
+              <div style={{ marginTop: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+                <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: theme.text }}>
+                  Lead source auto-reply flows
+                </p>
+                <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  Configure one flow per source (Email, Text, Phone call, etc). Save source flow to keep each set independent.
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <label style={{ fontSize: 12, color: theme.text }}>
+                    Lead source
+                    <select
+                      value={settingsFormValues.lead_source_settings ?? leadSourceOptions[0]}
+                      onChange={(e) => setSettingValue("lead_source_settings", e.target.value)}
+                      style={{ ...theme.formInput, marginTop: 4, minWidth: 160 }}
+                    >
+                      {leadSourceOptions.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={saveCurrentLeadSourceConfig}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Save source flow
+                  </button>
+                </div>
+                <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={(settingsFormValues.send_auto_response ?? "unchecked") === "checked"}
+                      onChange={(e) => setSettingValue("send_auto_response", e.target.checked ? "checked" : "unchecked")}
+                    />
+                    Send auto response for this source
+                  </label>
+                  {(settingsFormValues.send_auto_response ?? "unchecked") === "checked" ? (
+                    <>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Auto response message</label>
+                      <textarea
+                        value={settingsFormValues.auto_response_message ?? ""}
+                        onChange={(e) => setSettingValue("auto_response_message", e.target.value)}
+                        rows={3}
+                        style={{ ...theme.formInput, resize: "vertical" }}
+                      />
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={(settingsFormValues.auto_response_use_ai ?? "unchecked") === "checked"}
+                          onChange={(e) => setSettingValue("auto_response_use_ai", e.target.checked ? "checked" : "unchecked")}
+                        />
+                        Use AI to tailor this message
+                      </label>
+                      {(settingsFormValues.auto_response_use_ai ?? "unchecked") === "checked" ? (
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={(settingsFormValues.auto_response_use_ai_require_approval ?? "unchecked") === "checked"}
+                            onChange={(e) =>
+                              setSettingValue("auto_response_use_ai_require_approval", e.target.checked ? "checked" : "unchecked")
+                            }
+                          />
+                          Require approval before sending AI message
+                        </label>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+                {Object.keys(leadSourceConfigs).length > 0 ? (
+                  <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#334155" }}>Saved source flows</p>
+                    {Object.entries(leadSourceConfigs).map(([source, cfg]) => {
+                      const expanded = expandedLeadSourceKey === source
+                      return (
+                        <div key={source} style={{ border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff" }}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedLeadSourceKey((prev) => (prev === source ? null : source))}
+                            style={{
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "8px 10px",
+                              border: "none",
+                              background: "transparent",
+                              fontWeight: 700,
+                              color: theme.text,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {expanded ? "▾" : "▸"} {source}
+                          </button>
+                          {expanded ? (
+                            <div style={{ padding: "0 10px 10px", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                              <div>Auto response: {(cfg.send_auto_response ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                              <div>AI tailor: {(cfg.auto_response_use_ai ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                              <div>
+                                Template: {(cfg.auto_response_message ?? "").trim() ? (cfg.auto_response_message ?? "").trim().slice(0, 140) : "(empty)"}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </div>
               {(() => {
                 const origin = typeof window !== "undefined" ? window.location.origin : ""
                 const slug = String(settingsFormValues.embed_lead_slug ?? "")

@@ -2663,29 +2663,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
               <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                 Preferences are saved to your profile. Server-side automations use these when quote workflows are enabled for your account.
               </p>
-              <PortalSettingItemsForm
-                items={quoteAutomaticRepliesItems}
-                formValues={quoteAutoRepliesFormValues}
-                setFormValue={(id, value) => setQuoteAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
-                isItemVisible={isQuoteAutomaticRepliesItemVisible}
-              />
+              <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
+                <div style={{ marginTop: 10 }}>
+                  <PortalSettingItemsForm
+                    items={quoteAutomaticRepliesItems}
+                    formValues={quoteAutoRepliesFormValues}
+                    setFormValue={(id, value) => setQuoteAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
+                    isItemVisible={isQuoteAutomaticRepliesItemVisible}
+                  />
+                </div>
+              </details>
               {quoteAutoRepliesFormValues.quote_auto_reply_method === "Phone call" &&
                 quoteAutoRepliesFormValues.quote_auto_phone_allow_automation === "checked" && (
-                  <div
-                    style={{
-                      marginTop: 14,
-                      padding: 12,
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#f9fafb",
-                      fontSize: 12,
-                      color: "#374151",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
-                    such as &quot;This is a prerecorded message&quot; before your content.
-                  </div>
+                  <details style={{ marginTop: 14, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
+                    <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Phone call automation details</summary>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 12,
+                        color: "#374151",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
+                      such as &quot;This is a prerecorded message&quot; before your content.
+                    </div>
+                  </details>
                 )}
               {quoteAutoRepliesFormValues.quote_auto_phone_delivery === "Record in app" &&
                 quoteAutoRepliesFormValues.quote_auto_phone_allow_automation === "checked" &&

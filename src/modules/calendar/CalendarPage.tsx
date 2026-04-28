@@ -2829,49 +2829,54 @@ export default function CalendarPage() {
           <div onClick={() => setShowAutoResponse(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "440px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Calendar Auto Response Options</h3>
-            {calendarAutoResponseItems.length === 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                <div>
-                  <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Remind before event (minutes)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={arReminderMins}
-                    onChange={(e) => {
-                      setArReminderMins(e.target.value)
+            <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
+              <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
+              <div style={{ marginTop: 10 }}>
+                {calendarAutoResponseItems.length === 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div>
+                      <label style={{ fontSize: "14px", fontWeight: 600, color: theme.text }}>Remind before event (minutes)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={arReminderMins}
+                        onChange={(e) => {
+                          setArReminderMins(e.target.value)
+                          try {
+                            localStorage.setItem("calendar_arReminderMins", e.target.value)
+                          } catch {
+                            /* ignore */
+                          }
+                        }}
+                        style={{ ...theme.formInput }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <PortalSettingItemsForm
+                    items={calendarAutoResponseItems}
+                    formValues={autoResponsePortalValues}
+                    setFormValue={(id, v) => {
+                      setAutoResponsePortalValues((prev) => ({ ...prev, [id]: v }))
                       try {
-                        localStorage.setItem("calendar_arReminderMins", e.target.value)
+                        localStorage.setItem(`cal_ar_${id}`, v)
                       } catch {
                         /* ignore */
                       }
+                      if (id === "ar_remind_before_mins") {
+                        setArReminderMins(v)
+                        try {
+                          localStorage.setItem("calendar_arReminderMins", v)
+                        } catch {
+                          /* ignore */
+                        }
+                      }
                     }}
-                    style={{ ...theme.formInput }}
+                    isItemVisible={(item) => isPortalItemVisible(calendarAutoResponseItems, autoResponsePortalValues, item)}
                   />
-                </div>
+                )}
               </div>
-            ) : (
-              <PortalSettingItemsForm
-                items={calendarAutoResponseItems}
-                formValues={autoResponsePortalValues}
-                setFormValue={(id, v) => {
-                  setAutoResponsePortalValues((prev) => ({ ...prev, [id]: v }))
-                  try {
-                    localStorage.setItem(`cal_ar_${id}`, v)
-                  } catch {
-                    /* ignore */
-                  }
-                  if (id === "ar_remind_before_mins") {
-                    setArReminderMins(v)
-                    try {
-                      localStorage.setItem("calendar_arReminderMins", v)
-                    } catch {
-                      /* ignore */
-                    }
-                  }
-                }}
-                isItemVisible={(item) => isPortalItemVisible(calendarAutoResponseItems, autoResponsePortalValues, item)}
-              />
-            )}
+            </details>
             <button onClick={() => setShowAutoResponse(false)} style={{ marginTop: "20px", padding: "10px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, color: theme.text, cursor: "pointer" }}>Done</button>
           </div>
         </>

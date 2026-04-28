@@ -1871,30 +1871,34 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
               <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                 Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.
               </p>
-              <PortalSettingItemsForm
-                items={automaticRepliesItems}
-                formValues={autoRepliesFormValues}
-                setFormValue={(id, value) => setAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
-                isItemVisible={isAutomaticRepliesItemVisible}
-              />
+              <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
+                <div style={{ marginTop: 10 }}>
+                  <PortalSettingItemsForm
+                    items={automaticRepliesItems}
+                    formValues={autoRepliesFormValues}
+                    setFormValue={(id, value) => setAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
+                    isItemVisible={isAutomaticRepliesItemVisible}
+                  />
+                </div>
+              </details>
               {autoRepliesFormValues.conv_auto_reply_method === "Phone call" &&
                 autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" && (
-                  <div
-                    style={{
-                      marginTop: 14,
-                      padding: 12,
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#f9fafb",
-                      fontSize: 12,
-                      color: "#374151",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
-                    such as &quot;This is a prerecorded message&quot; before your content (required for automated outreach; exact wording may follow your counsel and carrier
-                    rules).
-                  </div>
+                  <details style={{ marginTop: 14, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
+                    <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Phone call automation details</summary>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 12,
+                        color: "#374151",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice
+                      such as &quot;This is a prerecorded message&quot; before your content (required for automated outreach; exact wording may follow your counsel and carrier
+                      rules).
+                    </div>
+                  </details>
                 )}
               {autoRepliesFormValues.conv_auto_phone_delivery === "Record in app" &&
                 autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" &&
