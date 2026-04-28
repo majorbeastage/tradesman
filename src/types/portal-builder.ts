@@ -703,6 +703,7 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
     type: "checkbox",
     label: 'Public "contact us" form hosted on this Tradesman app (link it from my own website)',
     defaultChecked: false,
+    visibleToUser: false,
   },
   {
     id: "embed_lead_slug",
@@ -735,13 +736,14 @@ export const DEFAULT_LEADS_SETTINGS_ITEMS: PortalSettingItem[] = [
     defaultChecked: false,
     dependency: { dependsOnItemId: "auto_response_use_ai", showWhenValue: "checked" },
   },
-  { id: 'notify_new_lead', type: 'checkbox', label: 'Notify when new lead is captured', defaultChecked: false },
+  { id: 'notify_new_lead', type: 'checkbox', label: 'Notify when new lead is captured', defaultChecked: false, visibleToUser: false },
   {
     id: 'notify_new_lead_channel',
     type: 'dropdown',
     label: 'Notification channel',
     options: ['Email', 'Text Message', 'App notification if registered'],
     dependency: { dependsOnItemId: 'notify_new_lead', showWhenValue: 'checked' },
+    visibleToUser: false,
   },
   /** @deprecated use notify_new_lead; kept so existing portal JSON still maps behavior in server */
   { id: 'email_new_lead', type: 'checkbox', label: '(Legacy) Email when new lead is created', defaultChecked: false },

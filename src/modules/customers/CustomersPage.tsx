@@ -127,7 +127,7 @@ export default function CustomersPage() {
   return (
     <div>
       <h1>Customers</h1>
-      <p style={{ fontSize: "14px", color: theme.text, marginTop: "4px" }}>
+      <p style={{ fontSize: "14px", color: "#cbd5e1", marginTop: "4px" }}>
         All customers from Leads, Conversations, Quotes, and Calendar. Active = has open work; Archived = everything removed or completed.
       </p>
 
@@ -143,7 +143,7 @@ export default function CustomersPage() {
 
       <div style={{ display: "flex", gap: "16px", marginTop: "16px", flexWrap: "wrap", alignItems: "center" }}>
         <div>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Section</label>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Section</label>
           <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
             <button
               onClick={() => { setSection("active"); setSelectedCustomer(null) }}
@@ -160,7 +160,7 @@ export default function CustomersPage() {
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Filter</label>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Filter</label>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <input
               type="text"
@@ -179,7 +179,7 @@ export default function CustomersPage() {
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: theme.text }}>Sort by</label>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Sort by</label>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <select
               value={sortField}

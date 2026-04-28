@@ -8,6 +8,7 @@ import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -159,6 +160,7 @@ export function AccountProfilePanel({
 }: AccountProfilePanelProps) {
   const { user, refetchProfile } = useAuth()
   const { setLocale, t, refetchLocale } = useLocale()
+  const isMobile = useIsMobile()
   const portalConfig = usePortalConfigForPage()
   const showAccountSection = (sectionId: string) =>
     adminContext || getAccountSectionVisible(portalConfig, sectionId)
@@ -685,9 +687,17 @@ export function AccountProfilePanel({
               </label>
               <div style={{ display: "grid", gap: 10 }}>
                 {DAY_KEYS.map((key) => (
-                  <div key={key} style={{ display: "grid", gridTemplateColumns: "minmax(110px, 160px) 120px 120px 120px", gap: 10, alignItems: "center" }}>
-                    <div style={{ color: theme.text, fontWeight: 600 }}>{t(`account.day.${key}`)}</div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13 }}>
+                  <div
+                    key={key}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isMobile ? "1fr 1fr" : "minmax(110px, 160px) 120px 120px 120px",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ color: theme.text, fontWeight: 600, ...(isMobile ? { gridColumn: "1 / -1" } : {}) }}>{t(`account.day.${key}`)}</div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, ...(isMobile ? { gridColumn: "1 / -1" } : {}) }}>
                       <input
                         type="checkbox"
                         checked={form.business_hours[key].enabled}

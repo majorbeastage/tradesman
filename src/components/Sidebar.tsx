@@ -33,6 +33,19 @@ const DEFAULT_TABS = [
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const { t } = useLocale()
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
+  const mobileTabButtonStyle: CSSProperties = {
+    width: "100%",
+    minHeight: 42,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(249,115,22,0.35)",
+    background: "rgba(255,255,255,0.04)",
+    color: theme.primary,
+    fontWeight: 700,
+    fontSize: 14,
+    textAlign: "left",
+    cursor: "pointer",
+  }
   const allTabs = portalTabs && portalTabs.length > 0
     ? portalTabs
     : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
@@ -114,7 +127,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             display: "flex",
             flexDirection: "column",
             gap: 10,
-            alignItems: "flex-start",
+            alignItems: "stretch",
           }}
         >
           {showPayments ? (
@@ -126,6 +139,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
               }}
               style={{
                 minHeight: 48,
+                width: "100%",
                 padding: "0 14px",
                 borderRadius: 10,
                 border: `1px solid rgba(249,115,22,0.45)`,
@@ -150,28 +164,47 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                justifyContent: "center",
+                justifyContent: "flex-start",
+                gap: 8,
                 minHeight: 48,
-                minWidth: 48,
+                width: "100%",
                 padding: "8px 12px",
                 borderRadius: 10,
                 border: `1px solid rgba(249,115,22,0.45)`,
                 background: "rgba(249,115,22,0.12)",
                 cursor: "pointer",
+                color: theme.primary,
+                fontWeight: 700,
               }}
             >
-              <img src={accountIcon} alt="" style={{ width: 44, height: 30, display: "block", objectFit: "contain" }} />
+              <img src={accountIcon} alt="" style={{ width: 28, height: 20, display: "block", objectFit: "contain" }} />
+              <span>{t("layout.account")}</span>
             </button>
           ) : null}
         </div>
       ) : null}
 
       <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {mainNavTabs.map((tab) => (
-          <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
-            {formatPortalTabLabel(tab.tab_id, tab.label, t)}
-          </p>
-        ))}
+        {isMobile ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {mainNavTabs.map((tab) => (
+              <button
+                key={tab.tab_id}
+                type="button"
+                onClick={() => { setPage(tab.tab_id); onClose?.() }}
+                style={mobileTabButtonStyle}
+              >
+                {formatPortalTabLabel(tab.tab_id, tab.label, t)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          mainNavTabs.map((tab) => (
+            <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
+              {formatPortalTabLabel(tab.tab_id, tab.label, t)}
+            </p>
+          ))
+        )}
       </div>
 
       <div

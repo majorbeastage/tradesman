@@ -99,7 +99,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
                 justifyContent: "center",
               }}
             >
-              <img src={mytIcon} alt="" width={40} height={28} style={{ objectFit: "contain", display: "block" }} />
+              <img src={mytIcon} alt="" width={30} height={22} style={{ objectFit: "contain", display: "block" }} />
             </button>
           </div>
         )}

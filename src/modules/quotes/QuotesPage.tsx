@@ -250,11 +250,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteLegalSignatures, setQuoteLegalSignatures] = useState(true)
   const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
   const [showQuoteJobTypesModal, setShowQuoteJobTypesModal] = useState(false)
+  const [quoteJobTypeEditorOpen, setQuoteJobTypeEditorOpen] = useState(false)
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
   const [quoteJobTypesList, setQuoteJobTypesList] = useState<QuoteJobTypeListRow[]>([])
-  const [quoteJobTypesModalValues, setQuoteJobTypesModalValues] = useState<Record<string, string>>({})
   const [estimateReview, setEstimateReview] = useState<{
     subtotal: number | null
     issues: string[]
@@ -310,6 +310,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [addItemLoading, setAddItemLoading] = useState(false)
   const [quoteJtNewName, setQuoteJtNewName] = useState("")
   const [quoteJtNewDurationStr, setQuoteJtNewDurationStr] = useState("60")
+  const [quoteJtDurationUnit, setQuoteJtDurationUnit] = useState<15 | 60>(60)
   const [quoteJtNewDesc, setQuoteJtNewDesc] = useState("")
   const [quoteJtNewColor, setQuoteJtNewColor] = useState("#F97316")
   const [quoteJtSaving, setQuoteJtSaving] = useState(false)
@@ -382,10 +383,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     () => getControlItemsForUser(portalConfig, "quotes", "estimate_line_items", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
-  const quoteJobTypesPanelItems = useMemo(
-    () => getControlItemsForUser(portalConfig, "quotes", "job_types", { aiAutomationsEnabled }),
-    [portalConfig, aiAutomationsEnabled],
-  )
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
   const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
   const quoteAddCustomerPortalItems = useMemo(
@@ -393,7 +390,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     [portalConfig, aiAutomationsEnabled],
   )
   const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
-  const showQuotesSettings = getOmPageActionVisible(portalConfig, "quotes", "settings")
+  const showQuotesSettings = false
   const showQuotesEstimateTemplate =
     getPageActionVisible(portalConfig, "quotes", "estimate_template") && getOmPageActionVisible(portalConfig, "quotes", "estimate_template")
   const showQuotesEstimateLineItems =
@@ -549,10 +546,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   function isEstimateTemplateItemVisible(item: PortalSettingItem): boolean {
     return isPortalSettingDependencyVisible(item, estimateTemplateItems, estimateTemplateFormValues)
-  }
-
-  function isQuoteJobTypesPanelItemVisible(item: PortalSettingItem): boolean {
-    return isPortalSettingDependencyVisible(item, quoteJobTypesPanelItems, quoteJobTypesModalValues)
   }
 
   useEffect(() => {
@@ -1030,31 +1023,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     setQuoteAddCustomerPortalValues(next)
   }, [showAddCustomer, quoteAddCustomerPortalItems])
-
-  useEffect(() => {
-    if (!showQuoteJobTypesModal || quoteJobTypesPanelItems.length === 0) {
-      if (showQuoteJobTypesModal) setQuoteJobTypesModalValues({})
-      return
-    }
-    const next: Record<string, string> = {}
-    for (const item of quoteJobTypesPanelItems) {
-      try {
-        const s = localStorage.getItem(`quotes_qjt_${item.id}`)
-        if (item.type === "checkbox") {
-          next[item.id] = s === "checked" || s === "unchecked" ? s : item.defaultChecked ? "checked" : "unchecked"
-        } else if (item.type === "dropdown" && item.options?.length) {
-          next[item.id] = s && item.options.includes(s) ? s : item.options[0]
-        } else {
-          next[item.id] = s ?? ""
-        }
-      } catch {
-        if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
-        else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
-        else next[item.id] = ""
-      }
-    }
-    setQuoteJobTypesModalValues(next)
-  }, [showQuoteJobTypesModal, quoteJobTypesPanelItems])
 
   useEffect(() => {
     if (!showQuoteJobTypesModal || !supabase || !userId) return
@@ -2018,23 +1986,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
-  function insertSavedPresetOnOpenQuote(p: EstimateLinePresetRow) {
-    if (!selectedQuoteId) {
-      alert("Open a quote from the list first. Then use Saved lines under Quote items, or the buttons here.")
-      return
-    }
-    void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
-      presetId: p.id,
-      metadata: {
-        minimum_line_total: p.minimum_line_total,
-        line_kind: p.line_kind,
-        ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-          ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
-          : {}),
-      },
-    })
-  }
-
   async function persistQuoteItemUpdate(itemId: string, patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> }) {
     if (!supabase || !selectedQuoteId) return
     const result = await updateQuoteItemRowSafe(supabase, itemId, patch)
@@ -2166,9 +2117,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Please enter a name for the job type.")
       return
     }
-    const parsedJtDur = parseJobTypeDurationMinutes(quoteJtNewDurationStr)
+    const parsedJtDur =
+      quoteJtDurationUnit === 60
+        ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
+        : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
     if (parsedJtDur == null) {
-      alert("Enter duration in minutes (whole number, at least 15).")
+      alert(`Enter duration in ${quoteJtDurationUnit === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
       return
     }
     if (!supabase || !userId) return
@@ -2223,6 +2177,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteJtNewName("")
       setQuoteJtNewDesc("")
       setQuoteJtNewDurationStr("60")
+      setQuoteJtDurationUnit(60)
       setQuoteJtNewColor("#F97316")
       setQuoteJtTrackMileage(false)
       setEditingQuoteJtId(null)
@@ -2279,17 +2234,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }) {
     setQuoteJtNewName(jt.name)
     setQuoteJtNewDesc(jt.description ?? "")
-    setQuoteJtNewDurationStr(String(Math.max(15, jt.duration_minutes)))
+    const safeMinutes = Math.max(15, jt.duration_minutes)
+    const useHours = safeMinutes % 60 === 0
+    setQuoteJtDurationUnit(useHours ? 60 : 15)
+    setQuoteJtNewDurationStr(useHours ? String(safeMinutes / 60) : String(safeMinutes))
     setQuoteJtNewColor(jt.color_hex ?? "#F97316")
     setQuoteJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setQuoteJtTrackMileage(jt.track_mileage === true)
     setEditingQuoteJtId(jt.id)
+    setQuoteJobTypeEditorOpen(true)
   }
 
   function cancelEditQuoteJobType() {
     setQuoteJtNewName("")
     setQuoteJtNewDesc("")
     setQuoteJtNewDurationStr("60")
+    setQuoteJtDurationUnit(60)
     setQuoteJtNewColor("#F97316")
     setQuoteJtMaterials("")
     setQuoteJtTrackMileage(false)
@@ -4613,9 +4573,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
                     Qty
                     <input
-                      type="number"
-                      min={0}
-                      step={0.01}
+                      type="text"
+                      inputMode="decimal"
                       value={eliSimpleQty}
                       onChange={(e) => setEliSimpleQty(e.target.value)}
                       style={theme.formInput}
@@ -4797,14 +4756,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 <option value="each">Each</option>
                               </select>
                               <input
-                                type="number"
-                                min={0}
-                                step={0.01}
+                                type="text"
+                                inputMode="decimal"
                                 title="Quantity"
                                 placeholder="Qty"
-                                value={row.quantity}
+                                value={row.quantity === 0 ? "" : String(row.quantity)}
                                 onChange={(e) => {
-                                  const q = Number.parseFloat(e.target.value) || 0
+                                  const parsed = Number.parseFloat(e.target.value.replace(/,/g, "").trim())
+                                  const q = Number.isFinite(parsed) ? parsed : 0
                                   setEstimateLineDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
                                 }}
                                 style={theme.formInput}
@@ -5028,6 +4987,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
               onClick={() => {
                 cancelEditQuoteJobType()
                 setShowQuoteJobTypesModal(false)
+                setQuoteJobTypeEditorOpen(false)
               }}
               style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 10000 }}
             />
@@ -5055,6 +5015,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   onClick={() => {
                     cancelEditQuoteJobType()
                     setShowQuoteJobTypesModal(false)
+                    setQuoteJobTypeEditorOpen(false)
                   }}
                   style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
                 >
@@ -5073,10 +5034,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   background: "#f8fafc",
                 }}
               >
-                <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: theme.text }}>
-                  {editingQuoteJtId ? "Edit job type" : "New job type"}
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {!editingQuoteJtId ? (
+                  <button
+                    type="button"
+                    onClick={() => setQuoteJobTypeEditorOpen((prev) => !prev)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {quoteJobTypeEditorOpen ? "Hide create new job type" : "Create new job type"}
+                  </button>
+                ) : null}
+                {(editingQuoteJtId || quoteJobTypeEditorOpen) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: theme.text }}>
+                    {editingQuoteJtId ? "Edit job type" : "New job type"}
+                  </p>
                   <input
                     placeholder="Name"
                     value={quoteJtNewName}
@@ -5085,16 +5066,34 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <label style={{ fontSize: 12, color: theme.text }}>
-                      Duration (min)
+                      Duration
+                      <select
+                        value={quoteJtDurationUnit}
+                        onChange={(e) => {
+                          const nextUnit = e.target.value === "60" ? 60 : 15
+                          const parsed =
+                            quoteJtDurationUnit === 60
+                              ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
+                              : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
+                          setQuoteJtDurationUnit(nextUnit)
+                          if (parsed != null) setQuoteJtNewDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
+                        }}
+                        style={{ ...theme.formInput, display: "block", marginTop: 4, marginBottom: 4, width: 110 }}
+                      >
+                        <option value={60}>Hours</option>
+                        <option value={15}>Minutes</option>
+                      </select>
                       <input
-                        type="number"
-                        min={15}
-                        step={15}
+                        type="text"
+                        inputMode="decimal"
                         value={quoteJtNewDurationStr}
                         onChange={(e) => setQuoteJtNewDurationStr(e.target.value)}
                         onBlur={() => {
-                          const m = parseJobTypeDurationMinutes(quoteJtNewDurationStr)
-                          if (m != null) setQuoteJtNewDurationStr(String(m))
+                          const parsed =
+                            quoteJtDurationUnit === 60
+                              ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
+                              : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
+                          if (parsed != null) setQuoteJtNewDurationStr(formatDurationFieldFromMinutes(parsed, quoteJtDurationUnit))
                         }}
                         style={{ ...theme.formInput, display: "block", marginTop: 4, width: 100 }}
                       />
@@ -5236,24 +5235,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     ) : null}
                   </div>
                 </div>
+                )}
               </div>
-              {quoteJobTypesPanelItems.length > 0 ? (
-                <div style={{ marginBottom: 16 }}>
-                  <PortalSettingItemsForm
-                    items={quoteJobTypesPanelItems}
-                    formValues={quoteJobTypesModalValues}
-                    setFormValue={(id, v) => {
-                      setQuoteJobTypesModalValues((prev) => ({ ...prev, [id]: v }))
-                      try {
-                        localStorage.setItem(`quotes_qjt_${id}`, v)
-                      } catch {
-                        /* ignore */
-                      }
-                    }}
-                    isItemVisible={isQuoteJobTypesPanelItemVisible}
-                  />
-                </div>
-              ) : null}
               {quoteJobTypesList.length === 0 ? (
                 <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add one above or under Calendar → Job Types.</p>
               ) : (
@@ -5323,44 +5306,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   ))}
                 </div>
               )}
-              {estimateLinePresets.length > 0 ? (
-                <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-                  <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Saved line templates</h4>
-                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                    Same presets as <strong>{estimateLineItemsButtonLabel}</strong>. With a quote open in the table above, click to add that line to the quote.
-                  </p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {estimateLinePresets.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => insertSavedPresetOnOpenQuote(p)}
-                        style={{
-                          fontSize: 12,
-                          padding: "6px 12px",
-                          borderRadius: 6,
-                          border: `1px solid #94a3b8`,
-                          background: "#f1f5f9",
-                          color: "#0f172a",
-                          cursor: "pointer",
-                          maxWidth: 260,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={`${p.description} · ${p.quantity} ${eliUnitSuffix(p.unit_basis)} @ $${Number(p.unit_price).toFixed(2)}`}
-                      >
-                        {p.description.length > 40 ? `${p.description.slice(0, 40)}…` : p.description}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
               <button
                 type="button"
                 onClick={() => {
                   cancelEditQuoteJobType()
                   setShowQuoteJobTypesModal(false)
+                  setQuoteJobTypeEditorOpen(false)
                 }}
                 style={{
                   marginTop: 16,

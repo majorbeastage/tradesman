@@ -333,6 +333,7 @@ export default function CalendarPage() {
   const [jtName, setJtName] = useState("")
   const [jtDescription, setJtDescription] = useState("")
   const [jtDurationStr, setJtDurationStr] = useState("60")
+  const [jtDurationUnit, setJtDurationUnit] = useState<15 | 60>(60)
   const [jtColor, setJtColor] = useState("#F97316")
   const [jtSaving, setJtSaving] = useState(false)
   const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
@@ -376,7 +377,10 @@ export default function CalendarPage() {
     [portalConfig, aiAutomationsEnabled],
   )
   const jobTypesPortalItems = useMemo(
-    () => getControlItemsForUser(portalConfig, "calendar", "job_types", { aiAutomationsEnabled }),
+    () =>
+      getControlItemsForUser(portalConfig, "calendar", "job_types", { aiAutomationsEnabled }).filter(
+        (item) => !item.id.startsWith("recurrence_") && !/recurr/i.test(item.label),
+      ),
     [portalConfig, aiAutomationsEnabled],
   )
   const receiptTemplateItems = useMemo(() => {
@@ -413,15 +417,13 @@ export default function CalendarPage() {
   const showRecurringRemoveChoices =
     !!selectedEvent && (!!selectedEvent.recurrence_series_id || (selectedLegacyRecurringIds && selectedLegacyRecurringIds.length >= 2))
   const showCalAddItem = getPageActionVisible(portalConfig, "calendar", "add_item_to_calendar") && getOmPageActionVisible(portalConfig, "calendar", "add_item")
-  const showCalAutoResponse = getOmPageActionVisible(portalConfig, "calendar", "auto_response")
+  const showCalAutoResponse = false
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
   const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
   const showCalReceiptTemplate =
     getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
-  const showCalCompletionSettings =
-    getPageActionVisible(portalConfig, "calendar", "completion_settings") &&
-    getOmPageActionVisible(portalConfig, "calendar", "completion_settings")
+  const showCalCompletionSettings = false
   const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
   const completionSettingsButtonLabel = portalConfig?.controlLabels?.completion_settings ?? "Job completion"
 
@@ -1758,9 +1760,12 @@ export default function CalendarPage() {
       alert("Please enter a name for the job type.")
       return
     }
-    const jtDurParsed = parseJobTypeDurationMinutes(jtDurationStr)
+    const jtDurParsed =
+      jtDurationUnit === 60
+        ? parseDurationFieldToMinutes(jtDurationStr, 60)
+        : parseJobTypeDurationMinutes(jtDurationStr)
     if (jtDurParsed == null) {
-      alert("Enter duration in minutes (whole number, at least 15).")
+      alert(`Enter duration in ${jtDurationUnit === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
       return
     }
     if (!supabase) {
@@ -1837,6 +1842,7 @@ export default function CalendarPage() {
     setJtName("")
     setJtDescription("")
     setJtDurationStr("60")
+    setJtDurationUnit(60)
     setJtColor("#F97316")
     setJtMaterials("")
     setJtTrackMileage(false)
@@ -1848,7 +1854,10 @@ export default function CalendarPage() {
   function startEditJobType(jt: JobType) {
     setJtName(jt.name)
     setJtDescription(jt.description ?? "")
-    setJtDurationStr(String(Math.max(15, jt.duration_minutes)))
+    const safeMinutes = Math.max(15, jt.duration_minutes)
+    const useHours = safeMinutes % 60 === 0
+    setJtDurationUnit(useHours ? 60 : 15)
+    setJtDurationStr(useHours ? String(safeMinutes / 60) : String(safeMinutes))
     setJtColor(jt.color_hex ?? "#F97316")
     setJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setJtTrackMileage(jt.track_mileage === true)
@@ -1859,6 +1868,7 @@ export default function CalendarPage() {
     setJtName("")
     setJtDescription("")
     setJtDurationStr("60")
+    setJtDurationUnit(60)
     setJtColor("#F97316")
     setJtMaterials("")
     setJtTrackMileage(false)
@@ -2485,28 +2495,8 @@ export default function CalendarPage() {
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "520px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
             <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
             <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, opacity: 0.9 }}>
-              Same job types as <strong>Quotes</strong> (materials + line templates). Recurrence options below apply when you add items from the calendar.
+              Same job types as <strong>Quotes</strong> (materials + line templates), so both tabs stay consistent.
             </p>
-            {jobTypesPortalItems.length > 0 && (
-              <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>
-                  Options (from your portal setup)
-                </p>
-                <PortalSettingItemsForm
-                  items={jobTypesPortalItems}
-                  formValues={jobTypesPortalValues}
-                  setFormValue={(id, v) => {
-                    setJobTypesPortalValues((prev) => ({ ...prev, [id]: v }))
-                    try {
-                      localStorage.setItem(`cal_jt_${id}`, v)
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  isItemVisible={(item) => isPortalItemVisible(jobTypesPortalItems, jobTypesPortalValues, item)}
-                />
-              </div>
-            )}
             {jobTypesLoadError && (
               <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
                 Could not load job types: {jobTypesLoadError}
@@ -2519,16 +2509,30 @@ export default function CalendarPage() {
               <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
               <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <select
+                  value={jtDurationUnit}
+                  onChange={(e) => {
+                    const nextUnit = e.target.value === "60" ? 60 : 15
+                    const parsed =
+                      jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
+                    setJtDurationUnit(nextUnit)
+                    if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
+                  }}
+                  style={{ ...theme.formInput, width: "120px" }}
+                >
+                  <option value={60}>Hours</option>
+                  <option value={15}>Minutes</option>
+                </select>
                 <input
-                  type="number"
-                  min={15}
-                  step={15}
-                  placeholder="Duration (min)"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={jtDurationUnit === 60 ? "Duration (hours)" : "Duration (minutes)"}
                   value={jtDurationStr}
                   onChange={(e) => setJtDurationStr(e.target.value)}
                   onBlur={() => {
-                    const m = parseJobTypeDurationMinutes(jtDurationStr)
-                    if (m != null) setJtDurationStr(String(m))
+                    const parsed =
+                      jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
+                    if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, jtDurationUnit))
                   }}
                   style={{ ...theme.formInput, width: "120px" }}
                 />
