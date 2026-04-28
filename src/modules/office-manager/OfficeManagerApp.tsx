@@ -491,7 +491,7 @@ function OfficeManagerAppContent() {
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}
       {hasClients && page === "quotes" && <QuotesPage setPage={setPage} />}
-      {hasClients && page === "calendar" && <CalendarPage />}
+      {hasClients && page === "calendar" && <CalendarPage setPage={setPage} />}
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}
       {hasClients && page === "settings" && <SettingsPage />}

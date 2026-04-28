@@ -38,6 +38,7 @@ import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/up
 import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
 import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "../../lib/defaultEstimateLegal"
 import {
   resolveRecurrenceFromPortal,
   applyRecurrenceEndLimitsFromPortal,
@@ -2411,10 +2412,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
         if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
       }
       const legal =
-        quoteIncludeLegal && quoteLegalText.trim()
+        quoteIncludeLegal || quoteLegalSignatures
           ? {
-              body: quoteLegalText.trim(),
-              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : null,
+              body: quoteLegalText.trim() || DEFAULT_ESTIMATE_LEGAL_TEMPLATE,
+              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE,
               showSignatures: quoteLegalSignatures,
             }
           : null

@@ -206,7 +206,15 @@ async function handleEstimateLegalDraft(req: VercelRequest, res: VercelResponse)
 
   const openaiKey = firstEnv("OPENAI_API_KEY")
   if (!openaiKey) {
-    res.status(503).json({ error: "OpenAI is not configured on the server." })
+    const label = businessName || "Home services contractor"
+    const legalText =
+      `ESTIMATE / PROPOSAL ACKNOWLEDGMENT\n\n` +
+      `This estimate is prepared for ${label}. It summarizes the proposed scope of work and pricing and is not a final contract unless both parties execute a separate written agreement.\n\n` +
+      `Customer acknowledges review of line items, quantities, and pricing shown in this estimate. Any additional work or changes should be approved in writing before execution.\n\n` +
+      `This language is a starting point only and should be reviewed by your attorney for your state and trade.`
+    const cancellationText =
+      `Cancellation: If the customer cancels after accepting this estimate, a cancellation fee of up to 25% of the quoted total may apply for scheduling, ordered materials, or work performed, as permitted by law. Customize with your attorney.`
+    res.status(200).json({ ok: true, legalText, cancellationText, fallback: true })
     return
   }
 
