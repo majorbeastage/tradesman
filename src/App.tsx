@@ -200,7 +200,7 @@ function MainApp() {
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
       {page === "quotes" && <QuotesPage />}
-      {page === "calendar" && <CalendarPage />}
+      {page === "calendar" && <CalendarPage setPage={setPage} />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
       {page === "settings" && <SettingsPage />}

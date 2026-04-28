@@ -36,6 +36,7 @@ import {
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
+import { queueCustomerFocus } from "../../lib/customerNavigation"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -256,7 +257,7 @@ function normalizeCalendarEventRow(raw: unknown): CalendarEvent {
   return { ...e, customers, job_types }
 }
 
-export default function CalendarPage() {
+export default function CalendarPage({ setPage }: { setPage?: (page: string) => void }) {
   const { userId: authUserId, user: authUser, role: authRole } = useAuth()
   const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
@@ -3081,6 +3082,29 @@ export default function CalendarPage() {
                   <strong>Customer:</strong> {selectedEvent.customers.display_name}
                 </p>
               )}
+              {selectedEvent.customer_id && setPage ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    queueCustomerFocus(selectedEvent.customer_id!)
+                    setSelectedEvent(null)
+                    setPage("customers")
+                  }}
+                  style={{
+                    alignSelf: "flex-start",
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Open customer contact card
+                </button>
+              ) : null}
               {(selectedEvent.customers?.service_address?.trim() ||
                 selectedEvent.customers?.service_lat != null ||
                 selectedEvent.customers?.service_lng != null) && (

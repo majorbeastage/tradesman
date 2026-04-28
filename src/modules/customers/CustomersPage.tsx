@@ -5,6 +5,7 @@ import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { consumeQueuedCustomerFocus } from "../../lib/customerNavigation"
 
 type CustomerRow = {
   id: string
@@ -26,6 +27,7 @@ export default function CustomersPage() {
   const [sortAsc, setSortAsc] = useState(true)
   const [section, setSection] = useState<"active" | "archived">("active")
   const [loadError, setLoadError] = useState<string>("")
+  const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
 
   async function loadCustomers() {
     if (!userId || !supabase) {
@@ -108,6 +110,23 @@ export default function CustomersPage() {
   useEffect(() => {
     loadCustomers()
   }, [userId])
+
+  useEffect(() => {
+    if (!pendingFocusCustomerId) return
+    const activeMatch = activeCustomers.find((c) => c.id === pendingFocusCustomerId)
+    if (activeMatch) {
+      setSection("active")
+      setSelectedCustomer(activeMatch)
+      setPendingFocusCustomerId(null)
+      return
+    }
+    const archivedMatch = archivedCustomers.find((c) => c.id === pendingFocusCustomerId)
+    if (archivedMatch) {
+      setSection("archived")
+      setSelectedCustomer(archivedMatch)
+      setPendingFocusCustomerId(null)
+    }
+  }, [pendingFocusCustomerId, activeCustomers, archivedCustomers])
 
   const currentList = section === "active" ? activeCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {
