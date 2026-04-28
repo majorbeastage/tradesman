@@ -109,6 +109,20 @@ function eliUnitSuffix(unitBasis: string | undefined): string {
   return "hr"
 }
 
+function quoteRecurrenceExplicitlyEnabled(values: Record<string, string>): boolean {
+  const yes = new Set(["checked", "true", "yes", "1", "on", "enabled"])
+  const no = new Set(["unchecked", "false", "no", "0", "off", "disabled", "none", "single"])
+  for (const [k, raw] of Object.entries(values)) {
+    const key = k.toLowerCase()
+    if (!key.includes("recurr") && !key.includes("repeat")) continue
+    const v = String(raw ?? "").trim().toLowerCase()
+    if (!v) continue
+    if (no.has(v)) return false
+    if (yes.has(v)) return true
+  }
+  return false
+}
+
 /** PostgREST when `quotes.job_type_id` has not been migrated yet */
 function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): boolean {
   const m = (message ?? "").toLowerCase()
@@ -345,7 +359,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobTypes, setJobTypes] = useState<CalendarPickerJobType[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
   const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
-  const [quoteJobTypesPortalValues, setQuoteJobTypesPortalValues] = useState<Record<string, string>>({})
+  const [, setQuoteJobTypesPortalValues] = useState<Record<string, string>>({})
   const [autoAssignEnabled, setAutoAssignEnabled] = useState(true)
   const [assignToScopedUser, setAssignToScopedUser] = useState(true)
   const [calendarTargetUserId, setCalendarTargetUserId] = useState("")
@@ -4321,17 +4335,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       return
                     }
                     const durationMs = durMinutes * 60 * 1000
-                    const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
-                    const recurrenceFromJt =
-                      calJobTypeId && calendarJobTypesPortalItems.length > 0
-                        ? resolveRecurrenceFromPortal(calendarJobTypesPortalItems, quoteJobTypesPortalValues)
-                        : null
-                    let series = recurrenceFromQuote ?? recurrenceFromJt
-                    if (series) {
-                      const fromQuoteModal = recurrenceFromQuote != null
-                      const endItems = fromQuoteModal ? quoteCalendarItems : calendarJobTypesPortalItems
-                      const endVals = fromQuoteModal ? quoteCalPortalValues : quoteJobTypesPortalValues
-                      series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
+                    /**
+                     * Quotes -> Add to Calendar should default to ONE event.
+                     * Recurrence only applies when explicitly enabled in the quote scheduling controls.
+                     */
+                    let series = null as ReturnType<typeof resolveRecurrenceFromPortal> | null
+                    if (quoteRecurrenceExplicitlyEnabled(quoteCalPortalValues)) {
+                      const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
+                      if (recurrenceFromQuote) {
+                        series = applyRecurrenceEndLimitsFromPortal(quoteCalendarItems, quoteCalPortalValues, recurrenceFromQuote)
+                      }
                     }
                     const starts = series ? computeOccurrenceStarts(start, series) : [start]
                     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))

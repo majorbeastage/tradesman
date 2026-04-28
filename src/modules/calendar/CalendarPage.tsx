@@ -3082,11 +3082,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   <strong>Customer:</strong> {selectedEvent.customers.display_name}
                 </p>
               )}
-              {selectedEvent.customer_id && setPage ? (
+              {(selectedEvent.customer_id || selectedEvent.quote_id) && setPage ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    queueCustomerFocus(selectedEvent.customer_id!)
+                  onClick={async () => {
+                    let customerId = selectedEvent.customer_id ?? null
+                    if (!customerId && selectedEvent.quote_id && supabase) {
+                      const { data } = await supabase
+                        .from("quotes")
+                        .select("customer_id")
+                        .eq("id", selectedEvent.quote_id)
+                        .maybeSingle()
+                      customerId = (data?.customer_id as string | null) ?? null
+                    }
+                    if (!customerId) {
+                      alert("No customer is linked to this calendar event yet.")
+                      return
+                    }
+                    queueCustomerFocus(customerId)
                     setSelectedEvent(null)
                     setPage("customers")
                   }}
