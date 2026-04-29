@@ -2596,6 +2596,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 {quoteAutomaticRepliesButtonLabel}
               </button>
             )}
+            {userId ? <TabNotificationAlertsButton tab="quotes" profileUserId={userId} /> : null}
             {showQuotesEstimateTemplate && (
               <button
                 type="button"
@@ -2626,7 +2627,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
             {customActionButtons.map((btn) => (
               <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
             ))}
-            {userId ? <TabNotificationAlertsButton tab="quotes" profileUserId={userId} /> : null}
           </div>
         </div>
 

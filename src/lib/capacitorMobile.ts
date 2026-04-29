@@ -128,9 +128,52 @@ export async function requestPushPermissionAndRegister(
       window.setTimeout(resolve, 450)
     })
     await PushNotifications.register()
+    // Ensure this device row exists before user taps "Send test push".
+    if (supabase && userId) {
+      const started = Date.now()
+      while (Date.now() - started < 3000) {
+        const { data } = await supabase
+          .from("user_push_devices")
+          .select("id")
+          .eq("user_id", userId)
+          .limit(1)
+        if ((data?.length ?? 0) > 0) {
+          return { ok: true, message: "Registered for push notifications on this device." }
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 300))
+      }
+      return {
+        ok: true,
+        message:
+          "Permission granted. Token registration may still be syncing; wait a few seconds, then send test push again.",
+      }
+    }
     return { ok: true, message: "Registered for push notifications on this device." }
   } catch (e) {
     return { ok: false, message: humanizePermissionError(e, "notifications") }
+  }
+}
+
+/**
+ * Startup sync for native installs:
+ * if notification permission is already granted, re-register so this device token is upserted.
+ * Never prompts the user; it only runs when permission is already granted.
+ */
+export async function syncPushTokenIfPermissionGranted(
+  supabase: SupabaseClient | null,
+  userId: string | null,
+): Promise<void> {
+  if (!isNativeApp() || !supabase || !userId) return
+  try {
+    await attachPushTokenUpsertListeners(supabase, userId)
+    const { PushNotifications } = await import("@capacitor/push-notifications")
+    const perm = await PushNotifications.checkPermissions()
+    if (perm.receive !== "granted") return
+    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 250))
+    await PushNotifications.register()
+  } catch (e) {
+    console.warn("[push] startup sync failed", e)
   }
 }
 

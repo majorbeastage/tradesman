@@ -1777,21 +1777,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 Add Conversation
               </button>
             )}
-            {showConversationSettingsButton && (
-              <button
-                onClick={() => setShowSettings(true)}
-                style={{
-                  padding: "8px 14px",
-                  borderRadius: "6px",
-                  border: "1px solid #d1d5db",
-                  background: "white",
-                  cursor: "pointer",
-                  color: theme.text,
-                }}
-              >
-                {portalConfig?.controlLabels?.conversation_settings ?? "Settings"}
-              </button>
-            )}
             {showAutomaticRepliesButton && (
               <button
                 type="button"
@@ -1808,6 +1793,22 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
               </button>
             )}
+            {userId ? <TabNotificationAlertsButton tab="conversations" profileUserId={userId} /> : null}
+            {showConversationSettingsButton && (
+              <button
+                onClick={() => setShowSettings(true)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  cursor: "pointer",
+                  color: theme.text,
+                }}
+              >
+                {portalConfig?.controlLabels?.conversation_settings ?? "Settings"}
+              </button>
+            )}
             {customActionButtons.map((btn) => (
               <button
                 key={btn.id}
@@ -1817,7 +1818,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 {btn.label}
               </button>
             ))}
-            {userId ? <TabNotificationAlertsButton tab="conversations" profileUserId={userId} /> : null}
           </div>
         </div>
 

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
-import { attachPushTokenUpsertListeners, detachPushTokenUpsertListeners, isNativeApp } from "../lib/capacitorMobile"
+import {
+  attachPushTokenUpsertListeners,
+  detachPushTokenUpsertListeners,
+  isNativeApp,
+  syncPushTokenIfPermissionGranted,
+} from "../lib/capacitorMobile"
 
 /**
  * Native only: registers push token rows and (when GPS opt-in) periodically upserts user_last_locations.
@@ -27,7 +32,10 @@ export default function NativeMobilePipeline() {
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return
-    const t = window.setTimeout(() => void attachPushTokenUpsertListeners(supabase, user.id), 400)
+    const t = window.setTimeout(() => {
+      void attachPushTokenUpsertListeners(supabase, user.id)
+      void syncPushTokenIfPermissionGranted(supabase, user.id)
+    }, 400)
     return () => {
       window.clearTimeout(t)
       void detachPushTokenUpsertListeners()
