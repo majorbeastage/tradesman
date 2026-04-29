@@ -1979,7 +1979,19 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         </section>
       ) : null}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "10px",
+          alignItems: "center",
+          padding: "12px",
+          background: theme.charcoalSmoke,
+          borderRadius: "8px",
+          border: `1px solid ${theme.border}`,
+          boxSizing: "border-box",
+        }}
+      >
         {showCalAddItem && (
           <button
             onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
@@ -2054,8 +2066,20 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       </div>
 
       {/* Calendar area: view switcher + expand + job types */}
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", padding: isMobile ? "12px" : "16px", background: "white" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center", marginBottom: "12px" }}>
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", background: "white", overflow: "hidden" }}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "12px",
+            alignItems: "center",
+            padding: isMobile ? "10px 12px" : "12px 16px",
+            marginBottom: 0,
+            background: theme.charcoalSmoke,
+            borderBottom: `1px solid ${theme.border}`,
+            boxSizing: "border-box",
+          }}
+        >
           <select
             value={view}
             onChange={(e) => setView(e.target.value as "day" | "week" | "month")}
@@ -2108,6 +2132,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           </button>
         </div>
 
+        <div style={{ padding: isMobile ? "12px" : "16px" }}>
         <div style={{ minHeight: expanded ? "70vh" : "400px", overflow: "auto" }}>
           {loadError && (
             <p style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "14px" }}>Calendar error: {loadError}</p>
@@ -2334,6 +2359,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
 

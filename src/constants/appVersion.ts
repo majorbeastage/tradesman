@@ -22,6 +22,7 @@
  * **1.4.13** — Public `/account-deletion` page + `LEGAL_LINKS.accountDeletion` (Play delete-account URL); nav link; optional `VITE_PUBLIC_ACCOUNT_DELETION_URL`.
  * **1.4.14** — Inbound Twilio: return Dial/voicemail TwiML before CRM (`waitUntil`); native Supabase session via Capacitor Preferences; safer push/GPS permission timing; Quotes estimate-legal-draft sends Supabase URL/anon in body when server env missing.
  * **1.4.17** — Mobile push reliability: startup token re-sync on native installs + safer token upsert wait after permission flow; action bar order unified (Add → Automatic replies → Alerts) in Leads/Conversations/Quotes.
+ * **1.4.18** — Customers tab UX aligned with Conversations (charcoal filter bar, row expand/detail panel, selection colors); Calendar primary actions + view toolbar use matching charcoal control strips; version bump for release.
  *
  * @see CopyrightVersionFooter
  */

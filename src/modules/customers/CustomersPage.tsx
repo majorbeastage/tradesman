@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
@@ -143,67 +143,107 @@ export default function CustomersPage() {
     return sortAsc ? cmp : -cmp
   })
 
+  const selectedRowText = "#0f172a"
+
+  function activateCustomerRow(c: CustomerRow) {
+    if (selectedCustomer?.id === c.id) {
+      setSelectedCustomer(null)
+    } else {
+      setSelectedCustomer(c)
+    }
+  }
+
   return (
-    <div>
-      <h1>Customers</h1>
-      <p style={{ fontSize: "14px", color: "#cbd5e1", marginTop: "4px" }}>
-        All customers from Leads, Conversations, Quotes, and Calendar. Active = has open work; Archived = everything removed or completed.
-      </p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px", minWidth: 0, position: "relative" }}>
+      <div>
+        <h1 style={{ margin: 0 }}>Customers</h1>
+        <p style={{ fontSize: "14px", color: "#cbd5e1", marginTop: "6px", marginBottom: 0 }}>
+          All customers from Leads, Conversations, Quotes, and Calendar. Active = has open work; Archived = everything removed or completed.
+        </p>
+      </div>
 
       {!supabase && (
         <p style={{ color: "#b91c1c" }}>Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to tradesman/.env and restart the dev server.</p>
       )}
 
-      {loadError && <p style={{ color: "#b91c1c", marginBottom: "12px" }}>{loadError}</p>}
+      {loadError && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
 
-      <button onClick={loadCustomers} style={{ marginTop: "8px", padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
-        Refresh
-      </button>
-
-      <div style={{ display: "flex", gap: "16px", marginTop: "16px", flexWrap: "wrap", alignItems: "center" }}>
-        <div>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Section</label>
-          <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "16px",
+          alignItems: "flex-end",
+          marginBottom: 0,
+          padding: "12px",
+          background: theme.charcoalSmoke,
+          borderRadius: "8px",
+          border: `1px solid ${theme.border}`,
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>List</label>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button
+              type="button"
               onClick={() => { setSection("active"); setSelectedCustomer(null) }}
-              style={{ padding: "6px 12px", borderRadius: "6px", border: section === "active" ? `2px solid ${theme.primary}` : "1px solid #d1d5db", background: section === "active" ? "#eff6ff" : "white", cursor: "pointer", color: theme.text }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: section === "active" ? `2px solid ${theme.primary}` : "1px solid #d1d5db",
+                background: section === "active" ? "#eff6ff" : "white",
+                cursor: "pointer",
+                color: theme.text,
+                fontWeight: section === "active" ? 600 : 400,
+              }}
             >
               Active
             </button>
             <button
+              type="button"
               onClick={() => { setSection("archived"); setSelectedCustomer(null) }}
-              style={{ padding: "6px 12px", borderRadius: "6px", border: section === "archived" ? `2px solid ${theme.primary}` : "1px solid #d1d5db", background: section === "archived" ? "#eff6ff" : "white", cursor: "pointer", color: theme.text }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: section === "archived" ? `2px solid ${theme.primary}` : "1px solid #d1d5db",
+                background: section === "archived" ? "#eff6ff" : "white",
+                cursor: "pointer",
+                color: theme.text,
+                fontWeight: section === "archived" ? 600 : 400,
+              }}
             >
               Archived
             </button>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Filter</label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <input
               type="text"
               placeholder="By name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
             />
             <input
               type="text"
               placeholder="By phone..."
               value={filterPhone}
               onChange={(e) => setFilterPhone(e.target.value)}
-              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
             />
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0" }}>Sort by</label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <select
               value={sortField}
               onChange={(e) => setSortField(e.target.value)}
-              style={{ padding: "6px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
             >
               <option value="name">Name</option>
               <option value="phone">Phone</option>
@@ -211,86 +251,189 @@ export default function CustomersPage() {
             <button
               type="button"
               onClick={() => setSortAsc(!sortAsc)}
-              style={{ padding: "6px 10px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}
+              style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
             >
               {sortAsc ? "↑ Asc" : "↓ Desc"}
             </button>
           </div>
         </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginLeft: isMobile ? 0 : "auto" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Reload list</label>
+          <button
+            type="button"
+            onClick={() => void loadCustomers()}
+            style={{
+              padding: "6px 14px",
+              borderRadius: "6px",
+              border: "none",
+              background: theme.primary,
+              color: "white",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div style={{ width: "100%", overflowX: "auto" }}>
-      <table style={{ width: "100%", minWidth: isMobile ? "420px" : "100%", borderCollapse: "collapse", marginTop: "16px", border: "1px solid #ddd", borderRadius: "6px" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd", background: "#f9fafb" }}>
-            <th onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Name</th>
-            <th onClick={() => { setSortField("phone"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Phone</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.length === 0 ? (
-            <tr>
-              <td colSpan={2} style={{ padding: "16px", color: "#6b7280" }}>
-                {section === "active" ? "No active customers." : "No archived customers."}
-              </td>
+        <table style={{ width: "100%", minWidth: isMobile ? "420px" : "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "42%" }} />
+            <col />
+          </colgroup>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+              <th
+                onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Name
+              </th>
+              <th
+                onClick={() => { setSortField("phone"); setSortAsc(!sortAsc) }}
+                style={{ padding: "8px", cursor: "pointer" }}
+              >
+                Phone
+              </th>
             </tr>
-          ) : (
-            sorted.map((c) => {
-              const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || "—"
-              return (
-                <tr
-                  key={c.id}
-                  onClick={() => setSelectedCustomer(c)}
-                  style={{
-                    cursor: "pointer",
-                    borderBottom: "1px solid #eee",
-                    background: selectedCustomer?.id === c.id ? "#f3f4f6" : "transparent"
-                  }}
-                >
-                  <td style={{ padding: "8px" }}>{c.display_name || "—"}</td>
-                  <td style={{ padding: "8px" }}>{phone}</td>
-                </tr>
-              )
-            })
-          )}
-        </tbody>
-      </table>
-      </div>
+          </thead>
+          <tbody>
+            {sorted.length === 0 ? (
+              <tr>
+                <td colSpan={2} style={{ padding: "16px", color: "#6b7280" }}>
+                  {section === "active" ? "No active customers." : "No archived customers."}
+                </td>
+              </tr>
+            ) : (
+              sorted.map((c) => {
+                const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || "—"
+                const isRowSelected = selectedCustomer?.id === c.id
+                const cellBase = { padding: "8px" as const, color: isRowSelected ? selectedRowText : undefined, fontWeight: isRowSelected ? (600 as const) : (400 as const) }
+                return (
+                  <Fragment key={c.id}>
+                    <tr
+                      onClick={() => activateCustomerRow(c)}
+                      style={{
+                        cursor: "pointer",
+                        borderBottom: "1px solid #eee",
+                        background: isRowSelected ? "#bae6fd" : "transparent",
+                      }}
+                    >
+                      <td style={cellBase}>{c.display_name || "—"}</td>
+                      <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={phone !== "—" ? phone : undefined}>
+                        {phone}
+                      </td>
+                    </tr>
+                    {isRowSelected ? (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          style={{
+                            padding: 0,
+                            borderBottom: "1px solid #e5e7eb",
+                            background: "#f8fafc",
+                            verticalAlign: "top",
+                          }}
+                        >
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              padding: "16px 18px 20px",
+                              maxWidth: "min(960px, 100%)",
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                              <div>
+                                <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>
+                                  {c.display_name || "Customer"}
+                                </h3>
+                                <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+                                  Opportunities and actions will grow here. Click the same list row to close this panel.
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label="Close customer detail"
+                                onClick={() => setSelectedCustomer(null)}
+                                style={{
+                                  flexShrink: 0,
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  border: `1px solid ${theme.border}`,
+                                  background: "#fff",
+                                  cursor: "pointer",
+                                  fontSize: 18,
+                                  lineHeight: 1,
+                                  color: theme.text,
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
 
-      {selectedCustomer && (
-        <div style={{ marginTop: "20px", padding: isMobile ? "16px" : "20px", border: "1px solid #ddd", borderRadius: "6px" }}>
-          <button
-            onClick={() => setSelectedCustomer(null)}
-            style={{ marginBottom: "16px" }}
-          >
-            ← Back to list
-          </button>
-          <h3 style={{ marginTop: 0 }}>Customer</h3>
-          <p><strong>Name:</strong> {selectedCustomer.display_name || "—"}</p>
-          <div style={{ margin: "8px 0" }}>
-            <strong>Phone:</strong>{" "}
-            {(() => {
-              const ph = selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
-              return ph.trim() ? (
-                <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact />
-              ) : (
-                "—"
-              )
-            })()}
-          </div>
-          <p><strong>Email:</strong> {selectedCustomer.customer_identifiers?.find((i) => i.type === "email")?.value ?? "—"}</p>
-          <button
-            type="button"
-            onClick={() => {
-              setNotesCustomerId(selectedCustomer.id)
-              setNotesCustomerName(selectedCustomer.display_name ?? "")
-            }}
-            style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-          >
-            Notes
-          </button>
-        </div>
-      )}
+                            <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                                <div style={{ fontWeight: 700, color: theme.text }}>Customer details</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNotesCustomerId(c.id)
+                                      setNotesCustomerName(c.display_name ?? "")
+                                    }}
+                                    style={{
+                                      padding: "4px 10px",
+                                      fontSize: "12px",
+                                      background: theme.primary,
+                                      color: "white",
+                                      border: "none",
+                                      borderRadius: "6px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Notes
+                                  </button>
+                                </div>
+                              </div>
+                              <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
+                                <div>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Name</span>
+                                  <div style={{ marginTop: 2 }}>{c.display_name || "—"}</div>
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Phone</span>
+                                  <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    {(() => {
+                                      const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
+                                      return ph.trim() ? (
+                                        <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact />
+                                      ) : (
+                                        "—"
+                                      )
+                                    })()}
+                                  </div>
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Email</span>
+                                  <div style={{ marginTop: 2 }}>{c.customer_identifiers?.find((i) => i.type === "email")?.value ?? "—"}</div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {notesCustomerId && (
         <CustomerNotesPanel
