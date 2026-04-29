@@ -67,6 +67,7 @@ const TIMEZONE_OPTIONS = [
 const DAY_KEYS: DayKey[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
+const PROFILE_PHOTOS_BUCKET = "profile-photos"
 
 const ACCOUNT_SECTION_CARD: CSSProperties = {
   padding: 16,
@@ -190,6 +191,8 @@ export function AccountProfilePanel({
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
+  const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -253,6 +256,8 @@ export function AccountProfilePanel({
         const metaObj =
           metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
         const uiLang = metaObj.ui_language === "es" ? "es" : "en"
+        const purl = metaObj.profile_photo_url
+        setProfilePhotoUrl(typeof purl === "string" && purl.trim().startsWith("http") ? purl.trim() : null)
         const row = data as {
           service_radius_enabled?: boolean | null
           service_radius_miles?: number | string | null
@@ -307,6 +312,52 @@ export function AccountProfilePanel({
   }, [profileUserId])
 
   /** Language is saved immediately so My T works even when Contact & profile is hidden in portal. */
+  async function handleProfilePhotoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file || !supabase || !profileUserId || profileUserId !== user?.id) return
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file (PNG or JPEG).")
+      return
+    }
+    setUploadingProfilePhoto(true)
+    setError("")
+    setMessage("")
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase()
+      const safeExt = ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp" ? ext : "jpg"
+      const path = `${profileUserId}/avatar_${Date.now()}.${safeExt}`
+      const { error: upErr } = await supabase.storage.from(PROFILE_PHOTOS_BUCKET).upload(path, file, {
+        upsert: true,
+        contentType: file.type || "image/jpeg",
+      })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from(PROFILE_PHOTOS_BUCKET).getPublicUrl(path)
+      const url = pub?.publicUrl
+      if (!url) throw new Error("Could not get public URL for profile photo.")
+
+      const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (metaErr) throw metaErr
+      const prevMeta =
+        metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+          ? { ...(metaRow.metadata as Record<string, unknown>) }
+          : {}
+      prevMeta.profile_photo_url = url
+      const { error: upMeta } = await supabase
+        .from("profiles")
+        .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
+        .eq("id", profileUserId)
+      if (upMeta) throw upMeta
+      setProfilePhotoUrl(url)
+      await refetchProfile()
+      setMessage("Profile photo updated.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploadingProfilePhoto(false)
+    }
+  }
+
   async function persistUiLanguage(next: "en" | "es") {
     if (!supabase || !profileUserId) return
     setLanguageSaving(true)
@@ -568,6 +619,53 @@ export function AccountProfilePanel({
             <div style={ACCOUNT_SECTION_CARD}>
               <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.section.contactTitle")}</h2>
               <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.section.contactSub")}</p>
+              {!adminContext && user?.id === profileUserId ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
+                  <div
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: "50%",
+                      border: `2px solid ${theme.border}`,
+                      overflow: "hidden",
+                      background: "#f1f5f9",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {profilePhotoUrl ? (
+                      <img src={profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 6 }}>
+                        No photo
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
+                    <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                      Shown next to My T in the app header. Square images work best. Requires the <code style={{ fontSize: 11 }}>profile-photos</code> bucket — run{" "}
+                      <code style={{ fontSize: 11 }}>supabase/profile-photos-storage.sql</code> if upload fails.
+                    </span>
+                    <label style={{ display: "inline-flex" }}>
+                      <span
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: 8,
+                          border: `1px solid ${theme.border}`,
+                          background: uploadingProfilePhoto ? "#f1f5f9" : "#fff",
+                          color: theme.text,
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: uploadingProfilePhoto ? "wait" : "pointer",
+                        }}
+                      >
+                        {uploadingProfilePhoto ? "Uploading…" : "Upload photo"}
+                      </span>
+                      <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleProfilePhotoChange(ev)} disabled={uploadingProfilePhoto} style={{ display: "none" }} />
+                    </label>
+                  </div>
+                </div>
+              ) : null}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.loginEmail")}</span>

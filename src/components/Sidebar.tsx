@@ -6,6 +6,7 @@ import accountIcon from "../assets/MyT.png"
 import { TAB_ID_LABELS } from "../types/portal-builder"
 import { useLocale } from "../i18n/LocaleContext"
 import { formatPortalTabLabel } from "../i18n/navLabel"
+import { useAuth } from "../contexts/AuthContext"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -32,6 +33,7 @@ const DEFAULT_TABS = [
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const { t } = useLocale()
+  const { profilePhotoUrl } = useAuth()
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
   const mobileTabButtonStyle: CSSProperties = {
     width: "100%",
@@ -274,11 +276,23 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              alignSelf: "flex-start"
+              alignSelf: "flex-start",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
             }}
             title={t("layout.account")}
           >
-            <img src={accountIcon} alt={t("layout.account")} style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
+            <img src={accountIcon} alt="" style={{ width: "52px", height: "36px", display: "block", objectFit: "contain" }} />
+            {profilePhotoUrl ? (
+              <img
+                src={profilePhotoUrl}
+                alt=""
+                width={40}
+                height={40}
+                style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.35)", display: "block" }}
+              />
+            ) : null}
           </button>
         ) : null}
       </div>

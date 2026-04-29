@@ -13,6 +13,9 @@ import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
+import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
+import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
+import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { geocodeAddressToLatLng, mergeJobSiteIntoMetadata, parseJobSiteFromEventMetadata } from "../../lib/jobSiteLocation"
 import { theme } from "../../styles/theme"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
@@ -213,6 +216,12 @@ function formatOutboundError(raw: string): string {
   return t.length > 280 ? `${t.slice(0, 280)}…` : t
 }
 
+type CalendarSuiteState =
+  | { id: "calendar" }
+  | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" }
+  | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
+  | { id: "managed_job_types" }
+
 function mergeCompletionMetadata(prevMeta: unknown, note: string): Record<string, unknown> {
   const prev =
     prevMeta && typeof prevMeta === "object" && !Array.isArray(prevMeta) ? { ...(prevMeta as Record<string, unknown>) } : {}
@@ -273,27 +282,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [expanded, setExpanded] = useState(false)
   const [showAddItem, setShowAddItem] = useState(false)
-  const [showJobTypes, setShowJobTypes] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showCustomizeUser, setShowCustomizeUser] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
-  const [showTeamMapModal, setShowTeamMapModal] = useState(false)
+  const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
+  const managedByOfficeManager = useManagedByOfficeManager()
+  const [managedSelfPolicy, setManagedSelfPolicy] = useState(() => parseOmCalendarPolicy({}))
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
   const [calendarCompletionProfile, setCalendarCompletionProfile] = useState<Record<string, string>>({})
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
-  const [prefRibbonColor, setPrefRibbonColor] = useState("#0ea5e9")
-  const [prefAutoAssignEnabled, setPrefAutoAssignEnabled] = useState(true)
-  const [prefSaving, setPrefSaving] = useState(false)
-  const [prefMessage, setPrefMessage] = useState("")
-  const [customizeTargetUserId, setCustomizeTargetUserId] = useState("")
   const [addTargetUserId, setAddTargetUserId] = useState("")
   const [addAssignToSelectedUser, setAddAssignToSelectedUser] = useState(true)
   const [showAllOrgEvents, setShowAllOrgEvents] = useState(() => {
@@ -312,12 +316,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     return userId ? [userId] : []
   }, [scopeCtx?.clients, userId])
-
-  /** OM portal has scope with loaded clients; keep map visible if auth `role` is briefly null after token refresh. */
-  const showTeamMapButton =
-    authRole === "office_manager" ||
-    authRole === "admin" ||
-    (scopeCtx != null && !scopeCtx.loadingClients && scopeCtx.clients.length > 0)
 
   // Add item form
   const [addTitle, setAddTitle] = useState("")
@@ -421,7 +419,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const showCalAutoResponse = false
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
-  const showCalCustomizeUser = getOmPageActionVisible(portalConfig, "calendar", "customize_user")
   const showCalReceiptTemplate =
     getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
   const showCalCompletionSettings = false
@@ -500,8 +497,37 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddItemPortalValues(next)
   }, [showAddItem, addItemPortalItems])
 
+  const jobTypesSurfaceActive =
+    calendarSuite.id === "managed_job_types" ||
+    (calendarSuite.id === "team_management" && calendarSuite.panel === "job_types") ||
+    (calendarSuite.id === "scheduling_tools" && calendarSuite.panel === "job_types")
+
+  const isOfficeManagerOrAdmin = authRole === "office_manager" || authRole === "admin"
+  const showTeamManagementEntry = isOfficeManagerOrAdmin
+  const showSchedulingToolsStandalone = authRole === "user" && !managedByOfficeManager && !isOfficeManagerOrAdmin
+  const showAddOnMainCalendar = showCalAddItem && (!managedByOfficeManager || managedSelfPolicy.allow_add_to_calendar !== false)
+  const showManagedJobTypesEntry =
+    managedByOfficeManager && authRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off"
+
   useEffect(() => {
-    if (!showJobTypes) return
+    if (!managedByOfficeManager || !supabase || !authUserId) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", authUserId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        setManagedSelfPolicy(parseOmCalendarPolicy(data?.metadata))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [managedByOfficeManager, supabase, authUserId])
+
+  useEffect(() => {
+    if (!jobTypesSurfaceActive) return
     if (jobTypesPortalItems.length === 0) {
       setJobTypesPortalValues({})
       return
@@ -524,7 +550,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
     }
     setJobTypesPortalValues(next)
-  }, [showJobTypes, jobTypesPortalItems])
+  }, [jobTypesSurfaceActive, jobTypesPortalItems])
 
   useEffect(() => {
     if (!showAutoResponse) return
@@ -1317,7 +1343,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       .eq("owner_user_id", ownerUserId)
       .maybeSingle()
     if (error) {
-      setPrefMessage(error.message)
       return null
     }
     const row = (data as UserCalendarPreference | null) ?? null
@@ -1394,7 +1419,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   useEffect(() => {
-    if (!showJobTypes || !supabase || !userId) return
+    if (!jobTypesSurfaceActive || !supabase || !userId) return
     let cancelled = false
     void supabase
       .from("profiles")
@@ -1412,7 +1437,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return () => {
       cancelled = true
     }
-  }, [showJobTypes, supabase, userId])
+  }, [jobTypesSurfaceActive, supabase, userId])
 
   useEffect(() => {
     if (!editingJobTypeId) return
@@ -1564,9 +1589,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!userId) return
     void loadUserPreference(userId).then((row) => {
       setUserPref(row)
-      setPrefRibbonColor(row?.ribbon_color?.trim() || "#0ea5e9")
-      setPrefAutoAssignEnabled(row?.auto_assign_enabled !== false)
-      setCustomizeTargetUserId(userId)
       setAddTargetUserId(userId)
     })
   }, [userId])
@@ -1578,15 +1600,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     void loadEntityAttachmentsForCalendarEvent(selectedEvent.id).then(setCalendarEventEntityRows)
   }, [selectedEvent?.id, supabase])
-
-  useEffect(() => {
-    if (!showCustomizeUser || !customizeTargetUserId) return
-    setPrefMessage("")
-    void loadUserPreference(customizeTargetUserId).then((row) => {
-      setPrefRibbonColor(row?.ribbon_color?.trim() || "#0ea5e9")
-      setPrefAutoAssignEnabled(row?.auto_assign_enabled !== false)
-    })
-  }, [showCustomizeUser, customizeTargetUserId])
 
   useEffect(() => {
     if (!showAddItem || !addTargetUserId) return
@@ -1992,79 +2005,176 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           boxSizing: "border-box",
         }}
       >
-        {showCalAddItem && (
-          <button
-            onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
-            style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
-          >
-            Add item to calendar
-          </button>
-        )}
-        {showCalAutoResponse && (
-          <button
-            onClick={() => setShowAutoResponse(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            Auto Response Options
-          </button>
-        )}
-        {showCalJobTypes && (
-          <button
-            onClick={() => setShowJobTypes(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            Job Types
-          </button>
-        )}
-        {showCalSettings && (
-          <button
-            onClick={() => setShowSettings(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            Settings
-          </button>
-        )}
-        {showCalCompletionSettings && (
-          <button
-            type="button"
-            onClick={() => setShowCompletionSettingsModal(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            {completionSettingsButtonLabel}
-          </button>
-        )}
-        {showCalReceiptTemplate && (
-          <button
-            type="button"
-            onClick={() => setShowReceiptTemplateModal(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            {receiptTemplateButtonLabel}
-          </button>
-        )}
-        {showCalCustomizeUser && (
-          <button
-            onClick={() => { setPrefMessage(""); setShowCustomizeUser(true) }}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-          >
-            Customize user
-          </button>
-        )}
-        {customActionButtons.map((btn) => (
-          <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
-        ))}
-        {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
-        {showTeamMapButton && (
-          <button
-            type="button"
-            onClick={() => setShowTeamMapModal(true)}
-            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#f0fdf4", cursor: "pointer", color: theme.text, fontWeight: 600 }}
-          >
-            Team map (beta)
-          </button>
+        {calendarSuite.id === "calendar" ? (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              {showAddOnMainCalendar ? (
+                <button
+                  type="button"
+                  onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
+                  style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: 600 }}
+                >
+                  Add item to calendar
+                </button>
+              ) : null}
+              {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
+            </div>
+            {showCalAutoResponse ? (
+              <button
+                type="button"
+                onClick={() => setShowAutoResponse(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+              >
+                Auto Response Options
+              </button>
+            ) : null}
+            {showCalJobTypes && !showTeamManagementEntry && !managedByOfficeManager && !showSchedulingToolsStandalone ? (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+              >
+                Job Types
+              </button>
+            ) : null}
+            {showCalSettings ? (
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+              >
+                Settings
+              </button>
+            ) : null}
+            {showCalCompletionSettings ? (
+              <button
+                type="button"
+                onClick={() => setShowCompletionSettingsModal(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {completionSettingsButtonLabel}
+              </button>
+            ) : null}
+            {showCalReceiptTemplate ? (
+              <button
+                type="button"
+                onClick={() => setShowReceiptTemplateModal(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+              >
+                {receiptTemplateButtonLabel}
+              </button>
+            ) : null}
+            {showManagedJobTypesEntry ? (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "managed_job_types" })}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
+              >
+                Job types
+              </button>
+            ) : null}
+            {showTeamManagementEntry ? (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+              >
+                Team management
+              </button>
+            ) : null}
+            {showSchedulingToolsStandalone ? (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+              >
+                Scheduling tools
+              </button>
+            ) : null}
+            {customActionButtons.map((btn) => (
+              <button key={btn.id} type="button" onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>
+                {btn.label}
+              </button>
+            ))}
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setCalendarSuite({ id: "calendar" })}
+              style={{
+                padding: "8px 14px",
+                borderRadius: "6px",
+                border: `2px solid ${theme.primary}`,
+                background: "#eff6ff",
+                cursor: "pointer",
+                color: theme.text,
+                fontWeight: 700,
+              }}
+            >
+              Return to calendar view
+            </button>
+            {calendarSuite.id === "team_management" ? (
+              <>
+                {(["team_members", "job_types", "team_map"] as const).map((panel) => {
+                  const active = calendarSuite.panel === panel
+                  const label = panel === "team_members" ? "Team member options" : panel === "job_types" ? "Job types" : "Team map"
+                  return (
+                    <button
+                      key={panel}
+                      type="button"
+                      onClick={() => setCalendarSuite({ id: "team_management", panel })}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: "6px",
+                        border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                        background: active ? "#eff6ff" : "white",
+                        cursor: "pointer",
+                        color: theme.text,
+                        fontWeight: active ? 700 : 500,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </>
+            ) : null}
+            {calendarSuite.id === "scheduling_tools" ? (
+              <>
+                {(["job_types", "customer_map"] as const).map((panel) => {
+                  const active = calendarSuite.panel === panel
+                  const label = panel === "job_types" ? "Job types" : "Customer locations map"
+                  return (
+                    <button
+                      key={panel}
+                      type="button"
+                      onClick={() => setCalendarSuite({ id: "scheduling_tools", panel })}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: "6px",
+                        border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                        background: active ? "#eff6ff" : "white",
+                        cursor: "pointer",
+                        color: theme.text,
+                        fontWeight: active ? 700 : 500,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </>
+            ) : null}
+            {calendarSuite.id === "managed_job_types" ? (
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>Job types (office-managed)</span>
+            ) : null}
+          </>
         )}
       </div>
 
+      {calendarSuite.id === "calendar" ? (
+      <>
       {/* Calendar area: view switcher + expand + job types */}
       <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", background: "white", overflow: "hidden" }}>
         <div
@@ -2362,6 +2472,222 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         </div>
         </div>
       </div>
+      </>
+      ) : (
+        <div
+          style={{
+            border: `1px solid ${theme.border}`,
+            borderRadius: "8px",
+            background: "white",
+            padding: isMobile ? "14px" : "20px",
+            overflow: "auto",
+            maxHeight: "calc(100vh - 220px)",
+            boxSizing: "border-box",
+          }}
+        >
+          {calendarSuite.id === "team_management" && calendarSuite.panel === "team_members" && authUserId ? (
+            <CalendarTeamManagementPanel
+              officeManagerUserId={authUserId}
+              roster={
+                scopeCtx?.clients?.length
+                  ? scopeCtx.clients
+                  : [{ userId: authUserId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
+              }
+              managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+            />
+          ) : null}
+          {calendarSuite.id === "team_management" && calendarSuite.panel === "team_map" && teamMapUserIds.length > 0 ? (
+            <TeamLocationsMapModal
+              variant="embedded"
+              members={selectableUsers.map((u) => ({ userId: u.userId, label: u.label, isSelf: u.isSelf }))}
+              orgUserIdsForJobs={teamMapUserIds}
+              onClose={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
+            />
+          ) : null}
+          {calendarSuite.id === "scheduling_tools" && calendarSuite.panel === "customer_map" && authUserId ? (
+            <TeamLocationsMapModal
+              variant="embedded"
+              members={[{ userId: authUserId, label: "My jobs on map" }]}
+              orgUserIdsForJobs={[authUserId]}
+              onClose={() => {}}
+            />
+          ) : null}
+          {jobTypesSurfaceActive ? (
+            <div style={{ maxWidth: 900 }}>
+              <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job types</h3>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, opacity: 0.9 }}>
+                Same job types as <strong>Quotes</strong> (materials + line templates), so both tabs stay consistent.
+              </p>
+              {jobTypesLoadError && (
+                <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
+                  Could not load job types: {jobTypesLoadError}
+                  <br />
+                  <strong>Fix:</strong> In Supabase Dashboard → SQL Editor, run the full script in <code style={{ fontSize: "12px" }}>tradesman/supabase-job-types-setup.sql</code>, then reload this view.
+                </p>
+              )}
+              <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>
+                Create job types with description, time required, color, optional materials checklist, and links to saved quote line templates.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+                <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
+                <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    value={jtDurationUnit}
+                    onChange={(e) => {
+                      const nextUnit = e.target.value === "60" ? 60 : 15
+                      const parsed =
+                        jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
+                      setJtDurationUnit(nextUnit)
+                      if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
+                    }}
+                    style={{ ...theme.formInput, width: "120px" }}
+                  >
+                    <option value={60}>Hours</option>
+                    <option value={15}>Minutes</option>
+                  </select>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={jtDurationUnit === 60 ? "Duration (hours)" : "Duration (minutes)"}
+                    value={jtDurationStr}
+                    onChange={(e) => setJtDurationStr(e.target.value)}
+                    onBlur={() => {
+                      const parsed =
+                        jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
+                      if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, jtDurationUnit))
+                    }}
+                    style={{ ...theme.formInput, width: "120px" }}
+                  />
+                  <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
+                  <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
+                </div>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
+                  Materials checklist (optional, one line per item — copied to new events; editable per event)
+                  <textarea
+                    value={jtMaterials}
+                    onChange={(e) => setJtMaterials(e.target.value)}
+                    rows={4}
+                    placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
+                    style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
+                  <input type="checkbox" checked={jtTrackMileage} onChange={(e) => setJtTrackMileage(e.target.checked)} />
+                  Track mileage on calendar events (mileage field when this job type is selected)
+                </label>
+                <details
+                  style={{
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    padding: "8px 10px",
+                  }}
+                >
+                  <summary
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: "#111827",
+                      cursor: "pointer",
+                      listStyle: "none",
+                    }}
+                  >
+                    Saved line templates
+                    {estimateLinePresetsCal.length > 0 ? (
+                      <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresetsCal.length})</span>
+                    ) : null}
+                  </summary>
+                  <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
+                    Check lines to link them to this job type. Manage the full list under <strong style={{ color: "#111827" }}>Quotes → Saved line templates</strong>.
+                  </p>
+                  {estimateLinePresetsCal.length === 0 ? (
+                    <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
+                  ) : (
+                    <div
+                      style={{
+                        maxHeight: 220,
+                        overflow: "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        padding: 8,
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#f9fafb",
+                      }}
+                    >
+                      {estimateLinePresetsCal.map((p) => {
+                        const costLine = formatEstimatePresetCostSummary(p)
+                        return (
+                          <label
+                            key={p.id}
+                            style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
+                          >
+                            <input
+                              type="checkbox"
+                              style={{ marginTop: 4, flexShrink: 0 }}
+                              checked={jtModalPresetChecksCal[p.id] === true}
+                              onChange={(e) =>
+                                setJtModalPresetChecksCal((prev) => ({ ...prev, [p.id]: e.target.checked }))
+                              }
+                            />
+                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+                              <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
+                              {costLine ? <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span> : null}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                </details>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button type="button" onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
+                    {jtSaving ? (editingJobTypeId ? "Updating..." : "Adding...") : editingJobTypeId ? "Update job type" : "Add job type"}
+                  </button>
+                  {editingJobTypeId ? (
+                    <button type="button" onClick={cancelEditJobType} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: "12px" }}>
+                <h4 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>Your job types</h4>
+                {jobTypes.length === 0 && !jobTypesLoadError ? (
+                  <p style={{ margin: 0, fontSize: "13px", color: "#6b7280" }}>No job types yet. Create one above; they will appear here and in the &quot;Add to calendar&quot; job type dropdown.</p>
+                ) : jobTypes.length === 0 ? null : (
+                  jobTypes.map((jt) => (
+                    <div key={jt.id} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", padding: "8px", background: "#f9fafb", borderRadius: "6px", flexWrap: "wrap" }}>
+                      <div style={{ width: "16px", height: "16px", borderRadius: "4px", background: jt.color_hex ?? theme.primary, flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontWeight: 600, color: theme.text }}>{jt.name}</span>
+                      <span style={{ fontSize: "13px", color: "#6b7280" }}>{jt.duration_minutes} min</span>
+                      <button type="button" onClick={() => startEditJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => removeJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: "1px solid #fca5a5", borderRadius: "6px", background: "white", cursor: "pointer", color: "#b91c1c" }}>
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (calendarSuite.id === "managed_job_types") setCalendarSuite({ id: "calendar" })
+                  else if (calendarSuite.id === "team_management") setCalendarSuite({ id: "team_management", panel: "team_members" })
+                  else if (calendarSuite.id === "scheduling_tools") setCalendarSuite({ id: "calendar" })
+                }}
+                style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, cursor: "pointer", color: theme.text }}
+              >
+                Done
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Add item modal */}
       {showAddItem && (
@@ -2515,173 +2841,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         </>
       )}
 
-      {/* Job Types modal */}
-      {showJobTypes && (
-        <>
-          <div onClick={() => setShowJobTypes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "520px", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-            <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job Types</h3>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, opacity: 0.9 }}>
-              Same job types as <strong>Quotes</strong> (materials + line templates), so both tabs stay consistent.
-            </p>
-            {jobTypesLoadError && (
-              <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
-                Could not load job types: {jobTypesLoadError}
-                <br />
-                <strong>Fix:</strong> In Supabase Dashboard → SQL Editor, run the full script in <code style={{ fontSize: "12px" }}>tradesman/supabase-job-types-setup.sql</code>, then close and reopen this window.
-              </p>
-            )}
-            <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>Create job types with description, time required, color, optional materials checklist, and links to saved quote line templates.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
-              <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
-              <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <select
-                  value={jtDurationUnit}
-                  onChange={(e) => {
-                    const nextUnit = e.target.value === "60" ? 60 : 15
-                    const parsed =
-                      jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
-                    setJtDurationUnit(nextUnit)
-                    if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
-                  }}
-                  style={{ ...theme.formInput, width: "120px" }}
-                >
-                  <option value={60}>Hours</option>
-                  <option value={15}>Minutes</option>
-                </select>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={jtDurationUnit === 60 ? "Duration (hours)" : "Duration (minutes)"}
-                  value={jtDurationStr}
-                  onChange={(e) => setJtDurationStr(e.target.value)}
-                  onBlur={() => {
-                    const parsed =
-                      jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
-                    if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, jtDurationUnit))
-                  }}
-                  style={{ ...theme.formInput, width: "120px" }}
-                />
-                <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
-                <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
-              </div>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
-                Materials checklist (optional, one line per item — copied to new events; editable per event)
-                <textarea
-                  value={jtMaterials}
-                  onChange={(e) => setJtMaterials(e.target.value)}
-                  rows={4}
-                  placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
-                  style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
-                />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-                <input type="checkbox" checked={jtTrackMileage} onChange={(e) => setJtTrackMileage(e.target.checked)} />
-                Track mileage on calendar events (mileage field when this job type is selected)
-              </label>
-              <details
-                style={{
-                  borderRadius: 6,
-                  border: `1px solid ${theme.border}`,
-                  background: "#fff",
-                  padding: "8px 10px",
-                }}
-              >
-                <summary
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: "#111827",
-                    cursor: "pointer",
-                    listStyle: "none",
-                  }}
-                >
-                  Saved line templates
-                  {estimateLinePresetsCal.length > 0 ? (
-                    <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresetsCal.length})</span>
-                  ) : null}
-                </summary>
-                <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
-                  Check lines to link them to this job type. Manage the full list under <strong style={{ color: "#111827" }}>Quotes → Saved line templates</strong>.
-                </p>
-                {estimateLinePresetsCal.length === 0 ? (
-                  <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
-                ) : (
-                  <div
-                    style={{
-                      maxHeight: 220,
-                      overflow: "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      padding: 8,
-                      borderRadius: 6,
-                      border: `1px solid ${theme.border}`,
-                      background: "#f9fafb",
-                    }}
-                  >
-                    {estimateLinePresetsCal.map((p) => {
-                      const costLine = formatEstimatePresetCostSummary(p)
-                      return (
-                        <label
-                          key={p.id}
-                          style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
-                        >
-                          <input
-                            type="checkbox"
-                            style={{ marginTop: 4, flexShrink: 0 }}
-                            checked={jtModalPresetChecksCal[p.id] === true}
-                            onChange={(e) =>
-                              setJtModalPresetChecksCal((prev) => ({ ...prev, [p.id]: e.target.checked }))
-                            }
-                          />
-                          <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-                            <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
-                            {costLine ? <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span> : null}
-                          </span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                )}
-              </details>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
-                  {jtSaving ? (editingJobTypeId ? "Updating..." : "Adding...") : editingJobTypeId ? "Update job type" : "Add job type"}
-                </button>
-                {editingJobTypeId && (
-                  <button onClick={cancelEditJobType} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </div>
-            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: "12px" }}>
-              <h4 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>Your job types</h4>
-              {jobTypes.length === 0 && !jobTypesLoadError ? (
-                <p style={{ margin: 0, fontSize: "13px", color: "#6b7280" }}>No job types yet. Create one above; they will appear here and in the &quot;Add to calendar&quot; job type dropdown.</p>
-              ) : jobTypes.length === 0 ? null : (
-                jobTypes.map((jt) => (
-                  <div key={jt.id} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", padding: "8px", background: "#f9fafb", borderRadius: "6px" }}>
-                    <div style={{ width: "16px", height: "16px", borderRadius: "4px", background: jt.color_hex ?? theme.primary, flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontWeight: 600, color: theme.text }}>{jt.name}</span>
-                    <span style={{ fontSize: "13px", color: "#6b7280" }}>{jt.duration_minutes} min</span>
-                    <button type="button" onClick={() => startEditJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => removeJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: "1px solid #fca5a5", borderRadius: "6px", background: "white", cursor: "pointer", color: "#b91c1c" }}>
-                      Remove
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            <button onClick={() => setShowJobTypes(false)} style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, cursor: "pointer", color: theme.text }}>Done</button>
-          </div>
-        </>
-      )}
-
       {showSettings && (
         <PortalSettingsModal
           title="Calendar Settings"
@@ -2726,82 +2885,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           }
         />
       )}
-      {showCustomizeUser && (
-        <>
-          <div onClick={() => setShowCustomizeUser(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "440px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-            <h3 style={{ margin: "0 0 12px", color: theme.text }}>Customize user calendar</h3>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, opacity: 0.85 }}>
-              {scopeCtx?.clients.find((c) => c.userId === customizeTargetUserId)?.isSelf ? "You are customizing your own calendar." : "This applies to the selected user."}
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: theme.text, fontSize: 14 }}>
-                Select user
-                <select
-                  value={customizeTargetUserId}
-                  onChange={(e) => setCustomizeTargetUserId(e.target.value)}
-                  style={{ ...addInputStyle, maxWidth: "100%" }}
-                >
-                  {selectableUsers.map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      {u.label}{u.email ? ` (${u.email})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontSize: 14 }}>
-                Ribbon color
-                <input type="color" value={prefRibbonColor} onChange={(e) => setPrefRibbonColor(e.target.value)} />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 14 }}>
-                <input
-                  type="checkbox"
-                  checked={prefAutoAssignEnabled}
-                  onChange={(e) => setPrefAutoAssignEnabled(e.target.checked)}
-                />
-                Auto-assign new calendar items to selected user
-              </label>
-              <button
-                type="button"
-                disabled={prefSaving || !customizeTargetUserId || !supabase}
-                onClick={async () => {
-                  if (!customizeTargetUserId || !supabase) return
-                  setPrefSaving(true)
-                  setPrefMessage("")
-                  const payload = {
-                    owner_user_id: customizeTargetUserId,
-                    ribbon_color: prefRibbonColor,
-                    auto_assign_enabled: prefAutoAssignEnabled,
-                    updated_at: new Date().toISOString(),
-                  }
-                  const { error } = await supabase.from("user_calendar_preferences").upsert(payload, { onConflict: "owner_user_id" })
-                  setPrefSaving(false)
-                  if (error) {
-                    setPrefMessage(error.message)
-                    return
-                  }
-                  if (customizeTargetUserId === userId) {
-                    setUserPref({
-                      owner_user_id: userId,
-                      ribbon_color: prefRibbonColor,
-                      auto_assign_enabled: prefAutoAssignEnabled,
-                    })
-                  }
-                  setPrefMessage("Saved.")
-                }}
-                style={{ padding: "9px 14px", background: theme.primary, color: "white", border: "none", borderRadius: 6, cursor: prefSaving ? "wait" : "pointer", fontWeight: 600 }}
-              >
-                {prefSaving ? "Saving..." : "Save customization"}
-              </button>
-              {prefMessage && <p style={{ margin: 0, fontSize: 12, color: prefMessage === "Saved." ? "#059669" : "#b91c1c" }}>{prefMessage}</p>}
-              <button onClick={() => setShowCustomizeUser(false)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
-                Close
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
       {openCustomButtonId && (() => {
         const btn = customActionButtons.find((b) => b.id === openCustomButtonId)
         if (!btn) return null
@@ -3048,13 +3131,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         </>
       )}
 
-      {showTeamMapModal && (
-        <TeamLocationsMapModal
-          members={selectableUsers.map((u) => ({ userId: u.userId, label: u.label, isSelf: u.isSelf }))}
-          orgUserIdsForJobs={teamMapUserIds}
-          onClose={() => setShowTeamMapModal(false)}
-        />
-      )}
 
       {selectedEvent && (
         <>

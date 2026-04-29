@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { supabase } from "../lib/supabase"
@@ -36,6 +36,8 @@ type Props = {
   /** User IDs whose calendars are searched for “next job” pins (usually same as all members). */
   orgUserIdsForJobs: string[]
   onClose: () => void
+  /** Inline panel (no modal overlay); used inside Calendar → Team management. */
+  variant?: "modal" | "embedded"
 }
 
 function normalizeCustomerJoin(
@@ -46,7 +48,7 @@ function normalizeCustomerJoin(
   return c
 }
 
-export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onClose }: Props) {
+export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onClose, variant = "modal" }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -241,30 +243,45 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
     }
   }, [members.length, orderedIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, viewUserId, activeLocationUserIds.join(",")])
 
-  return (
-    <>
-      <div role="presentation" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 10000 }} />
-      <div
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: "min(760px, 94vw)",
-          maxHeight: "90vh",
-          overflow: "hidden",
-          background: "#fff",
-          borderRadius: 10,
-          padding: 16,
-          zIndex: 10001,
-          boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <h3 style={{ margin: 0, fontSize: 17, color: theme.text }}>Team map</h3>
+  const embedded = variant === "embedded"
+  const shellStyle: CSSProperties = embedded
+    ? {
+        position: "relative",
+        width: "100%",
+        maxWidth: "100%",
+        overflow: "hidden",
+        background: "#fff",
+        borderRadius: 10,
+        padding: 16,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        border: `1px solid ${theme.border}`,
+      }
+    : {
+        position: "fixed",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+        width: "min(760px, 94vw)",
+        maxHeight: "90vh",
+        overflow: "hidden",
+        background: "#fff",
+        borderRadius: 10,
+        padding: 16,
+        zIndex: 10001,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }
+
+  const inner = (
+    <div style={shellStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: 17, color: theme.text }}>Team map</h3>
+        {!embedded ? (
           <button
             type="button"
             onClick={onClose}
@@ -280,66 +297,83 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
           >
             Close
           </button>
-        </div>
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", fontSize: 13, color: theme.text }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-            Show
-            <select
-              value={viewUserId}
-              onChange={(e) => setViewUserId(e.target.value)}
-              style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, minWidth: 200 }}
-            >
-              <option value="all">Entire team</option>
-              {members.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
-            Next job pins
-          </label>
-        </div>
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Legend</span>
-          {orderedIds.map((uid) => {
-            const n = teamMemberDisplayIndex(uid, orderedIds)
-            const { fill, stroke } = teamMarkerColors(n)
-            return (
-              <span
-                key={uid}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                  padding: "4px 8px",
-                  borderRadius: 999,
-                  border: `1px solid ${theme.border}`,
-                  background: "#f8fafc",
-                }}
-              >
-                <span style={{ width: 18, height: 18, borderRadius: 999, background: fill, border: `2px solid ${stroke}` }} />
-                <strong>#{n}</strong> {labelById.get(uid) ?? uid.slice(0, 6)}
-              </span>
-            )
-          })}
-          <span style={{ fontSize: 11, color: "#64748b" }}>Solid = last GPS · dashed = next job (needs lat/lng on customer or job site)</span>
-        </div>
-
-        <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-          Last position from users who enabled GPS under Account → Mobile app. Numbers match the roster order above. Add{" "}
-          <strong>service address + coordinates</strong> on customers (Leads / Quotes / Conversations) or <strong>job site</strong> on a
-          calendar event so the next job can appear on the map.
-        </p>
-        {error && <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{error}</p>}
-        {loading && <p style={{ margin: 0, fontSize: 13, color: theme.text }}>Loading map…</p>}
-        <div ref={mapRef} style={{ height: "min(52vh, 440px)", width: "100%", borderRadius: 8, border: `1px solid ${theme.border}` }} />
+        ) : null}
       </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", fontSize: 13, color: theme.text }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+          Show
+          <select
+            value={viewUserId}
+            onChange={(e) => setViewUserId(e.target.value)}
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, minWidth: 200 }}
+          >
+            <option value="all">Entire team</option>
+            {members.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+          <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
+          Next job pins
+        </label>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Legend</span>
+        {orderedIds.map((uid) => {
+          const n = teamMemberDisplayIndex(uid, orderedIds)
+          const { fill, stroke } = teamMarkerColors(n)
+          return (
+            <span
+              key={uid}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+              }}
+            >
+              <span style={{ width: 18, height: 18, borderRadius: 999, background: fill, border: `2px solid ${stroke}` }} />
+              <strong>#{n}</strong> {labelById.get(uid) ?? uid.slice(0, 6)}
+            </span>
+          )
+        })}
+        <span style={{ fontSize: 11, color: "#64748b" }}>Solid = last GPS · dashed = next job (needs lat/lng on customer or job site)</span>
+      </div>
+
+      <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+        Last position from users who enabled GPS under Account → Mobile app. Numbers match the roster order above. Add{" "}
+        <strong>service address + coordinates</strong> on customers (Leads / Quotes / Conversations) or <strong>job site</strong> on a
+        calendar event so the next job can appear on the map.
+      </p>
+      {error && <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{error}</p>}
+      {loading && <p style={{ margin: 0, fontSize: 13, color: theme.text }}>Loading map…</p>}
+      <div
+        ref={mapRef}
+        style={{
+          height: embedded ? "min(420px, 55vh)" : "min(52vh, 440px)",
+          width: "100%",
+          borderRadius: 8,
+          border: `1px solid ${theme.border}`,
+        }}
+      />
+    </div>
+  )
+
+  if (embedded) return inner
+
+  return (
+    <>
+      <div role="presentation" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 10000 }} />
+      {inner}
     </>
   )
 }

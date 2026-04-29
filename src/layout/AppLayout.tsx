@@ -18,7 +18,7 @@ type AppLayoutProps = {
 
 export default function AppLayout({ children, setPage, portalTabs, currentPage }: AppLayoutProps) {
   const [showMobileNav, setShowMobileNav] = useState(false)
-  const { signOut } = useAuth()
+  const { signOut, profilePhotoUrl } = useAuth()
   const { setView } = useView()
   const isMobile = useIsMobile()
   const { t } = useLocale()
@@ -97,9 +97,19 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
+                gap: 6,
               }}
             >
               <img src={mytIcon} alt="" width={30} height={22} style={{ objectFit: "contain", display: "block" }} />
+              {profilePhotoUrl ? (
+                <img
+                  src={profilePhotoUrl}
+                  alt=""
+                  width={32}
+                  height={32}
+                  style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.4)", display: "block" }}
+                />
+              ) : null}
             </button>
           </div>
         )}

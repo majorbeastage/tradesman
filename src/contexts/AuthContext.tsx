@@ -31,6 +31,8 @@ type AuthState = {
   /** True after sign-in when profiles.account_disabled is true; user is signed out. Cleared when starting a new sign-in attempt. */
   accountAccessBlocked: boolean
   clearAccessBlockedReason: () => void
+  /** Public URL from profiles.metadata.profile_photo_url when set. */
+  profilePhotoUrl: string | null
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -43,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [portalConfig, setPortalConfig] = useState<PortalConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
   /** Last user id from auth session; used to avoid clearing `role` on TOKEN_REFRESHED (same user). */
   const authSessionUserIdRef = useRef<string | null>(null)
   /** Dedupe notify POST when both INITIAL_SESSION and getSession() run back-to-back. */
@@ -108,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(null)
       setClientId(DEFAULT_CLIENT_ID)
       setPortalConfig(null)
+      setProfilePhotoUrl(null)
       return
     }
     const sb = supabase
@@ -118,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, timeoutMs)
     sb
       .from("profiles")
-      .select("role, client_id, portal_config, account_disabled")
+      .select("role, client_id, portal_config, account_disabled, metadata")
       .eq("id", user.id)
       .single()
       .then(({ data, error }) => {
@@ -136,6 +140,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled && data?.client_id) setClientId(data.client_id as string)
         else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
         if (!cancelled) setPortalConfig((data?.portal_config as PortalConfig) ?? null)
+        if (!cancelled) {
+          const meta = (data as { metadata?: unknown })?.metadata
+          const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
+          const url = m.profile_photo_url
+          setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
+        }
       })
     return () => {
       cancelled = true
@@ -167,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase || !user?.id) return { role: null }
     const { data, error } = await supabase
       .from("profiles")
-      .select("role, client_id, portal_config, account_disabled")
+      .select("role, client_id, portal_config, account_disabled, metadata")
       .eq("id", user.id)
       .single()
     if (data?.account_disabled === true) {
@@ -185,6 +195,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (data?.client_id) setClientId(data.client_id as string)
     else setClientId(DEFAULT_CLIENT_ID)
     setPortalConfig((data?.portal_config as PortalConfig) ?? null)
+    const meta = (data as { metadata?: unknown })?.metadata
+    const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
+    const url = m.profile_photo_url
+    setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
     return { role: roleFromDb }
   }, [user?.id])
 
@@ -209,6 +223,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refetchProfile,
     accountAccessBlocked,
     clearAccessBlockedReason,
+    profilePhotoUrl,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
