@@ -226,6 +226,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [showQuoteAutomaticReplies, setShowQuoteAutomaticReplies] = useState(false)
   const [quoteAutoRepliesFormValues, setQuoteAutoRepliesFormValues] = useState<Record<string, string>>({})
   const [quotesAutoRepliesProfile, setQuotesAutoRepliesProfile] = useState<Record<string, string>>({})
+  const [quoteSourceFlowConfigs, setQuoteSourceFlowConfigs] = useState<Record<string, Record<string, string>>>({})
+  const [expandedQuoteSourceKey, setExpandedQuoteSourceKey] = useState<string | null>(null)
   const [quoteAutoRepliesRecordingBusy, setQuoteAutoRepliesRecordingBusy] = useState(false)
   const [quoteAutoRepliesUploading, setQuoteAutoRepliesUploading] = useState(false)
   const [quoteAutoRepliesRecordingSupported, setQuoteAutoRepliesRecordingSupported] = useState(false)
@@ -427,6 +429,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
     portalConfig?.controlLabels?.automatic_replies ??
     portalConfig?.controlLabels?.auto_response_options ??
     "Automatic replies"
+  const quoteSourceOptions = useMemo(() => {
+    const methodItem = quoteAutomaticRepliesItems.find((i) => i.id === "quote_auto_reply_method")
+    return methodItem?.options?.length ? methodItem.options : ["Email", "Text message", "Phone call"]
+  }, [quoteAutomaticRepliesItems])
 
   function isEstimateLinePortalItemVisible(item: PortalSettingItem): boolean {
     return isPortalSettingDependencyVisible(item, estimateLineItemsPortal, estimateLinePortalValues)
@@ -811,6 +817,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
             )
           : {}
       setQuotesAutoRepliesProfile(saved)
+      const sourceRaw = meta.quotesAutomaticRepliesSourceFlows
+      const sourceSaved =
+        sourceRaw && typeof sourceRaw === "object" && !Array.isArray(sourceRaw)
+          ? Object.fromEntries(
+              Object.entries(sourceRaw as Record<string, unknown>).map(([k, v]) => [
+                k,
+                v && typeof v === "object" && !Array.isArray(v)
+                  ? Object.fromEntries(
+                      Object.entries(v as Record<string, unknown>).map(([ik, iv]) => [ik, typeof iv === "string" ? iv : String(iv ?? "")]),
+                    )
+                  : {},
+              ]),
+            )
+          : {}
+      setQuoteSourceFlowConfigs(sourceSaved)
     })()
     return () => {
       cancelled = true
@@ -848,6 +869,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
     prevMeta.quotesAutomaticRepliesValues = { ...quoteAutoRepliesFormValues }
+    prevMeta.quotesAutomaticRepliesSourceFlows = { ...quoteSourceFlowConfigs }
     const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
     if (error) {
       alert(error.message)
@@ -855,6 +877,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     setQuotesAutoRepliesProfile({ ...quoteAutoRepliesFormValues })
     setShowQuoteAutomaticReplies(false)
+  }
+
+  function saveCurrentQuoteSourceFlow() {
+    const source = (quoteAutoRepliesFormValues.quote_auto_reply_method || quoteSourceOptions[0] || "Email").trim()
+    if (!source) return
+    const next: Record<string, string> = {}
+    for (const item of quoteAutomaticRepliesItems) {
+      next[item.id] = quoteAutoRepliesFormValues[item.id] ?? ""
+    }
+    next.quote_auto_reply_method = source
+    setQuoteSourceFlowConfigs((prev) => ({ ...prev, [source]: next }))
+    setExpandedQuoteSourceKey(source)
   }
 
   async function uploadQuoteAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
@@ -2687,6 +2721,87 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     setFormValue={(id, value) => setQuoteAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
                     isItemVisible={isQuoteAutomaticRepliesItemVisible}
                   />
+                </div>
+              </details>
+              <details style={{ marginTop: 12, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Save source flow</summary>
+                <div style={{ marginTop: 10 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Save a full automatic-reply setup by contact method, then switch methods to apply saved flows.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                    <label style={{ fontSize: 12, color: theme.text }}>
+                      Contact method
+                      <select
+                        value={quoteAutoRepliesFormValues.quote_auto_reply_method ?? quoteSourceOptions[0]}
+                        onChange={(e) => {
+                          const source = e.target.value
+                          setQuoteAutoRepliesFormValues((prev) => {
+                            const saved = quoteSourceFlowConfigs[source]
+                            if (!saved) return { ...prev, quote_auto_reply_method: source }
+                            return { ...prev, ...saved, quote_auto_reply_method: source }
+                          })
+                        }}
+                        style={{ ...theme.formInput, marginTop: 4, minWidth: 180 }}
+                      >
+                        {quoteSourceOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={saveCurrentQuoteSourceFlow}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: theme.primary,
+                        color: "#fff",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Save source flow
+                    </button>
+                  </div>
+                  {Object.keys(quoteSourceFlowConfigs).length > 0 ? (
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#334155" }}>Saved source flows</p>
+                      {Object.entries(quoteSourceFlowConfigs).map(([source, cfg]) => {
+                        const expanded = expandedQuoteSourceKey === source
+                        return (
+                          <div key={source} style={{ border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff" }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedQuoteSourceKey((prev) => (prev === source ? null : source))}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "8px 10px",
+                                border: "none",
+                                background: "transparent",
+                                fontWeight: 700,
+                                color: theme.text,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {expanded ? "▾" : "▸"} {source}
+                            </button>
+                            {expanded ? (
+                              <div style={{ padding: "0 10px 10px", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                                <div>Auto reply: {(cfg.quote_auto_reply_enabled ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                                <div>AI enabled: {(cfg.quote_auto_reply_ai ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                                <div>Template: {(cfg.quote_auto_reply_message ?? "").trim() ? (cfg.quote_auto_reply_message ?? "").trim().slice(0, 140) : "(empty)"}</div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </details>
               {quoteAutoRepliesFormValues.quote_auto_reply_method === "Phone call" &&

@@ -376,6 +376,8 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const [showAutomaticReplies, setShowAutomaticReplies] = useState(false)
   const [autoRepliesFormValues, setAutoRepliesFormValues] = useState<Record<string, string>>({})
   const [conversationsAutoRepliesProfile, setConversationsAutoRepliesProfile] = useState<Record<string, string>>({})
+  const [conversationSourceFlowConfigs, setConversationSourceFlowConfigs] = useState<Record<string, Record<string, string>>>({})
+  const [expandedConversationSourceKey, setExpandedConversationSourceKey] = useState<string | null>(null)
   const [autoRepliesRecordingBusy, setAutoRepliesRecordingBusy] = useState(false)
   const [autoRepliesUploading, setAutoRepliesUploading] = useState(false)
   const [autoRepliesRecordingSupported, setAutoRepliesRecordingSupported] = useState(false)
@@ -460,6 +462,10 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const showAutomaticRepliesButton =
     getPageActionVisible(portalConfig, "conversations", "automatic_replies") &&
     getOmPageActionVisible(portalConfig, "conversations", "automatic_replies")
+  const conversationSourceOptions = useMemo(() => {
+    const methodItem = automaticRepliesItems.find((i) => i.id === "conv_auto_reply_method")
+    return methodItem?.options?.length ? methodItem.options : ["Email", "Text message", "Phone call"]
+  }, [automaticRepliesItems])
 
   const emailOnlyEvents = useMemo(
     () => communicationEvents.filter((e) => e.event_type === "email"),
@@ -525,6 +531,21 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
             )
           : {}
       setConversationsAutoRepliesProfile(saved)
+      const sourceRaw = meta.conversationsAutomaticRepliesSourceFlows
+      const sourceSaved =
+        sourceRaw && typeof sourceRaw === "object" && !Array.isArray(sourceRaw)
+          ? Object.fromEntries(
+              Object.entries(sourceRaw as Record<string, unknown>).map(([k, v]) => [
+                k,
+                v && typeof v === "object" && !Array.isArray(v)
+                  ? Object.fromEntries(
+                      Object.entries(v as Record<string, unknown>).map(([ik, iv]) => [ik, typeof iv === "string" ? iv : String(iv ?? "")]),
+                    )
+                  : {},
+              ]),
+            )
+          : {}
+      setConversationSourceFlowConfigs(sourceSaved)
     })()
     return () => {
       cancelled = true
@@ -770,6 +791,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
     prevMeta.conversationsAutomaticRepliesValues = { ...autoRepliesFormValues }
+    prevMeta.conversationsAutomaticRepliesSourceFlows = { ...conversationSourceFlowConfigs }
     const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
     if (error) {
       alert(error.message)
@@ -777,6 +799,18 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     }
     setConversationsAutoRepliesProfile({ ...autoRepliesFormValues })
     setShowAutomaticReplies(false)
+  }
+
+  function saveCurrentConversationSourceFlow() {
+    const source = (autoRepliesFormValues.conv_auto_reply_method || conversationSourceOptions[0] || "Email").trim()
+    if (!source) return
+    const next: Record<string, string> = {}
+    for (const item of automaticRepliesItems) {
+      next[item.id] = autoRepliesFormValues[item.id] ?? ""
+    }
+    next.conv_auto_reply_method = source
+    setConversationSourceFlowConfigs((prev) => ({ ...prev, [source]: next }))
+    setExpandedConversationSourceKey(source)
   }
 
   async function carryOverAutoRepliesToQuotesProfile() {
@@ -1880,6 +1914,87 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                     setFormValue={(id, value) => setAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
                     isItemVisible={isAutomaticRepliesItemVisible}
                   />
+                </div>
+              </details>
+              <details style={{ marginTop: 12, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Save source flow</summary>
+                <div style={{ marginTop: 10 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Save a full automatic-reply setup by contact method, then switch methods to apply saved flows.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                    <label style={{ fontSize: 12, color: theme.text }}>
+                      Contact method
+                      <select
+                        value={autoRepliesFormValues.conv_auto_reply_method ?? conversationSourceOptions[0]}
+                        onChange={(e) => {
+                          const source = e.target.value
+                          setAutoRepliesFormValues((prev) => {
+                            const saved = conversationSourceFlowConfigs[source]
+                            if (!saved) return { ...prev, conv_auto_reply_method: source }
+                            return { ...prev, ...saved, conv_auto_reply_method: source }
+                          })
+                        }}
+                        style={{ ...theme.formInput, marginTop: 4, minWidth: 180 }}
+                      >
+                        {conversationSourceOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={saveCurrentConversationSourceFlow}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: theme.primary,
+                        color: "#fff",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Save source flow
+                    </button>
+                  </div>
+                  {Object.keys(conversationSourceFlowConfigs).length > 0 ? (
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#334155" }}>Saved source flows</p>
+                      {Object.entries(conversationSourceFlowConfigs).map(([source, cfg]) => {
+                        const expanded = expandedConversationSourceKey === source
+                        return (
+                          <div key={source} style={{ border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff" }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedConversationSourceKey((prev) => (prev === source ? null : source))}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "8px 10px",
+                                border: "none",
+                                background: "transparent",
+                                fontWeight: 700,
+                                color: theme.text,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {expanded ? "▾" : "▸"} {source}
+                            </button>
+                            {expanded ? (
+                              <div style={{ padding: "0 10px 10px", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                                <div>Auto reply: {(cfg.conv_auto_reply_enabled ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                                <div>AI enabled: {(cfg.conv_auto_reply_ai ?? "unchecked") === "checked" ? "On" : "Off"}</div>
+                                <div>Template: {(cfg.conv_auto_reply_message ?? "").trim() ? (cfg.conv_auto_reply_message ?? "").trim().slice(0, 140) : "(empty)"}</div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </details>
               {autoRepliesFormValues.conv_auto_reply_method === "Phone call" &&

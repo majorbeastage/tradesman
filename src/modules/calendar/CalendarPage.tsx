@@ -2488,6 +2488,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           {calendarSuite.id === "team_management" && calendarSuite.panel === "team_members" && authUserId ? (
             <CalendarTeamManagementPanel
               officeManagerUserId={authUserId}
+              viewerUserId={authUserId}
               roster={
                 scopeCtx?.clients?.length
                   ? scopeCtx.clients

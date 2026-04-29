@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import type { ManagedClientRow } from "../../contexts/OfficeManagerScopeContext"
@@ -24,21 +24,525 @@ type PrefLite = {
   auto_assign_enabled: boolean | null
 }
 
+type UpcomingEventRow = {
+  id: string
+  user_id: string | null
+  title: string
+  start_at: string
+  job_types?: { name: string | null } | { name: string | null }[] | null
+}
+
+type JobTypeNameRow = { user_id: string; name: string }
+
+type CardTab = "schedule" | "permissions"
+
+type OpenClockRow = { user_id: string; clocked_in_at: string }
+
 type Props = {
   officeManagerUserId: string
+  /** Signed-in user (for clock in/out and roster membership). */
+  viewerUserId: string
   roster: ManagedClientRow[]
-  /** Managed users only (excludes OM row) for policy cards */
   managedOnly: ManagedClientRow[]
 }
 
-export default function CalendarTeamManagementPanel({ officeManagerUserId, roster, managedOnly }: Props) {
+function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null {
+  if (!raw) return null
+  if (Array.isArray(raw)) {
+    const n = raw[0]?.name
+    return typeof n === "string" && n.trim() ? n.trim() : null
+  }
+  const n = raw.name
+  return typeof n === "string" && n.trim() ? n.trim() : null
+}
+
+function TeamUserCard({
+  member,
+  ribbonOm,
+  photo,
+  displayName,
+  clockedInAt,
+  policy,
+  pref,
+  ribbonPref,
+  savingUserId,
+  setOmMeta,
+  persistOmColorForMember,
+  persistManagedPolicy,
+  persistUserPref,
+  setPrefsByUser,
+  upcoming,
+  jobTypeNames,
+  cardTab,
+  setCardTab,
+}: {
+  member: ManagedClientRow
+  ribbonOm: string
+  photo: string | null
+  displayName: string
+  clockedInAt: string | null
+  policy: OmCalendarPolicyV1
+  pref: PrefLite | undefined
+  ribbonPref: string
+  savingUserId: string | null
+  setOmMeta: React.Dispatch<React.SetStateAction<Record<string, unknown>>>
+  persistOmColorForMember: (memberUserId: string, hex: string) => Promise<void>
+  persistManagedPolicy: (targetUserId: string, patch: Partial<OmCalendarPolicyV1>) => Promise<void>
+  persistUserPref: (targetUserId: string, ribbon: string, autoAssign: boolean) => Promise<void>
+  setPrefsByUser: React.Dispatch<React.SetStateAction<Record<string, PrefLite>>>
+  upcoming: UpcomingEventRow[]
+  jobTypeNames: string[]
+  cardTab: CardTab
+  setCardTab: (userId: string, tab: CardTab) => void
+}) {
+  const tab = cardTab
+  const listBox: React.CSSProperties = {
+    borderRadius: 8,
+    border: `1px solid ${theme.border}`,
+    background: "#f8fafc",
+    padding: "8px 10px",
+    minHeight: 88,
+    fontSize: 12,
+    color: "#334155",
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    overflow: "hidden",
+  }
+  const listTitle: CSSProperties = { fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 2 }
+
+  return (
+    <div
+      style={{
+        borderRadius: 12,
+        border: `1px solid ${theme.border}`,
+        background: "#fff",
+        overflow: "hidden",
+        boxShadow: "0 2px 10px rgba(15,23,42,0.06)",
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          minHeight: 68,
+          background: ribbonOm,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          padding: "10px 72px 10px 14px",
+          boxSizing: "border-box",
+        }}
+      >
+        <div
+          style={{
+            fontWeight: 800,
+            fontSize: 15,
+            color: "#fff",
+            lineHeight: 1.25,
+            textShadow: "0 1px 3px rgba(0,0,0,0.45)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+          }}
+        >
+          {displayName}
+        </div>
+        {clockedInAt ? (
+          <div
+            title={`Clocked in at ${new Date(clockedInAt).toLocaleString()}`}
+            style={{
+              position: "absolute",
+              top: 8,
+              right: photo ? 78 : 12,
+              fontSize: 10,
+              fontWeight: 800,
+              color: "#fff",
+              background: "rgba(0,0,0,0.28)",
+              padding: "4px 8px",
+              borderRadius: 6,
+              textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+              letterSpacing: 0.02,
+            }}
+          >
+            In ·{" "}
+            {new Date(clockedInAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          </div>
+        ) : null}
+        {photo ? (
+          <img
+            src={photo}
+            alt=""
+            style={{
+              position: "absolute",
+              right: 14,
+              bottom: -22,
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              objectFit: "cover",
+              border: "3px solid #fff",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            }}
+          />
+        ) : null}
+      </div>
+
+      <div style={{ padding: "12px 12px 10px", borderBottom: `1px solid ${theme.border}`, background: "#fafafa" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => setCardTab(member.userId, "schedule")}
+            style={{
+              flex: 1,
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: tab === "schedule" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+              background: tab === "schedule" ? "#eff6ff" : "#fff",
+              fontWeight: tab === "schedule" ? 800 : 600,
+              fontSize: 12,
+              color: theme.text,
+              cursor: "pointer",
+            }}
+          >
+            Schedule
+          </button>
+          <button
+            type="button"
+            onClick={() => setCardTab(member.userId, "permissions")}
+            style={{
+              flex: 1,
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: tab === "permissions" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+              background: tab === "permissions" ? "#eff6ff" : "#fff",
+              fontWeight: tab === "permissions" ? 800 : 600,
+              fontSize: 12,
+              color: theme.text,
+              cursor: "pointer",
+            }}
+          >
+            Edit permissions
+          </button>
+        </div>
+      </div>
+
+      {tab === "schedule" ? (
+        <div style={{ padding: "12px 12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {member.email ? <div style={{ fontSize: 11, color: "#94a3b8" }}>{member.email}</div> : null}
+          {member.isSelf ? <div style={{ fontSize: 10, fontWeight: 700, color: theme.primary }}>Office manager</div> : null}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              alignItems: "stretch",
+            }}
+          >
+            <div style={listBox}>
+              <div style={listTitle}>Upcoming jobs</div>
+              {upcoming.length === 0 ? (
+                <span style={{ color: "#94a3b8", fontStyle: "italic" }}>No upcoming jobs on file.</span>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.45 }}>
+                  {upcoming.slice(0, 6).map((ev) => {
+                    const jt = normalizeJobTypeName(ev.job_types)
+                    const when = ev.start_at ? new Date(ev.start_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"
+                    return (
+                      <li key={ev.id} style={{ marginBottom: 4 }}>
+                        <span style={{ fontWeight: 700, color: "#0f172a" }}>{ev.title?.trim() || "Untitled"}</span>
+                        {jt ? <span style={{ color: "#64748b" }}> · {jt}</span> : null}
+                        <div style={{ fontSize: 11, color: "#64748b" }}>{when}</div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+            <div style={listBox}>
+              <div style={listTitle}>Job type assignments</div>
+              {jobTypeNames.length === 0 ? (
+                <span style={{ color: "#94a3b8", fontStyle: "italic" }}>No job types yet for this user.</span>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.45 }}>
+                  {jobTypeNames.slice(0, 8).map((name) => (
+                    <li key={name} style={{ marginBottom: 2 }}>
+                      {name}
+                    </li>
+                  ))}
+                  {jobTypeNames.length > 8 ? <li style={{ color: "#94a3b8" }}>+{jobTypeNames.length - 8} more…</li> : null}
+                </ul>
+              )}
+              <p style={{ margin: "6px 0 0", fontSize: 10, color: "#94a3b8", lineHeight: 1.35 }}>
+                Per-type routing (qualified / assign-all) arrives in a later update.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={listBox}>
+              <div style={listTitle}>Upcoming time off</div>
+              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>No time off on the calendar yet.</span>
+            </div>
+            <div style={listBox}>
+              <div style={listTitle}>Associates schedule</div>
+              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Teammate links and shared views coming soon.</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ padding: "12px 12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            Team color
+            <input
+              type="color"
+              value={ribbonOm}
+              disabled={savingUserId === "__om__"}
+              onChange={(e) => {
+                const hex = e.target.value
+                setOmMeta((prev) => mergeTeamRibbonColors(prev, member.userId, hex))
+              }}
+              onBlur={(e) => void persistOmColorForMember(member.userId, e.currentTarget.value)}
+              style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
+            />
+          </label>
+
+          <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            Calendar ribbon (map / pins)
+            <input
+              type="color"
+              value={ribbonPref}
+              disabled={savingUserId === member.userId}
+              onChange={(e) =>
+                setPrefsByUser((prev) => ({
+                  ...prev,
+                  [member.userId]: {
+                    owner_user_id: member.userId,
+                    ribbon_color: e.target.value,
+                    auto_assign_enabled: pref?.auto_assign_enabled ?? true,
+                  },
+                }))
+              }
+              style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
+            />
+            <button
+              type="button"
+              disabled={savingUserId === member.userId}
+              onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled ?? true)}
+              style={{
+                padding: "4px 10px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+                cursor: savingUserId === member.userId ? "wait" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Save ribbon
+            </button>
+          </label>
+
+          <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={pref?.auto_assign_enabled !== false}
+              disabled={savingUserId === member.userId}
+              onChange={(e) => {
+                const v = e.target.checked
+                setPrefsByUser((prev) => ({
+                  ...prev,
+                  [member.userId]: {
+                    owner_user_id: member.userId,
+                    ribbon_color: ribbonPref,
+                    auto_assign_enabled: v,
+                  },
+                }))
+              }}
+            />
+            Auto-assign new items to this user
+          </label>
+          <button
+            type="button"
+            disabled={savingUserId === member.userId}
+            onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled !== false)}
+            style={{
+              alignSelf: "flex-start",
+              padding: "4px 10px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 600,
+              cursor: savingUserId === member.userId ? "wait" : "pointer",
+            }}
+          >
+            Save calendar prefs
+          </button>
+
+          {!member.isSelf ? (
+            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Managed user access</span>
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_add_to_calendar !== false}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_add_to_calendar: e.target.checked })}
+                />
+                Allow &quot;Add item to calendar&quot; on their Calendar tab
+              </label>
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.scheduling_tools === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { scheduling_tools: e.target.checked })}
+                />
+                Scheduling tools (extra Calendar + Alerts options)
+              </label>
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                Job types on their tab
+                <select
+                  value={policy.job_types_access ?? "edit"}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) =>
+                    void persistManagedPolicy(member.userId, {
+                      job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"],
+                    })
+                  }
+                  style={{ ...theme.formInput, maxWidth: 160, fontSize: 12 }}
+                >
+                  <option value="off">Hidden</option>
+                  <option value="read">Read-only</option>
+                  <option value="edit">Edit</option>
+                </select>
+              </label>
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              Your own calendar permissions follow your account role. Managed-user rules apply to linked contractors only.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function CalendarTeamManagementPanel({ officeManagerUserId, viewerUserId, roster, managedOnly }: Props) {
   const [omMeta, setOmMeta] = useState<Record<string, unknown>>({})
   const [profilesById, setProfilesById] = useState<Record<string, ProfileLite>>({})
   const [prefsByUser, setPrefsByUser] = useState<Record<string, PrefLite>>({})
   const [savingUserId, setSavingUserId] = useState<string | null>(null)
   const [message, setMessage] = useState<string>("")
+  const [upcomingByUser, setUpcomingByUser] = useState<Record<string, UpcomingEventRow[]>>({})
+  const [jobTypesByUser, setJobTypesByUser] = useState<Record<string, string[]>>({})
+  const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
+  const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
+  const [clockLoading, setClockLoading] = useState(false)
+  const [clockError, setClockError] = useState("")
+  const [clockActionBusy, setClockActionBusy] = useState(false)
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
+
+  const setCardTab = useCallback((userId: string, tab: CardTab) => {
+    setCardTabByUser((prev) => ({ ...prev, [userId]: tab }))
+  }, [])
+
+  const loadOpenClockSessions = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!supabase || roster.length === 0) {
+      setOpenClockByUser({})
+      return
+    }
+    const ids = roster.map((r) => r.userId).filter(Boolean)
+    if (!opts?.silent) setClockLoading(true)
+    setClockError("")
+    const { data, error } = await supabase
+      .from("user_time_clock_sessions")
+      .select("user_id, clocked_in_at")
+      .in("user_id", ids)
+      .is("clocked_out_at", null)
+    if (!opts?.silent) setClockLoading(false)
+    if (error) {
+      setClockError(error.message)
+      setOpenClockByUser({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const row of (data ?? []) as OpenClockRow[]) {
+      if (row.user_id && row.clocked_in_at) next[row.user_id] = row.clocked_in_at
+    }
+    setOpenClockByUser(next)
+  }, [roster])
+
+  useEffect(() => {
+    void loadOpenClockSessions()
+    const id = window.setInterval(() => void loadOpenClockSessions({ silent: true }), 45_000)
+    return () => {
+      window.clearInterval(id)
+    }
+  }, [loadOpenClockSessions])
+
+  async function handleClockIn() {
+    if (!supabase) return
+    setClockActionBusy(true)
+    setClockError("")
+    const { error } = await supabase.from("user_time_clock_sessions").insert({ user_id: viewerUserId })
+    setClockActionBusy(false)
+    if (error) {
+      setClockError(error.message)
+      return
+    }
+    await loadOpenClockSessions({ silent: true })
+  }
+
+  async function handleClockOut() {
+    if (!supabase) return
+    setClockActionBusy(true)
+    setClockError("")
+    const { error } = await supabase
+      .from("user_time_clock_sessions")
+      .update({ clocked_out_at: new Date().toISOString() })
+      .eq("user_id", viewerUserId)
+      .is("clocked_out_at", null)
+    setClockActionBusy(false)
+    if (error) {
+      setClockError(error.message)
+      return
+    }
+    await loadOpenClockSessions({ silent: true })
+  }
+
+  const viewerOnRoster = useMemo(() => roster.some((r) => r.userId === viewerUserId), [roster, viewerUserId])
+
+  const rosterLabel = useCallback(
+    (userId: string) => {
+      const fromProfile = profilesById[userId]?.display_name?.trim()
+      if (fromProfile) return fromProfile
+      return roster.find((r) => r.userId === userId)?.label?.trim() || userId.slice(0, 8) + "…"
+    },
+    [profilesById, roster],
+  )
+
+  const clockedInMembers = useMemo(() => {
+    return roster
+      .filter((m) => openClockByUser[m.userId])
+      .map((m) => ({ member: m, at: openClockByUser[m.userId]! }))
+      .sort((a, b) => rosterLabel(a.member.userId).localeCompare(rosterLabel(b.member.userId)))
+  }, [roster, openClockByUser, rosterLabel])
+
+  const notClockedInMembers = useMemo(() => {
+    return roster
+      .filter((m) => !openClockByUser[m.userId])
+      .sort((a, b) => rosterLabel(a.userId).localeCompare(rosterLabel(b.userId)))
+  }, [roster, openClockByUser, rosterLabel])
 
   useEffect(() => {
     if (!supabase) return
@@ -78,6 +582,74 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, roste
       cancelled = true
     }
   }, [roster])
+
+  useEffect(() => {
+    if (!supabase || roster.length === 0) return
+    const ids = roster.map((r) => r.userId).filter(Boolean)
+    let cancelled = false
+    const nowIso = new Date().toISOString()
+    void (async () => {
+      const jobSelect = `
+        id,
+        user_id,
+        title,
+        start_at,
+        job_types ( name )
+      `
+      const jobSelectFallback = `id, user_id, title, start_at, job_type_id`
+      let rows: UpcomingEventRow[] = []
+      const primary = await supabase
+        .from("calendar_events")
+        .select(jobSelect)
+        .in("user_id", ids)
+        .is("removed_at", null)
+        .is("completed_at", null)
+        .gte("start_at", nowIso)
+        .order("start_at", { ascending: true })
+        .limit(180)
+      if (!cancelled && !primary.error && primary.data) {
+        rows = primary.data as UpcomingEventRow[]
+      } else if (!cancelled) {
+        const fb = await supabase
+          .from("calendar_events")
+          .select(jobSelectFallback)
+          .in("user_id", ids)
+          .is("removed_at", null)
+          .is("completed_at", null)
+          .gte("start_at", nowIso)
+          .order("start_at", { ascending: true })
+          .limit(180)
+        if (!cancelled && !fb.error && fb.data) rows = fb.data as UpcomingEventRow[]
+      }
+      const byUser: Record<string, UpcomingEventRow[]> = {}
+      for (const id of ids) byUser[id] = []
+      for (const ev of rows) {
+        const uid = ev.user_id ?? ""
+        if (!uid || !byUser[uid]) continue
+        if (byUser[uid].length >= 6) continue
+        byUser[uid].push(ev)
+      }
+      if (!cancelled) setUpcomingByUser(byUser)
+
+      const jtRes = await supabase.from("job_types").select("user_id, name").in("user_id", ids).order("name")
+      if (cancelled || jtRes.error || !jtRes.data) {
+        if (!cancelled) setJobTypesByUser({})
+        return
+      }
+      const jtBy: Record<string, string[]> = {}
+      for (const id of ids) jtBy[id] = []
+      for (const row of jtRes.data as JobTypeNameRow[]) {
+        const n = row.name?.trim()
+        if (!n) continue
+        if (!jtBy[row.user_id]) jtBy[row.user_id] = []
+        jtBy[row.user_id].push(n)
+      }
+      if (!cancelled) setJobTypesByUser(jtBy)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [roster, supabase])
 
   async function persistOmColorForMember(memberUserId: string, hex: string) {
     if (!supabase) return
@@ -142,12 +714,138 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, roste
     }
   }
 
+  const myOpenClock = openClockByUser[viewerUserId]
+  const clockPanelStyle: CSSProperties = {
+    borderRadius: 10,
+    border: `1px solid ${theme.border}`,
+    background: "#f8fafc",
+    padding: "14px 16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  }
+  const clockColStyle: CSSProperties = {
+    borderRadius: 8,
+    border: `1px solid ${theme.border}`,
+    background: "#fff",
+    padding: "10px 12px",
+    minHeight: 100,
+    maxHeight: 220,
+    overflow: "auto",
+    fontSize: 12,
+    color: "#334155",
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.55, maxWidth: 900 }}>
-        Configure roster members linked to your office. Colors are saved on your profile; per-user calendar toggles are saved on each
-        user&apos;s profile (managed accounts). More scheduling rules and job-type routing will layer on this foundation.
+        Configure roster members linked to your office. Use <strong>Schedule</strong> for a quick read on jobs and job types; use{" "}
+        <strong>Edit permissions</strong> for colors, calendar defaults, and managed-user access. Open shifts appear in{" "}
+        <strong>Time clock</strong> below (run the SQL in <code style={{ fontSize: 12 }}>supabase/user-time-clock-sessions.sql</code> if this section errors).
       </p>
+
+      <div style={clockPanelStyle}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Time clock</span>
+          {clockLoading ? <span style={{ fontSize: 11, color: "#64748b" }}>Refreshing…</span> : null}
+        </div>
+        {clockError ? (
+          <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", lineHeight: 1.45 }}>{clockError}</p>
+        ) : null}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))", gap: 10 }}>
+          <div style={clockColStyle}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#059669", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 8 }}>Clocked in</div>
+            {clockedInMembers.length === 0 ? (
+              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Nobody on this roster is clocked in.</span>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.5 }}>
+                {clockedInMembers.map(({ member: m, at }) => (
+                  <li key={m.userId} style={{ marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700 }}>{rosterLabel(m.userId)}</span>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                      Since {new Date(at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div style={clockColStyle}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 8 }}>Not clocked in</div>
+            {notClockedInMembers.length === 0 ? (
+              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Everyone is clocked in.</span>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.5 }}>
+                {notClockedInMembers.map((m) => (
+                  <li key={m.userId} style={{ marginBottom: 4 }}>
+                    {rosterLabel(m.userId)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        {viewerOnRoster ? (
+          <div
+            style={{
+              borderTop: `1px solid ${theme.border}`,
+              paddingTop: 12,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Your shift</span>
+            {myOpenClock ? (
+              <>
+                <span style={{ fontSize: 12, color: "#475569" }}>
+                  Clocked in since {new Date(myOpenClock).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
+                </span>
+                <button
+                  type="button"
+                  disabled={clockActionBusy}
+                  onClick={() => void handleClockOut()}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "#334155",
+                    color: "#fff",
+                    cursor: clockActionBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {clockActionBusy ? "Working…" : "Clock out"}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={clockActionBusy}
+                onClick={() => void handleClockIn()}
+                style={{
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  borderRadius: 8,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  cursor: clockActionBusy ? "wait" : "pointer",
+                }}
+              >
+                {clockActionBusy ? "Working…" : "Clock in"}
+              </button>
+            )}
+            <span style={{ fontSize: 11, color: "#94a3b8", flex: "1 1 200px", minWidth: 0 }}>
+              Linked contractors sign in with their own account to clock in later; this records the signed-in profile only.
+            </span>
+          </div>
+        ) : null}
+      </div>
+
       {message ? (
         <p style={{ margin: 0, fontSize: 13, color: message.includes("saved") ? "#059669" : "#b91c1c" }}>{message}</p>
       ) : null}
@@ -155,7 +853,7 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, roste
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
           gap: 14,
         }}
       >
@@ -170,184 +868,31 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, roste
           const pref = prefsByUser[member.userId]
           const ribbonPref = pref?.ribbon_color?.trim() || ribbonOm
           const policy = member.isSelf ? ({ allow_add_to_calendar: true, job_types_access: "edit" } as OmCalendarPolicyV1) : parseOmCalendarPolicy(p?.metadata)
+          const displayName = (p?.display_name?.trim() || member.label || "User").trim()
+          const tab: CardTab = cardTabByUser[member.userId] ?? "schedule"
 
           return (
-            <div
+            <TeamUserCard
               key={member.userId}
-              style={{
-                borderRadius: 12,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                overflow: "hidden",
-                boxShadow: "0 2px 10px rgba(15,23,42,0.06)",
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 200,
-              }}
-            >
-              <div
-                style={{
-                  position: "relative",
-                  height: 56,
-                  background: ribbonOm,
-                  flexShrink: 0,
-                }}
-              >
-                {photo ? (
-                  <img
-                    src={photo}
-                    alt=""
-                    style={{
-                      position: "absolute",
-                      left: "50%",
-                      bottom: 4,
-                      transform: "translateX(-50%)",
-                      width: 56,
-                      height: 56,
-                      borderRadius: "50%",
-                      objectFit: "cover",
-                      border: "3px solid #fff",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                    }}
-                  />
-                ) : null}
-              </div>
-              <div style={{ padding: "14px 14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: theme.text }}>{member.label}</div>
-                  {member.email ? <div style={{ fontSize: 12, color: "#64748b" }}>{member.email}</div> : null}
-                  {member.isSelf ? <div style={{ fontSize: 11, fontWeight: 700, color: theme.primary, marginTop: 4 }}>Office manager</div> : null}
-                </div>
-
-                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  Team color
-                  <input
-                    type="color"
-                    value={ribbonOm}
-                    disabled={savingUserId === "__om__"}
-                    onChange={(e) => {
-                      const hex = e.target.value
-                      setOmMeta((prev) => mergeTeamRibbonColors(prev, member.userId, hex))
-                    }}
-                    onBlur={(e) => void persistOmColorForMember(member.userId, e.currentTarget.value)}
-                    style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
-                  />
-                </label>
-
-                <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  Calendar ribbon (map / pins)
-                  <input
-                    type="color"
-                    value={ribbonPref}
-                    disabled={savingUserId === member.userId}
-                    onChange={(e) => setPrefsByUser((prev) => ({
-                      ...prev,
-                      [member.userId]: {
-                        owner_user_id: member.userId,
-                        ribbon_color: e.target.value,
-                        auto_assign_enabled: pref?.auto_assign_enabled ?? true,
-                      },
-                    }))}
-                    style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
-                  />
-                  <button
-                    type="button"
-                    disabled={savingUserId === member.userId}
-                    onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled ?? true)}
-                    style={{
-                      padding: "4px 10px",
-                      fontSize: 12,
-                      borderRadius: 6,
-                      border: `1px solid ${theme.border}`,
-                      background: "#f8fafc",
-                      cursor: savingUserId === member.userId ? "wait" : "pointer",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Save ribbon
-                  </button>
-                </label>
-
-                <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={pref?.auto_assign_enabled !== false}
-                    disabled={savingUserId === member.userId}
-                    onChange={(e) => {
-                      const v = e.target.checked
-                      setPrefsByUser((prev) => ({
-                        ...prev,
-                        [member.userId]: {
-                          owner_user_id: member.userId,
-                          ribbon_color: ribbonPref,
-                          auto_assign_enabled: v,
-                        },
-                      }))
-                    }}
-                  />
-                  Auto-assign new items to this user
-                </label>
-                <button
-                  type="button"
-                  disabled={savingUserId === member.userId}
-                  onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled !== false)}
-                  style={{
-                    alignSelf: "flex-start",
-                    padding: "4px 10px",
-                    fontSize: 12,
-                    borderRadius: 6,
-                    border: "none",
-                    background: theme.primary,
-                    color: "#fff",
-                    fontWeight: 600,
-                    cursor: savingUserId === member.userId ? "wait" : "pointer",
-                  }}
-                >
-                  Save calendar prefs
-                </button>
-
-                {!member.isSelf ? (
-                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Managed user access</span>
-                    <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={policy.allow_add_to_calendar !== false}
-                        disabled={savingUserId === member.userId}
-                        onChange={(e) => void persistManagedPolicy(member.userId, { allow_add_to_calendar: e.target.checked })}
-                      />
-                      Allow &quot;Add item to calendar&quot; on their Calendar tab
-                    </label>
-                    <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={policy.scheduling_tools === true}
-                        disabled={savingUserId === member.userId}
-                        onChange={(e) => void persistManagedPolicy(member.userId, { scheduling_tools: e.target.checked })}
-                      />
-                      Scheduling tools (extra Calendar + Alerts options)
-                    </label>
-                    <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6 }}>
-                      Job types on their tab
-                      <select
-                        value={policy.job_types_access ?? "edit"}
-                        disabled={savingUserId === member.userId}
-                        onChange={(e) =>
-                          void persistManagedPolicy(member.userId, {
-                            job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"],
-                          })
-                        }
-                        style={{ ...theme.formInput, maxWidth: 160, fontSize: 12 }}
-                      >
-                        <option value="off">Hidden</option>
-                        <option value="read">Read-only</option>
-                        <option value="edit">Edit</option>
-                      </select>
-                    </label>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+              member={member}
+              ribbonOm={ribbonOm}
+              photo={photo}
+              displayName={displayName}
+              clockedInAt={openClockByUser[member.userId] ?? null}
+              policy={policy}
+              pref={pref}
+              ribbonPref={ribbonPref}
+              savingUserId={savingUserId}
+              setOmMeta={setOmMeta}
+              persistOmColorForMember={persistOmColorForMember}
+              persistManagedPolicy={persistManagedPolicy}
+              persistUserPref={persistUserPref}
+              setPrefsByUser={setPrefsByUser}
+              upcoming={upcomingByUser[member.userId] ?? []}
+              jobTypeNames={jobTypesByUser[member.userId] ?? []}
+              cardTab={tab}
+              setCardTab={setCardTab}
+            />
           )
         })}
       </div>
