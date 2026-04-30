@@ -24,6 +24,7 @@
  * **1.4.17** — Mobile push reliability: startup token re-sync on native installs + safer token upsert wait after permission flow; action bar order unified (Add → Automatic replies → Alerts) in Leads/Conversations/Quotes.
  * **1.4.18** — Customers tab UX aligned with Conversations (charcoal filter bar, row expand/detail panel, selection colors); Calendar primary actions + view toolbar use matching charcoal control strips; version bump for release.
  * **1.4.19** — Calendar: Team management workbench (OM/admin) with team member cards, embedded team map + job types; Scheduling tools for solo users; managed-user calendar policy + profile photo (My T) + header avatar; profile-photos bucket SQL.
+ * **1.4.20** — Native: remove first-launch permission overlay; defer FCM attach/sync; skip redundant notification/location permission requests; longer settle before `register()` / `getCurrentPosition()` after grants.
  *
  * @see CopyrightVersionFooter
  */

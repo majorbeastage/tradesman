@@ -7,8 +7,8 @@ import { isNativeApp, requestGpsPermission, requestPushPermissionAndRegister } f
 const STORAGE_KEY = "tradesman_native_perm_onboarding_v1"
 
 /**
- * First signed-in session on the native app: prompt for notification + location so the OS shows the real dialogs.
- * User can dismiss; Account → Mobile app still has the same actions.
+ * Optional first-launch permission wizard (currently **not mounted** from `main.tsx`).
+ * Kept in the repo so we can re-enable behind a flag later; prefer **Account → Mobile app (MyT)** for explicit permission taps.
  */
 export default function NativePermissionOnboarding() {
   const { user } = useAuth()

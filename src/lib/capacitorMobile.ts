@@ -141,7 +141,9 @@ export async function requestPushPermissionAndRegister(
           "Notifications were denied for this app. Tap “Open system settings”, turn notifications on for Tradesman, then try again.",
       }
     }
-    const perm = await PushNotifications.requestPermissions()
+    /** Never call `requestPermissions()` if already granted — a second OS prompt can destabilize some WebViews. */
+    const perm =
+      existing.receive === "granted" ? existing : await PushNotifications.requestPermissions()
     if (perm.receive !== "granted") {
       return {
         ok: false,
@@ -164,7 +166,7 @@ export async function requestPushPermissionAndRegister(
             console.warn("[push] delayed register() after grant", regErr)
           }
         })
-      }, 2600)
+      }, 4500)
       return {
         ok: true,
         message:
@@ -224,7 +226,7 @@ export async function syncPushTokenIfPermissionGranted(
     const { PushNotifications } = await import("@capacitor/push-notifications")
     const perm = await PushNotifications.checkPermissions()
     if (perm.receive !== "granted") return
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 600))
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 2000))
     await schedulePushRegister(async () => {
       try {
         await PushNotifications.register()
@@ -258,6 +260,11 @@ export async function requestGpsPermission(): Promise<{ ok: boolean; message: st
           "Location was denied for this app. Tap “Open system settings”, allow Location for Tradesman, then try again.",
       }
     }
+    if (hadFine || hadCoarse) {
+      await new Promise<void>((r) => window.setTimeout(r, 400))
+      await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 })
+      return { ok: true, message: "Location access is already enabled for this app." }
+    }
     const perm = await Geolocation.requestPermissions()
     if (perm.location !== "granted" && perm.coarseLocation !== "granted") {
       return {
@@ -266,6 +273,7 @@ export async function requestGpsPermission(): Promise<{ ok: boolean; message: st
           "Location permission was not granted. Use “Open system settings” → Permissions → Location → Allow while using the app.",
       }
     }
+    await new Promise<void>((r) => window.setTimeout(r, 500))
     await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 })
     return { ok: true, message: "Location access is enabled for this app." }
   } catch (e) {

@@ -32,10 +32,11 @@ export default function NativeMobilePipeline() {
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return
+    /** Delay push listener attach + FCM register until after first-launch OS permission flows settle (WebView crashes if this races). */
     const t = window.setTimeout(() => {
       void attachPushTokenUpsertListeners(supabase, user.id)
       void syncPushTokenIfPermissionGranted(supabase, user.id)
-    }, 400)
+    }, 12_000)
     return () => {
       window.clearTimeout(t)
       void detachPushTokenUpsertListeners()

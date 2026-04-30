@@ -71,7 +71,9 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
       <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Mobile app (MyT)</h2>
       <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
         Tradesman on Android / iPhone uses your profile here. Enable push and GPS when you want dispatch, en-route messages, and (for office managers) live maps.
-        {isNativeApp() ? "" : " Open this page inside the installed app to request system permissions."}
+        {isNativeApp()
+          ? " The app no longer interrupts first launch with a permission popup — use the buttons below when you are ready."
+          : " Open this page inside the installed app to request system permissions."}
       </p>
       {loading ? (
         <span style={{ color: theme.text }}>Loading…</span>
