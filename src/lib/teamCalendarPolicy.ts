@@ -4,8 +4,19 @@
  */
 export type OmCalendarPolicyV1 = {
   allow_add_to_calendar?: boolean
+  /** Legacy + current flag for advanced scheduling options. */
   scheduling_tools?: boolean
+  advanced_scheduling_tools?: boolean
   job_types_access?: "off" | "read" | "edit"
+  customer_map_access?: boolean
+  allow_my_hours?: boolean
+  backup_user_id?: string | null
+  teammate_user_id?: string | null
+  /**
+   * Keyed by job type id when available, else job type name.
+   * Example: { "install": "preferred" }
+   */
+  job_qualifications?: Record<string, "not_qualified" | "qualified" | "preferred" | "required">
   /** Future: nested scheduling / alerts flags */
   _v?: 1
 }
@@ -13,7 +24,13 @@ export type OmCalendarPolicyV1 = {
 const DEFAULT_POLICY: OmCalendarPolicyV1 = {
   allow_add_to_calendar: true,
   scheduling_tools: false,
+  advanced_scheduling_tools: false,
   job_types_access: "edit",
+  customer_map_access: false,
+  allow_my_hours: false,
+  backup_user_id: null,
+  teammate_user_id: null,
+  job_qualifications: {},
   _v: 1,
 }
 
@@ -25,10 +42,30 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
   const jobTypes = o.job_types_access
   const jt =
     jobTypes === "off" || jobTypes === "read" || jobTypes === "edit" ? jobTypes : DEFAULT_POLICY.job_types_access
+  const legacyScheduling = o.scheduling_tools === true
+  const advancedScheduling = o.advanced_scheduling_tools === true || legacyScheduling
+  const backupUserId = typeof o.backup_user_id === "string" && o.backup_user_id.trim() ? o.backup_user_id.trim() : null
+  const teammateUserId = typeof o.teammate_user_id === "string" && o.teammate_user_id.trim() ? o.teammate_user_id.trim() : null
+  const qualificationsRaw = o.job_qualifications
+  const quals: Record<string, "not_qualified" | "qualified" | "preferred" | "required"> = {}
+  if (qualificationsRaw && typeof qualificationsRaw === "object" && !Array.isArray(qualificationsRaw)) {
+    for (const [key, val] of Object.entries(qualificationsRaw as Record<string, unknown>)) {
+      if (!key.trim()) continue
+      if (val === "not_qualified" || val === "qualified" || val === "preferred" || val === "required") {
+        quals[key] = val
+      }
+    }
+  }
   return {
     allow_add_to_calendar: o.allow_add_to_calendar === false ? false : true,
-    scheduling_tools: o.scheduling_tools === true,
+    scheduling_tools: advancedScheduling,
+    advanced_scheduling_tools: advancedScheduling,
     job_types_access: jt,
+    customer_map_access: o.customer_map_access === true,
+    allow_my_hours: o.allow_my_hours === true,
+    backup_user_id: backupUserId,
+    teammate_user_id: teammateUserId,
+    job_qualifications: quals,
     _v: 1,
   }
 }

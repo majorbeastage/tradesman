@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
@@ -7,9 +7,11 @@ import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
+import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { consumeQueuedCustomerFocus } from "../../lib/customerNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import { getControlItemsForUser } from "../../types/portal-builder"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -19,7 +21,29 @@ const JOB_PIPELINE_OPTIONS = [
   "Quote Sent",
   "Quote Approved",
   "Scheduled",
+  "Lost",
+  "Completed",
 ] as const
+
+function formatFetchApiError(response: Response, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
+    return (
+      "The server function crashed or timed out. Check deployment logs for /api/outbound-messages or /api/send-sms. " +
+      "Common causes: missing env keys, Resend/Twilio errors."
+    )
+  }
+  if (trimmed.startsWith("{")) {
+    try {
+      const j = JSON.parse(trimmed) as Record<string, unknown>
+      const parts = [j.error, j.message, j.hint, j.logWarning].filter((x) => typeof x === "string" && String(x).trim()) as string[]
+      if (parts.length) return parts.join("\n\n")
+    } catch {
+      /* ignore */
+    }
+  }
+  return trimmed || `Request failed (HTTP ${response.status})`
+}
 
 const DEFAULT_BEST_CONTACT_OPTIONS = ["Phone call", "Text message", "Email", "Other"] as const
 
@@ -101,6 +125,74 @@ export default function CustomersPage() {
     bestContact: DEFAULT_BEST_CONTACT_OPTIONS[0],
     jobStatus: JOB_PIPELINE_OPTIONS[0],
   })
+
+  const [customerMessages, setCustomerMessages] = useState<any[]>([])
+  const [customerCommEvents, setCustomerCommEvents] = useState<any[]>([])
+  const [customerActivityLoading, setCustomerActivityLoading] = useState(false)
+  const [primaryConversationId, setPrimaryConversationId] = useState<string | null>(null)
+  const [customerReplySms, setCustomerReplySms] = useState("")
+  const [customerEmailTo, setCustomerEmailTo] = useState("")
+  const [customerEmailSubject, setCustomerEmailSubject] = useState("")
+  const [customerEmailBody, setCustomerEmailBody] = useState("")
+  const [customerSmsSending, setCustomerSmsSending] = useState(false)
+  const [customerEmailSending, setCustomerEmailSending] = useState(false)
+  const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
+  const [completeBusy, setCompleteBusy] = useState(false)
+  const [removeBusy, setRemoveBusy] = useState(false)
+
+  const conversationPortalDefaults = useMemo(() => {
+    const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
+    const out: Record<string, string> = {}
+    for (const item of items) {
+      if (item.type === "checkbox") out[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      else if (item.type === "dropdown" && item.options?.length) out[item.id] = item.options[0]
+      else out[item.id] = ""
+    }
+    return out
+  }, [portalConfig, aiAutomationsEnabled])
+
+  const customerActivityItems = useMemo(() => {
+    const items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[] = []
+    for (const m of customerMessages) {
+      const t = m.created_at ? Date.parse(m.created_at) : 0
+      items.push({ sortMs: t, key: `m-${m.id}`, kind: "msg", payload: m })
+    }
+    for (const e of customerCommEvents) {
+      const t = e.created_at ? Date.parse(e.created_at) : 0
+      items.push({ sortMs: t, key: `e-${e.id}`, kind: "ev", payload: e })
+    }
+    items.sort((a, b) => a.sortMs - b.sortMs)
+    return items
+  }, [customerMessages, customerCommEvents])
+
+  const inboundSmsItems = useMemo(
+    () =>
+      customerActivityItems.filter((item) => {
+        if (item.kind === "msg") return item.payload?.sender === "customer"
+        const ev = item.payload
+        return ev?.event_type === "sms" && ev?.direction === "inbound"
+      }),
+    [customerActivityItems],
+  )
+
+  const inboundEmailItems = useMemo(
+    () =>
+      customerActivityItems.filter((item) => {
+        if (item.kind !== "ev") return false
+        const ev = item.payload
+        return ev?.event_type === "email" && ev?.direction === "inbound"
+      }),
+    [customerActivityItems],
+  )
+
+  const voicemailItems = useMemo(
+    () =>
+      customerActivityItems.filter((item) => {
+        if (item.kind !== "ev") return false
+        return item.payload?.event_type === "voicemail"
+      }),
+    [customerActivityItems],
+  )
 
   const applyDetailFromCustomer = useCallback((c: CustomerRow) => {
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
@@ -230,6 +322,87 @@ export default function CustomersPage() {
     setArchivedCustomers(archived)
   }, [userId])
 
+  const loadCustomerActivity = useCallback(
+    async (customerId: string) => {
+      if (!supabase || !userId) return
+      setCustomerActivityLoading(true)
+      try {
+        const { data: convos } = await supabase
+          .from("conversations")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("customer_id", customerId)
+          .is("removed_at", null)
+          .order("created_at", { ascending: false })
+        const convoIds = (convos ?? []).map((c: { id: string }) => c.id)
+        setPrimaryConversationId(convoIds[0] ?? null)
+
+        let messages: any[] = []
+        if (convoIds.length > 0) {
+          const { data: msgs } = await supabase.from("messages").select("*").in("conversation_id", convoIds).order("created_at", { ascending: true })
+          messages = msgs ?? []
+        }
+        setCustomerMessages(messages)
+
+        const evSelect =
+          "id, event_type, subject, body, direction, created_at, metadata, recording_url, transcript_text, summary_text, lead_id, conversation_id, customer_id"
+        const seen = new Set<string>()
+        const merged: any[] = []
+        const { data: evCust } = await supabase
+          .from("communication_events")
+          .select(evSelect)
+          .eq("user_id", userId)
+          .eq("customer_id", customerId)
+          .order("created_at", { ascending: true })
+          .limit(400)
+        for (const row of evCust ?? []) {
+          if (row.id && !seen.has(row.id)) {
+            seen.add(row.id)
+            merged.push(row)
+          }
+        }
+        if (convoIds.length > 0) {
+          const { data: evConvo } = await supabase
+            .from("communication_events")
+            .select(evSelect)
+            .eq("user_id", userId)
+            .in("conversation_id", convoIds)
+            .order("created_at", { ascending: true })
+            .limit(400)
+          for (const row of evConvo ?? []) {
+            if (row.id && !seen.has(row.id)) {
+              seen.add(row.id)
+              merged.push(row)
+            }
+          }
+        }
+        merged.sort((a, b) => Date.parse(a.created_at || "") - Date.parse(b.created_at || ""))
+        setCustomerCommEvents(merged)
+      } finally {
+        setCustomerActivityLoading(false)
+      }
+    },
+    [userId],
+  )
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("voicemail_conversations_display")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data) return
+        const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
+        if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
   useEffect(() => {
     void loadCustomers()
   }, [loadCustomers])
@@ -254,6 +427,21 @@ export default function CustomersPage() {
   useEffect(() => {
     if (selectedCustomer) applyDetailFromCustomer(selectedCustomer)
   }, [selectedCustomer, applyDetailFromCustomer])
+
+  useEffect(() => {
+    if (!selectedCustomer?.id || !supabase || !userId) {
+      setCustomerMessages([])
+      setCustomerCommEvents([])
+      setPrimaryConversationId(null)
+      setCustomerReplySms("")
+      setCustomerEmailBody("")
+      return
+    }
+    const em = selectedCustomer.customer_identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
+    setCustomerEmailTo(em)
+    setCustomerEmailSubject(selectedCustomer.display_name?.trim() ? `Re: ${selectedCustomer.display_name.trim()}` : "Message from us")
+    void loadCustomerActivity(selectedCustomer.id)
+  }, [selectedCustomer?.id, userId, loadCustomerActivity])
 
   const currentList = section === "active" ? activeCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {
@@ -409,6 +597,139 @@ export default function CustomersPage() {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
       setDetailSaving(false)
+    }
+  }
+
+  async function sendCustomerSms() {
+    if (!userId || !selectedCustomer?.id) return
+    const trimmed = customerReplySms.trim()
+    const to = detailForm.phone.trim() || selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() || ""
+    if (!trimmed) {
+      alert("Enter a message to send.")
+      return
+    }
+    if (!to) {
+      alert("Add a phone number for this customer before sending SMS.")
+      return
+    }
+    setCustomerSmsSending(true)
+    try {
+      const response = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          body: trimmed,
+          userId,
+          customerId: selectedCustomer.id,
+          ...(primaryConversationId ? { conversationId: primaryConversationId } : {}),
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      setCustomerReplySms("")
+      await loadCustomerActivity(selectedCustomer.id)
+      await loadCustomers()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCustomerSmsSending(false)
+    }
+  }
+
+  async function sendCustomerEmail() {
+    if (!userId || !selectedCustomer?.id) return
+    const to = customerEmailTo.trim()
+    const subject = customerEmailSubject.trim()
+    const body = customerEmailBody.trim()
+    if (!to) {
+      alert("Enter an email address.")
+      return
+    }
+    if (!subject) {
+      alert("Enter a subject.")
+      return
+    }
+    if (!body) {
+      alert("Enter message body.")
+      return
+    }
+    setCustomerEmailSending(true)
+    try {
+      const response = await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          subject,
+          body,
+          userId,
+          customerId: selectedCustomer.id,
+          ...(primaryConversationId ? { conversationId: primaryConversationId } : {}),
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchApiError(response, raw))
+      setCustomerEmailBody("")
+      await loadCustomerActivity(selectedCustomer.id)
+      await loadCustomers()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCustomerEmailSending(false)
+    }
+  }
+
+  async function markCustomerComplete() {
+    if (!supabase || !selectedCustomer) return
+    setCompleteBusy(true)
+    try {
+      const nowIso = new Date().toISOString()
+      const patch: Record<string, unknown> = { job_pipeline_status: "Completed", last_activity_at: nowIso }
+      let { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
+      if (error && String(error.message || "").toLowerCase().includes("job_pipeline")) {
+        const { job_pipeline_status: _j, last_activity_at: _la, ...rest } = patch
+        const r = await supabase.from("customers").update(rest).eq("id", selectedCustomer.id)
+        error = r.error
+      }
+      if (error) throw error
+      setDetailForm((p) => ({ ...p, jobStatus: "Completed" }))
+      await loadCustomers()
+      const tried = await supabase
+        .from("customers")
+        .select(
+          `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, last_activity_at, customer_identifiers ( type, value )`,
+        )
+        .eq("id", selectedCustomer.id)
+        .maybeSingle()
+      if (!tried.error && tried.data) setSelectedCustomer(tried.data as CustomerRow)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCompleteBusy(false)
+    }
+  }
+
+  async function removeCustomerRecord() {
+    if (!supabase || !selectedCustomer) return
+    if (
+      !window.confirm(
+        "Remove this customer record permanently? This only works if nothing still references them (quotes, events, etc.). Otherwise the database will refuse deletion.",
+      )
+    )
+      return
+    setRemoveBusy(true)
+    try {
+      const { error } = await supabase.from("customers").delete().eq("id", selectedCustomer.id)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setSelectedCustomer(null)
+      setDetailEditMode(false)
+      await loadCustomers()
+    } finally {
+      setRemoveBusy(false)
     }
   }
 
@@ -687,21 +1008,58 @@ export default function CustomersPage() {
                             </div>
 
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                              <button
-                                type="button"
-                                onClick={() => setDetailEditMode((e) => !e)}
-                                style={{
-                                  padding: "6px 12px",
-                                  borderRadius: 6,
-                                  border: `1px solid ${theme.border}`,
-                                  background: "#fff",
-                                  cursor: "pointer",
-                                  fontWeight: 600,
-                                  fontSize: 13,
-                                }}
-                              >
-                                {detailEditMode ? "Stop editing" : "Edit details"}
-                              </button>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                <button
+                                  type="button"
+                                  disabled={completeBusy || !selectedCustomer}
+                                  onClick={() => void markCustomerComplete()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: "1px solid #047857",
+                                    background: "#ecfdf5",
+                                    color: "#065f46",
+                                    cursor: completeBusy ? "wait" : "pointer",
+                                    fontWeight: 700,
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  {completeBusy ? "…" : "Complete"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={removeBusy || !selectedCustomer}
+                                  onClick={() => void removeCustomerRecord()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: "1px solid #b91c1c",
+                                    background: "#fef2f2",
+                                    color: "#991b1b",
+                                    cursor: removeBusy ? "wait" : "pointer",
+                                    fontWeight: 700,
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  {removeBusy ? "…" : "Remove"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDetailEditMode((e) => !e)}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: "1px solid #334155",
+                                    background: "#e2e8f0",
+                                    color: "#0f172a",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  {detailEditMode ? "Stop editing" : "Edit details"}
+                                </button>
+                              </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <button
                                   type="button"
@@ -850,8 +1208,9 @@ export default function CustomersPage() {
                                       style={{
                                         padding: "6px 12px",
                                         borderRadius: 6,
-                                        border: `1px solid ${theme.border}`,
-                                        background: "#fff",
+                                        border: "1px solid #334155",
+                                        background: "#f1f5f9",
+                                        color: "#0f172a",
                                         cursor: serviceGeocodeBusy ? "wait" : "pointer",
                                         fontWeight: 600,
                                         fontSize: 12,
@@ -881,6 +1240,188 @@ export default function CustomersPage() {
                                     </button>
                                   </div>
                                 ) : null}
+
+                                <div
+                                  style={{
+                                    borderTop: `1px solid ${theme.border}`,
+                                    paddingTop: 16,
+                                    marginTop: 12,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 14,
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Received</div>
+                                  {customerActivityLoading ? (
+                                    <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading messages…</p>
+                                  ) : (
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                                      <div
+                                        style={{
+                                          border: `1px solid ${theme.border}`,
+                                          borderRadius: 8,
+                                          padding: 10,
+                                          background: "#fff",
+                                          maxHeight: 200,
+                                          overflow: "auto",
+                                        }}
+                                      >
+                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Text messages</div>
+                                        {inboundSmsItems.length === 0 ? (
+                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No inbound texts yet.</p>
+                                        ) : (
+                                          inboundSmsItems.map((item) => (
+                                            <div key={item.key} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
+                                              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                                                {item.payload?.created_at
+                                                  ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                  : ""}
+                                              </div>
+                                              <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>
+                                                {item.kind === "msg" ? item.payload?.content ?? "—" : item.payload?.body ?? "—"}
+                                              </p>
+                                            </div>
+                                          ))
+                                        )}
+                                      </div>
+                                      <div
+                                        style={{
+                                          border: `1px solid ${theme.border}`,
+                                          borderRadius: 8,
+                                          padding: 10,
+                                          background: "#fff",
+                                          maxHeight: 200,
+                                          overflow: "auto",
+                                        }}
+                                      >
+                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Email</div>
+                                        {inboundEmailItems.length === 0 ? (
+                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No inbound email logged yet.</p>
+                                        ) : (
+                                          inboundEmailItems.map((item) => {
+                                            const ev = item.payload
+                                            return (
+                                              <div key={item.key} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
+                                                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                                                  {ev?.created_at
+                                                    ? new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                    : ""}
+                                                </div>
+                                                {ev?.subject?.trim() ? (
+                                                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
+                                                ) : null}
+                                                <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
+                                              </div>
+                                            )
+                                          })
+                                        )}
+                                      </div>
+                                      <div
+                                        style={{
+                                          border: `1px solid ${theme.border}`,
+                                          borderRadius: 8,
+                                          padding: 10,
+                                          background: "#fff",
+                                          maxHeight: 220,
+                                          overflow: "auto",
+                                        }}
+                                      >
+                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Voicemails</div>
+                                        {voicemailItems.length === 0 ? (
+                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No voicemails yet.</p>
+                                        ) : (
+                                          voicemailItems.map((item) => {
+                                            const ev = item.payload
+                                            return (
+                                              <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f1f5f9" }}>
+                                                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
+                                                  {ev?.created_at
+                                                    ? new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                    : ""}
+                                                </div>
+                                                <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
+                                                <VoicemailTranscriptBlock
+                                                  ev={ev}
+                                                  profileVoicemailDisplay={voicemailProfileDisplay}
+                                                  conversationPortalValues={conversationPortalDefaults}
+                                                />
+                                                {ev?.body ? (
+                                                  <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                                ) : null}
+                                              </div>
+                                            )
+                                          })
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Reply</div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Text message</span>
+                                    <textarea
+                                      placeholder="SMS reply…"
+                                      value={customerReplySms}
+                                      onChange={(e) => setCustomerReplySms(e.target.value)}
+                                      rows={2}
+                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: 560, color: "#0f172a" }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => void sendCustomerSms()}
+                                      disabled={customerSmsSending}
+                                      style={{
+                                        alignSelf: "flex-start",
+                                        padding: "8px 14px",
+                                        background: theme.primary,
+                                        color: "white",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        cursor: customerSmsSending ? "wait" : "pointer",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {customerSmsSending ? "Sending…" : "Send text"}
+                                    </button>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginTop: 6 }}>Email</span>
+                                    <input
+                                      placeholder="To"
+                                      value={customerEmailTo}
+                                      onChange={(e) => setCustomerEmailTo(e.target.value)}
+                                      style={{ ...theme.formInput, maxWidth: 560, color: "#0f172a" }}
+                                    />
+                                    <input
+                                      placeholder="Subject"
+                                      value={customerEmailSubject}
+                                      onChange={(e) => setCustomerEmailSubject(e.target.value)}
+                                      style={{ ...theme.formInput, maxWidth: 560, color: "#0f172a" }}
+                                    />
+                                    <textarea
+                                      placeholder="Email body…"
+                                      value={customerEmailBody}
+                                      onChange={(e) => setCustomerEmailBody(e.target.value)}
+                                      rows={4}
+                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: 560, color: "#0f172a" }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => void sendCustomerEmail()}
+                                      disabled={customerEmailSending}
+                                      style={{
+                                        alignSelf: "flex-start",
+                                        padding: "8px 14px",
+                                        background: theme.primary,
+                                        color: "white",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        cursor: customerEmailSending ? "wait" : "pointer",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {customerEmailSending ? "Sending…" : "Send email"}
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </div>

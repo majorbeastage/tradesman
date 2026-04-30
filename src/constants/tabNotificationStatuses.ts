@@ -23,6 +23,8 @@ const CUSTOMERS_PIPELINE_STATUSES = [
   "Quote Sent",
   "Quote Approved",
   "Scheduled",
+  "Lost",
+  "Completed",
 ] as const
 
 export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {

@@ -149,7 +149,29 @@ export async function requestPushPermissionAndRegister(
           "Notification permission was not granted. You can enable it under Settings → Apps → Tradesman → Notifications, or use “Open system settings” below.",
       }
     }
-    // Let the OS dialog / WebView settle before touching FCM (reduces native crashes on some devices).
+    /**
+     * If permission was just granted via a fresh OS prompt, avoid immediate `register()` in this tick.
+     * Some Android WebViews crash when FCM register runs right after the system permission dialog returns.
+     * Startup sync (`syncPushTokenIfPermissionGranted`) and this delayed task will complete registration.
+     */
+    const wasAlreadyGranted = existing.receive === "granted"
+    if (!wasAlreadyGranted) {
+      window.setTimeout(() => {
+        void schedulePushRegister(async () => {
+          try {
+            await PushNotifications.register()
+          } catch (regErr) {
+            console.warn("[push] delayed register() after grant", regErr)
+          }
+        })
+      }, 2600)
+      return {
+        ok: true,
+        message:
+          "Notifications enabled. Finishing device registration in the background; wait a few seconds before test push.",
+      }
+    }
+    // Permission was already granted before this action: safe to register now.
     await new Promise<void>((resolve) => {
       window.setTimeout(resolve, 900)
     })

@@ -79,7 +79,7 @@ export const TAB_ID_LABELS: Record<string, string> = {
   leads: 'Leads',
   conversations: 'Conversations',
   quotes: 'Quotes',
-  calendar: 'Calendar',
+  calendar: 'Scheduling',
   customers: 'Customers',
   payments: 'Payments',
   account: 'Account',

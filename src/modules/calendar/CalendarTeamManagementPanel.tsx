@@ -10,7 +10,6 @@ import {
   parseTeamRibbonColors,
   type OmCalendarPolicyV1,
 } from "../../lib/teamCalendarPolicy"
-import { MANAGED_USER_PERMISSIONS_GUIDANCE, SELF_PERMISSIONS_GUIDANCE } from "./teamManagementPermissionsGuidance"
 
 type ProfileLite = {
   id: string
@@ -34,6 +33,8 @@ type UpcomingEventRow = {
 }
 
 type JobTypeNameRow = { user_id: string; name: string }
+type JobQualificationLevel = "not_qualified" | "qualified" | "preferred" | "required"
+type TimeClockSessionRow = { user_id: string; clocked_in_at: string; clocked_out_at: string | null }
 
 type CardTab = "schedule" | "permissions"
 
@@ -57,6 +58,13 @@ function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null
   return typeof n === "string" && n.trim() ? n.trim() : null
 }
 
+function startOfWeekLocal(d: Date): Date {
+  const at = new Date(d)
+  at.setHours(0, 0, 0, 0)
+  at.setDate(at.getDate() - at.getDay())
+  return at
+}
+
 function TeamUserCard({
   member,
   ribbonOm,
@@ -65,15 +73,15 @@ function TeamUserCard({
   clockedInAt,
   policy,
   pref,
-  ribbonPref,
   savingUserId,
   setOmMeta,
   persistOmColorForMember,
   persistManagedPolicy,
   persistUserPref,
-  setPrefsByUser,
   upcoming,
   jobTypeNames,
+  rosterOptions,
+  removeJobQualification,
   cardTab,
   setCardTab,
 }: {
@@ -84,15 +92,15 @@ function TeamUserCard({
   clockedInAt: string | null
   policy: OmCalendarPolicyV1
   pref: PrefLite | undefined
-  ribbonPref: string
   savingUserId: string | null
   setOmMeta: React.Dispatch<React.SetStateAction<Record<string, unknown>>>
   persistOmColorForMember: (memberUserId: string, hex: string) => Promise<void>
   persistManagedPolicy: (targetUserId: string, patch: Partial<OmCalendarPolicyV1>) => Promise<void>
   persistUserPref: (targetUserId: string, ribbon: string, autoAssign: boolean) => Promise<void>
-  setPrefsByUser: React.Dispatch<React.SetStateAction<Record<string, PrefLite>>>
   upcoming: UpcomingEventRow[]
   jobTypeNames: string[]
+  rosterOptions: { id: string; label: string }[]
+  removeJobQualification: (targetUserId: string, key: string) => Promise<void>
   cardTab: CardTab
   setCardTab: (userId: string, tab: CardTab) => void
 }) {
@@ -111,6 +119,22 @@ function TeamUserCard({
     overflow: "hidden",
   }
   const listTitle: CSSProperties = { fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 2 }
+  const [qualificationsOpen, setQualificationsOpen] = useState(false)
+  const [jobQualificationDraft, setJobQualificationDraft] = useState("")
+  const [jobQualificationLevel, setJobQualificationLevel] = useState<JobQualificationLevel>("qualified")
+  const qualificationPairs = Object.entries(policy.job_qualifications ?? {})
+  const [upcomingWindow, setUpcomingWindow] = useState<"day" | "week" | "month">("week")
+  const filteredUpcoming = useMemo(() => {
+    const now = new Date()
+    const end = new Date(now)
+    if (upcomingWindow === "day") end.setDate(end.getDate() + 1)
+    else if (upcomingWindow === "week") end.setDate(end.getDate() + 7)
+    else end.setMonth(end.getMonth() + 1)
+    return upcoming.filter((ev) => {
+      const start = new Date(ev.start_at)
+      return start >= now && start < end
+    })
+  }, [upcoming, upcomingWindow])
 
   return (
     <div
@@ -246,12 +270,23 @@ function TeamUserCard({
             }}
           >
             <div style={listBox}>
-              <div style={listTitle}>Upcoming jobs</div>
-              {upcoming.length === 0 ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={listTitle}>Upcoming jobs</div>
+                <select
+                  value={upcomingWindow}
+                  onChange={(e) => setUpcomingWindow(e.target.value as "day" | "week" | "month")}
+                  style={{ ...theme.formInput, fontSize: 11, padding: "2px 6px", minHeight: 0, height: 24, maxWidth: 90 }}
+                >
+                  <option value="day">Day</option>
+                  <option value="week">Week</option>
+                  <option value="month">Month</option>
+                </select>
+              </div>
+              {filteredUpcoming.length === 0 ? (
                 <span style={{ color: "#94a3b8", fontStyle: "italic" }}>No upcoming jobs on file.</span>
               ) : (
                 <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.45 }}>
-                  {upcoming.slice(0, 6).map((ev) => {
+                  {filteredUpcoming.slice(0, 6).map((ev) => {
                     const jt = normalizeJobTypeName(ev.job_types)
                     const when = ev.start_at ? new Date(ev.start_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"
                     return (
@@ -298,124 +333,26 @@ function TeamUserCard({
         </div>
       ) : (
         <div style={{ padding: "12px 12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div
-            style={{
-              borderRadius: 10,
-              border: `1px solid ${theme.border}`,
-              background: "#f1f5f9",
-              padding: "12px 12px 10px",
-              maxHeight: "min(42vh, 340px)",
-              overflowY: "auto",
-              marginBottom: 2,
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", marginBottom: 10, letterSpacing: 0.02 }}>
-              {member.isSelf ? "Your settings on this roster" : "What you can give this team member"}
-            </div>
-            {(member.isSelf ? SELF_PERMISSIONS_GUIDANCE : MANAGED_USER_PERMISSIONS_GUIDANCE).map((block) => (
-              <div key={block.id} style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 4, lineHeight: 1.3 }}>{block.title}</div>
-                <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.55 }}>{block.body}</p>
-              </div>
-            ))}
-          </div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.06 }}>Controls</div>
 
-          <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.06, marginTop: 4 }}>
-            Controls
-          </div>
-
-          <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8 }}>
             Team color
             <input
               type="color"
               value={ribbonOm}
-              disabled={savingUserId === "__om__"}
+              disabled={savingUserId === "__om__" || savingUserId === member.userId}
               onChange={(e) => {
                 const hex = e.target.value
                 setOmMeta((prev) => mergeTeamRibbonColors(prev, member.userId, hex))
+                void persistUserPref(member.userId, hex, pref?.auto_assign_enabled ?? true)
               }}
               onBlur={(e) => void persistOmColorForMember(member.userId, e.currentTarget.value)}
-              style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
+              style={{ width: 32, height: 22, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 5, cursor: "pointer" }}
             />
           </label>
-
-          <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            Calendar ribbon (map / pins)
-            <input
-              type="color"
-              value={ribbonPref}
-              disabled={savingUserId === member.userId}
-              onChange={(e) =>
-                setPrefsByUser((prev) => ({
-                  ...prev,
-                  [member.userId]: {
-                    owner_user_id: member.userId,
-                    ribbon_color: e.target.value,
-                    auto_assign_enabled: pref?.auto_assign_enabled ?? true,
-                  },
-                }))
-              }
-              style={{ width: 40, height: 32, padding: 0, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: "pointer" }}
-            />
-            <button
-              type="button"
-              disabled={savingUserId === member.userId}
-              onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled ?? true)}
-              style={{
-                padding: "4px 10px",
-                fontSize: 12,
-                borderRadius: 6,
-                border: `1px solid ${theme.border}`,
-                background: "#f8fafc",
-                cursor: savingUserId === member.userId ? "wait" : "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Save ribbon
-            </button>
-          </label>
-
-          <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={pref?.auto_assign_enabled !== false}
-              disabled={savingUserId === member.userId}
-              onChange={(e) => {
-                const v = e.target.checked
-                setPrefsByUser((prev) => ({
-                  ...prev,
-                  [member.userId]: {
-                    owner_user_id: member.userId,
-                    ribbon_color: ribbonPref,
-                    auto_assign_enabled: v,
-                  },
-                }))
-              }}
-            />
-            Auto-assign new items to this user
-          </label>
-          <button
-            type="button"
-            disabled={savingUserId === member.userId}
-            onClick={() => void persistUserPref(member.userId, ribbonPref, pref?.auto_assign_enabled !== false)}
-            style={{
-              alignSelf: "flex-start",
-              padding: "4px 10px",
-              fontSize: 12,
-              borderRadius: 6,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 600,
-              cursor: savingUserId === member.userId ? "wait" : "pointer",
-            }}
-          >
-            Save calendar prefs
-          </button>
 
           {!member.isSelf ? (
             <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Managed user access</span>
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
@@ -423,39 +360,160 @@ function TeamUserCard({
                   disabled={savingUserId === member.userId}
                   onChange={(e) => void persistManagedPolicy(member.userId, { allow_add_to_calendar: e.target.checked })}
                 />
-                Allow &quot;Add item to calendar&quot; on their Calendar tab
+                Allow User to add items to Calendar
               </label>
+
+              <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setQualificationsOpen((v) => !v)}
+                  style={{ border: "none", background: "transparent", color: theme.text, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700 }}
+                >
+                  {qualificationsOpen ? "Hide" : "Select"} Job Qualifications
+                </button>
+                {qualificationsOpen ? (
+                  <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6 }}>
+                      <select value={jobQualificationDraft} onChange={(e) => setJobQualificationDraft(e.target.value)} style={{ ...theme.formInput, fontSize: 12 }}>
+                        <option value="">Select job type</option>
+                        {jobTypeNames.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <select value={jobQualificationLevel} onChange={(e) => setJobQualificationLevel(e.target.value as JobQualificationLevel)} style={{ ...theme.formInput, fontSize: 12 }}>
+                        <option value="not_qualified">Not - Qualified</option>
+                        <option value="qualified">Qualified</option>
+                        <option value="preferred">Preferred</option>
+                        <option value="required">Required</option>
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!jobQualificationDraft || savingUserId === member.userId}
+                        onClick={() => {
+                          void persistManagedPolicy(member.userId, {
+                            job_qualifications: {
+                              ...(policy.job_qualifications ?? {}),
+                              [jobQualificationDraft]: jobQualificationLevel,
+                            },
+                          })
+                          setJobQualificationDraft("")
+                          setJobQualificationLevel("qualified")
+                        }}
+                        style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {qualificationPairs.length ? (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {qualificationPairs.map(([key, value]) => (
+                          <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff", padding: "6px 8px" }}>
+                            <span style={{ fontSize: 11, color: "#334155" }}>{key} - {String(value).replace("_", " ")}</span>
+                            <button
+                              type="button"
+                              onClick={() => void removeJobQualification(member.userId, key)}
+                              style={{ border: "none", background: "transparent", color: "#b91c1c", cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 11, color: "#94a3b8" }}>No job qualifications selected yet.</span>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
-                  checked={policy.scheduling_tools === true}
-                  disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { scheduling_tools: e.target.checked })}
-                />
-                Scheduling tools (extra Calendar + Alerts options)
-              </label>
-              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                Job types on their tab
-                <select
-                  value={policy.job_types_access ?? "edit"}
+                  checked={policy.advanced_scheduling_tools === true || policy.scheduling_tools === true}
                   disabled={savingUserId === member.userId}
                   onChange={(e) =>
                     void persistManagedPolicy(member.userId, {
-                      job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"],
+                      scheduling_tools: e.target.checked,
+                      advanced_scheduling_tools: e.target.checked,
+                      ...(e.target.checked ? {} : { job_types_access: "off", customer_map_access: false, allow_my_hours: false }),
                     })
                   }
-                  style={{ ...theme.formInput, maxWidth: 160, fontSize: 12 }}
+                />
+                Allow User advanced Scheduling Tools
+              </label>
+
+              {policy.advanced_scheduling_tools === true || policy.scheduling_tools === true ? (
+                <div style={{ marginLeft: 16, display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    Allow User Access to Job Types settings
+                    <select
+                      value={policy.job_types_access ?? "read"}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"] })}
+                      style={{ ...theme.formInput, maxWidth: 160, fontSize: 12 }}
+                    >
+                      <option value="read">View only</option>
+                      <option value="edit">Edit access</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.customer_map_access === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { customer_map_access: e.target.checked })}
+                    />
+                    Allow upcoming Customer Map access
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.allow_my_hours === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_my_hours: e.target.checked })}
+                    />
+                    Allow My Hours
+                  </label>
+                </div>
+              ) : null}
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                Select Backup
+                <select
+                  value={policy.backup_user_id ?? ""}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { backup_user_id: e.target.value || null })}
+                  style={{ ...theme.formInput, maxWidth: 220, fontSize: 12 }}
                 >
-                  <option value="off">Hidden</option>
-                  <option value="read">Read-only</option>
-                  <option value="edit">Edit</option>
+                  <option value="">None selected</option>
+                  {rosterOptions.filter((u) => u.id !== member.userId).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                Select Teammate
+                <select
+                  value={policy.teammate_user_id ?? ""}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { teammate_user_id: e.target.value || null })}
+                  style={{ ...theme.formInput, maxWidth: 220, fontSize: 12 }}
+                >
+                  <option value="">None selected</option>
+                  {rosterOptions.filter((u) => u.id !== member.userId).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
           ) : (
-            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Your own calendar permissions follow your account role. Managed-user rules apply to linked contractors only.
-            </p>
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>Use this card to adjust your team color.</p>
           )}
         </div>
       )}
@@ -476,6 +534,14 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
   const [clockLoading, setClockLoading] = useState(false)
   const [clockError, setClockError] = useState("")
   const [clockActionBusy, setClockActionBusy] = useState(false)
+  const [clockPanelTab, setClockPanelTab] = useState<"time_clock" | "my_hours">("time_clock")
+  const [weekSessionsByUser, setWeekSessionsByUser] = useState<Record<string, TimeClockSessionRow[]>>({})
+  const weekStart = useMemo(() => startOfWeekLocal(new Date()), [])
+  const weekEnd = useMemo(() => {
+    const d = new Date(weekStart)
+    d.setDate(d.getDate() + 7)
+    return d
+  }, [weekStart])
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
@@ -516,6 +582,39 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
       window.clearInterval(id)
     }
   }, [loadOpenClockSessions])
+
+  useEffect(() => {
+    if (!supabase || roster.length === 0) {
+      setWeekSessionsByUser({})
+      return
+    }
+    const ids = roster.map((r) => r.userId).filter(Boolean)
+    let cancelled = false
+    void supabase
+      .from("user_time_clock_sessions")
+      .select("user_id, clocked_in_at, clocked_out_at")
+      .in("user_id", ids)
+      .gte("clocked_in_at", weekStart.toISOString())
+      .lt("clocked_in_at", weekEnd.toISOString())
+      .order("clocked_in_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error || !data) {
+          setWeekSessionsByUser({})
+          return
+        }
+        const byUser: Record<string, TimeClockSessionRow[]> = {}
+        for (const id of ids) byUser[id] = []
+        for (const row of data as TimeClockSessionRow[]) {
+          if (!row.user_id || !byUser[row.user_id]) continue
+          byUser[row.user_id].push(row)
+        }
+        setWeekSessionsByUser(byUser)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [roster, weekStart, weekEnd])
 
   async function handleClockIn() {
     if (!supabase) return
@@ -741,7 +840,22 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
     }
   }
 
+  async function removeJobQualification(targetUserId: string, key: string) {
+    const current = parseOmCalendarPolicy(profilesById[targetUserId]?.metadata)
+    const next = { ...(current.job_qualifications ?? {}) }
+    delete next[key]
+    await persistManagedPolicy(targetUserId, { job_qualifications: next })
+  }
+
   const myOpenClock = openClockByUser[viewerUserId]
+  const rosterOptions = useMemo(
+    () =>
+      roster.map((m) => ({
+        id: m.userId,
+        label: profilesById[m.userId]?.display_name?.trim() || m.label || m.userId.slice(0, 8),
+      })),
+    [roster, profilesById],
+  )
   const clockPanelStyle: CSSProperties = {
     borderRadius: 10,
     border: `1px solid ${theme.border}`,
@@ -776,10 +890,45 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
           <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Time clock</span>
           {clockLoading ? <span style={{ fontSize: 11, color: "#64748b" }}>Refreshing…</span> : null}
         </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setClockPanelTab("time_clock")}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: clockPanelTab === "time_clock" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+              background: clockPanelTab === "time_clock" ? "#eff6ff" : "#fff",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: clockPanelTab === "time_clock" ? 800 : 600,
+              color: theme.text,
+            }}
+          >
+            Time clock
+          </button>
+          <button
+            type="button"
+            onClick={() => setClockPanelTab("my_hours")}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: clockPanelTab === "my_hours" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+              background: clockPanelTab === "my_hours" ? "#eff6ff" : "#fff",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: clockPanelTab === "my_hours" ? 800 : 600,
+              color: theme.text,
+            }}
+          >
+            My hrs (week)
+          </button>
+        </div>
         {clockError ? (
           <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", lineHeight: 1.45 }}>{clockError}</p>
         ) : null}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))", gap: 10 }}>
+        {clockPanelTab === "time_clock" ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))", gap: 10 }}>
           <div style={clockColStyle}>
             <div style={{ fontSize: 11, fontWeight: 800, color: "#059669", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 8 }}>Clocked in</div>
             {clockedInMembers.length === 0 ? (
@@ -811,8 +960,39 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
               </ul>
             )}
           </div>
-        </div>
-        {viewerOnRoster ? (
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>
+              Week of {weekStart.toLocaleDateString(undefined, { dateStyle: "medium" })} to{" "}
+              {new Date(weekEnd.getTime() - 1).toLocaleDateString(undefined, { dateStyle: "medium" })}
+            </div>
+            {roster.map((m) => {
+              const rows = weekSessionsByUser[m.userId] ?? []
+              const label = rosterLabel(m.userId)
+              return (
+                <div key={m.userId} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "8px 10px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>{label}</div>
+                  {rows.length === 0 ? (
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>No clock entries this week.</span>
+                  ) : (
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
+                      {rows.slice(0, 10).map((row, idx) => (
+                        <li key={`${m.userId}-${idx}`}>
+                          {new Date(row.clocked_in_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })} -{" "}
+                          {row.clocked_out_at
+                            ? new Date(row.clocked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                            : "Active"}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {viewerOnRoster && clockPanelTab === "time_clock" ? (
           <div
             style={{
               borderTop: `1px solid ${theme.border}`,
@@ -893,7 +1073,6 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
               : null
           const ribbonOm = teamColors[member.userId] ?? defaultTeamRibbonColor(member.userId, idx)
           const pref = prefsByUser[member.userId]
-          const ribbonPref = pref?.ribbon_color?.trim() || ribbonOm
           const policy = member.isSelf ? ({ allow_add_to_calendar: true, job_types_access: "edit" } as OmCalendarPolicyV1) : parseOmCalendarPolicy(p?.metadata)
           const displayName = (p?.display_name?.trim() || member.label || "User").trim()
           const tab: CardTab = cardTabByUser[member.userId] ?? "schedule"
@@ -908,15 +1087,15 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
               clockedInAt={openClockByUser[member.userId] ?? null}
               policy={policy}
               pref={pref}
-              ribbonPref={ribbonPref}
               savingUserId={savingUserId}
               setOmMeta={setOmMeta}
               persistOmColorForMember={persistOmColorForMember}
               persistManagedPolicy={persistManagedPolicy}
               persistUserPref={persistUserPref}
-              setPrefsByUser={setPrefsByUser}
               upcoming={upcomingByUser[member.userId] ?? []}
               jobTypeNames={jobTypesByUser[member.userId] ?? []}
+              rosterOptions={rosterOptions}
+              removeJobQualification={removeJobQualification}
               cardTab={tab}
               setCardTab={setCardTab}
             />

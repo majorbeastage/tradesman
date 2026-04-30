@@ -352,7 +352,12 @@ export function AccountProfilePanel({
       await refetchProfile()
       setMessage("Profile photo updated.")
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const raw = err instanceof Error ? err.message : String(err)
+      if (/bucket not found/i.test(raw)) {
+        setError("Bucket not found: run supabase/profile-photos-storage.sql in Supabase SQL Editor, then try upload again.")
+      } else {
+        setError(raw)
+      }
     } finally {
       setUploadingProfilePhoto(false)
     }

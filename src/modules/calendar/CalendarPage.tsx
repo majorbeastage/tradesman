@@ -504,10 +504,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   const isOfficeManagerOrAdmin = authRole === "office_manager" || authRole === "admin"
   const showTeamManagementEntry = isOfficeManagerOrAdmin
-  const showSchedulingToolsStandalone = authRole === "user" && !managedByOfficeManager && !isOfficeManagerOrAdmin
+  const managedSchedulingToolsEnabled =
+    managedByOfficeManager && (managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true)
+  const showSchedulingToolsStandalone =
+    authRole === "user" && !isOfficeManagerOrAdmin && (!managedByOfficeManager || managedSchedulingToolsEnabled)
   const showAddOnMainCalendar = showCalAddItem && (!managedByOfficeManager || managedSelfPolicy.allow_add_to_calendar !== false)
   const showManagedJobTypesEntry =
-    managedByOfficeManager && authRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off"
+    managedByOfficeManager && authRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off" && !managedSchedulingToolsEnabled
+
+  useEffect(() => {
+    if (calendarSuite.id !== "scheduling_tools" || !managedByOfficeManager) return
+    const toolsOn = managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true
+    if (!toolsOn) {
+      setCalendarSuite({ id: "calendar" })
+      return
+    }
+    if (calendarSuite.panel === "job_types" && managedSelfPolicy.job_types_access === "off") {
+      if (managedSelfPolicy.customer_map_access === true) setCalendarSuite({ id: "scheduling_tools", panel: "customer_map" })
+      else setCalendarSuite({ id: "calendar" })
+      return
+    }
+    if (calendarSuite.panel === "customer_map" && managedSelfPolicy.customer_map_access !== true) {
+      setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })
+    }
+  }, [calendarSuite, managedByOfficeManager, managedSelfPolicy])
 
   useEffect(() => {
     if (!managedByOfficeManager || !supabase || !authUserId) return
@@ -963,7 +983,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const workerMay = calendarCompletionProfile.calendar_completion_worker_may_message_customer === "checked"
     if (isAssignedUserCompleting && !workerMay && (receiptEmailCustomer || receiptSmsCustomer)) {
       alert(
-        "Your office has not allowed assigned users to send receipts directly to customers. Ask your office manager to enable it under Calendar → Job completion, or complete without customer email/SMS.",
+        "Your office has not allowed assigned users to send receipts directly to customers. Ask your office manager to enable it under Scheduling -> Job completion, or complete without customer email/SMS.",
       )
       return
     }
@@ -1939,7 +1959,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
       <h1 style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-        Calendar
+        Scheduling
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
 
@@ -2017,6 +2037,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Add item to calendar
                 </button>
               ) : null}
+              {showTeamManagementEntry ? (
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                >
+                  Team management
+                </button>
+              ) : null}
               {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
             </div>
             {showCalAutoResponse ? (
@@ -2073,15 +2102,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 Job types
               </button>
             ) : null}
-            {showTeamManagementEntry ? (
-              <button
-                type="button"
-                onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
-              >
-                Team management
-              </button>
-            ) : null}
             {showSchedulingToolsStandalone ? (
               <button
                 type="button"
@@ -2112,7 +2132,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 fontWeight: 700,
               }}
             >
-              Return to calendar view
+              Return to scheduling view
             </button>
             {calendarSuite.id === "team_management" ? (
               <>
@@ -2142,7 +2162,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             ) : null}
             {calendarSuite.id === "scheduling_tools" ? (
               <>
-                {(["job_types", "customer_map"] as const).map((panel) => {
+                {(
+                  managedByOfficeManager
+                    ? ([
+                        ...(managedSelfPolicy.job_types_access !== "off" ? (["job_types"] as const) : []),
+                        ...(managedSelfPolicy.customer_map_access === true ? (["customer_map"] as const) : []),
+                      ] as Array<"job_types" | "customer_map">)
+                    : (["job_types", "customer_map"] as Array<"job_types" | "customer_map">)
+                ).map((panel) => {
                   const active = calendarSuite.panel === panel
                   const label = panel === "job_types" ? "Job types" : "Customer locations map"
                   return (
@@ -2175,7 +2202,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
       {calendarSuite.id === "calendar" ? (
       <>
-      {/* Calendar area: view switcher + expand + job types */}
+      {/* Scheduling area: view switcher + expand + job types */}
       <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", background: "white", overflow: "hidden" }}>
         <div
           style={{
@@ -2245,7 +2272,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         <div style={{ padding: isMobile ? "12px" : "16px" }}>
         <div style={{ minHeight: expanded ? "70vh" : "400px", overflow: "auto" }}>
           {loadError && (
-            <p style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "14px" }}>Calendar error: {loadError}</p>
+            <p style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "14px" }}>Scheduling error: {loadError}</p>
           )}
           {loading ? (
             <p style={{ color: theme.text }}>Loading...</p>
@@ -2505,7 +2532,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               onClose={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
             />
           ) : null}
-          {calendarSuite.id === "scheduling_tools" && calendarSuite.panel === "customer_map" && authUserId ? (
+          {calendarSuite.id === "scheduling_tools" &&
+          calendarSuite.panel === "customer_map" &&
+          authUserId &&
+          (!managedByOfficeManager || managedSelfPolicy.customer_map_access === true) ? (
             <TeamLocationsMapModal
               variant="embedded"
               members={[{ userId: authUserId, label: "My jobs on map" }]}
@@ -2844,7 +2874,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
       {showSettings && (
         <PortalSettingsModal
-          title="Calendar Settings"
+          title="Scheduling Settings"
           items={calendarSettingsItemsWithOrg}
           formValues={settingsFormValues}
           setFormValue={(id, value) => {
@@ -2939,7 +2969,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         <>
           <div onClick={() => setShowAutoResponse(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "440px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-            <h3 style={{ margin: "0 0 16px", color: theme.text }}>Calendar Auto Response Options</h3>
+            <h3 style={{ margin: "0 0 16px", color: theme.text }}>Scheduling Auto Response Options</h3>
             <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
               <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
               <div style={{ marginTop: 10 }}>
