@@ -15,33 +15,38 @@ import {
 export default function NativeMobilePipeline() {
   const { user } = useAuth()
   const [gpsOptIn, setGpsOptIn] = useState(false)
+  const [pushOptIn, setPushOptIn] = useState(false)
 
-  const loadGpsOptIn = useCallback(async () => {
+  const loadMobilePrefs = useCallback(async () => {
     if (!supabase || !user?.id) return
     const { data } = await supabase.from("profiles").select("metadata").eq("id", user.id).maybeSingle()
     const m = data?.metadata as Record<string, unknown> | undefined
     setGpsOptIn(m?.mobile_gps_opt_in === true)
+    setPushOptIn(m?.mobile_push_opt_in === true)
   }, [user?.id])
 
   useEffect(() => {
-    void loadGpsOptIn()
-    const onFocus = () => void loadGpsOptIn()
+    void loadMobilePrefs()
+    const onFocus = () => void loadMobilePrefs()
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
-  }, [loadGpsOptIn])
+  }, [loadMobilePrefs])
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return
     /** Delay push listener attach + FCM register until after first-launch OS permission flows settle (WebView crashes if this races). */
     const t = window.setTimeout(() => {
       void attachPushTokenUpsertListeners(supabase, user.id)
-      void syncPushTokenIfPermissionGranted(supabase, user.id)
+      /** When MyT “Allow push” is on, show the system notification sheet if still `prompt` (same pattern as GPS after location opt-in). */
+      void syncPushTokenIfPermissionGranted(supabase, user.id, {
+        requestPermissionIfPrompt: pushOptIn,
+      })
     }, 12_000)
     return () => {
       window.clearTimeout(t)
       void detachPushTokenUpsertListeners()
     }
-  }, [user?.id])
+  }, [user?.id, pushOptIn])
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase || !gpsOptIn) return

@@ -18,6 +18,14 @@ const CARD = {
   gap: 12,
 }
 
+/** Body shape from `push-test` (also returned on 4xx/5xx when JSON). */
+type PushTestPayload = {
+  ok?: boolean
+  error?: string
+  hint?: string
+  results?: { platform: string; ok: boolean; detail: string }[]
+}
+
 type Props = {
   profileUserId: string
 }
@@ -72,7 +80,7 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
       <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
         Tradesman on Android / iPhone uses your profile here. Enable push and GPS when you want dispatch, en-route messages, and (for office managers) live maps.
         {isNativeApp()
-          ? " The app no longer interrupts first launch with a permission popup — use the buttons below when you are ready."
+          ? " After you turn on “Allow push” or “Allow GPS” here, the app will ask the system for permission on this device (usually within a few seconds), same pattern as other apps."
           : " Open this page inside the installed app to request system permissions."}
       </p>
       {loading ? (
@@ -86,7 +94,13 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
               onChange={(e) => {
                 const v = e.target.checked
                 setPushOptIn(v)
-                void persist({ push: v })
+                void (async () => {
+                  await persist({ push: v })
+                  if (v && isNativeApp() && user?.id === profileUserId && supabase) {
+                    const r = await requestPushPermissionAndRegister(supabase, user.id)
+                    setPermMsg(r.message)
+                  }
+                })()
               }}
               disabled={saving}
             />
@@ -117,16 +131,46 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
                 setPermMsg(null)
                 setTestPushBusy(true)
                 try {
-                  const { data, error } = await supabase!.functions.invoke("push-test", {
+                  const { data, error, response: fnResponse } = await supabase!.functions.invoke("push-test", {
                     body: { title: "Tradesman test", body: "Push pipeline OK." },
                   })
-                  if (error) setPermMsg(error.message)
-                  else {
-                    const d = data as { ok?: boolean; results?: { ok: boolean; detail: string }[]; error?: string }
-                    if (d?.error) setPermMsg(d.error)
-                    else if (d?.ok) setPermMsg("Test push sent. Check this device.")
-                    else setPermMsg(d?.results?.map((r) => r.detail).join(" · ") || "Push test failed — see Supabase logs / FCM secret.")
+                  // Non-2xx: `data` may be null; read error JSON from a clone so the body is not double-consumed.
+                  let parsedFromBody: PushTestPayload | null = null
+                  if (error && fnResponse) {
+                    try {
+                      const ct = (fnResponse.headers.get("Content-Type") ?? "").toLowerCase()
+                      if (ct.includes("application/json")) {
+                        const text = await fnResponse.clone().text()
+                        if (text) parsedFromBody = JSON.parse(text) as PushTestPayload
+                      }
+                    } catch {
+                      /* ignore */
+                    }
                   }
+                  const d = (data as PushTestPayload | null) ?? parsedFromBody
+                  const detailLines =
+                    d?.results?.map((r) => `${r.platform}: ${r.detail}`).filter(Boolean).join(" · ") ?? ""
+                  if (error) {
+                    setPermMsg(
+                      [d?.error, d?.hint, detailLines || error.message].filter(Boolean).join(" — ") ||
+                        error.message,
+                    )
+                  } else if (d?.error) {
+                    setPermMsg([d.error, d.hint].filter(Boolean).join(" — "))
+                  } else if (d?.ok) {
+                    setPermMsg(
+                      detailLines
+                        ? `Test push accepted by FCM. ${detailLines}`
+                        : "Test push accepted by FCM. Check the notification shade on this device; if the app is open, also test once with app in background.",
+                    )
+                  } else {
+                    setPermMsg(
+                      detailLines ||
+                        "Push test did not succeed — set Supabase secret FCM_SERVICE_ACCOUNT_JSON and deploy push-test, or confirm this device row exists in user_push_devices.",
+                    )
+                  }
+                } catch (e) {
+                  setPermMsg(e instanceof Error ? e.message : String(e))
                 } finally {
                   setTestPushBusy(false)
                 }

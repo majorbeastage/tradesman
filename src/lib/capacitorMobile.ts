@@ -11,6 +11,7 @@ let pushListenersAttachedForUserId: string | null = null
 let pushRegisterChain: Promise<void> = Promise.resolve()
 const MIN_MS_BETWEEN_PUSH_REGISTER = 2200
 let lastPushRegisterAt = 0
+const ANDROID_PUSH_CHANNEL_ID = "tradesman_alerts"
 
 /** Remove FCM registration listeners (e.g. on sign-out or before re-attaching for another user). */
 export async function detachPushTokenUpsertListeners(): Promise<void> {
@@ -96,6 +97,43 @@ function humanizePermissionError(e: unknown, kind: "location" | "notifications")
   return raw || "Permission request failed."
 }
 
+/**
+ * Android: Capacitor `PushNotifications.register()` calls Firebase Messaging; without
+ * `google-services.json` the default FirebaseApp never initializes and the native layer crashes.
+ * iOS/Web: no-op guard (always registers when reached).
+ */
+async function registerPushIfFirebaseReady(reason: string): Promise<void> {
+  const { PushNotifications } = await import("@capacitor/push-notifications")
+  if (Capacitor.getPlatform() === "android") {
+    try {
+      await PushNotifications.createChannel({
+        id: ANDROID_PUSH_CHANNEL_ID,
+        name: "Tradesman Alerts",
+        description: "Dispatch updates, messages, and reminders",
+        importance: 5,
+        visibility: 1,
+        sound: "default",
+      })
+    } catch (e) {
+      console.warn("[push] createChannel failed", e)
+    }
+    try {
+      const { TradesmanNative } = await import("../plugins/tradesman-native")
+      const { available } = await TradesmanNative.getFcmAvailability()
+      if (!available) {
+        console.warn(
+          `[push] ${reason}: Firebase not initialized for this Android build. Add Firebase \`google-services.json\` under \`android/app/\`, rebuild, then FCM registration will run. Skipping register() to prevent a crash.`,
+        )
+        return
+      }
+    } catch (e) {
+      console.warn(`[push] ${reason}: FCM availability check failed; skipping register() on Android.`, e)
+      return
+    }
+  }
+  await PushNotifications.register()
+}
+
 function schedulePushRegister(task: () => Promise<void>): Promise<void> {
   pushRegisterChain = pushRegisterChain.then(
     () =>
@@ -161,7 +199,7 @@ export async function requestPushPermissionAndRegister(
       window.setTimeout(() => {
         void schedulePushRegister(async () => {
           try {
-            await PushNotifications.register()
+            await registerPushIfFirebaseReady("delayed-after-grant")
           } catch (regErr) {
             console.warn("[push] delayed register() after grant", regErr)
           }
@@ -179,7 +217,7 @@ export async function requestPushPermissionAndRegister(
     })
     await schedulePushRegister(async () => {
       try {
-        await PushNotifications.register()
+        await registerPushIfFirebaseReady("permission-flow")
       } catch (regErr) {
         console.warn("[push] register()", regErr)
         throw regErr
@@ -211,25 +249,39 @@ export async function requestPushPermissionAndRegister(
   }
 }
 
+export type SyncPushStartupOptions = {
+  /**
+   * When true and the OS status is `prompt`, calls `requestPermissions()` so the system sheet appears
+   * (user must have opted in under MyT — same idea as GPS after enabling location).
+   */
+  requestPermissionIfPrompt?: boolean
+}
+
 /**
- * Startup sync for native installs:
- * if notification permission is already granted, re-register so this device token is upserted.
- * Never prompts the user; it only runs when permission is already granted.
+ * Startup sync for native installs: attach listeners and register with FCM when allowed.
+ * By default does not show the permission sheet unless `requestPermissionIfPrompt` is true and status is `prompt`.
  */
 export async function syncPushTokenIfPermissionGranted(
   supabase: SupabaseClient | null,
   userId: string | null,
+  options?: SyncPushStartupOptions,
 ): Promise<void> {
   if (!isNativeApp() || !supabase || !userId) return
   try {
     await attachPushTokenUpsertListeners(supabase, userId)
     const { PushNotifications } = await import("@capacitor/push-notifications")
-    const perm = await PushNotifications.checkPermissions()
-    if (perm.receive !== "granted") return
+    let perm = await PushNotifications.checkPermissions()
+    if (perm.receive === "denied") return
+    if (perm.receive !== "granted") {
+      if (options?.requestPermissionIfPrompt && perm.receive === "prompt") {
+        perm = await PushNotifications.requestPermissions()
+      }
+      if (perm.receive !== "granted") return
+    }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 2000))
     await schedulePushRegister(async () => {
       try {
-        await PushNotifications.register()
+        await registerPushIfFirebaseReady("startup-sync")
       } catch (regErr) {
         console.warn("[push] startup register()", regErr)
       }

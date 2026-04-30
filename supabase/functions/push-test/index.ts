@@ -113,8 +113,10 @@ Deno.serve(async (req) => {
   }
 
   const anyOk = results.some((r) => r.ok)
+  // Always 200 when the handler finished: per-device outcomes are in `results`.
+  // (HTTP 502 here made Supabase logs show EDGE_FUNCTION_ERROR even though this was an app-level FCM failure.)
   return new Response(JSON.stringify({ ok: anyOk, results }), {
-    status: anyOk ? 200 : 502,
+    status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
 })

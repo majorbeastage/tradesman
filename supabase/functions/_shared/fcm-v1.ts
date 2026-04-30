@@ -67,6 +67,12 @@ export async function sendFcmNotification(params: {
       },
       android: {
         priority: "HIGH",
+        notification: {
+          channel_id: "tradesman_alerts",
+          // AndroidNotification uses `notification_priority`, not `priority` (invalid → FCM 400).
+          notification_priority: "PRIORITY_HIGH",
+          default_sound: true,
+        },
       },
     },
   }

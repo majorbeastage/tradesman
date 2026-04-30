@@ -25,6 +25,8 @@
  * **1.4.18** — Customers tab UX aligned with Conversations (charcoal filter bar, row expand/detail panel, selection colors); Calendar primary actions + view toolbar use matching charcoal control strips; version bump for release.
  * **1.4.19** — Calendar: Team management workbench (OM/admin) with team member cards, embedded team map + job types; Scheduling tools for solo users; managed-user calendar policy + profile photo (My T) + header avatar; profile-photos bucket SQL.
  * **1.4.20** — Native: remove first-launch permission overlay; defer FCM attach/sync; skip redundant notification/location permission requests; longer settle before `register()` / `getCurrentPosition()` after grants.
+ * **1.4.21** — Android: avoid FCM `register()` crash when Firebase is not configured (missing `google-services.json`); `TradesmanNative` plugin reports FCM availability before calling Capacitor Push.
+ * **1.4.22** — Native: request notification permission when MyT push is opted in (startup + toggling the checkbox); clearer `push-test` error text (FCM secret, device rows, non-2xx bodies).
  *
  * @see CopyrightVersionFooter
  */

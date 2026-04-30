@@ -8,7 +8,14 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.tradesmanus.com',
   appName: 'Tradesman',
-  webDir: 'dist'
+  webDir: 'dist',
+  // Android: without `alert`, FCM delivers in foreground but the plugin never calls
+  // NotificationManager.notify — so "test push sent" can succeed with nothing visible.
+  plugins: {
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
+  },
 };
 
 export default config;
