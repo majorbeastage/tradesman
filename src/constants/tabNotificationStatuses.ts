@@ -14,6 +14,17 @@ export const QUOTE_STATUS_SELECT_OPTIONS: { value: string; label: string }[] = Q
 
 const CALENDAR_STATUSES = ["Scheduled", "In progress", "Completed", "Cancelled"] as const
 
+/** Customers hub — pipeline stages (align with job_pipeline_status when saved). */
+const CUSTOMERS_PIPELINE_STATUSES = [
+  "New Lead",
+  "First Contact Sent",
+  "First Reply Received",
+  "Job Description Received",
+  "Quote Sent",
+  "Quote Approved",
+  "Scheduled",
+] as const
+
 export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {
   switch (tab) {
     case "leads":
@@ -24,6 +35,8 @@ export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {
       return QUOTE_STATUSES as unknown as readonly string[]
     case "calendar":
       return CALENDAR_STATUSES as unknown as readonly string[]
+    case "customers":
+      return CUSTOMERS_PIPELINE_STATUSES as unknown as readonly string[]
     default:
       return []
   }

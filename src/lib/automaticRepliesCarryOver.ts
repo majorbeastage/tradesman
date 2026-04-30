@@ -18,6 +18,33 @@ const CLEAR_TEXT_ON_CARRY_TO_QUOTES = new Set([
  * Build `quotesAutomaticRepliesValues` from the Conversations modal values.
  * Custom text fields on Quotes are cleared; AI email/SMS approval defaults to on for Quotes.
  */
+/** Map a Quotes automatic-replies field id to its Conversations counterpart. */
+export function mapQuoteAutoReplyKeyToConv(qKey: string): string | null {
+  if (qKey === "quote_auto_notify_when_qualified") return "conv_auto_quote_when_qualified"
+  if (!qKey.startsWith("quote_auto_")) return null
+  return `conv_auto_${qKey.slice("quote_auto_".length)}`
+}
+
+/**
+ * Build `conversationsAutomaticRepliesValues` from the Quotes modal values.
+ */
+export function carryQuoteToConversationValues(
+  quoteVals: Record<string, string>,
+  convItemIds: Set<string>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [qKey, val] of Object.entries(quoteVals)) {
+    const cKey = mapQuoteAutoReplyKeyToConv(qKey)
+    if (cKey && convItemIds.has(cKey)) out[cKey] = val
+  }
+  if (convItemIds.has("conv_auto_ai_infer_status")) {
+    const crit = String(quoteVals.quote_auto_qualified_criteria ?? "").trim().toLowerCase()
+    if (crit.includes("ai")) out.conv_auto_ai_infer_status = "checked"
+    else out.conv_auto_ai_infer_status = "unchecked"
+  }
+  return out
+}
+
 export function carryConversationAutoRepliesToQuoteValues(
   convVals: Record<string, string>,
   quoteItemIds: Set<string>,

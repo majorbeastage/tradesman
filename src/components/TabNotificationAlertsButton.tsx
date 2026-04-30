@@ -132,7 +132,15 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
   }
 
   const tabLabel =
-    tab === "leads" ? "Leads" : tab === "conversations" ? "Conversations" : tab === "quotes" ? "Quotes" : "Calendar"
+    tab === "leads"
+      ? "Leads"
+      : tab === "conversations"
+        ? "Conversations"
+        : tab === "quotes"
+          ? "Quotes"
+          : tab === "customers"
+            ? "Customers"
+            : "Calendar"
 
   return (
     <>

@@ -7,6 +7,10 @@ export function isNativeApp(): boolean {
 
 let pushListenerCleanups: Array<() => void | Promise<void>> = []
 let pushListenersAttachedForUserId: string | null = null
+/** Serializes FCM `register()` — back-to-back calls can crash some Android WebViews. */
+let pushRegisterChain: Promise<void> = Promise.resolve()
+const MIN_MS_BETWEEN_PUSH_REGISTER = 2200
+let lastPushRegisterAt = 0
 
 /** Remove FCM registration listeners (e.g. on sign-out or before re-attaching for another user). */
 export async function detachPushTokenUpsertListeners(): Promise<void> {
@@ -92,6 +96,30 @@ function humanizePermissionError(e: unknown, kind: "location" | "notifications")
   return raw || "Permission request failed."
 }
 
+function schedulePushRegister(task: () => Promise<void>): Promise<void> {
+  pushRegisterChain = pushRegisterChain.then(
+    () =>
+      new Promise<void>((resolve) => {
+        const run = () => {
+          const gap = Date.now() - lastPushRegisterAt
+          const wait = gap < MIN_MS_BETWEEN_PUSH_REGISTER ? MIN_MS_BETWEEN_PUSH_REGISTER - gap : 0
+          window.setTimeout(() => {
+            void (async () => {
+              try {
+                await task()
+              } finally {
+                lastPushRegisterAt = Date.now()
+                resolve()
+              }
+            })()
+          }, wait)
+        }
+        window.requestAnimationFrame(() => window.requestAnimationFrame(run))
+      }),
+  )
+  return pushRegisterChain
+}
+
 export async function requestPushPermissionAndRegister(
   supabase: SupabaseClient | null,
   userId: string | null,
@@ -122,12 +150,17 @@ export async function requestPushPermissionAndRegister(
       }
     }
     // Let the OS dialog / WebView settle before touching FCM (reduces native crashes on some devices).
-    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
-    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
     await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 450)
+      window.setTimeout(resolve, 900)
     })
-    await PushNotifications.register()
+    await schedulePushRegister(async () => {
+      try {
+        await PushNotifications.register()
+      } catch (regErr) {
+        console.warn("[push] register()", regErr)
+        throw regErr
+      }
+    })
     // Ensure this device row exists before user taps "Send test push".
     if (supabase && userId) {
       const started = Date.now()
@@ -169,9 +202,14 @@ export async function syncPushTokenIfPermissionGranted(
     const { PushNotifications } = await import("@capacitor/push-notifications")
     const perm = await PushNotifications.checkPermissions()
     if (perm.receive !== "granted") return
-    await new Promise<void>((r) => window.requestAnimationFrame(() => r()))
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 250))
-    await PushNotifications.register()
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 600))
+    await schedulePushRegister(async () => {
+      try {
+        await PushNotifications.register()
+      } catch (regErr) {
+        console.warn("[push] startup register()", regErr)
+      }
+    })
   } catch (e) {
     console.warn("[push] startup sync failed", e)
   }

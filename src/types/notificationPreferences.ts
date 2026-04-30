@@ -1,6 +1,6 @@
 /** Per-channel notification rules when a record's status changes (stored in profiles.metadata). */
 
-export type NotificationTabId = "leads" | "conversations" | "quotes" | "calendar"
+export type NotificationTabId = "leads" | "conversations" | "quotes" | "calendar" | "customers"
 
 /** Push / email / SMS toggles + which statuses fire. */
 export type StatusChannelPrefs = {

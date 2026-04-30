@@ -53,6 +53,7 @@ import {
   totalFromQuoteItemRows,
   type QuoteItemMetadata,
 } from "../../lib/quoteItemMath"
+import { carryQuoteToConversationValues } from "../../lib/automaticRepliesCarryOver"
 import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
@@ -889,6 +890,39 @@ export default function QuotesPage(_props: QuotesPageProps) {
     next.quote_auto_reply_method = source
     setQuoteSourceFlowConfigs((prev) => ({ ...prev, [source]: next }))
     setExpandedQuoteSourceKey(source)
+  }
+
+  async function carryQuoteAutoRepliesToConversationsProfile() {
+    if (!supabase || !userId) {
+      alert("Sign in to save.")
+      return
+    }
+    const convItems = getControlItemsForUser(portalConfig, "conversations", "automatic_replies", { aiAutomationsEnabled })
+    const idSet = new Set(convItems.map((i) => i.id))
+    const merged = carryQuoteToConversationValues(quoteAutoRepliesFormValues, idSet)
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    const prevC = prevMeta.conversationsAutomaticRepliesValues
+    const existing =
+      prevC && typeof prevC === "object" && !Array.isArray(prevC)
+        ? Object.fromEntries(
+            Object.entries(prevC as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+          )
+        : {}
+    prevMeta.conversationsAutomaticRepliesValues = { ...existing, ...merged }
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    alert("Copied these settings to Conversations → Automatic replies. Open Conversations to review.")
   }
 
   async function uploadQuoteAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
@@ -2869,6 +2903,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     ) : null}
                   </div>
                 )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+                <button
+                  type="button"
+                  disabled={!supabase || !userId}
+                  onClick={() => void carryQuoteAutoRepliesToConversationsProfile()}
+                  style={{
+                    alignSelf: "flex-start",
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: !supabase || !userId ? "not-allowed" : "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                >
+                  Carry over these settings to Conversations tab
+                </button>
+                <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                  Copies toggles and methods to <strong>Conversations → Automatic replies</strong>. Missing conversation-only fields keep their saved values.
+                </p>
+              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
                 <button
                   type="button"

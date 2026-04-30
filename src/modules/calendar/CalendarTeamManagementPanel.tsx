@@ -10,6 +10,7 @@ import {
   parseTeamRibbonColors,
   type OmCalendarPolicyV1,
 } from "../../lib/teamCalendarPolicy"
+import { MANAGED_USER_PERMISSIONS_GUIDANCE, SELF_PERMISSIONS_GUIDANCE } from "./teamManagementPermissionsGuidance"
 
 type ProfileLite = {
   id: string
@@ -297,6 +298,32 @@ function TeamUserCard({
         </div>
       ) : (
         <div style={{ padding: "12px 12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div
+            style={{
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#f1f5f9",
+              padding: "12px 12px 10px",
+              maxHeight: "min(42vh, 340px)",
+              overflowY: "auto",
+              marginBottom: 2,
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", marginBottom: 10, letterSpacing: 0.02 }}>
+              {member.isSelf ? "Your settings on this roster" : "What you can give this team member"}
+            </div>
+            {(member.isSelf ? SELF_PERMISSIONS_GUIDANCE : MANAGED_USER_PERMISSIONS_GUIDANCE).map((block) => (
+              <div key={block.id} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 4, lineHeight: 1.3 }}>{block.title}</div>
+                <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.55 }}>{block.body}</p>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.06, marginTop: 4 }}>
+            Controls
+          </div>
+
           <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             Team color
             <input
