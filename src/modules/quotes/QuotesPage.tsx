@@ -64,6 +64,13 @@ import {
   parseEstimateLinePresetsFromMetadata,
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
+import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistantPanel"
+import EstimateStartGuideModal, { EstimateGuideStatusMarker } from "../../components/EstimateStartGuideModal"
+import {
+  loadEstimateGuideFlags,
+  saveEstimateGuideFlags,
+  type EstimateGuideFlags,
+} from "../../lib/estimateGuidePrefs"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -270,6 +277,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quickAccessApplyPick, setQuickAccessApplyPick] = useState("")
   const [customerPickerCustomerId, setCustomerPickerCustomerId] = useState("")
   const [customerSummaryExpanded, setCustomerSummaryExpanded] = useState(false)
+  const [estimateGuideFlags, setEstimateGuideFlags] = useState<EstimateGuideFlags>({})
+  const [estimateStartGuideOpen, setEstimateStartGuideOpen] = useState(false)
+  const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<1 | 2>(1)
+  const [estimateGuideCustomerPick, setEstimateGuideCustomerPick] = useState("")
+  const [estimateGuideTemplatePick, setEstimateGuideTemplatePick] = useState("")
+  const [estimateGuideBusy, setEstimateGuideBusy] = useState(false)
+  const [estimateCustomerFoldOpen, setEstimateCustomerFoldOpen] = useState(false)
+  const [estimateTemplatesFoldOpen, setEstimateTemplatesFoldOpen] = useState(false)
   const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
   const [bottomActionEmailOpen, setBottomActionEmailOpen] = useState(false)
@@ -402,6 +417,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
+
+  useEffect(() => {
+    setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
+  }, [selectedQuoteId])
 
   useEffect(() => {
     try {
@@ -1565,7 +1584,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     alert("Saved to Quick Access templates.")
   }
 
-  async function applyQuickAccessTemplate(templateId: string) {
+  async function applyQuickAccessTemplate(templateId: string, opts?: { silent?: boolean }) {
     const tpl = quickAccessTemplates.find((t) => t.id === templateId)
     if (!tpl || !selectedQuote?.id || !supabase) return
     const jobTypeId = typeof tpl.payload.job_type_id === "string" ? tpl.payload.job_type_id : ""
@@ -1596,7 +1615,62 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (typeof tpl.payload.quote_cancellation_text === "string") setQuoteCancellationText(tpl.payload.quote_cancellation_text)
     if (tpl.payload.quote_export_format === "docx" || tpl.payload.quote_export_format === "pdf")
       setQuoteExportFormat(tpl.payload.quote_export_format)
-    alert("Template applied to this estimate.")
+    if (selectedQuote.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { templateAppliedViaGuide: true, templateSkipped: false })
+      setEstimateGuideFlags((f) => ({ ...f, templateAppliedViaGuide: true, templateSkipped: false }))
+    }
+    setEstimateTemplatesFoldOpen(false)
+    setQuickAccessApplyPick("")
+    if (!opts?.silent) alert("Template applied to this estimate.")
+  }
+
+  async function handleEstimateGuideCustomerContinue() {
+    if (!estimateGuideCustomerPick.trim()) return
+    setEstimateGuideBusy(true)
+    try {
+      await persistQuoteCustomerLink(estimateGuideCustomerPick.trim())
+      if (selectedQuote?.id) {
+        saveEstimateGuideFlags(selectedQuote.id, { customerLinkedViaGuide: true, customerSkipped: false })
+        setEstimateGuideFlags((f) => ({ ...f, customerLinkedViaGuide: true, customerSkipped: false }))
+      }
+      setEstimateCustomerFoldOpen(false)
+      setEstimateStartGuideStep(2)
+    } finally {
+      setEstimateGuideBusy(false)
+    }
+  }
+
+  function handleEstimateGuideCustomerSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { customerSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, customerSkipped: true }))
+    }
+    setEstimateStartGuideStep(2)
+  }
+
+  async function handleEstimateGuideTemplateContinue() {
+    if (!estimateGuideTemplatePick.trim()) return
+    setEstimateGuideBusy(true)
+    try {
+      await applyQuickAccessTemplate(estimateGuideTemplatePick.trim(), { silent: true })
+      setEstimateStartGuideOpen(false)
+      setEstimateStartGuideStep(1)
+      setEstimateGuideTemplatePick("")
+      setEstimateGuideCustomerPick("")
+    } finally {
+      setEstimateGuideBusy(false)
+    }
+  }
+
+  function handleEstimateGuideTemplateSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { templateSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, templateSkipped: true }))
+    }
+    setEstimateStartGuideOpen(false)
+    setEstimateStartGuideStep(1)
+    setEstimateGuideTemplatePick("")
+    setEstimateGuideCustomerPick("")
   }
 
   async function patchEntityAttachmentMetadataRow(row: EntityAttachmentRow, patch: Record<string, unknown>) {
@@ -1972,6 +2046,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
     void refreshQuoteItemsOnly()
   }
 
+  async function addQuoteLineFromSuggestion(description: string, quantity: number, unitPrice: number) {
+    if (!supabase || !selectedQuoteId || !description.trim()) return
+    const meta: QuoteItemMetadata = {}
+    const qJt =
+      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string" && (selectedQuote as QuoteRow).job_type_id?.trim()
+        ? (selectedQuote as QuoteRow).job_type_id!.trim()
+        : ""
+    if (qJt) meta.job_type_id = qJt
+    if (estimateLineTemplateOffered("eli_show_manpower")) meta.manpower = 1
+    setAddItemLoading(true)
+    const result = await insertQuoteItemRowSafe(supabase, {
+      quote_id: selectedQuoteId,
+      description: description.trim(),
+      quantity,
+      unit_price: unitPrice,
+      metadata: Object.keys(meta).length > 0 ? (meta as Record<string, unknown>) : undefined,
+    })
+    setAddItemLoading(false)
+    if (!result.ok) {
+      alert(result.error)
+      return
+    }
+    void refreshQuoteItemsOnly()
+  }
+
   function getItemDisplay(item: any) {
     const desc = item.description ?? item.item_description ?? item.name ?? "—"
     const qtyRaw = item.quantity ?? item.qty ?? 0
@@ -2022,6 +2121,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
       ),
     [selectedQuoteItems],
   )
+
+  const estimateScopeExistingLines = useMemo(() => {
+    return selectedQuoteItems.map((item) => {
+      const { desc, qty, up } = getItemDisplay(item)
+      const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
+      const unit_price = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
+      return { description: String(desc), quantity, unit_price }
+    })
+  }, [selectedQuoteItems])
 
   useEffect(() => {
     if (!selectedQuoteId || !session?.access_token) {
@@ -3674,6 +3782,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
                                 <button
                                   type="button"
+                                  onClick={() => {
+                                    setEstimateStartGuideOpen(true)
+                                    setEstimateStartGuideStep(1)
+                                    setEstimateGuideCustomerPick("")
+                                    setEstimateGuideTemplatePick("")
+                                    void loadCustomerList()
+                                  }}
+                                  style={{
+                                    padding: "10px 18px",
+                                    borderRadius: 10,
+                                    border: "none",
+                                    background: `linear-gradient(135deg, ${theme.primary} 0%, #ea580c 100%)`,
+                                    cursor: "pointer",
+                                    fontWeight: 800,
+                                    fontSize: 14,
+                                    color: "#fff",
+                                    boxShadow: "0 6px 18px rgba(249,115,22,0.35)",
+                                  }}
+                                >
+                                  Start quote
+                                </button>
+                                <button
+                                  type="button"
                                   disabled={quotePdfBusy}
                                   onClick={() => void previewEstimateDocument()}
                                   style={{
@@ -3710,8 +3841,70 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 </button>
                               </div>
                             </div>
-                            <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-                              <div style={{ fontWeight: 700, fontSize: 15 }}>Customer</div>
+                            <EstimateStartGuideModal
+                              open={estimateStartGuideOpen}
+                              step={estimateStartGuideStep}
+                              onClose={() => {
+                                setEstimateStartGuideOpen(false)
+                                setEstimateStartGuideStep(1)
+                              }}
+                              customers={customerList.map((c: { id: string; display_name?: string | null }) => ({
+                                id: c.id,
+                                display_name: c.display_name,
+                              }))}
+                              customerPick={estimateGuideCustomerPick}
+                              onCustomerPick={setEstimateGuideCustomerPick}
+                              onCustomerContinue={() => void handleEstimateGuideCustomerContinue()}
+                              onCustomerSkip={handleEstimateGuideCustomerSkip}
+                              customerBusy={estimateGuideBusy}
+                              templates={quickAccessTemplates.map((t) => ({ id: t.id, title: t.title }))}
+                              templatePick={estimateGuideTemplatePick}
+                              onTemplatePick={setEstimateGuideTemplatePick}
+                              onTemplateContinue={() => void handleEstimateGuideTemplateContinue()}
+                              onTemplateSkip={handleEstimateGuideTemplateSkip}
+                              templateBusy={estimateGuideBusy}
+                            />
+                            <details
+                              open={estimateCustomerFoldOpen}
+                              onToggle={(e) => setEstimateCustomerFoldOpen((e.target as HTMLDetailsElement).open)}
+                              style={{
+                                marginBottom: 12,
+                                border: `1px solid ${theme.border}`,
+                                borderRadius: 10,
+                                padding: "10px 12px",
+                                background: "#fff",
+                              }}
+                            >
+                              <summary
+                                style={{
+                                  cursor: "pointer",
+                                  fontWeight: 700,
+                                  fontSize: 15,
+                                  color: theme.text,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  listStylePosition: "outside",
+                                }}
+                              >
+                                Customer
+                                <EstimateGuideStatusMarker
+                                  variant={
+                                    selectedQuote?.customer_id ? "done" : estimateGuideFlags.customerSkipped ? "skipped" : "none"
+                                  }
+                                  label="Customer"
+                                />
+                              </summary>
+                              <div
+                                style={{
+                                  fontSize: 14,
+                                  color: theme.text,
+                                  marginTop: 10,
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 10,
+                                }}
+                              >
                               {!selectedQuote.customer_id ? (
                                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -3960,10 +4153,42 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   ) : null}
                                 </>
                               )}
-                              <details style={{ marginBottom: 10 }}>
-                                <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
-                                  Available templates
-                                </summary>
+                              </div>
+                            </details>
+                            <details
+                              open={estimateTemplatesFoldOpen}
+                              onToggle={(e) => setEstimateTemplatesFoldOpen((e.target as HTMLDetailsElement).open)}
+                              style={{
+                                marginBottom: 12,
+                                border: `1px solid ${theme.border}`,
+                                borderRadius: 10,
+                                padding: "10px 12px",
+                                background: "#f8fafc",
+                              }}
+                            >
+                              <summary
+                                style={{
+                                  cursor: "pointer",
+                                  fontWeight: 700,
+                                  fontSize: 14,
+                                  color: theme.text,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                }}
+                              >
+                                Templates &amp; job type
+                                <EstimateGuideStatusMarker
+                                  variant={
+                                    estimateGuideFlags.templateAppliedViaGuide
+                                      ? "done"
+                                      : estimateGuideFlags.templateSkipped
+                                        ? "skipped"
+                                        : "none"
+                                  }
+                                  label="Template"
+                                />
+                              </summary>
                                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
                                   {showQuotesJobTypesPanel ? (
                                     <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
@@ -4048,11 +4273,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     </div>
                                   ) : null}
                                 </div>
-                              </details>
-                            </div>
+                            </details>
 
                             <details style={{ marginBottom: 16 }}>
-                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>Activity</summary>
+                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
+                                Conversations
+                              </summary>
                               <div style={{ marginTop: 10 }}>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                                 {(["all", "voicemail", "sms", "email"] as const).map((ch) => (
@@ -4315,6 +4541,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>No files attached to this quote yet.</p>
                             )}
                             </details>
+
+              {selectedQuoteId ? (
+                <EstimateScopeAssistantPanel
+                  quoteId={selectedQuoteId}
+                  accessToken={session?.access_token}
+                  tradeHint={profileDisplayNameForPdf || undefined}
+                  existingLines={estimateScopeExistingLines}
+                  onApproveLine={async (s) => {
+                    await addQuoteLineFromSuggestion(s.description, s.quantity, s.unit_price)
+                  }}
+                />
+              ) : null}
 
               <details style={{ marginTop: 16 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>Quick Add Quote Items</summary>

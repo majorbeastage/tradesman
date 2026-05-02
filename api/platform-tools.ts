@@ -331,6 +331,113 @@ async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse
   res.status(200).json({ ok: true, computedSubtotal, issues, agreesWithSubtotal })
 }
 
+type ScopeLineSuggestion = {
+  description: string
+  quantity: number
+  unit_price: number
+  rationale?: string
+}
+
+/**
+ * Turn free-form scope text into suggested quote lines (JSON). OPENAI_API_KEY required for non-fallback.
+ * POST body: { scopeText: string, tradeHint?: string, existingLines?: { description: string; quantity: number; unit_price: number }[] }
+ */
+async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+
+  const body = jsonBody(req)
+  const scopeText = pickFirstString(body.scopeText).slice(0, 8000)
+  const tradeHint = pickFirstString(body.tradeHint).slice(0, 200)
+  const linesRaw = body.existingLines
+  const existingLines = Array.isArray(linesRaw)
+    ? linesRaw
+        .map((row) => {
+          const o = row as Record<string, unknown>
+          const q = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+          const p = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+          const d = String(o.description ?? "").slice(0, 400)
+          return { description: d, quantity: q, unit_price: p }
+        })
+        .filter((x) => x.description.trim())
+        .slice(0, 40)
+    : []
+
+  if (!scopeText.trim()) {
+    res.status(400).json({ error: "scopeText required" })
+    return
+  }
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(200).json({
+      ok: true,
+      suggestions: [] as ScopeLineSuggestion[],
+      clarifications: ["Connect OpenAI on the server (OPENAI_API_KEY) to generate line suggestions from your scope."],
+      fallback: true,
+    })
+    return
+  }
+
+  const pack = JSON.stringify({
+    scope: scopeText,
+    trade: tradeHint || "residential / commercial contractor",
+    existingLines,
+  }).slice(0, 12000)
+
+  const raw =
+    (await openAiText(
+      `You help contractors build estimate line items from a spoken or written job scope.
+Reply with JSON only, no markdown:
+{"suggestions":[{"description":"string","quantity":number,"unit_price":number,"rationale":"optional short note"}],"clarifications":["optional questions — max 4 short strings when critical info is missing"]}
+Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed/labor guess for US trades; use 0 if unknown and explain in rationale). Descriptions are concise trade language.`,
+      pack,
+    ))?.trim() ?? "{}"
+
+  let suggestions: ScopeLineSuggestion[] = []
+  let clarifications: string[] = []
+  try {
+    const j = JSON.parse(raw) as {
+      suggestions?: unknown
+      clarifications?: unknown
+    }
+    if (Array.isArray(j.suggestions)) {
+      for (const row of j.suggestions.slice(0, 14)) {
+        if (!row || typeof row !== "object") continue
+        const o = row as Record<string, unknown>
+        const description = String(o.description ?? "").trim().slice(0, 500)
+        if (!description) continue
+        const quantity =
+          typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+        const unit_price =
+          typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+        const rationale = typeof o.rationale === "string" ? o.rationale.slice(0, 400) : ""
+        suggestions.push({
+          description,
+          quantity: Math.max(0, quantity),
+          unit_price: Math.max(0, unit_price),
+          ...(rationale.trim() ? { rationale: rationale.trim() } : {}),
+        })
+      }
+    }
+    if (Array.isArray(j.clarifications)) {
+      clarifications = j.clarifications
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.slice(0, 400))
+        .slice(0, 4)
+    }
+  } catch {
+    suggestions = []
+    clarifications = []
+  }
+
+  res.status(200).json({ ok: true, suggestions, clarifications })
+}
+
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   return bodyAsRecord(req)
 }
@@ -1311,6 +1418,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "notify-admin-verified-signup",
         "estimate-legal-draft",
         "quote-estimate-review",
+        "estimate-scope-lines",
         "lead-evaluate-fit",
         "customer-evaluate-fit",
         "helcim-js-return",
@@ -1360,6 +1468,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "quote-estimate-review") {
       await handleQuoteEstimateReview(req, res)
+      return
+    }
+    if (route === "estimate-scope-lines") {
+      await handleEstimateScopeLines(req, res)
       return
     }
     if (route === "lead-evaluate-fit") {
