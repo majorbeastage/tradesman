@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, Fragment, type ChangeEvent, type CSSProperties } from "react"
+import { useEffect, useState, useMemo, useRef, type ChangeEvent, type CSSProperties } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
@@ -9,7 +9,6 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
-import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStatuses"
 import { theme } from "../../styles/theme"
@@ -32,10 +31,13 @@ import {
   loadAttachmentsByCommunicationEventIds,
   loadEntityAttachmentsForQuote,
   deleteEntityAttachmentRow,
+  entityAttachmentsForCustomerCopy,
+  isProbablyImageAttachment,
+  parseQuoteAttachmentMeta,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
-import { buildQuotePdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
+import { buildQuotePdfBytes, downloadPdfBlob, type QuotePdfCustomerCopyAttachment } from "../../lib/documentPdf"
 import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "../../lib/defaultEstimateLegal"
@@ -137,6 +139,7 @@ type CustomerRow = {
   service_address?: string | null
   service_lat?: number | null
   service_lng?: number | null
+  archived_at?: string | null
 }
 type MessageRow = { content: string | null; created_at: string | null }
 type QuoteRow = {
@@ -144,9 +147,10 @@ type QuoteRow = {
   status: string | null
   created_at?: string
   updated_at?: string
-  customer_id: string
+  customer_id: string | null
   conversation_id: string | null
   job_type_id?: string | null
+  archived_at?: string | null
   customers: CustomerRow | null
   conversations?: { messages?: MessageRow[] | null } | null
 }
@@ -210,6 +214,18 @@ function DecimalDraftInput({
   )
 }
 
+function quoteCustomerCopyAttachmentsPayload(rows: EntityAttachmentRow[]): QuotePdfCustomerCopyAttachment[] {
+  return entityAttachmentsForCustomerCopy(rows).map((r) => {
+    const p = parseQuoteAttachmentMeta(r.metadata)
+    return {
+      publicUrl: r.public_url,
+      fileName: (r.file_name || "Attachment").trim(),
+      contentType: r.content_type ?? null,
+      description: p.includeNote && p.note.trim() ? p.note.trim() : "",
+    }
+  })
+}
+
 export default function QuotesPage(_props: QuotesPageProps) {
   void _props
   const isMobile = useIsMobile()
@@ -237,10 +253,26 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const quoteAutoRepliesMediaStreamRef = useRef<MediaStream | null>(null)
   /** After interacting with customer edit (incl. browser autofill UI), ignore stray clicks on the summary row briefly. */
   const skipQuoteRowToggleUntilRef = useRef(0)
-  const [search, setSearch] = useState("")
-  const [filterPhone, setFilterPhone] = useState("")
-  const [sortField, setSortField] = useState<string>("name")
-  const [sortAsc, setSortAsc] = useState(true)
+  const search = ""
+  const filterPhone = ""
+  const sortField: string = "name"
+  const sortAsc = true
+  const [estimateSuite, setEstimateSuite] = useState<"home" | "library">("home")
+  const [librarySection, setLibrarySection] = useState<
+    "quick_access" | "previous_estimates" | "estimate_line_items" | "job_types"
+  >("quick_access")
+  const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
+  const [pastLibSearch, setPastLibSearch] = useState("")
+  const [pastLibStatus, setPastLibStatus] = useState("")
+  const [quickAccessTemplates, setQuickAccessTemplates] = useState<
+    { id: string; title: string; savedAt: string; payload: Record<string, unknown> }[]
+  >([])
+  const [quickAccessApplyPick, setQuickAccessApplyPick] = useState("")
+  const [customerPickerCustomerId, setCustomerPickerCustomerId] = useState("")
+  const [customerSummaryExpanded, setCustomerSummaryExpanded] = useState(false)
+  const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
+  const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
+  const [bottomActionEmailOpen, setBottomActionEmailOpen] = useState(false)
   const [quotes, setQuotes] = useState<QuoteRow[]>([])
   const [quotesError, setQuotesError] = useState<string>("")
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
@@ -257,8 +289,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteTemplateFooter, setQuoteTemplateFooter] = useState("")
   const [quoteExportFormat, setQuoteExportFormat] = useState<"pdf" | "docx">("pdf")
   const [quoteIncludePreparedDate, setQuoteIncludePreparedDate] = useState(true)
-  const [quoteShowLineNumbers, setQuoteShowLineNumbers] = useState(false)
-  const [quoteShowLogo, setQuoteShowLogo] = useState(false)
+  const [quoteShowLineNumbers, setQuoteShowLineNumbers] = useState(true)
+  const [quoteShowLogo, setQuoteShowLogo] = useState(true)
   const [quoteLogoUrl, setQuoteLogoUrl] = useState("")
   const [estimateLogoUploadBusy, setEstimateLogoUploadBusy] = useState(false)
   const [legalDraftBusy, setLegalDraftBusy] = useState(false)
@@ -304,7 +336,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
   const [quoteEmailSending, setQuoteEmailSending] = useState(false)
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
-  const [showQuoteEmailPanel, setShowQuoteEmailPanel] = useState(false)
   const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -402,13 +433,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     [portalConfig, aiAutomationsEnabled],
   )
   const customActionButtons = useMemo(() => getCustomActionButtonsForUser(portalConfig, "quotes"), [portalConfig])
-  const showQuotesAddCustomer = getPageActionVisible(portalConfig, "quotes", "add_customer_to_quotes") && getOmPageActionVisible(portalConfig, "quotes", "add_customer")
   const quoteAddCustomerPortalItems = useMemo(
     () => getControlItemsForUser(portalConfig, "quotes", "add_customer_to_quotes", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
   const [quoteAddCustomerPortalValues, setQuoteAddCustomerPortalValues] = useState<Record<string, string>>({})
-  const showQuotesSettings = false
   const showQuotesEstimateTemplate =
     getPageActionVisible(portalConfig, "quotes", "estimate_template") && getOmPageActionVisible(portalConfig, "quotes", "estimate_template")
   const showQuotesEstimateLineItems =
@@ -416,16 +445,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
     getOmPageActionVisible(portalConfig, "quotes", "estimate_line_items")
   const showQuotesJobTypesPanel =
     getPageActionVisible(portalConfig, "quotes", "job_types") && getOmPageActionVisible(portalConfig, "quotes", "job_types")
-  const estimateTemplateButtonLabel = portalConfig?.controlLabels?.estimate_template ?? "Estimate template"
   const estimateLineItemsButtonLabel = portalConfig?.controlLabels?.estimate_line_items ?? "Estimate line items"
   const quoteJobTypesButtonLabel = portalConfig?.controlLabels?.job_types ?? "Job types"
   const quoteAutomaticRepliesItems = useMemo(
     () => getControlItemsForUser(portalConfig, "quotes", "auto_response_options", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
-  const showQuotesAutomaticReplies =
-    getPageActionVisible(portalConfig, "quotes", "auto_response_options") &&
-    getOmPageActionVisible(portalConfig, "quotes", "auto_response")
   const quoteAutomaticRepliesButtonLabel =
     portalConfig?.controlLabels?.automatic_replies ??
     portalConfig?.controlLabels?.auto_response_options ??
@@ -523,8 +548,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteExportFormat(metaToExportFormat(meta.estimate_template_output_format))
       setQuoteTemplateFooter(typeof meta.estimate_template_footer === "string" ? meta.estimate_template_footer : "")
       setQuoteIncludePreparedDate(meta.estimate_template_include_prepared_date !== false)
-      setQuoteShowLineNumbers(meta.estimate_template_show_line_numbers === true)
-      setQuoteShowLogo(meta.estimate_template_show_logo === true)
+      setQuoteShowLineNumbers(meta.estimate_template_show_line_numbers !== false)
+      setQuoteShowLogo(meta.estimate_template_show_logo !== false)
       setQuoteLogoUrl(typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : "")
       setQuoteIncludeLegal(meta.estimate_template_include_legal === true)
       setQuoteLegalText(typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : "")
@@ -585,8 +610,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const footer = typeof meta.estimate_template_footer === "string" ? meta.estimate_template_footer : ""
       const fmt = exportFormatToDropdown(metaToExportFormat(meta.estimate_template_output_format))
       const includeDate = meta.estimate_template_include_prepared_date !== false
-      const lineNums = meta.estimate_template_show_line_numbers === true
-      const showLogo = meta.estimate_template_show_logo === true
+      const lineNums = meta.estimate_template_show_line_numbers !== false
+      const showLogo = meta.estimate_template_show_logo !== false
       const logoUrl = typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : ""
       const includeLegal = meta.estimate_template_include_legal === true
       const legalBody = typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : ""
@@ -1302,6 +1327,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
     loadQuotes()
   }, [userId])
 
+  useEffect(() => {
+    void loadQuickAccessTemplatesFromProfile()
+  }, [userId])
+
+  useEffect(() => {
+    if (selectedQuoteId && !selectedQuote?.customer_id) void loadCustomerList()
+  }, [selectedQuoteId, selectedQuote?.customer_id])
+
+  useEffect(() => {
+    if (!userId || !supabase || estimateSuite !== "home") return
+    if (selectedQuoteId) return
+    if (estimatesBootstrapRef.current) return
+    void (async () => {
+      const ok = await createNewEstimate()
+      if (ok) estimatesBootstrapRef.current = true
+    })()
+  }, [userId, supabase, estimateSuite, selectedQuoteId])
+
   async function loadCustomerList() {
     if (!supabase || !userId) return
     const { data } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
@@ -1378,19 +1421,197 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
-  function toggleQuoteRow(quoteId: string) {
-    if (selectedQuoteId === quoteId) {
-      setSelectedQuoteId(null)
-      setSelectedQuote(null)
-      setQuoteOpenError("")
-      setSelectedQuoteItems([])
-      setQuoteCommEvents([])
-      setQuoteThreadMessages([])
-      setQuoteAttachmentsByEvent({})
-      setQuoteEntityRows([])
-    } else {
-      void openQuote(quoteId)
+  const estimatesBootstrapRef = useRef(false)
+
+  function closeEstimateWorkspace() {
+    setSelectedQuoteId(null)
+    setSelectedQuote(null)
+    setQuoteOpenError("")
+    setSelectedQuoteItems([])
+    setQuoteCommEvents([])
+    setQuoteThreadMessages([])
+    setQuoteAttachmentsByEvent({})
+    setQuoteEntityRows([])
+  }
+
+  async function closeEstimateWorkspaceAndNewDraft() {
+    closeEstimateWorkspace()
+    await createNewEstimate()
+  }
+
+  async function createNewEstimate(): Promise<boolean> {
+    if (!supabase || !userId) return false
+    try {
+      const { data, error } = await supabase
+        .from("quotes")
+        .insert({
+          user_id: userId,
+          customer_id: null,
+          status: defaultQuoteStatus,
+          conversation_id: null,
+        })
+        .select("id")
+        .single()
+      if (error) {
+        const msg = error.message ?? ""
+        if (msg.toLowerCase().includes("customer") || msg.toLowerCase().includes("null")) {
+          alert(
+            "Could not create an estimate without a customer. Run supabase/quotes-nullable-customer-id.sql in the Supabase SQL Editor (or attach a customer via Add Customer to quotes)."
+          )
+        } else {
+          alert(msg || "Could not create estimate.")
+        }
+        return false
+      }
+      setEstimateSuite("home")
+      await loadQuotes()
+      if (data?.id) {
+        const opened = await openQuote(data.id)
+        return opened
+      }
+      return false
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message ?? "Failed to create estimate.")
+      return false
     }
+  }
+
+  async function persistQuoteCustomerLink(nextCustomerId: string | null) {
+    if (!supabase || !selectedQuote?.id) return
+    const { error } = await supabase
+      .from("quotes")
+      .update({ customer_id: nextCustomerId, updated_at: new Date().toISOString() })
+      .eq("id", selectedQuote.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setCustomerPickerCustomerId("")
+    setCustomerSummaryExpanded(false)
+    await openQuote(selectedQuote.id as string)
+  }
+
+  async function loadQuickAccessTemplatesFromProfile() {
+    if (!supabase || !userId) return
+    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (error || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
+    const meta = data.metadata as Record<string, unknown>
+    const raw = meta.quick_access_estimate_templates
+    if (!Array.isArray(raw)) return
+    const next: { id: string; title: string; savedAt: string; payload: Record<string, unknown> }[] = []
+    for (const row of raw) {
+      if (!row || typeof row !== "object") continue
+      const o = row as Record<string, unknown>
+      const id = typeof o.id === "string" ? o.id : crypto.randomUUID()
+      const title = typeof o.title === "string" ? o.title : "Template"
+      const savedAt = typeof o.savedAt === "string" ? o.savedAt : new Date().toISOString()
+      const payload = o.payload && typeof o.payload === "object" && !Array.isArray(o.payload) ? (o.payload as Record<string, unknown>) : {}
+      next.push({ id, title, savedAt, payload })
+    }
+    setQuickAccessTemplates(next)
+  }
+
+  async function persistQuickAccessTemplatesList(nextList: typeof quickAccessTemplates) {
+    if (!supabase || !userId) return
+    const { data, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (loadErr) {
+      alert(loadErr.message)
+      return
+    }
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    prevMeta.quick_access_estimate_templates = nextList
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setQuickAccessTemplates(nextList)
+  }
+
+  async function saveCurrentEstimateAsQuickAccessTemplate() {
+    if (!selectedQuote?.id || !supabase) return
+    const title = window.prompt("Name this Quick Access template", `Template ${new Date().toLocaleDateString()}`)
+    if (title == null || !title.trim()) return
+    const lines = selectedQuoteItems.map((it: any) => ({
+      description: String(it.description ?? it.item_description ?? ""),
+      quantity: typeof it.quantity === "number" ? it.quantity : Number.parseFloat(String(it.quantity ?? 0)) || 0,
+      unit_price: typeof it.unit_price === "number" ? it.unit_price : Number.parseFloat(String(it.unit_price ?? 0)) || 0,
+      metadata: it.metadata && typeof it.metadata === "object" ? it.metadata : {},
+    }))
+    const payload: Record<string, unknown> = {
+      job_type_id: (selectedQuote as QuoteRow).job_type_id ?? null,
+      quote_lines: lines,
+      estimate_template_values: { ...estimateTemplateFormValues },
+      quote_legal_text: quoteLegalText,
+      quote_cancellation_text: quoteCancellationText,
+      quote_export_format: quoteExportFormat,
+      quote_include_legal: quoteIncludeLegal,
+      quote_include_prepared_date: quoteIncludePreparedDate,
+      quote_show_line_numbers: quoteShowLineNumbers,
+      quote_show_logo: quoteShowLogo,
+    }
+    const entry = {
+      id: crypto.randomUUID(),
+      title: title.trim(),
+      savedAt: new Date().toISOString(),
+      payload,
+    }
+    await persistQuickAccessTemplatesList([entry, ...quickAccessTemplates])
+    await loadQuickAccessTemplatesFromProfile()
+    alert("Saved to Quick Access templates.")
+  }
+
+  async function applyQuickAccessTemplate(templateId: string) {
+    const tpl = quickAccessTemplates.find((t) => t.id === templateId)
+    if (!tpl || !selectedQuote?.id || !supabase) return
+    const jobTypeId = typeof tpl.payload.job_type_id === "string" ? tpl.payload.job_type_id : ""
+    if (jobTypeId) await persistQuoteJobType(jobTypeId)
+    const lines = Array.isArray(tpl.payload.quote_lines) ? tpl.payload.quote_lines : []
+    for (const it of selectedQuoteItems) {
+      await deleteQuoteItemRow(String((it as { id: string }).id))
+    }
+    for (const raw of lines) {
+      if (!raw || typeof raw !== "object") continue
+      const o = raw as Record<string, unknown>
+      const desc = String(o.description ?? "").trim()
+      if (!desc) continue
+      const qty = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+      const up = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+      const metaRaw = o.metadata
+      const parsedMeta =
+        metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)
+          ? parseQuoteItemMetadata(metaRaw as Record<string, unknown>)
+          : undefined
+      await insertQuoteLineRow(desc, qty, up, parsedMeta ? { metadata: parsedMeta } : undefined)
+    }
+    const etv = tpl.payload.estimate_template_values
+    if (etv && typeof etv === "object" && !Array.isArray(etv)) {
+      setEstimateTemplateFormValues(Object.fromEntries(Object.entries(etv as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])))
+    }
+    if (typeof tpl.payload.quote_legal_text === "string") setQuoteLegalText(tpl.payload.quote_legal_text)
+    if (typeof tpl.payload.quote_cancellation_text === "string") setQuoteCancellationText(tpl.payload.quote_cancellation_text)
+    if (tpl.payload.quote_export_format === "docx" || tpl.payload.quote_export_format === "pdf")
+      setQuoteExportFormat(tpl.payload.quote_export_format)
+    alert("Template applied to this estimate.")
+  }
+
+  async function patchEntityAttachmentMetadataRow(row: EntityAttachmentRow, patch: Record<string, unknown>) {
+    if (!supabase) return
+    const base =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    const nextMeta = { ...base, ...patch }
+    const { error } = await supabase.from("entity_attachments").update({ metadata: nextMeta }).eq("id", row.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setQuoteEntityRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, metadata: nextMeta } : r)))
   }
 
   function applyQuoteCustomerFormFromCustomers(cust: CustomerRow | null | undefined) {
@@ -1494,7 +1715,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
-  async function openQuote(quoteId: string) {
+  async function openQuote(quoteId: string): Promise<boolean> {
     setSelectedQuoteId(quoteId)
     setQuoteCustomerEditMode(false)
     setSelectedQuote(null)
@@ -1504,7 +1725,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setQuoteThreadMessages([])
     setQuoteAttachmentsByEvent({})
     setQuoteEntityRows([])
-    if (!supabase) return
+    if (!supabase) return false
     const quoteDetailSelect = `
         id,
         status,
@@ -1601,11 +1822,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
             : ""
         }`,
       )
-      return
+      return false
     }
     if (!row) {
       setQuoteOpenError("Quote not found.")
-      return
+      return false
     }
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
@@ -1656,6 +1877,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     } else {
       setQuoteThreadMessages([])
     }
+    return true
   }
 
   /** Reload only quote_items (no full quote panel reset — avoids flash when editing lines). */
@@ -2153,28 +2375,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     await persistEstimatePresetsToProfile(merged)
   }
 
-  async function persistQuoteStatus(nextStatus: string) {
-    if (!supabase || !selectedQuoteId || !selectedQuote) return
-    const prev = (selectedQuote as QuoteRow).status ?? ""
-    if (prev === nextStatus) return
-    const { error } = await supabase
-      .from("quotes")
-      .update({ status: nextStatus, updated_at: new Date().toISOString() })
-      .eq("id", selectedQuoteId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setSelectedQuote((p: QuoteRow | null) => (p && typeof p === "object" ? { ...p, status: nextStatus } : p))
-    void loadQuotes()
-    if (session?.access_token) {
-      const { error: fnErr } = await supabase.functions.invoke("notify-quote-status", {
-        body: { quoteId: selectedQuoteId, previousStatus: prev, newStatus: nextStatus },
-      })
-      if (fnErr) console.warn("notify-quote-status:", fnErr.message)
-    }
-  }
-
   async function persistQuoteJobType(jobTypeId: string) {
     if (!supabase || !selectedQuoteId) return
     const v = jobTypeId.trim() || null
@@ -2512,6 +2712,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         showLineNumbers: quoteShowLineNumbers,
         logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
         legal,
+        customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
       }
       const shortId = selectedQuote.id.slice(0, 8)
       if (quoteExportFormat === "docx") {
@@ -2522,6 +2723,55 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const bytes = await buildQuotePdfBytes(base)
         downloadPdfBlob(bytes, `quote-${shortId}.pdf`)
       }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuotePdfBusy(false)
+    }
+  }
+
+  async function previewEstimateDocument() {
+    if (!selectedQuote) return
+    setQuotePdfBusy(true)
+    try {
+      const items = selectedQuoteItems.map((item) => {
+        const { desc, qty, up, tot } = getItemDisplay(item)
+        const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
+        const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
+        const total = typeof tot === "number" && !Number.isNaN(tot) ? tot : quantity * unitPrice
+        return { description: String(desc), quantity, unitPrice, total }
+      })
+      let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
+      if (quoteShowLogo && quoteLogoUrl.trim()) {
+        logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
+        if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
+      }
+      const legal =
+        quoteIncludeLegal || quoteLegalSignatures
+          ? {
+              body: quoteLegalText.trim() || DEFAULT_ESTIMATE_LEGAL_TEMPLATE,
+              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE,
+              showSignatures: quoteLegalSignatures,
+            }
+          : null
+      const base = {
+        title: `Quote ${selectedQuote.id.slice(0, 8)}`,
+        businessLabel: profileDisplayNameForPdf || "Quote",
+        customerName: selectedQuote.customers?.display_name ?? "Customer",
+        items,
+        templateHeader: quotePdfTemplate,
+        templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
+        includePreparedDate: quoteIncludePreparedDate,
+        showLineNumbers: quoteShowLineNumbers,
+        logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
+        legal,
+        customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
+      }
+      const bytes = await buildQuotePdfBytes(base)
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
+      const url = URL.createObjectURL(blob)
+      window.open(url, "_blank", "noopener,noreferrer")
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2547,9 +2797,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Enter subject and body.")
       return
     }
+    const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
+    let bodyForSend = body
     let attachmentPublicUrls: string[] | undefined
-    if (quoteEmailAttachEntity && quoteEntityRows.length > 0) {
-      attachmentPublicUrls = quoteEntityRows.map((r) => r.public_url)
+    if (quoteEmailAttachEntity && copyRows.length > 0) {
+      attachmentPublicUrls = copyRows.map((r) => r.public_url)
+      const noteBlocks = copyRows.map((r) => {
+        const p = parseQuoteAttachmentMeta(r.metadata)
+        const title = (r.file_name || "Attachment").trim()
+        const desc = p.includeNote && p.note.trim() ? p.note.trim() : ""
+        return desc ? `${title}\n${desc}` : title
+      })
+      bodyForSend = `${body.trim()}\n\n---\nCustomer copy (attachments below):\n${noteBlocks.join("\n\n")}`
     }
     setQuoteEmailSending(true)
     try {
@@ -2562,7 +2821,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         body: JSON.stringify({
           to: email,
           subject,
-          body,
+          body: bodyForSend,
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
@@ -2574,7 +2833,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const raw = await res.text()
       if (!res.ok) throw new Error(raw.slice(0, 400))
       alert("Email sent.")
-      setShowQuoteEmailPanel(false)
+      setBottomActionEmailOpen(false)
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2609,12 +2868,34 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return aVal < bVal ? 1 : -1
   })
 
-  function getLastMessage(q: QuoteRow): string | null {
-    const msgs = (q.conversations as { messages?: MessageRow[] } | null)?.messages
-    if (!msgs?.length) return null
-    const sorted = [...msgs].sort((x, y) => (y.created_at || "").localeCompare(x.created_at || ""))
-    return sorted[0]?.content ?? null
-  }
+  const previousEstimatesActiveList = useMemo(() => {
+    return sortedQuotes.filter((q) => {
+      if (!q.customer_id) return false
+      if (q.archived_at) return false
+      const ca = (q.customers as CustomerRow | null)?.archived_at
+      if (ca) return false
+      return true
+    })
+  }, [sortedQuotes])
+
+  const previousEstimatesArchivedList = useMemo(() => {
+    return sortedQuotes.filter((q) => Boolean(q.archived_at) || Boolean((q.customers as CustomerRow | null)?.archived_at))
+  }, [sortedQuotes])
+
+  const libraryPreviousFiltered = useMemo(() => {
+    const base = previousEstimatesBucket === "active" ? previousEstimatesActiveList : previousEstimatesArchivedList
+    const needle = pastLibSearch.trim().toLowerCase()
+    const st = pastLibStatus.trim()
+    return base.filter((row) => {
+      const name = (row.customers?.display_name || "").toLowerCase()
+      const phone =
+        row.customers?.customer_identifiers?.find((i: { type: string; value: string }) => i.type === "phone")?.value || ""
+      const phoneLower = phone.toLowerCase()
+      const matchSearch = !needle || name.includes(needle) || phoneLower.includes(needle)
+      const matchStatus = !st || (row.status || "") === st
+      return matchSearch && matchStatus
+    })
+  }, [previousEstimatesActiveList, previousEstimatesArchivedList, previousEstimatesBucket, pastLibSearch, pastLibStatus])
 
   const quoteActivityItems = useMemo(() => {
     const items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[] = []
@@ -2630,71 +2911,57 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return items
   }, [quoteThreadMessages, quoteCommEvents])
 
-  const selectedQuoteRowText = theme.text
+  const quoteActivityFiltered = useMemo(() => {
+    return quoteActivityItems.filter((item) => {
+      if (activityChannelFocus === "all") return true
+      if (activityChannelFocus === "voicemail") {
+        return item.kind === "ev" && item.payload?.event_type === "voicemail"
+      }
+      if (activityChannelFocus === "sms") {
+        return item.kind === "msg" || (item.kind === "ev" && item.payload?.event_type === "sms")
+      }
+      if (activityChannelFocus === "email") {
+        return item.kind === "ev" && item.payload?.event_type === "email"
+      }
+      return true
+    })
+  }, [quoteActivityItems, activityChannelFocus])
 
   return (
     <div style={{ display: "flex", position: "relative", minWidth: 0 }}>
       <div style={{ width: "100%", minWidth: 0 }}>
-        <h1>Quotes</h1>
+        <h1>Estimates</h1>
 
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            {showQuotesAddCustomer && (
-              <button
-                onClick={() => { setShowAddCustomer(true); loadCustomerList() }}
-                style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer" }}
-              >
-                Add Customer to quotes
-              </button>
-            )}
-            {showQuotesSettings && (
-              <button
-                onClick={() => setShowSettings(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                Settings
-              </button>
-            )}
-            {showQuotesAutomaticReplies && (
-              <button
-                type="button"
-                onClick={() => setShowQuoteAutomaticReplies(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                {quoteAutomaticRepliesButtonLabel}
-              </button>
-            )}
-            {userId ? <TabNotificationAlertsButton tab="quotes" profileUserId={userId} /> : null}
-            {showQuotesEstimateTemplate && (
-              <button
-                type="button"
-                onClick={() => setShowEstimateTemplateModal(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                {estimateTemplateButtonLabel}
-              </button>
-            )}
-            {showQuotesEstimateLineItems && (
-              <button
-                type="button"
-                onClick={() => openEstimateLineItemsModal()}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                {estimateLineItemsButtonLabel}
-              </button>
-            )}
-            {showQuotesJobTypesPanel && (
-              <button
-                type="button"
-                onClick={() => setShowQuoteJobTypesModal(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}
-              >
-                {quoteJobTypesButtonLabel}
-              </button>
-            )}
-            {customActionButtons.map((btn) => (
-              <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid #d1d5db", background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
-            ))}
+        <div style={{ marginBottom: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+              {userId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPastLibSearch("")
+                    setPastLibStatus("")
+                    setLibrarySection("quick_access")
+                    setEstimateSuite("library")
+                  }}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `2px solid ${theme.primary}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                >
+                  Estimates Library
+                </button>
+              ) : null}
+              {showQuotesEstimateTemplate && (
+                <button
+                  type="button"
+                  onClick={() => setShowEstimateTemplateModal(true)}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
+                >
+                  Advanced Options
+                </button>
+              )}
+              {customActionButtons.map((btn) => (
+                <button key={btn.id} onClick={() => setOpenCustomButtonId(btn.id)} style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}>{btn.label}</button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -2950,7 +3217,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
         {showEstimateTemplateModal && (
           <PortalSettingsModal
-            title={estimateTemplateButtonLabel}
+            title="Advanced Options"
             maxWidthPx={560}
             closeButtonLabel="Save & close"
             intro={
@@ -2996,9 +3263,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
               {estimateTemplateItems.some((i) => i.id === "estimate_template_logo_url") ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: theme.text }}>Upload company logo</p>
-                  <p style={{ margin: 0, fontSize: 12, color: theme.text, opacity: 0.82, lineHeight: 1.45 }}>
-                    PNG or JPEG. Stored in your comm-attachments bucket with a public URL (same pattern as other outbound attachments).
-                  </p>
                   <input
                     type="file"
                     accept="image/png,image/jpeg,.jpg,.png"
@@ -3095,651 +3359,75 @@ export default function QuotesPage(_props: QuotesPageProps) {
           </p>
         )}
 
-        <div style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "16px",
-          alignItems: "center",
-          marginBottom: "16px",
-          padding: "12px",
-          background: theme.charcoalSmoke,
-          borderRadius: "8px",
-          border: `1px solid ${theme.border}`,
-          width: "100%",
-          boxSizing: "border-box"
-        }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-            <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Filter</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="text"
-                placeholder="By name..."
-                name="quotes_filter_name"
-                autoComplete="off"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
-              />
-              <input
-                type="text"
-                placeholder="By phone..."
-                name="quotes_filter_phone"
-                autoComplete="off"
-                value={filterPhone}
-                onChange={(e) => setFilterPhone(e.target.value)}
-                style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
-              />
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
-            <label style={{ fontSize: "12px", fontWeight: 600, color: "#e5e7eb" }}>Sort by</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <select
-                value={sortField}
-                onChange={(e) => setSortField(e.target.value)}
-                style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
-              >
-                <option value="name">Name</option>
-                <option value="status">Status</option>
-                <option value="created_at">Date</option>
-              </select>
+        {estimateSuite === "library" ? (
+          <div
+            style={{
+              border: `1px solid ${theme.border}`,
+              borderRadius: 12,
+              background: "#f8fafc",
+              padding: 16,
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                marginBottom: 16,
+                paddingBottom: 12,
+                borderBottom: `1px solid ${theme.border}`,
+                alignItems: "center",
+              }}
+            >
               <button
                 type="button"
-                onClick={() => setSortAsc(!sortAsc)}
-                style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
+                onClick={() => setEstimateSuite("home")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  color: "#0f172a",
+                }}
               >
-                {sortAsc ? "↑ Asc" : "↓ Desc"}
+                ← Back
               </button>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ width: "100%", overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: isMobile ? "760px" : "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
-          <colgroup>
-            <col style={{ width: "16%" }} />
-            <col style={{ width: "14%" }} />
-            <col style={{ width: "12%" }} />
-            <col style={{ width: "12%" }} />
-            <col style={{ width: "12%" }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-              <th onClick={() => { setSortField("name"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Name</th>
-              <th style={{ padding: "8px" }}>Phone</th>
-              <th style={{ padding: "8px" }}>Source</th>
-              <th onClick={() => { setSortField("status"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Status</th>
-              <th onClick={() => { setSortField("created_at"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>Last Update</th>
-              <th style={{ padding: "8px" }}>Last message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedQuotes.map((q) => {
-              const phone = q.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value || ""
-              const lastMsg = getLastMessage(q)
-              const lastMsgText = lastMsg?.trim() ? (lastMsg.length > 50 ? lastMsg.slice(0, 50) + "…" : lastMsg) : "—"
-              const source = q.conversation_id ? "Conversation" : "Manual"
-              const isRowSelected = selectedQuoteId === q.id
-              const cellBase = {
-                padding: "8px" as const,
-                color: isRowSelected ? selectedQuoteRowText : undefined,
-                fontWeight: isRowSelected ? (600 as const) : (400 as const),
-              }
-              return (
-                <Fragment key={q.id}>
-                  <tr
-                    onClick={() => {
-                      if (Date.now() < skipQuoteRowToggleUntilRef.current) return
-                      toggleQuoteRow(q.id)
-                    }}
-                    style={{
-                      cursor: "pointer",
-                      borderBottom: "1px solid #eee",
-                      background: isRowSelected ? "#bae6fd" : "transparent",
-                    }}
-                  >
-                    <td style={cellBase}>{q.customers?.display_name ?? "—"}</td>
-                    <td style={cellBase}>{phone || "—"}</td>
-                    <td style={cellBase}>{source}</td>
-                    <td style={cellBase}>{q.status ?? "—"}</td>
-                    <td style={cellBase}>
-                      {(q.updated_at || q.created_at) ? new Date(q.updated_at || q.created_at!).toLocaleDateString() : "—"}
-                    </td>
-                    <td style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }} title={lastMsg ?? undefined}>{lastMsgText}</td>
-                  </tr>
-                  {isRowSelected && quoteOpenError ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 16, borderBottom: "1px solid #fecaca", background: "#fef2f2", verticalAlign: "top" }}>
-                        <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}>
-                          <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "#991b1b" }}>Could not load this quote</h3>
-                          <p style={{ margin: 0, fontSize: 14, color: "#7f1d1d", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{quoteOpenError}</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : isRowSelected && selectedQuote?.id === q.id ? (
-                    <tr data-quote-detail-row="1">
-                      <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid #e5e7eb", background: "#f8fafc", verticalAlign: "top", color: theme.text }}>
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ padding: "16px 18px 20px", maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
-                            <div>
-                              <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>Quote</h3>
-                              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
-                                {selectedQuote.customers?.display_name ?? "Customer"} · Click the row again to collapse.
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              aria-label="Close quote detail"
-                              onClick={() => toggleQuoteRow(q.id)}
-                              style={{
-                                flexShrink: 0,
-                                width: 36,
-                                height: 36,
-                                borderRadius: 8,
-                                border: `1px solid ${theme.border}`,
-                                background: "#fff",
-                                cursor: "pointer",
-                                fontSize: 18,
-                                lineHeight: 1,
-                                color: theme.text,
-                              }}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                              <div style={{ fontWeight: 700 }}>Customer</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                {!quoteCustomerEditMode ? (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
-                                      setQuoteCustomerEditMode(true)
-                                    }}
-                                    style={{
-                                      padding: "4px 10px",
-                                      fontSize: "12px",
-                                      background: "#fff",
-                                      color: theme.text,
-                                      border: `1px solid ${theme.border}`,
-                                      borderRadius: "6px",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    Edit customer
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setNotesCustomerId(selectedQuote.customer_id ?? null)
-                                    setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
-                                  }}
-                                  style={{ padding: "4px 10px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-                                >
-                                  Notes
-                                </button>
-                              </div>
-                            </div>
-                            {quoteCustomerEditMode ? (
-                              <div
-                                data-quote-customer-editor="1"
-                                onPointerDownCapture={() => {
-                                  skipQuoteRowToggleUntilRef.current = Date.now() + 1000
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 420, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}
-                              >
-                                <input
-                                  placeholder="Customer name"
-                                  name="quote_customer_display_name"
-                                  autoComplete="section-quote-customer name"
-                                  value={quoteCustomerForm.name}
-                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, name: e.target.value }))}
-                                  style={{ ...theme.formInput }}
-                                />
-                                <input
-                                  placeholder="Phone"
-                                  name="quote_customer_phone"
-                                  autoComplete="section-quote-customer tel"
-                                  value={quoteCustomerForm.phone}
-                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, phone: e.target.value }))}
-                                  style={{ ...theme.formInput }}
-                                />
-                                <input
-                                  placeholder="Email"
-                                  name="quote_customer_email"
-                                  autoComplete="section-quote-customer email"
-                                  value={quoteCustomerForm.email}
-                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
-                                  style={{ ...theme.formInput }}
-                                />
-                                <textarea
-                                  placeholder="Street, city, state (optional, for maps)"
-                                  name="quote_customer_service_address"
-                                  value={quoteCustomerForm.serviceAddress}
-                                  onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceAddress: e.target.value }))}
-                                  rows={2}
-                                  style={{ ...theme.formInput, resize: "vertical" }}
-                                />
-                                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                  Use the button below to fill latitude and longitude from the address.
-                                </p>
-                                <button
-                                  type="button"
-                                  disabled={quoteCustomerGeocodeBusy || quoteCustomerSaving}
-                                  onClick={() => void geocodeQuoteCustomerServiceAddress()}
-                                  style={{
-                                    alignSelf: "flex-start",
-                                    padding: "6px 12px",
-                                    borderRadius: 6,
-                                    border: `1px solid ${theme.border}`,
-                                    background: "#fff",
-                                    cursor: quoteCustomerGeocodeBusy || quoteCustomerSaving ? "wait" : "pointer",
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    color: theme.charcoal,
-                                  }}
-                                >
-                                  {quoteCustomerGeocodeBusy ? "Looking up…" : "Look up coordinates from address"}
-                                </button>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                  <input
-                                    placeholder="Lat"
-                                    value={quoteCustomerForm.serviceLat}
-                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLat: e.target.value }))}
-                                    style={{ ...theme.formInput, flex: "1 1 120px" }}
-                                  />
-                                  <input
-                                    placeholder="Lng"
-                                    value={quoteCustomerForm.serviceLng}
-                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLng: e.target.value }))}
-                                    style={{ ...theme.formInput, flex: "1 1 120px" }}
-                                  />
-                                </div>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    disabled={quoteCustomerSaving}
-                                    onClick={() => void saveQuoteCustomerDetails()}
-                                    style={{
-                                      padding: "6px 12px",
-                                      borderRadius: 6,
-                                      border: "none",
-                                      background: theme.primary,
-                                      color: "#fff",
-                                      cursor: quoteCustomerSaving ? "wait" : "pointer",
-                                      fontWeight: 600,
-                                    }}
-                                  >
-                                    {quoteCustomerSaving ? "Saving…" : "Save customer"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={quoteCustomerSaving}
-                                    onClick={() => {
-                                      applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
-                                      setQuoteCustomerEditMode(false)
-                                    }}
-                                    style={{
-                                      padding: "6px 12px",
-                                      borderRadius: 6,
-                                      border: `1px solid ${theme.border}`,
-                                      background: "#fff",
-                                      cursor: "pointer",
-                                      color: theme.charcoal,
-                                      fontWeight: 600,
-                                    }}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                <p style={{ margin: 0 }}>
-                                  <strong>Name:</strong> {selectedQuote.customers?.display_name ?? "—"}
-                                </p>
-                                <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                                  <span>
-                                    <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
-                                  </span>
-                                  {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
-                                    <CustomerCallButton
-                                      phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
-                                      bridgeOwnerUserId={userId}
-                                      compact
-                                    />
-                                  ) : null}
-                                </p>
-                                <p style={{ margin: 0 }}>
-                                  <strong>Email:</strong>{" "}
-                                  {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value ?? "—"}
-                                </p>
-                                {(selectedQuote.customers as CustomerRow | null)?.service_address?.trim() ||
-                                (selectedQuote.customers as CustomerRow | null)?.service_lat != null ? (
-                                  <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
-                                    <strong>Service address:</strong> {(selectedQuote.customers as CustomerRow)?.service_address?.trim() || "—"}
-                                    {(selectedQuote.customers as CustomerRow)?.service_lat != null &&
-                                    (selectedQuote.customers as CustomerRow)?.service_lng != null
-                                      ? ` · ${Number((selectedQuote.customers as CustomerRow).service_lat).toFixed(5)}, ${Number((selectedQuote.customers as CustomerRow).service_lng).toFixed(5)}`
-                                      : ""}
-                                  </p>
-                                ) : null}
-                              </>
-                            )}
-                            <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
-                              <strong style={{ flexShrink: 0 }}>Status:</strong>
-                              <select
-                                value={(() => {
-                                  const raw = (selectedQuote.status ?? "draft").toLowerCase()
-                                  return QUOTE_STATUS_SELECT_OPTIONS.some((o) => o.value === raw) ? raw : "draft"
-                                })()}
-                                onChange={(e) => void persistQuoteStatus(e.target.value)}
-                                style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 160, maxWidth: "100%" }}
-                              >
-                                {QUOTE_STATUS_SELECT_OPTIONS.map((o) => (
-                                  <option key={o.value} value={o.value}>
-                                    {o.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            {showQuotesJobTypesPanel ? (
-                              <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
-                                <strong style={{ flexShrink: 0 }}>Quote job type:</strong>
-                                <select
-                                  value={
-                                    typeof (selectedQuote as QuoteRow).job_type_id === "string"
-                                      ? (selectedQuote as QuoteRow).job_type_id ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => void persistQuoteJobType(e.target.value)}
-                                  style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 180, maxWidth: "100%" }}
-                                >
-                                  <option value="">— None —</option>
-                                  {quoteDetailJobTypes.map((jt) => (
-                                    <option key={jt.id} value={jt.id}>
-                                      {jt.name}
-                                    </option>
-                                  ))}
-                                </select>
-                                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 400 }}>
-                                  New lines inherit this unless the line already has a job type.
-                                </span>
-                              </label>
-                            ) : null}
-                            {showQuotesJobTypesPanel && estimateLinePresets.length > 0 ? (
-                              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                                <button
-                                  type="button"
-                                  disabled={applyJtLinesBusy || !(selectedQuote as QuoteRow).job_type_id}
-                                  onClick={() => void applyJobTypeLinesToQuoteItems()}
-                                  style={{
-                                    padding: "6px 12px",
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    borderRadius: 6,
-                                    border: "none",
-                                    background: theme.primary,
-                                    color: "#fff",
-                                    cursor: applyJtLinesBusy ? "wait" : "pointer",
-                                    opacity: (selectedQuote as QuoteRow).job_type_id ? 1 : 0.5,
-                                  }}
-                                >
-                                  {applyJtLinesBusy ? "Adding…" : "Add job type lines to quote"}
-                                </button>
-                                <span style={{ fontSize: 12, color: "#64748b", maxWidth: 420 }}>
-                                  Inserts every saved line template linked to this job type (skips lines already on the quote).
-                                </span>
-                              </div>
-                            ) : null}
-                            <p style={{ margin: 0 }}><strong>Source:</strong> {selectedQuote.conversation_id ? "From conversation" : "Added manually"}</p>
-                          </div>
-
-                          <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Activity</h4>
-                          <div
-                            style={{
-                              border: `1px solid ${theme.border}`,
-                              padding: 12,
-                              borderRadius: 8,
-                              background: "#fff",
-                              minHeight: 72,
-                              maxHeight: "min(36vh, 320px)",
-                              overflow: "auto",
-                              boxSizing: "border-box",
-                              marginBottom: 20,
-                            }}
-                          >
-                            {quoteActivityItems.length === 0 ? (
-                              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                                No messages or communication events for this customer yet. Voicemails and inbound messages appear here when logged for this contact.
-                              </p>
-                            ) : (
-                              quoteActivityItems.map((item) => {
-                                if (item.kind === "msg") {
-                                  const msg = item.payload
-                                  return (
-                                    <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
-                                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                                        {msg.sender === "customer" ? "Customer" : "You"}
-                                        {msg.created_at ? (
-                                          <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
-                                            {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <p style={{ margin: 0, fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{msg.content}</p>
-                                    </div>
-                                  )
-                                }
-                                const ev = item.payload
-                                const label =
-                                  ev.event_type === "email"
-                                    ? "Email"
-                                    : ev.event_type === "sms"
-                                      ? "SMS"
-                                      : ev.event_type === "call"
-                                        ? "Call"
-                                        : ev.event_type === "voicemail"
-                                          ? "Voicemail"
-                                          : String(ev.event_type || "Event")
-                                return (
-                                  <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                                      {label}
-                                      {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
-                                      {ev.created_at ? (
-                                        <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
-                                          {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    {ev.event_type === "voicemail" ? (
-                                      <>
-                                        <VoicemailRecordingBlock recordingUrl={ev.recording_url} />
-                                        <VoicemailTranscriptBlock
-                                          ev={ev}
-                                          profileVoicemailDisplay={voicemailProfileDisplay}
-                                          conversationPortalValues={conversationPortalDefaults}
-                                        />
-                                        {ev.body ? (
-                                          <p style={{ margin: "8px 0 0", fontSize: 14, color: theme.text, whiteSpace: "pre-wrap" }}>{ev.body}</p>
-                                        ) : null}
-                                      </>
-                                    ) : ev.event_type === "email" ? (
-                                      <>
-                                        {ev.subject?.trim() ? <p style={{ margin: "0 0 6px", fontWeight: 700 }}>{ev.subject.trim()}</p> : null}
-                                        <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
-                                      </>
-                                    ) : (
-                                      <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap" }}>{ev.body || "—"}</p>
-                                    )}
-                                    <AttachmentStrip items={quoteAttachmentsByEvent[ev.id] ?? []} compact />
-                                  </div>
-                                )
-                              })
-                            )}
-                          </div>
-
-                          <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                            <button
-                              type="button"
-                              onClick={() => void downloadQuoteDocumentClick()}
-                              disabled={quotePdfBusy}
-                              style={{
-                                padding: "8px 14px",
-                                borderRadius: 6,
-                                border: "none",
-                                background: theme.primary,
-                                color: "#fff",
-                                fontWeight: 600,
-                                cursor: quotePdfBusy ? "wait" : "pointer",
-                                fontSize: 14,
-                              }}
-                            >
-                              {quotePdfBusy
-                                ? quoteExportFormat === "docx"
-                                  ? "Word…"
-                                  : "PDF…"
-                                : quoteExportFormat === "docx"
-                                  ? "Download quote (Word)"
-                                  : "Download quote PDF"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShowQuoteEmailPanel((v) => !v)}
-                              style={{
-                                padding: "8px 14px",
-                                borderRadius: 6,
-                                border: `1px solid ${theme.border}`,
-                                background: "#fff",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                fontSize: 14,
-                                color: theme.text,
-                              }}
-                            >
-                              {showQuoteEmailPanel ? "Hide email" : "Email customer"}
-                            </button>
-                          </div>
-                          {showQuoteEmailPanel ? (
-                            <div
-                              style={{
-                                marginBottom: 16,
-                                padding: 12,
-                                borderRadius: 8,
-                                border: `1px solid ${theme.border}`,
-                                background: "#fff",
-                                display: "grid",
-                                gap: 10,
-                              }}
-                            >
-                              <input
-                                value={quoteEmailSubject}
-                                onChange={(e) => setQuoteEmailSubject(e.target.value)}
-                                placeholder="Subject"
-                                style={theme.formInput}
-                              />
-                              <textarea
-                                value={quoteEmailBody}
-                                onChange={(e) => setQuoteEmailBody(e.target.value)}
-                                rows={4}
-                                placeholder="Message"
-                                style={{ ...theme.formInput, resize: "vertical" }}
-                              />
-                              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: theme.text }}>
-                                <input
-                                  type="checkbox"
-                                  style={{ marginTop: 3 }}
-                                  checked={quoteEmailAttachEntity}
-                                  onChange={(e) => setQuoteEmailAttachEntity(e.target.checked)}
-                                />
-                                <span>
-                                  Attach files from <strong>Quote files</strong> below ({quoteEntityRows.length} on this quote)
-                                  <span style={{ display: "block", fontSize: 12, opacity: 0.75, marginTop: 4, fontWeight: 400 }}>
-                                    This uses what you uploaded on the quote, not the generated PDF/Word unless you add that file here.
-                                  </span>
-                                </span>
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => void sendQuoteCustomerEmail()}
-                                disabled={quoteEmailSending}
-                                style={{
-                                  padding: "8px 14px",
-                                  borderRadius: 6,
-                                  border: "none",
-                                  background: theme.primary,
-                                  color: "#fff",
-                                  fontWeight: 600,
-                                  cursor: quoteEmailSending ? "wait" : "pointer",
-                                  justifySelf: "start",
-                                }}
-                              >
-                                {quoteEmailSending ? "Sending…" : "Send email"}
-                              </button>
-                            </div>
-                          ) : null}
-
-                          <h4 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: theme.text }}>Quote files</h4>
-                          <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                            <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
-                              Upload file
-                              <input
-                                type="file"
-                                disabled={quoteEntityUploadBusy}
-                                onChange={(e) => void handleQuoteEntityFileChange(e.target.files)}
-                                style={{ display: "block", marginTop: 6, fontSize: 13 }}
-                              />
-                            </label>
-                            {quoteEntityUploadBusy ? <span style={{ fontSize: 12, color: "#6b7280" }}>Uploading…</span> : null}
-                          </div>
-                          {quoteEntityRows.length > 0 ? (
-                            <ul style={{ margin: "0 0 16px", paddingLeft: 18, fontSize: 13, color: theme.text }}>
-                              {quoteEntityRows.map((row) => (
-                                <li key={row.id} style={{ marginBottom: 6 }}>
-                                  <a href={row.public_url} target="_blank" rel="noopener noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
-                                    {row.file_name || "File"}
-                                  </a>
-                                  {" · "}
-                                  <button
-                                    type="button"
-                                    onClick={() => void removeQuoteEntityRowLocal(row)}
-                                    style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", textDecoration: "underline", padding: 0, fontSize: 13 }}
-                                  >
-                                    Remove
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>No files attached to this quote yet.</p>
-                          )}
-
-            <div style={{ marginTop: 24, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>Quote items</h3>
+              <button
+                type="button"
+                onClick={() => setLibrarySection("quick_access")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: librarySection === "quick_access" ? theme.primary : "#e5e7eb",
+                  color: librarySection === "quick_access" ? "#fff" : "#0f172a",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                Quick Access Templates
+              </button>
               {showQuotesEstimateLineItems ? (
                 <button
                   type="button"
-                  onClick={() => openEstimateLineItemsModal()}
+                  onClick={() => {
+                    setLibrarySection("estimate_line_items")
+                    openEstimateLineItemsModal()
+                  }}
                   style={{
-                    fontSize: 12,
-                    padding: "4px 10px",
+                    padding: "6px 12px",
                     borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    color: theme.text,
+                    border: "none",
+                    background: librarySection === "estimate_line_items" ? theme.primary : "#e5e7eb",
+                    color: librarySection === "estimate_line_items" ? "#fff" : "#0f172a",
                     cursor: "pointer",
                     fontWeight: 600,
+                    fontSize: 13,
                   }}
                 >
                   {estimateLineItemsButtonLabel}
@@ -3748,548 +3436,1555 @@ export default function QuotesPage(_props: QuotesPageProps) {
               {showQuotesJobTypesPanel ? (
                 <button
                   type="button"
-                  onClick={() => setShowQuoteJobTypesModal(true)}
+                  onClick={() => {
+                    setLibrarySection("job_types")
+                    setShowQuoteJobTypesModal(true)
+                  }}
                   style={{
-                    fontSize: 12,
-                    padding: "4px 10px",
+                    padding: "6px 12px",
                     borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    color: theme.text,
+                    border: "none",
+                    background: librarySection === "job_types" ? theme.primary : "#e5e7eb",
+                    color: librarySection === "job_types" ? "#fff" : "#0f172a",
                     cursor: "pointer",
                     fontWeight: 600,
+                    fontSize: 13,
                   }}
                 >
                   {quoteJobTypesButtonLabel}
                 </button>
               ) : null}
-            </div>
-            {estimateLinePresets.length > 0 ? (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Saved lines</span>
-                {estimateLinePresets.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() =>
-                      void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
-                        presetId: p.id,
-                        metadata: {
-                          minimum_line_total: p.minimum_line_total,
-                          line_kind: p.line_kind,
-                          ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                            ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
-                            : {}),
-                        },
-                      })
-                    }
-                    style={{
-                      fontSize: 12,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #94a3b8",
-                      background: "#f1f5f9",
-                      color: "#0f172a",
-                      cursor: "pointer",
-                      maxWidth: 220,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={p.description}
-                  >
-                    {p.description.length > 36 ? `${p.description.slice(0, 36)}…` : p.description}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {(estimateReview.subtotal != null || estimateReview.issues.length > 0) && (
-              <div
+              <button
+                type="button"
+                onClick={() => setLibrarySection("previous_estimates")}
                 style={{
-                  marginBottom: 12,
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #cbd5e1",
-                  background: "#f8fafc",
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: librarySection === "previous_estimates" ? theme.primary : "#e5e7eb",
+                  color: librarySection === "previous_estimates" ? "#fff" : "#0f172a",
+                  cursor: "pointer",
+                  fontWeight: 600,
                   fontSize: 13,
-                  color: "#111827",
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Document check</div>
-                {estimateReview.subtotal != null ? (
-                  <p style={{ margin: "4px 0" }}>
-                    Line items subtotal (cross-check):{" "}
-                    <strong>${estimateReview.subtotal.toFixed(2)}</strong>
-                    {estimateReview.agreesWithSubtotal === false ? (
-                      <span style={{ color: "#b45309" }}> — double-check quantities and unit prices.</span>
-                    ) : null}
-                  </p>
-                ) : null}
-                {estimateReview.issues.length > 0 ? (
-                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#1e293b" }}>
-                    {estimateReview.issues.map((issue, idx) => (
-                      <li key={idx} style={{ marginBottom: 4 }}>
-                        {issue}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            )}
-            <table
-              style={{
-                width: "100%",
-                minWidth: isMobile ? "640px" : "100%",
-                borderCollapse: "collapse",
-                marginTop: "8px",
-                border: "1px solid #cbd5e1",
-              }}
-            >
-              <thead>
-                <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Qty</th>
-                  {estimateLineTemplateOffered("eli_show_manpower") ? (
-                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Crew</th>
-                  ) : null}
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Min $</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Unit</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Total</th>
-                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {selectedQuoteItems.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={7 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
-                      style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
-                    >
-                      No line items. Add one below.
-                    </td>
-                  </tr>
+                Previous Estimates
+              </button>
+            </div>
+
+            {librarySection === "quick_access" ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
+                  Save reusable estimate layouts here from the Estimates tool (<strong>Save Estimate Template</strong>). Apply a template when
+                  building an estimate using <strong>Quick Access Template</strong> on the estimate page.
+                </p>
+                {quickAccessTemplates.length === 0 ? (
+                  <p style={{ margin: 0, color: "#64748b", fontSize: 14 }}>No Quick Access templates yet.</p>
                 ) : (
-                  selectedQuoteItems.map((item, rowIdx) => {
-                    const { desc, qty, up, meta } = getItemDisplay(item)
-                    const dr = quoteLineDrafts[item.id]
-                    const showMpRow = estimateLineTemplateOffered("eli_show_manpower")
-                    const baseMetaRow = parseQuoteItemMetadata(item.metadata)
-                    const qtyLive = Number.parseFloat(String(dr?.quantity ?? item.quantity ?? 0)) || 0
-                    const upDraft = String(dr?.unit_price ?? "").trim()
-                    const upLive = upDraft === "" ? 0 : Number.parseFloat(upDraft.replace(/,/g, "")) || 0
-                    const crewLive = showMpRow
-                      ? Math.max(1, Number.parseInt(String(dr?.manpower ?? baseMetaRow.manpower ?? 1), 10) || 1)
-                      : Math.max(1, baseMetaRow.manpower ?? 1)
-                    const minDraftLive = (dr?.minimum ?? "").trim()
-                    let minimumLive = baseMetaRow.minimum_line_total
-                    if (minDraftLive !== "") {
-                      const n = Number.parseFloat(minDraftLive.replace(/[^0-9.]/g, ""))
-                      if (Number.isFinite(n) && n >= 0) minimumLive = n > 0 ? n : undefined
-                    }
-                    const metaLive: QuoteItemMetadata = {
-                      ...baseMetaRow,
-                      manpower: crewLive,
-                      minimum_line_total: minimumLive,
-                    }
-                    const lineTotalLive = computeQuoteLineTotal(qtyLive, upLive, metaLive).total
-                    const crew = meta.manpower ?? 1
-                    const serverDesc = String(item.description ?? item.item_description ?? item.name ?? "—")
-                    const serverQty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
-                    const serverUp =
-                      typeof item.unit_price === "number" ? item.unit_price : Number.parseFloat(String(item.unit_price ?? 0)) || 0
-                    return (
-                      <tr key={item.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 13 }}>{rowIdx + 1}</td>
-                        <td style={{ padding: "6px 8px", color: "#0f172a", fontSize: 13 }}>
-                          <input
-                            value={dr?.description ?? String(desc)}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, description: v } }
-                              })
+                  quickAccessTemplates.map((t) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: 12,
+                        background: "#fff",
+                        borderRadius: 8,
+                        border: `1px solid ${theme.border}`,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{t.title}</div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>Saved {new Date(t.savedAt).toLocaleString()}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEstimateSuite("home")
+                          window.setTimeout(() => void applyQuickAccessTemplate(t.id), 0)
+                        }}
+                        style={{
+                          padding: "8px 14px",
+                          background: theme.primary,
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Apply in Estimates Tool
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
+
+            {librarySection === "previous_estimates" ? (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPreviousEstimatesBucket("active")}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: previousEstimatesBucket === "active" ? "#dbeafe" : "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviousEstimatesBucket("archived")}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: previousEstimatesBucket === "archived" ? "#dbeafe" : "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Archived
+                  </button>
+                  <input
+                    type="text"
+                    placeholder="Search name or phone…"
+                    value={pastLibSearch}
+                    onChange={(e) => setPastLibSearch(e.target.value)}
+                    style={{ ...theme.formInput, minWidth: 200, flex: "1 1 200px" }}
+                  />
+                  <select
+                    value={pastLibStatus}
+                    onChange={(e) => setPastLibStatus(e.target.value)}
+                    style={{ ...theme.formInput, minWidth: 160 }}
+                  >
+                    <option value="">All statuses</option>
+                    {QUOTE_STATUS_SELECT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {libraryPreviousFiltered.length === 0 ? (
+                    <p style={{ margin: 0, color: "#64748b", fontSize: 14 }}>
+                      No estimates in this list. Run <code style={{ fontSize: 12 }}>supabase/quotes-estimates-library-archive.sql</code> for
+                      archive columns.
+                    </p>
+                  ) : (
+                    libraryPreviousFiltered.map((q) => {
+                      const phone =
+                        q.customers?.customer_identifiers?.find((i) => i.type === "phone")?.value || ""
+                      return (
+                        <div
+                          key={q.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            padding: 12,
+                            background: "#fff",
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: "1 1 200px" }}>
+                            <div style={{ fontWeight: 700, color: theme.text }}>{q.customers?.display_name ?? "(No customer)"}</div>
+                            <div style={{ fontSize: 13, color: "#64748b" }}>
+                              {q.status ?? "—"} ·{" "}
+                              {(q.updated_at || q.created_at) ? new Date(q.updated_at || q.created_at!).toLocaleDateString() : "—"}
+                              {phone ? ` · ${phone}` : ""}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEstimateSuite("home")
+                              void openQuote(q.id)
                             }}
-                            onBlur={(e) => {
-                              const v = e.target.value.trim()
-                              if (v && v !== serverDesc) void persistQuoteItemUpdate(item.id, { description: v })
+                            style={{
+                              padding: "8px 14px",
+                              background: theme.primary,
+                              color: "white",
+                              border: "none",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                              fontWeight: 600,
                             }}
-                            style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 120, boxSizing: "border-box" }}
-                          />
-                        </td>
-                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={dr?.quantity ?? String(qty)}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, quantity: v } }
-                              })
-                            }}
-                            onBlur={(e) => {
-                              const n = Number.parseFloat(e.target.value) || 0
-                              if (Math.abs(n - serverQty) > 1e-9) void persistQuoteItemUpdate(item.id, { quantity: n })
-                            }}
-                            style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
-                          />
-                        </td>
-                        {estimateLineTemplateOffered("eli_show_manpower") ? (
-                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                          >
+                            Open
+                          </button>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </>
+            ) : null}
+
+            {librarySection === "estimate_line_items" ? (
+              <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>
+                The Estimate Line Items editor opens in a modal. If it did not open, use the button in the menu row above.
+              </p>
+            ) : null}
+            {librarySection === "job_types" ? (
+              <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>
+                Job types open in a modal. If it did not open, use the button in the menu row above.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {estimateSuite === "home" && selectedQuoteId ? (
+          <div
+            style={{
+              border: `1px solid ${theme.border}`,
+              borderRadius: 12,
+              background: "#f8fafc",
+              marginBottom: 16,
+              overflow: "hidden",
+            }}
+          >
+            {quoteOpenError ? (
+              <div style={{ padding: 16, borderBottom: "1px solid #fecaca", background: "#fef2f2" }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: "min(960px, 100%)", boxSizing: "border-box", margin: "0 auto" }}>
+                  <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "#991b1b" }}>Could not load this quote</h3>
+                  <p style={{ margin: 0, fontSize: 14, color: "#7f1d1d", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{quoteOpenError}</p>
+                </div>
+              </div>
+            ) : selectedQuote?.id === selectedQuoteId ? (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ padding: "16px 18px 20px", maxWidth: "min(960px, 100%)", boxSizing: "border-box" }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                              <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>Estimate</h3>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                                <button
+                                  type="button"
+                                  disabled={quotePdfBusy}
+                                  onClick={() => void previewEstimateDocument()}
+                                  style={{
+                                    padding: "8px 14px",
+                                    borderRadius: 8,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    cursor: quotePdfBusy ? "wait" : "pointer",
+                                    fontWeight: 700,
+                                    fontSize: 14,
+                                    color: "#0f172a",
+                                  }}
+                                >
+                                  {quotePdfBusy ? "Working…" : "Preview Estimate"}
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Close quote detail"
+                                  onClick={() => void closeEstimateWorkspaceAndNewDraft()}
+                                  style={{
+                                    flexShrink: 0,
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 8,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    cursor: "pointer",
+                                    fontSize: 18,
+                                    lineHeight: 1,
+                                    color: theme.text,
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                            <div style={{ fontSize: 14, color: theme.text, marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                              <div style={{ fontWeight: 700, fontSize: 15 }}>Customer</div>
+                              {!selectedQuote.customer_id ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                    <select
+                                      value={customerPickerCustomerId}
+                                      onChange={(e) => setCustomerPickerCustomerId(e.target.value)}
+                                      style={{ ...theme.formInput, padding: "8px 10px", minWidth: 220 }}
+                                    >
+                                      <option value="">Select existing customer…</option>
+                                      {customerList.map((c: { id: string; display_name?: string | null }) => (
+                                        <option key={c.id} value={c.id}>
+                                          {c.display_name ?? c.id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={!customerPickerCustomerId}
+                                      onClick={() => void persistQuoteCustomerLink(customerPickerCustomerId)}
+                                      style={{
+                                        padding: "8px 14px",
+                                        borderRadius: 6,
+                                        border: "none",
+                                        background: customerPickerCustomerId ? theme.primary : "#cbd5e1",
+                                        color: "#fff",
+                                        fontWeight: 600,
+                                        cursor: customerPickerCustomerId ? "pointer" : "not-allowed",
+                                      }}
+                                    >
+                                      Apply
+                                    </button>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowAddCustomer(true)
+                                      loadCustomerList()
+                                    }}
+                                    style={{
+                                      alignSelf: "flex-start",
+                                      fontSize: 13,
+                                      background: "none",
+                                      border: "none",
+                                      color: theme.primary,
+                                      cursor: "pointer",
+                                      textDecoration: "underline",
+                                      padding: 0,
+                                    }}
+                                  >
+                                    Add new customer
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCustomerSummaryExpanded((v) => !v)}
+                                      style={{
+                                        border: `1px solid ${theme.border}`,
+                                        borderRadius: 8,
+                                        padding: "8px 12px",
+                                        background: "#fff",
+                                        cursor: "pointer",
+                                        fontWeight: 700,
+                                        fontSize: 14,
+                                        color: theme.text,
+                                      }}
+                                    >
+                                      {selectedQuote.customers?.display_name ?? "Customer"} <span style={{ fontWeight: 400, color: "#64748b" }}>▾</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void persistQuoteCustomerLink(null)}
+                                      style={{
+                                        fontSize: 13,
+                                        color: "#b91c1c",
+                                        background: "none",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        textDecoration: "underline",
+                                      }}
+                                    >
+                                      Remove customer from estimate
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setNotesCustomerId(selectedQuote.customer_id ?? null)
+                                        setNotesCustomerName(selectedQuote.customers?.display_name ?? "")
+                                      }}
+                                      style={{ padding: "6px 12px", fontSize: "12px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
+                                    >
+                                      Notes
+                                    </button>
+                                  </div>
+                                  {(customerSummaryExpanded || quoteCustomerEditMode) ? (
+                              quoteCustomerEditMode ? (
+                                <div
+                                  data-quote-customer-editor="1"
+                                  onPointerDownCapture={() => {
+                                    skipQuoteRowToggleUntilRef.current = Date.now() + 1000
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 420, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}
+                                >
+                                  <input
+                                    placeholder="Customer name"
+                                    name="quote_customer_display_name"
+                                    autoComplete="section-quote-customer name"
+                                    value={quoteCustomerForm.name}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, name: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
+                                  <input
+                                    placeholder="Phone"
+                                    name="quote_customer_phone"
+                                    autoComplete="section-quote-customer tel"
+                                    value={quoteCustomerForm.phone}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, phone: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
+                                  <input
+                                    placeholder="Email"
+                                    name="quote_customer_email"
+                                    autoComplete="section-quote-customer email"
+                                    value={quoteCustomerForm.email}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
+                                  <textarea
+                                    placeholder="Street, city, state (optional, for maps)"
+                                    name="quote_customer_service_address"
+                                    value={quoteCustomerForm.serviceAddress}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceAddress: e.target.value }))}
+                                    rows={2}
+                                    style={{ ...theme.formInput, resize: "vertical" }}
+                                  />
+                                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                    Use the button below to fill latitude and longitude from the address.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    disabled={quoteCustomerGeocodeBusy || quoteCustomerSaving}
+                                    onClick={() => void geocodeQuoteCustomerServiceAddress()}
+                                    style={{
+                                      alignSelf: "flex-start",
+                                      padding: "6px 12px",
+                                      borderRadius: 6,
+                                      border: `1px solid ${theme.border}`,
+                                      background: "#fff",
+                                      cursor: quoteCustomerGeocodeBusy || quoteCustomerSaving ? "wait" : "pointer",
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      color: theme.charcoal,
+                                    }}
+                                  >
+                                    {quoteCustomerGeocodeBusy ? "Looking up…" : "Look up coordinates from address"}
+                                  </button>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    <input
+                                      placeholder="Lat"
+                                      value={quoteCustomerForm.serviceLat}
+                                      onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLat: e.target.value }))}
+                                      style={{ ...theme.formInput, flex: "1 1 120px" }}
+                                    />
+                                    <input
+                                      placeholder="Lng"
+                                      value={quoteCustomerForm.serviceLng}
+                                      onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, serviceLng: e.target.value }))}
+                                      style={{ ...theme.formInput, flex: "1 1 120px" }}
+                                    />
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    <button
+                                      type="button"
+                                      disabled={quoteCustomerSaving}
+                                      onClick={() => void saveQuoteCustomerDetails()}
+                                      style={{
+                                        padding: "6px 12px",
+                                        borderRadius: 6,
+                                        border: "none",
+                                        background: theme.primary,
+                                        color: "#fff",
+                                        cursor: quoteCustomerSaving ? "wait" : "pointer",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {quoteCustomerSaving ? "Saving…" : "Save customer"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={quoteCustomerSaving}
+                                      onClick={() => {
+                                        applyQuoteCustomerFormFromCustomers(selectedQuote.customers as CustomerRow | null | undefined)
+                                        setQuoteCustomerEditMode(false)
+                                      }}
+                                      style={{
+                                        padding: "6px 12px",
+                                        borderRadius: 6,
+                                        border: `1px solid ${theme.border}`,
+                                        background: "#fff",
+                                        cursor: "pointer",
+                                        color: theme.charcoal,
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <p style={{ margin: 0 }}>
+                                    <strong>Name:</strong> {selectedQuote.customers?.display_name ?? "—"}
+                                  </p>
+                                  <p style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                                    <span>
+                                      <strong>Phone:</strong> {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value ?? "—"}
+                                    </span>
+                                    {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ? (
+                                      <CustomerCallButton
+                                        phone={String(selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value)}
+                                        bridgeOwnerUserId={userId}
+                                        compact
+                                      />
+                                    ) : null}
+                                  </p>
+                                  <p style={{ margin: 0 }}>
+                                    <strong>Email:</strong>{" "}
+                                    {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value ?? "—"}
+                                  </p>
+                                  {(selectedQuote.customers as CustomerRow | null)?.service_address?.trim() ||
+                                  (selectedQuote.customers as CustomerRow | null)?.service_lat != null ? (
+                                    <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
+                                      <strong>Service address:</strong> {(selectedQuote.customers as CustomerRow)?.service_address?.trim() || "—"}
+                                      {(selectedQuote.customers as CustomerRow)?.service_lat != null &&
+                                      (selectedQuote.customers as CustomerRow)?.service_lng != null
+                                        ? ` · ${Number((selectedQuote.customers as CustomerRow).service_lat).toFixed(5)}, ${Number((selectedQuote.customers as CustomerRow).service_lng).toFixed(5)}`
+                                        : ""}
+                                    </p>
+                                  ) : null}
+                                </>
+                              )
+                                  ) : null}
+                                </>
+                              )}
+                              <details style={{ marginBottom: 10 }}>
+                                <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
+                                  Available templates
+                                </summary>
+                                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                                  {showQuotesJobTypesPanel ? (
+                                    <label style={{ margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14, color: theme.text }}>
+                                      <strong style={{ flexShrink: 0 }}>Quote job type:</strong>
+                                      <select
+                                        value={
+                                          typeof (selectedQuote as QuoteRow).job_type_id === "string"
+                                            ? (selectedQuote as QuoteRow).job_type_id ?? ""
+                                            : ""
+                                        }
+                                        onChange={(e) => void persistQuoteJobType(e.target.value)}
+                                        style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 180, maxWidth: "100%" }}
+                                      >
+                                        <option value="">— None —</option>
+                                        {quoteDetailJobTypes.map((jt) => (
+                                          <option key={jt.id} value={jt.id}>
+                                            {jt.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <span style={{ fontSize: 12, color: "#64748b", fontWeight: 400 }}>
+                                        New lines inherit this unless the line already has a job type.
+                                      </span>
+                                    </label>
+                                  ) : null}
+                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                    <strong style={{ fontSize: 14 }}>Quick access template:</strong>
+                                    <select
+                                      value={quickAccessApplyPick}
+                                      onChange={(e) => setQuickAccessApplyPick(e.target.value)}
+                                      style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 200 }}
+                                    >
+                                      <option value="">— Select saved template —</option>
+                                      {quickAccessTemplates.map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                          {t.title}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={!quickAccessApplyPick}
+                                      onClick={() => void applyQuickAccessTemplate(quickAccessApplyPick)}
+                                      style={{
+                                        padding: "6px 12px",
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        borderRadius: 6,
+                                        border: "none",
+                                        background: theme.primary,
+                                        color: "#fff",
+                                        cursor: quickAccessApplyPick ? "pointer" : "not-allowed",
+                                        opacity: quickAccessApplyPick ? 1 : 0.5,
+                                      }}
+                                    >
+                                      Apply to estimate
+                                    </button>
+                                  </div>
+                                  {showQuotesJobTypesPanel && estimateLinePresets.length > 0 ? (
+                                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        disabled={applyJtLinesBusy || !(selectedQuote as QuoteRow).job_type_id}
+                                        onClick={() => void applyJobTypeLinesToQuoteItems()}
+                                        style={{
+                                          padding: "6px 12px",
+                                          fontSize: 13,
+                                          fontWeight: 600,
+                                          borderRadius: 6,
+                                          border: "none",
+                                          background: theme.primary,
+                                          color: "#fff",
+                                          cursor: applyJtLinesBusy ? "wait" : "pointer",
+                                          opacity: (selectedQuote as QuoteRow).job_type_id ? 1 : 0.5,
+                                        }}
+                                      >
+                                        {applyJtLinesBusy ? "Adding…" : "Add job type lines to quote"}
+                                      </button>
+                                      <span style={{ fontSize: 12, color: "#64748b", maxWidth: 420 }}>
+                                        Inserts every saved line template linked to this job type (skips lines already on the quote).
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </details>
+                            </div>
+
+                            <details style={{ marginBottom: 16 }}>
+                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>Activity</summary>
+                              <div style={{ marginTop: 10 }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                                {(["all", "voicemail", "sms", "email"] as const).map((ch) => (
+                                  <button
+                                    key={ch}
+                                    type="button"
+                                    onClick={() => setActivityChannelFocus(ch === "all" ? "all" : ch)}
+                                    style={{
+                                      padding: "6px 10px",
+                                      borderRadius: 6,
+                                      border: `1px solid ${theme.border}`,
+                                      background: activityChannelFocus === ch ? "#e0f2fe" : "#fff",
+                                      cursor: "pointer",
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      textTransform: "capitalize",
+                                      color: "#0f172a",
+                                    }}
+                                  >
+                                    {ch === "all" ? "All" : ch}
+                                  </button>
+                                ))}
+                              </div>
+                            <div
+                              style={{
+                                border: `1px solid ${theme.border}`,
+                                padding: 12,
+                                borderRadius: 8,
+                                background: "#fff",
+                                minHeight: 72,
+                                maxHeight: "min(36vh, 320px)",
+                                overflow: "auto",
+                                boxSizing: "border-box",
+                                marginBottom: 4,
+                              }}
+                            >
+                              {quoteActivityFiltered.length === 0 ? (
+                                <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                                  No messages or communication events for this customer yet. Voicemails and inbound messages appear here when logged for this contact.
+                                </p>
+                              ) : (
+                                quoteActivityFiltered.map((item) => {
+                                  if (item.kind === "msg") {
+                                    const msg = item.payload
+                                    return (
+                                      <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                                        <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", marginBottom: 4 }}>
+                                          {msg.sender === "customer" ? "Customer" : "You"}
+                                          {msg.created_at ? (
+                                            <span style={{ fontWeight: 500, color: "#475569", marginLeft: 8 }}>
+                                              {new Date(msg.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                        <p style={{ margin: 0, fontSize: 14, color: "#111827", whiteSpace: "pre-wrap" }}>{msg.content}</p>
+                                      </div>
+                                    )
+                                  }
+                                  const ev = item.payload
+                                  const label =
+                                    ev.event_type === "email"
+                                      ? "Email"
+                                      : ev.event_type === "sms"
+                                        ? "SMS"
+                                        : ev.event_type === "call"
+                                          ? "Call"
+                                          : ev.event_type === "voicemail"
+                                            ? "Voicemail"
+                                            : String(ev.event_type || "Event")
+                                  return (
+                                      <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", marginBottom: 4 }}>
+                                        {label}
+                                        {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
+                                        {ev.created_at ? (
+                                          <span style={{ fontWeight: 500, color: "#475569", marginLeft: 8 }}>
+                                            {new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      {ev.event_type === "voicemail" ? (
+                                        <>
+                                          <VoicemailRecordingBlock recordingUrl={ev.recording_url} />
+                                          <VoicemailTranscriptBlock
+                                            ev={ev}
+                                            profileVoicemailDisplay={voicemailProfileDisplay}
+                                            conversationPortalValues={conversationPortalDefaults}
+                                          />
+                                          {ev.body ? (
+                                            <p style={{ margin: "8px 0 0", fontSize: 14, color: "#111827", whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                          ) : null}
+                                        </>
+                                      ) : ev.event_type === "email" ? (
+                                        <>
+                                          {ev.subject?.trim() ? (
+                                            <p style={{ margin: "0 0 6px", fontWeight: 700, color: "#0f172a" }}>{ev.subject.trim()}</p>
+                                          ) : null}
+                                          <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap", color: "#111827" }}>{ev.body || "—"}</p>
+                                        </>
+                                      ) : (
+                                        <p style={{ margin: 0, fontSize: 14, whiteSpace: "pre-wrap", color: "#111827" }}>{ev.body || "—"}</p>
+                                      )}
+                                      <AttachmentStrip items={quoteAttachmentsByEvent[ev.id] ?? []} compact />
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                              </div>
+                            </details>
+
+                            <details style={{ marginBottom: 16 }}>
+                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
+                                Upload Photos or Files{" "}
+                                <span style={{ fontWeight: 600, color: "#64748b", marginLeft: 8 }}>
+                                  ({quoteEntityRows.length} file{quoteEntityRows.length === 1 ? "" : "s"})
+                                </span>
+                              </summary>
+                            <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                              <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                                Upload file
+                                <input
+                                  type="file"
+                                  disabled={quoteEntityUploadBusy}
+                                  onChange={(e) => void handleQuoteEntityFileChange(e.target.files)}
+                                  style={{ display: "block", marginTop: 6, fontSize: 13 }}
+                                />
+                              </label>
+                              {quoteEntityUploadBusy ? <span style={{ fontSize: 12, color: "#6b7280" }}>Uploading…</span> : null}
+                            </div>
+                            {quoteEntityRows.length > 0 ? (
+                              <ul style={{ margin: "0 0 16px", paddingLeft: 0, listStyle: "none", fontSize: 13, color: theme.text }}>
+                                {quoteEntityRows.map((row) => {
+                                  const parsed = parseQuoteAttachmentMeta(row.metadata)
+                                  const showThumb = isProbablyImageAttachment(row.content_type, row.public_url, row.file_name)
+                                  return (
+                                    <li
+                                      key={row.id}
+                                      style={{
+                                        marginBottom: 12,
+                                        padding: 10,
+                                        border: `1px solid ${theme.border}`,
+                                        borderRadius: 8,
+                                        background: "#fff",
+                                      }}
+                                    >
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                                        <a
+                                          href={row.public_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          title={row.file_name || undefined}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            color: theme.primary,
+                                            fontWeight: 600,
+                                            textDecoration: "none",
+                                          }}
+                                        >
+                                          {showThumb ? (
+                                            <img
+                                              src={row.public_url}
+                                              alt={row.file_name || "Attachment"}
+                                              style={{
+                                                width: 52,
+                                                height: 52,
+                                                objectFit: "cover",
+                                                borderRadius: 8,
+                                                border: `1px solid ${theme.border}`,
+                                                display: "block",
+                                              }}
+                                            />
+                                          ) : (
+                                            row.file_name || "File"
+                                          )}
+                                        </a>
+                                        <button
+                                          type="button"
+                                          onClick={() => void removeQuoteEntityRowLocal(row)}
+                                          style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", textDecoration: "underline", padding: 0, fontSize: 13 }}
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={parsed.includeNote}
+                                          onChange={(e) =>
+                                            void patchEntityAttachmentMetadataRow(row, {
+                                              include_note: e.target.checked,
+                                              note: parsed.note,
+                                              attach_to_customer_copy: parsed.attachToCustomerCopy,
+                                            } as Record<string, unknown>)
+                                          }
+                                        />
+                                        Write description
+                                      </label>
+                                      {parsed.includeNote ? (
+                                        <div style={{ marginTop: 8 }}>
+                                          <textarea
+                                            rows={2}
+                                            placeholder="Short description…"
+                                            defaultValue={parsed.note}
+                                            id={`ent-note-${row.id}`}
+                                            style={{ ...theme.formInput, width: "100%", maxWidth: 420, fontSize: 13 }}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const el = document.getElementById(`ent-note-${row.id}`) as HTMLTextAreaElement | null
+                                              const val = el?.value?.trim() ?? ""
+                                              void patchEntityAttachmentMetadataRow(row, {
+                                                include_note: true,
+                                                note: val,
+                                                attach_to_customer_copy: parsed.attachToCustomerCopy,
+                                              })
+                                            }}
+                                            style={{
+                                              marginTop: 6,
+                                              padding: "4px 10px",
+                                              fontSize: 12,
+                                              fontWeight: 600,
+                                              borderRadius: 4,
+                                              border: "none",
+                                              background: theme.primary,
+                                              color: "#fff",
+                                              cursor: "pointer",
+                                            }}
+                                          >
+                                            Save description
+                                          </button>
+                                        </div>
+                                      ) : null}
+                                      {parsed.note?.trim() ? (
+                                        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#475569" }}>
+                                          <strong>Saved:</strong> {parsed.note}
+                                        </p>
+                                      ) : null}
+                                      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={parsed.attachToCustomerCopy}
+                                          onChange={(e) =>
+                                            void patchEntityAttachmentMetadataRow(row, {
+                                              attach_to_customer_copy: e.target.checked,
+                                              note: parsed.note,
+                                              include_note: parsed.includeNote,
+                                            })
+                                          }
+                                        />
+                                        Attach this to customer&apos;s copy
+                                      </label>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : (
+                              <p style={{ margin: "0 0 16px", fontSize: 13, color: "#6b7280" }}>No files attached to this quote yet.</p>
+                            )}
+                            </details>
+
+              <details style={{ marginTop: 16 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>Quick Add Quote Items</summary>
+                <div style={{ marginTop: 10 }}>
+              {estimateLinePresets.length > 0 ? (
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Saved lines</span>
+                  {estimateLinePresets.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+                          presetId: p.id,
+                          metadata: {
+                            minimum_line_total: p.minimum_line_total,
+                            line_kind: p.line_kind,
+                            ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                              ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+                              : {}),
+                          },
+                        })
+                      }
+                      style={{
+                        fontSize: 12,
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        border: "1px solid #94a3b8",
+                        background: "#f1f5f9",
+                        color: "#0f172a",
+                        cursor: "pointer",
+                        maxWidth: 220,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={p.description}
+                    >
+                      {p.description.length > 36 ? `${p.description.slice(0, 36)}…` : p.description}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {(estimateReview.subtotal != null || estimateReview.issues.length > 0) && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    background: "#f8fafc",
+                    fontSize: 13,
+                    color: "#111827",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Document check</div>
+                  {estimateReview.subtotal != null ? (
+                    <p style={{ margin: "4px 0" }}>
+                      Line items subtotal (cross-check):{" "}
+                      <strong>${estimateReview.subtotal.toFixed(2)}</strong>
+                      {estimateReview.agreesWithSubtotal === false ? (
+                        <span style={{ color: "#b45309" }}> — double-check quantities and unit prices.</span>
+                      ) : null}
+                    </p>
+                  ) : null}
+                  {estimateReview.issues.length > 0 ? (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#1e293b" }}>
+                      {estimateReview.issues.map((issue, idx) => (
+                        <li key={idx} style={{ marginBottom: 4 }}>
+                          {issue}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              )}
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 16,
+                  borderTop: `1px solid ${theme.border}`,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  maxWidth: 480,
+                }}
+              >
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>New line — description (filters saved lines as you type)</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    placeholder="Description (type to filter saved lines)"
+                    value={newItemDescription}
+                    onChange={(e) => {
+                      setNewItemDescription(e.target.value)
+                      setNewItemPresetId(null)
+                      setPresetSuggestOpen(true)
+                    }}
+                    onFocus={() => setPresetSuggestOpen(true)}
+                    onBlur={() => window.setTimeout(() => setPresetSuggestOpen(false), 180)}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: "100%", boxSizing: "border-box" }}
+                  />
+                  {presetSuggestOpen && estimateLinePresets.length > 0 ? (
+                    <ul
+                      style={{
+                        position: "absolute",
+                        zIndex: 20,
+                        left: 0,
+                        right: 0,
+                        top: "100%",
+                        margin: "4px 0 0",
+                        padding: 4,
+                        listStyle: "none",
+                        background: "#fff",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: 6,
+                        maxHeight: 200,
+                        overflowY: "auto",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                      }}
+                    >
+                      {estimateLinePresets
+                        .filter((p) =>
+                          !newItemDescription.trim()
+                            ? true
+                            : p.description.toLowerCase().includes(newItemDescription.toLowerCase().trim()),
+                        )
+                        .slice(0, 12)
+                        .map((p) => (
+                          <li key={p.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setNewItemDescription(p.description)
+                                setNewItemQuantity(String(p.quantity))
+                                setNewItemUnitPrice(String(p.unit_price))
+                                setNewItemMinimum(
+                                  p.minimum_line_total != null && Number.isFinite(p.minimum_line_total)
+                                    ? String(p.minimum_line_total)
+                                    : "",
+                                )
+                                setNewItemManpower(
+                                  p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                                    ? String(DEFAULT_PRESET_LABOR_MANPOWER)
+                                    : "1",
+                                )
+                                setNewItemPresetId(p.id)
+                                setPresetSuggestOpen(false)
+                              }}
+                              style={{
+                                display: "block",
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "8px 10px",
+                                border: "none",
+                                background: "transparent",
+                                cursor: "pointer",
+                                fontSize: 13,
+                                color: "#0f172a",
+                                borderRadius: 4,
+                              }}
+                            >
+                              {p.description}
+                              <span style={{ opacity: 0.65, fontSize: 11 }}>
+                                {" "}
+                                · qty {p.quantity} @ ${p.unit_price.toFixed(2)}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Qty"
+                    value={newItemQuantity}
+                    onChange={(e) => setNewItemQuantity(e.target.value)}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
+                  />
+                  {estimateLineTemplateOffered("eli_show_manpower") ? (
+                    <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
+                      Crew
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={newItemManpower}
+                        onChange={(e) => setNewItemManpower(e.target.value)}
+                        style={{ ...theme.formInput, padding: "6px 10px", width: "72px" }}
+                      />
+                    </label>
+                  ) : null}
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
+                    Min $
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="optional"
+                      value={newItemMinimum}
+                      onChange={(e) => setNewItemMinimum(e.target.value)}
+                      style={{ ...theme.formInput, padding: "6px 10px", width: "88px" }}
+                    />
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Unit price"
+                    value={newItemUnitPrice}
+                    onChange={(e) => setNewItemUnitPrice(e.target.value)}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void addQuoteItem()}
+                    disabled={addItemLoading}
+                    style={{
+                      padding: "6px 12px",
+                      background: theme.primary,
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {addItemLoading ? "Adding..." : "Add line item"}
+                  </button>
+                </div>
+              </div>
+                </div>
+              </details>
+
+              <table
+                style={{
+                  width: "100%",
+                  minWidth: isMobile ? "640px" : "100%",
+                  borderCollapse: "collapse",
+                  marginTop: "8px",
+                  border: "1px solid #cbd5e1",
+                }}
+              >
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Qty</th>
+                    {estimateLineTemplateOffered("eli_show_manpower") ? (
+                      <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Crew</th>
+                    ) : null}
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Min $</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Unit</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Total</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedQuoteItems.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                        style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
+                      >
+                        No line items. Expand Quick Add Quote Items above to add a line.
+                      </td>
+                    </tr>
+                  ) : (
+                    selectedQuoteItems.map((item, rowIdx) => {
+                      const { desc, qty, up, meta } = getItemDisplay(item)
+                      const dr = quoteLineDrafts[item.id]
+                      const showMpRow = estimateLineTemplateOffered("eli_show_manpower")
+                      const baseMetaRow = parseQuoteItemMetadata(item.metadata)
+                      const qtyLive = Number.parseFloat(String(dr?.quantity ?? item.quantity ?? 0)) || 0
+                      const upDraft = String(dr?.unit_price ?? "").trim()
+                      const upLive = upDraft === "" ? 0 : Number.parseFloat(upDraft.replace(/,/g, "")) || 0
+                      const crewLive = showMpRow
+                        ? Math.max(1, Number.parseInt(String(dr?.manpower ?? baseMetaRow.manpower ?? 1), 10) || 1)
+                        : Math.max(1, baseMetaRow.manpower ?? 1)
+                      const minDraftLive = (dr?.minimum ?? "").trim()
+                      let minimumLive = baseMetaRow.minimum_line_total
+                      if (minDraftLive !== "") {
+                        const n = Number.parseFloat(minDraftLive.replace(/[^0-9.]/g, ""))
+                        if (Number.isFinite(n) && n >= 0) minimumLive = n > 0 ? n : undefined
+                      }
+                      const metaLive: QuoteItemMetadata = {
+                        ...baseMetaRow,
+                        manpower: crewLive,
+                        minimum_line_total: minimumLive,
+                      }
+                      const lineTotalLive = computeQuoteLineTotal(qtyLive, upLive, metaLive).total
+                      const crew = meta.manpower ?? 1
+                      const serverDesc = String(item.description ?? item.item_description ?? item.name ?? "—")
+                      const serverQty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
+                      const serverUp =
+                        typeof item.unit_price === "number" ? item.unit_price : Number.parseFloat(String(item.unit_price ?? 0)) || 0
+                      return (
+                        <tr key={item.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                          <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 13 }}>{rowIdx + 1}</td>
+                          <td style={{ padding: "6px 8px", color: "#0f172a", fontSize: 13 }}>
                             <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              value={dr?.manpower ?? String(crew)}
+                              value={dr?.description ?? String(desc)}
                               onChange={(e) => {
                                 const v = e.target.value
                                 setQuoteLineDrafts((prev) => {
                                   const cur = prev[item.id]
                                   if (!cur) return prev
-                                  return { ...prev, [item.id]: { ...cur, manpower: v } }
+                                  return { ...prev, [item.id]: { ...cur, description: v } }
                                 })
                               }}
                               onBlur={(e) => {
-                                const n = Math.max(1, parseInt(e.target.value, 10) || 1)
-                                if (n !== crew)
-                                  void persistQuoteItemUpdate(item.id, {
-                                    metadata: mergeQuoteItemMetadataRow(item, { manpower: n }),
-                                  })
+                                const v = e.target.value.trim()
+                                if (v && v !== serverDesc) void persistQuoteItemUpdate(item.id, { description: v })
                               }}
-                              style={{ ...theme.formInput, padding: "6px 8px", width: 56 }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 120, boxSizing: "border-box" }}
                             />
                           </td>
-                        ) : null}
-                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            placeholder="—"
-                            value={dr?.minimum ?? (meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total) ? String(meta.minimum_line_total) : "")}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, minimum: v } }
-                              })
-                            }}
-                            onBlur={(e) => {
-                              const t = e.target.value.trim()
-                              const n = t === "" ? null : Number.parseFloat(t)
-                              const nextMin = n != null && Number.isFinite(n) && n > 0 ? n : null
-                              const cur = meta.minimum_line_total
-                              const same =
-                                (nextMin == null && cur == null) ||
-                                (nextMin != null && cur != null && Math.abs(nextMin - cur) < 1e-9)
-                              if (!same)
-                                void persistQuoteItemUpdate(item.id, {
-                                  metadata: mergeQuoteItemMetadataRow(item, { minimum_line_total: nextMin }),
+                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={dr?.quantity ?? String(qty)}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setQuoteLineDrafts((prev) => {
+                                  const cur = prev[item.id]
+                                  if (!cur) return prev
+                                  return { ...prev, [item.id]: { ...cur, quantity: v } }
                                 })
-                            }}
-                            style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
-                          />
-                        </td>
-                        <td style={{ padding: "6px 8px", fontSize: 13 }}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0"
-                            value={dr?.unit_price ?? (Number.isFinite(up) && up !== 0 ? String(up) : "")}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, unit_price: v } }
-                              })
-                            }}
-                            onBlur={(e) => {
-                              const raw = e.target.value.replace(/,/g, "").trim()
-                              const n = raw === "" ? 0 : Number.parseFloat(raw) || 0
-                              if (Math.abs(n - serverUp) > 1e-9) void persistQuoteItemUpdate(item.id, { unit_price: n })
-                              setQuoteLineDrafts((prev) => {
-                                const cur = prev[item.id]
-                                if (!cur) return prev
-                                return { ...prev, [item.id]: { ...cur, unit_price: n === 0 ? "" : String(n) } }
-                              })
-                            }}
-                            style={{ ...theme.formInput, padding: "6px 8px", width: 88 }}
-                          />
-                        </td>
-                        <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 14 }}>
-                          {lineTotalLive.toFixed(2)}
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <button
-                            type="button"
-                            onClick={() => void deleteQuoteItemRow(item.id)}
-                            style={{
-                              fontSize: 12,
-                              color: "#b91c1c",
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              textDecoration: "underline",
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-              {selectedQuoteItems.length > 0 ? (
-                <tfoot>
-                  <tr style={{ borderTop: "2px solid #94a3b8", background: "#f1f5f9" }}>
-                    <td
-                      colSpan={5 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
-                      style={{
-                        padding: "10px 8px",
-                        textAlign: "right",
-                        fontWeight: 800,
-                        fontSize: 14,
-                        color: "#0f172a",
-                      }}
-                    >
-                      Estimate subtotal
-                    </td>
-                    <td style={{ padding: "10px 8px", fontWeight: 800, fontSize: 15, color: "#0f172a", whiteSpace: "nowrap" }}>
-                      ${spreadsheetEstimateSubtotal.toFixed(2)}
-                    </td>
-                    <td style={{ padding: "10px 8px" }} />
-                  </tr>
-                </tfoot>
-              ) : null}
-            </table>
-            <p style={{ margin: "10px 0 4px", fontSize: 12, color: "#64748b" }}>
-              Edit any column in the table. New lines use <strong>Quote job type</strong> when set (above). Line totals use crew × quantity × unit price, then the minimum if set. The subtotal updates as you type.
-            </p>
-            <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
-              <div style={{ position: "relative" }}>
-                <input
-                  placeholder="Description (type to filter saved lines)"
-                  value={newItemDescription}
-                  onChange={(e) => {
-                    setNewItemDescription(e.target.value)
-                    setNewItemPresetId(null)
-                    setPresetSuggestOpen(true)
-                  }}
-                  onFocus={() => setPresetSuggestOpen(true)}
-                  onBlur={() => window.setTimeout(() => setPresetSuggestOpen(false), 180)}
-                  style={{ ...theme.formInput, padding: "6px 10px", width: "100%", boxSizing: "border-box" }}
-                />
-                {presetSuggestOpen && estimateLinePresets.length > 0 ? (
-                  <ul
+                              }}
+                              onBlur={(e) => {
+                                const n = Number.parseFloat(e.target.value) || 0
+                                if (Math.abs(n - serverQty) > 1e-9) void persistQuoteItemUpdate(item.id, { quantity: n })
+                              }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
+                            />
+                          </td>
+                          {estimateLineTemplateOffered("eli_show_manpower") ? (
+                            <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={dr?.manpower ?? String(crew)}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setQuoteLineDrafts((prev) => {
+                                    const cur = prev[item.id]
+                                    if (!cur) return prev
+                                    return { ...prev, [item.id]: { ...cur, manpower: v } }
+                                  })
+                                }}
+                                onBlur={(e) => {
+                                  const n = Math.max(1, parseInt(e.target.value, 10) || 1)
+                                  if (n !== crew)
+                                    void persistQuoteItemUpdate(item.id, {
+                                      metadata: mergeQuoteItemMetadataRow(item, { manpower: n }),
+                                    })
+                                }}
+                                style={{ ...theme.formInput, padding: "6px 8px", width: 56 }}
+                              />
+                            </td>
+                          ) : null}
+                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              placeholder="—"
+                              value={dr?.minimum ?? (meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total) ? String(meta.minimum_line_total) : "")}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setQuoteLineDrafts((prev) => {
+                                  const cur = prev[item.id]
+                                  if (!cur) return prev
+                                  return { ...prev, [item.id]: { ...cur, minimum: v } }
+                                })
+                              }}
+                              onBlur={(e) => {
+                                const t = e.target.value.trim()
+                                const n = t === "" ? null : Number.parseFloat(t)
+                                const nextMin = n != null && Number.isFinite(n) && n > 0 ? n : null
+                                const cur = meta.minimum_line_total
+                                const same =
+                                  (nextMin == null && cur == null) ||
+                                  (nextMin != null && cur != null && Math.abs(nextMin - cur) < 1e-9)
+                                if (!same)
+                                  void persistQuoteItemUpdate(item.id, {
+                                    metadata: mergeQuoteItemMetadataRow(item, { minimum_line_total: nextMin }),
+                                  })
+                              }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: 72 }}
+                            />
+                          </td>
+                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0"
+                              value={dr?.unit_price ?? (Number.isFinite(up) && up !== 0 ? String(up) : "")}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setQuoteLineDrafts((prev) => {
+                                  const cur = prev[item.id]
+                                  if (!cur) return prev
+                                  return { ...prev, [item.id]: { ...cur, unit_price: v } }
+                                })
+                              }}
+                              onBlur={(e) => {
+                                const raw = e.target.value.replace(/,/g, "").trim()
+                                const n = raw === "" ? 0 : Number.parseFloat(raw) || 0
+                                if (Math.abs(n - serverUp) > 1e-9) void persistQuoteItemUpdate(item.id, { unit_price: n })
+                                setQuoteLineDrafts((prev) => {
+                                  const cur = prev[item.id]
+                                  if (!cur) return prev
+                                  return { ...prev, [item.id]: { ...cur, unit_price: n === 0 ? "" : String(n) } }
+                                })
+                              }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: 88 }}
+                            />
+                          </td>
+                          <td style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 600, fontSize: 14 }}>
+                            {lineTotalLive.toFixed(2)}
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>
+                            <button
+                              type="button"
+                              onClick={() => void deleteQuoteItemRow(item.id)}
+                              style={{
+                                fontSize: 12,
+                                color: "#b91c1c",
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                textDecoration: "underline",
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+                {selectedQuoteItems.length > 0 ? (
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #94a3b8", background: "#f1f5f9" }}>
+                      <td
+                        colSpan={5 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                        style={{
+                          padding: "10px 8px",
+                          textAlign: "right",
+                          fontWeight: 800,
+                          fontSize: 14,
+                          color: "#0f172a",
+                        }}
+                      >
+                        Estimate subtotal
+                      </td>
+                      <td style={{ padding: "10px 8px", fontWeight: 800, fontSize: 15, color: "#0f172a", whiteSpace: "nowrap" }}>
+                        ${spreadsheetEstimateSubtotal.toFixed(2)}
+                      </td>
+                      <td style={{ padding: "10px 8px" }} />
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+
+              <div
+                style={{
+                  marginTop: 24,
+                  paddingTop: 16,
+                  borderTop: `1px solid ${theme.border}`,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    disabled={!selectedQuote?.customer_id}
+                    title={!selectedQuote?.customer_id ? "Link a customer first" : undefined}
+                    onClick={() => {
+                      if (!selectedQuote?.customer_id) {
+                        alert("Select a customer on this estimate before saving to them.")
+                        return
+                      }
+                      alert("Estimate is linked to this customer. Changes save automatically as you edit.")
+                    }}
                     style={{
-                      position: "absolute",
-                      zIndex: 20,
-                      left: 0,
-                      right: 0,
-                      top: "100%",
-                      margin: "4px 0 0",
-                      padding: 4,
-                      listStyle: "none",
-                      background: "#fff",
-                      border: "1px solid #cbd5e1",
-                      borderRadius: 6,
-                      maxHeight: 200,
-                      overflowY: "auto",
-                      boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: selectedQuote?.customer_id ? theme.primary : "#94a3b8",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: selectedQuote?.customer_id ? "pointer" : "not-allowed",
                     }}
                   >
-                    {estimateLinePresets
-                      .filter((p) =>
-                        !newItemDescription.trim()
-                          ? true
-                          : p.description.toLowerCase().includes(newItemDescription.toLowerCase().trim()),
-                      )
-                      .slice(0, 12)
-                      .map((p) => (
-                        <li key={p.id}>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setNewItemDescription(p.description)
-                              setNewItemQuantity(String(p.quantity))
-                              setNewItemUnitPrice(String(p.unit_price))
-                              setNewItemMinimum(
-                                p.minimum_line_total != null && Number.isFinite(p.minimum_line_total)
-                                  ? String(p.minimum_line_total)
-                                  : "",
-                              )
-                              setNewItemManpower(
-                                p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                                  ? String(DEFAULT_PRESET_LABOR_MANPOWER)
-                                  : "1",
-                              )
-                              setNewItemPresetId(p.id)
-                              setPresetSuggestOpen(false)
-                            }}
-                            style={{
-                              display: "block",
-                              width: "100%",
-                              textAlign: "left",
-                              padding: "8px 10px",
-                              border: "none",
-                              background: "transparent",
-                              cursor: "pointer",
-                              fontSize: 13,
-                              color: "#0f172a",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {p.description}
-                            <span style={{ opacity: 0.65, fontSize: 11 }}>
-                              {" "}
-                              · qty {p.quantity} @ ${p.unit_price.toFixed(2)}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                ) : null}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Qty"
-                  value={newItemQuantity}
-                  onChange={(e) => setNewItemQuantity(e.target.value)}
-                  style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
-                />
-                {estimateLineTemplateOffered("eli_show_manpower") ? (
-                  <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
-                    Crew
+                    Save Estimate to Customer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveCurrentEstimateAsQuickAccessTemplate()}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      color: theme.text,
+                    }}
+                  >
+                    Save Estimate Template
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Print
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSaveToDeviceFormatModal(true)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Save to Device…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBottomActionEmailOpen((v) => !v)
+                    }}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {bottomActionEmailOpen ? "Hide email to customer" : "Email to Customer"}
+                  </button>
+                </div>
+                {bottomActionEmailOpen ? (
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
                     <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={newItemManpower}
-                      onChange={(e) => setNewItemManpower(e.target.value)}
-                      style={{ ...theme.formInput, padding: "6px 10px", width: "72px" }}
+                      value={quoteEmailSubject}
+                      onChange={(e) => setQuoteEmailSubject(e.target.value)}
+                      placeholder="Subject"
+                      style={theme.formInput}
                     />
-                  </label>
+                    <textarea
+                      value={quoteEmailBody}
+                      onChange={(e) => setQuoteEmailBody(e.target.value)}
+                      rows={4}
+                      placeholder="Message"
+                      style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
+                    />
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#0f172a" }}>
+                      <input
+                        type="checkbox"
+                        style={{ marginTop: 3 }}
+                        checked={quoteEmailAttachEntity}
+                        onChange={(e) => setQuoteEmailAttachEntity(e.target.checked)}
+                      />
+                      <span>
+                        Attach files flagged for <strong>customer copy</strong> ({entityAttachmentsForCustomerCopy(quoteEntityRows).length}{" "}
+                        on this estimate; descriptions are added to the message body)
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void sendQuoteCustomerEmail()}
+                      disabled={quoteEmailSending}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: theme.primary,
+                        color: "#fff",
+                        fontWeight: 600,
+                        cursor: quoteEmailSending ? "wait" : "pointer",
+                        justifySelf: "start",
+                      }}
+                    >
+                      {quoteEmailSending ? "Sending…" : "Send email"}
+                    </button>
+                  </div>
                 ) : null}
-                <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
-                  Min $
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="optional"
-                    value={newItemMinimum}
-                    onChange={(e) => setNewItemMinimum(e.target.value)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: "88px" }}
-                  />
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Unit price"
-                  value={newItemUnitPrice}
-                  onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                  style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
-                />
-                <button
-                  type="button"
-                  onClick={() => void addQuoteItem()}
-                  disabled={addItemLoading}
-                  style={{
-                    padding: "6px 12px",
-                    background: theme.primary,
-                    color: "white",
-                    border: "none",
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                  }}
-                >
-                  {addItemLoading ? "Adding..." : "Add line item"}
-                </button>
+                {saveToDeviceFormatModal ? (
+                  <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+                    <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 14 }}>Export format</p>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <select
+                        value={quoteExportFormat === "docx" ? ESTIMATE_FMT_DOCX : ESTIMATE_FMT_PDF}
+                        onChange={(e) => setQuoteExportFormat(dropdownToExportFormat(e.target.value))}
+                        style={{ ...theme.formInput, minWidth: 200, color: "#0f172a" }}
+                      >
+                        <option>{ESTIMATE_FMT_PDF}</option>
+                        <option>{ESTIMATE_FMT_DOCX}</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSaveToDeviceFormatModal(false)
+                          void downloadQuoteDocumentClick()
+                        }}
+                        disabled={quotePdfBusy}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: 6,
+                          border: "none",
+                          background: theme.primary,
+                          color: "#fff",
+                          fontWeight: 600,
+                          cursor: quotePdfBusy ? "wait" : "pointer",
+                        }}
+                      >
+                        {quotePdfBusy ? "Working…" : "Download"}
+                      </button>
+                      <button type="button" onClick={() => setSaveToDeviceFormatModal(false)} style={{ padding: "8px 12px" }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
 
-            {!selectedQuote.scheduled_at && (
-              <div style={{ marginTop: "20px" }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCalTitle(`${selectedQuote.customers?.display_name ?? "Customer"} – Quote`)
-                    setCalDate(new Date().toISOString().slice(0, 10))
-                    setCalTime("09:00")
-                    setCalMileage("")
-                    const qjt =
-                      typeof (selectedQuote as QuoteRow).job_type_id === "string"
-                        ? (selectedQuote as QuoteRow).job_type_id?.trim() ?? ""
-                        : ""
-                    setCalJobTypeId(qjt)
-                    setCalDurationInput(formatDurationFieldFromMinutes(60, quoteCalTimeIncrement))
-                    if (qjt && supabase) {
-                      void supabase
-                        .from("job_types")
-                        .select("duration_minutes")
-                        .eq("id", qjt)
-                        .maybeSingle()
-                        .then(({ data }) => {
-                          const dm = (data as { duration_minutes?: number } | null)?.duration_minutes
-                          if (typeof dm === "number" && dm >= 15)
-                            setCalDurationInput(formatDurationFieldFromMinutes(dm, quoteCalTimeIncrement))
-                        })
-                    }
-                    setCalNotes("")
-                    setCalendarTargetUserId(userId)
-                    setShowAddToCalendar(true)
-                  }}
-                  style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
-                >
-                  Add to Calendar
-                </button>
-              </div>
+                          </div>
+            ) : (
+              <div style={{ padding: 28, textAlign: "center", color: "#64748b", fontSize: 14 }}>Opening estimate…</div>
             )}
-            <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!supabase || !selectedQuote?.id) return
-                  if (!confirm("Remove this quote? It can be recalled from Customers later.")) return
-                  const { error } = await supabase.from("quotes").update({ removed_at: new Date().toISOString() }).eq("id", selectedQuote.id)
-                  if (error) { alert(error.message); return }
-                  setSelectedQuote(null)
-                  setSelectedQuoteId(null)
-                  setQuoteCommEvents([])
-                  setQuoteThreadMessages([])
-                  setQuoteAttachmentsByEvent({})
-                  setQuoteEntityRows([])
-                  loadQuotes()
-                }}
-                style={{ padding: "8px 14px", borderRadius: "6px", background: "#b91c1c", color: "white", border: "none", cursor: "pointer", fontSize: "14px" }}
-              >
-                Remove
-              </button>
-            </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
-              )
-            })}
-          </tbody>
-        </table>
-        </div>
+          </div>
+        ) : null}
 
         {showAddToCalendar && selectedQuote && supabase && (
           <>

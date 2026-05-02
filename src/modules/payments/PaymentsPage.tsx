@@ -97,77 +97,74 @@ export default function PaymentsPage() {
     }
     let cancelled = false
     void (async () => {
+      const sb = supabase
+      if (!sb) return
       let portalFromEdge = ""
       if (!cancelled) setBillingPortalConfigError(null)
       if (!ENV_PORTAL.trim()) {
-        let accessTok = (await supabase.auth.getSession()).data.session?.access_token
+        let accessTok = (await sb.auth.getSession()).data.session?.access_token
         if (!accessTok) {
-          const r = await supabase.auth.refreshSession()
+          const r = await sb.auth.refreshSession()
           accessTok = r.data.session?.access_token ?? undefined
         }
         const originBase = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
 
-        /** Prefer same-origin Vercel route (reliable CORS); Edge second for mobile / no server env. */
-        if (accessTok && originBase) {
-          try {
-            const r = await fetch(`${originBase}/api/billing-portal-config`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${accessTok}`, "Content-Type": "application/json" },
-              body: "{}",
-            })
-            if (r.ok) {
-              const j = (await r.json()) as { portalUrl?: string | null }
-              if (typeof j.portalUrl === "string" && j.portalUrl.trim()) {
-                portalFromEdge = j.portalUrl.trim()
-              }
-            } else if (!cancelled) {
-              const errText = await r.text().catch(() => "")
-              setBillingPortalConfigError(
-                `Vercel /api/billing-portal-config HTTP ${r.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`,
-              )
-            }
-          } catch (e) {
-            if (!cancelled) {
-              setBillingPortalConfigError(e instanceof Error ? e.message : "Vercel billing-portal-config fetch failed")
-            }
-          }
-        }
-
-        if (!portalFromEdge.trim() && accessTok) {
-          const { data: cfg, error: cfgErr } = await supabase.functions.invoke("billing-portal-config", {
-            body: {},
-            headers: { Authorization: `Bearer ${accessTok}` },
-          })
-          let edgeBody: { error?: string; portalUrl?: string | null } | null =
-            cfg && typeof cfg === "object" ? (cfg as { error?: string; portalUrl?: string | null }) : null
-          if (cfgErr instanceof FunctionsHttpError) {
+        /** Same-origin Vercel route and Supabase Edge often both work; race them and take the first valid URL. */
+        if (accessTok) {
+          const fetchFromHost = async (): Promise<string> => {
+            if (!originBase) return ""
             try {
-              edgeBody = { ...edgeBody, ...(await cfgErr.context.json()) }
+              const r = await fetch(`${originBase}/api/billing-portal-config`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${accessTok}`, "Content-Type": "application/json" },
+                body: "{}",
+              })
+              if (r.ok) {
+                const j = (await r.json()) as { portalUrl?: string | null }
+                if (typeof j.portalUrl === "string" && j.portalUrl.trim()) return j.portalUrl.trim()
+              }
             } catch {
-              /* ignore */
+              /* ignore — Edge may still succeed */
             }
+            return ""
           }
-          if (!cancelled && cfgErr) {
-            const parts = [edgeBody?.error, cfgErr.message].filter(Boolean) as string[]
-            setBillingPortalConfigError(parts.filter(Boolean).join(" — ") || "Could not reach billing-portal-config Edge function.")
+          const fetchFromEdge = async (): Promise<string> => {
+            try {
+              const { data: cfg, error: cfgErr } = await sb.functions.invoke("billing-portal-config", {
+                body: {},
+                headers: { Authorization: `Bearer ${accessTok}` },
+              })
+              let edgeBody: { error?: string; portalUrl?: string | null } | null =
+                cfg && typeof cfg === "object" ? (cfg as { error?: string; portalUrl?: string | null }) : null
+              if (cfgErr instanceof FunctionsHttpError) {
+                try {
+                  edgeBody = { ...edgeBody, ...(await cfgErr.context.json()) }
+                } catch {
+                  /* ignore */
+                }
+              }
+              if (edgeBody && typeof edgeBody.portalUrl === "string" && edgeBody.portalUrl.trim()) {
+                return edgeBody.portalUrl.trim()
+              }
+            } catch {
+              /* ignore — host may have succeeded */
+            }
+            return ""
           }
-          if (!cancelled && edgeBody && typeof edgeBody.portalUrl === "string" && edgeBody.portalUrl.trim()) {
-            portalFromEdge = edgeBody.portalUrl.trim()
+          const [fromHost, fromEdge] = await Promise.all([fetchFromHost(), fetchFromEdge()])
+          portalFromEdge = (fromHost || fromEdge).trim()
+          if (!cancelled && portalFromEdge) {
             setBillingPortalConfigError(null)
+          } else if (!cancelled && !portalFromEdge) {
+            setBillingPortalConfigError(
+              "Could not load the payment portal link. Try refreshing this page. If it keeps happening, ask your administrator to confirm online payments are enabled.",
+            )
           }
-        }
-
-        if (!cancelled && portalFromEdge.trim()) {
-          setBillingPortalConfigError(null)
-        } else if (!cancelled && !ENV_PORTAL.trim() && !portalFromEdge.trim()) {
-          setBillingPortalConfigError(
-            (prev) =>
-              prev?.trim() ||
-              "No hosted pay URL returned. Set HELCIM_PAYMENT_PORTAL_URL on Vercel (Environment Variables → Redeploy) or on Supabase Edge secrets, then reload.",
-          )
+        } else if (!cancelled) {
+          setBillingPortalConfigError("Sign in again to load the payment portal.")
         }
       }
-      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      const { data, error } = await sb.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
       if (cancelled) return
       setLoading(false)
       if (error || !data) {
@@ -520,36 +517,16 @@ export default function PaymentsPage() {
                 lineHeight: 1.55,
               }}
             >
-              <strong>Your billing plan is on file, but no valid Helcim hosted pay URL was found for this session.</strong>
+              <strong>Your billing plan is on file, but we couldn&apos;t open the payment portal this session.</strong>
               {billingPortalConfigError ? (
                 <p style={{ margin: "10px 0 0", fontSize: 13, opacity: 0.95 }}>
-                  Portal config request: {billingPortalConfigError}
+                  {billingPortalConfigError}
                 </p>
               ) : null}
-              <ul style={{ margin: "12px 0 0", paddingLeft: 20 }}>
-                <li style={{ marginBottom: 8 }}>
-                  <strong>Fastest for this website (no app rebuild):</strong> in Vercel → Project → Environment Variables, set{" "}
-                  <code style={{ color: "#fef3c7" }}>HELCIM_PAYMENT_PORTAL_URL</code> to your full hosted pay{" "}
-                  <code style={{ color: "#fef3c7" }}>https://…</code> link (same value you use in Helcim), apply to Production, then{" "}
-                  <strong>Redeploy</strong>. The Payments tab reads it via <code style={{ color: "#fef3c7" }}>/api/billing-portal-config</code>.
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  <strong>Mobile / no Vercel env:</strong> set the same secret name on Supabase → Edge Functions → Secrets, deploy{" "}
-                  <code style={{ color: "#fef3c7" }}>billing-portal-config</code>, reload.
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  <strong>Or</strong> set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code> at build time and redeploy
-                  the app / mobile shell.
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  <strong>Or</strong> add a per-user <strong>Pay portal URL override</strong> in Admin → Billing &amp; Helcim (saved on this
-                  profile).
-                </li>
-                <li>
-                  Optional embedded card form: set <code style={{ color: "#fef3c7" }}>VITE_HELCIM_JS_TOKEN</code> and keep the return URL
-                  on the same origin as the app.
-                </li>
-              </ul>
+              <p style={{ margin: "12px 0 0", fontSize: 13, opacity: 0.95, lineHeight: 1.5 }}>
+                Try refreshing the page. Your administrator can confirm the pay link under <strong>Admin → Billing &amp; Helcim</strong>, or
+                set a <strong>Pay portal URL</strong> on your profile there if your office uses a custom link.
+              </p>
               {monthlyPlanTotal > 0 ? (
                 <p style={{ margin: "14px 0 0", fontWeight: 600 }}>
                   Catalog monthly total (before tax): {formatUsdMonthly(monthlyPlanTotal)}
@@ -559,9 +536,8 @@ export default function PaymentsPage() {
                 </p>
               ) : null}
               <p style={{ margin: "12px 0 0", fontSize: 13, opacity: 0.95 }}>
-                Helcim charges that match your <strong>Helcim customer code</strong> should call the Supabase{" "}
-                <code style={{ color: "#fef3c7" }}>billing-webhook</code> (see Admin → Billing copy) so <strong>Last paid</strong> updates
-                automatically. Admin can also use <strong>Record payment received (now)</strong> for offline payments.
+                When your <strong>Helcim customer code</strong> is on file, matching charges can update <strong>Last paid</strong>{" "}
+                automatically. Your administrator can also record cash or check payments from Admin → Billing.
               </p>
             </div>
           ) : (

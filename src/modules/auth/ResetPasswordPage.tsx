@@ -4,12 +4,15 @@ import { supabase } from "../../lib/supabase"
 import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { consumeAuthHashErrorMessage, getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
+import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
+import { useLocale } from "../../i18n/LocaleContext"
 
 type Props = {
   onDone: () => void
 }
 
 export default function ResetPasswordPage({ onDone }: Props) {
+  const { t } = useLocale()
   const [phase, setPhase] = useState<"loading" | "form" | "request" | "done">("loading")
   const [password, setPassword] = useState("")
   const [password2, setPassword2] = useState("")
@@ -161,28 +164,34 @@ export default function ResetPasswordPage({ onDone }: Props) {
             <p style={{ margin: "0 0 18px", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>
               Choose a new password for your account.
             </p>
-            <label style={{ fontWeight: 600, fontSize: 14, color: theme.text }}>
-              New password
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="new-password"
-                style={inputStyle}
-                placeholder="At least 6 characters"
-              />
-            </label>
-            <label style={{ fontWeight: 600, fontSize: 14, color: theme.text }}>
-              Confirm password
-              <input
-                type="password"
-                value={password2}
-                onChange={(e) => setPassword2(e.target.value)}
-                autoComplete="new-password"
-                style={inputStyle}
-                placeholder="Repeat password"
-              />
-            </label>
+            <PasswordFieldWithReveal
+              label="New password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="new-password"
+              placeholder="At least 6 characters"
+              revealLabelShow={t("login.showPassword")}
+              revealLabelHide={t("login.hidePassword")}
+              labelStyle={{ fontWeight: 600, fontSize: 14, color: theme.text }}
+              inputStyle={inputStyle}
+              wrapMarginBottom={14}
+              innerGapTop={6}
+              name="new-password"
+            />
+            <PasswordFieldWithReveal
+              label="Confirm password"
+              value={password2}
+              onChange={setPassword2}
+              autoComplete="new-password"
+              placeholder="Repeat password"
+              revealLabelShow={t("login.showPassword")}
+              revealLabelHide={t("login.hidePassword")}
+              labelStyle={{ fontWeight: 600, fontSize: 14, color: theme.text }}
+              inputStyle={inputStyle}
+              wrapMarginBottom={14}
+              innerGapTop={6}
+              name="confirm-new-password"
+            />
             {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
             {message && <p style={{ color: "#059669", fontSize: 14, margin: "0 0 12px" }}>{message}</p>}
             <button

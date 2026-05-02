@@ -1,4 +1,13 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react"
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
@@ -76,6 +85,60 @@ const ACCOUNT_SECTION_CARD: CSSProperties = {
   background: "#fafafa",
   display: "grid",
   gap: 12,
+}
+
+const ACCOUNT_FOLD_BTN: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  width: "100%",
+  textAlign: "left",
+  padding: "10px 14px",
+  border: "none",
+  borderRadius: 10,
+  background: "#f1f5f9",
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 13,
+  color: theme.text,
+}
+
+function AccountFold({
+  title,
+  subtitle,
+  open,
+  onToggle,
+  children,
+  shellStyle,
+}: {
+  title: string
+  subtitle?: string
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+  shellStyle?: CSSProperties
+}) {
+  return (
+    <div style={{ ...ACCOUNT_SECTION_CARD, padding: 0, gap: 0, overflow: "hidden", ...shellStyle }}>
+      <button type="button" onClick={onToggle} style={ACCOUNT_FOLD_BTN}>
+        <span style={{ minWidth: 0 }}>
+          {title}
+          {subtitle && !open ? (
+            <span style={{ display: "block", marginTop: 3, fontWeight: 400, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
+              {subtitle}
+            </span>
+          ) : null}
+        </span>
+        <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }} aria-hidden>
+          {open ? "▲" : "▼"}
+        </span>
+      </button>
+      {open ? (
+        <div style={{ padding: 16, display: "grid", gap: 12, borderTop: `1px solid ${theme.border}` }}>{children}</div>
+      ) : null}
+    </div>
+  )
 }
 
 function defaultBusinessHours(): BusinessHours {
@@ -187,7 +250,17 @@ export function AccountProfilePanel({
   const [recordingGreeting, setRecordingGreeting] = useState(false)
   const [recordingSupported, setRecordingSupported] = useState(false)
   const [recordingPreviewUrl, setRecordingPreviewUrl] = useState("")
-  const [voicemailExpanded, setVoicemailExpanded] = useState(false)
+  const [foldOpen, setFoldOpen] = useState({
+    profile: false,
+    business_address: false,
+    service_area: false,
+    mobile_app: false,
+    business_hours: false,
+    call_forwarding: false,
+    voicemail_bundle: false,
+    ai_automations: false,
+  })
+  const toggleFold = (key: keyof typeof foldOpen) => () => setFoldOpen((prev) => ({ ...prev, [key]: !prev[key] }))
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
@@ -354,7 +427,7 @@ export function AccountProfilePanel({
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err)
       if (/bucket not found/i.test(raw)) {
-        setError("Bucket not found: run supabase/profile-photos-storage.sql in Supabase SQL Editor, then try upload again.")
+        setError("Photo storage isn’t available yet. Please try again later or contact support if this continues.")
       } else {
         setError(raw)
       }
@@ -621,9 +694,12 @@ export function AccountProfilePanel({
               if (!showAccountSection(sectionId)) return null
               if (sectionId === "profile") return (
             <Fragment key={sectionId}>
-            <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.section.contactTitle")}</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.section.contactSub")}</p>
+            <AccountFold
+              title={t("account.section.contactTitle")}
+              subtitle={t("account.section.contactSub")}
+              open={foldOpen.profile}
+              onToggle={toggleFold("profile")}
+            >
               {!adminContext && user?.id === profileUserId ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
                   <div
@@ -648,8 +724,7 @@ export function AccountProfilePanel({
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
                     <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                      Shown next to My T in the app header. Square images work best. Requires the <code style={{ fontSize: 11 }}>profile-photos</code> bucket — run{" "}
-                      <code style={{ fontSize: 11 }}>supabase/profile-photos-storage.sql</code> if upload fails.
+                      Shown next to My T in the app header. Square images work best.
                     </span>
                     <label style={{ display: "inline-flex" }}>
                       <span
@@ -699,13 +774,16 @@ export function AccountProfilePanel({
                 />
               </label>
               </div>
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "business_address") return (
             <Fragment key={sectionId}>
-            <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.addressTitle")}</h2>
+            <AccountFold
+              title={t("account.section.addressTitle")}
+              open={foldOpen.business_address}
+              onToggle={toggleFold("business_address")}
+            >
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <label style={{ display: "grid", gap: 6 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.address1")}</span>
@@ -732,14 +810,17 @@ export function AccountProfilePanel({
                 <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>{t("account.formattedAddress")}</div>
                 <div style={{ color: "#4b5563", whiteSpace: "pre-line" }}>{formatBusinessAddress(form) || t("account.noAddressYet")}</div>
               </div>
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "service_area") return (
             <Fragment key={sectionId}>
-            <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.serviceTitle")}</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.section.serviceSub")}</p>
+            <AccountFold
+              title={t("account.section.serviceTitle")}
+              subtitle={t("account.section.serviceSub")}
+              open={foldOpen.service_area}
+              onToggle={toggleFold("service_area")}
+            >
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                 <input
                   type="checkbox"
@@ -768,18 +849,29 @@ export function AccountProfilePanel({
                   />
                 </label>
               )}
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "mobile_app") return (
                 <Fragment key={sectionId}>
-                  <MobileAppPreferencesCard profileUserId={profileUserId} />
+                  <AccountFold
+                    title={t("account.section.mobileTitle")}
+                    subtitle={t("account.section.mobileSub")}
+                    open={foldOpen.mobile_app}
+                    onToggle={toggleFold("mobile_app")}
+                  >
+                    <MobileAppPreferencesCard profileUserId={profileUserId} hideTitle />
+                  </AccountFold>
                 </Fragment>
               )
               if (sectionId === "business_hours") return (
             <Fragment key={sectionId}>
-            <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.hoursTitle")}</h2>
+            <AccountFold
+              title={t("account.section.hoursTitle")}
+              subtitle={t("account.fold.hoursSub")}
+              open={foldOpen.business_hours}
+              onToggle={toggleFold("business_hours")}
+            >
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.timezone")}</span>
                 <select value={form.timezone} onChange={(e) => setForm((prev) => ({ ...prev, timezone: e.target.value }))} style={theme.formInput}>
@@ -849,13 +941,17 @@ export function AccountProfilePanel({
                   </div>
                 ))}
               </div>
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "call_forwarding") return (
             <Fragment key={sectionId}>
-            <div style={ACCOUNT_SECTION_CARD}>
-              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>{t("account.section.forwardTitle")}</h2>
+            <AccountFold
+              title={t("account.section.forwardTitle")}
+              subtitle={t("account.fold.forwardSub")}
+              open={foldOpen.call_forwarding}
+              onToggle={toggleFold("call_forwarding")}
+            >
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
@@ -962,46 +1058,23 @@ export function AccountProfilePanel({
                 )}
               </div>
             </div>
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "voicemail") return (
             <Fragment key={sectionId}>
-            <div style={{ ...ACCOUNT_SECTION_CARD, background: "#f8fafc" }}>
-              <button
-                type="button"
-                onClick={() => setVoicemailExpanded((v) => !v)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "12px 14px",
-                  borderRadius: 8,
-                  border: `1px solid ${theme.border}`,
-                  background: "#fff",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  fontSize: 15,
-                  color: theme.text,
-                }}
-              >
-                <span>
-                  {t("account.voicemail.title")}
-                  <span style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "#6b7280" }}>
-                    {form.voicemail_greeting_mode === "ai_text" ? t("account.voicemail.subAi") : t("account.voicemail.subRecorded")}
-                    {!voicemailExpanded ? t("account.voicemail.expand") : ""}
-                  </span>
-                </span>
-                <span style={{ fontSize: 14, color: "#6b7280", flexShrink: 0 }} aria-hidden>
-                  {voicemailExpanded ? "▲" : "▼"}
-                </span>
-              </button>
-
-              {voicemailExpanded && (
-                <div style={{ display: "grid", gap: 14, paddingTop: 4 }}>
+            <AccountFold
+              title={t("account.fold.voicemailBundleTitle")}
+              subtitle={
+                foldOpen.voicemail_bundle
+                  ? undefined
+                  : `${form.voicemail_greeting_mode === "ai_text" ? t("account.voicemail.subAi") : t("account.voicemail.subRecorded")} · ${t("account.section.helpTitle")}`
+              }
+              open={foldOpen.voicemail_bundle}
+              onToggle={toggleFold("voicemail_bundle")}
+              shellStyle={{ background: "#f8fafc" }}
+            >
+                <div style={{ display: "grid", gap: 14 }}>
                   <label style={{ display: "grid", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.voicemail.convLabel")}</span>
                     <select
@@ -1121,7 +1194,6 @@ export function AccountProfilePanel({
                     </>
                   )}
                 </div>
-              )}
 
               {showAccountSection("help_desk") &&
                 orderedAccountSectionIds.includes("help_desk") &&
@@ -1151,7 +1223,7 @@ export function AccountProfilePanel({
                     )}
                   </div>
                 )}
-            </div>
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "help_desk") return (
@@ -1177,10 +1249,14 @@ export function AccountProfilePanel({
               if (sectionId === "ai_automations") {
                 return (
                   <Fragment key={sectionId}>
-                    <div style={ACCOUNT_SECTION_CARD}>
-                      <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.ai.title")}</h2>
-                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-                        {t("account.ai.body")} {t("account.aiSignupNote")}
+                    <AccountFold
+                      title={t("account.ai.title")}
+                      subtitle={t("account.ai.shortHint")}
+                      open={foldOpen.ai_automations}
+                      onToggle={toggleFold("ai_automations")}
+                    >
+                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
+                        {t("account.ai.body")}
                       </p>
                       <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                         <input
@@ -1190,7 +1266,7 @@ export function AccountProfilePanel({
                         />
                         {t("account.ai.allow")}
                       </label>
-                    </div>
+                    </AccountFold>
                   </Fragment>
                 )
               }

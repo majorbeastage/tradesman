@@ -38,15 +38,49 @@ export type EntityAttachmentRow = {
   file_name?: string | null
   content_type?: string | null
   created_at?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export function parseQuoteAttachmentMeta(meta: unknown): {
+  note: string
+  attachToCustomerCopy: boolean
+  includeNote: boolean
+} {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta))
+    return { note: "", attachToCustomerCopy: false, includeNote: false }
+  const m = meta as Record<string, unknown>
+  const note = typeof m.note === "string" ? m.note : ""
+  const attachToCustomerCopy = m.attach_to_customer_copy === true
+  const includeNote = m.include_note === true
+  return { note, attachToCustomerCopy, includeNote }
+}
+
+/** Whether an attachment is likely an image (thumbnail in lists instead of the file name). */
+/** Quote/calendar files flagged “Attach this to customer’s copy” in metadata. */
+export function entityAttachmentsForCustomerCopy(rows: EntityAttachmentRow[]): EntityAttachmentRow[] {
+  return rows.filter((r) => parseQuoteAttachmentMeta(r.metadata).attachToCustomerCopy)
+}
+
+export function isProbablyImageAttachment(
+  contentType: string | null | undefined,
+  publicUrl: string,
+  fileName?: string | null,
+): boolean {
+  const t = (contentType || "").toLowerCase()
+  if (t.startsWith("image/")) return true
+  const u = (publicUrl || "").toLowerCase()
+  if (/\.(jpg|jpeg|png|gif|webp|avif|bmp|svg)(\?|#|$)/i.test(u)) return true
+  const n = (fileName || "").toLowerCase()
+  return /\.(jpg|jpeg|png|gif|webp|avif|bmp|svg)$/.test(n)
 }
 
 export async function loadEntityAttachmentsForQuote(quoteId: string): Promise<EntityAttachmentRow[]> {
   if (!supabase || !quoteId) return []
   const { data, error } = await supabase
     .from("entity_attachments")
-    .select("id, public_url, storage_path, file_name, content_type, created_at")
+    .select("id, public_url, storage_path, file_name, content_type, created_at, metadata")
     .eq("quote_id", quoteId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
   if (error || !data) return []
   return data as EntityAttachmentRow[]
 }
@@ -55,9 +89,9 @@ export async function loadEntityAttachmentsForCalendarEvent(calendarEventId: str
   if (!supabase || !calendarEventId) return []
   const { data, error } = await supabase
     .from("entity_attachments")
-    .select("id, public_url, storage_path, file_name, content_type, created_at")
+    .select("id, public_url, storage_path, file_name, content_type, created_at, metadata")
     .eq("calendar_event_id", calendarEventId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
   if (error || !data) return []
   return data as EntityAttachmentRow[]
 }

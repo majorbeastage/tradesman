@@ -22,14 +22,17 @@ const DEFAULT_TABS = [
   "dashboard",
   "leads",
   "conversations",
+  "customers",
   "quotes",
   "calendar",
-  "customers",
   "payments",
   "web-support",
   "tech-support",
   "settings",
 ]
+
+/** Shown on the dashboard only — keep off the left nav (including portal-configured tabs). */
+const SIDEBAR_EXCLUDED_TAB_IDS = new Set(["insurance-options"])
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const { t } = useLocale()
@@ -48,9 +51,11 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     textAlign: "left",
     cursor: "pointer",
   }
-  const allTabs = portalTabs && portalTabs.length > 0
-    ? portalTabs
-    : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
+  const allTabs = (
+    portalTabs && portalTabs.length > 0
+      ? portalTabs
+      : DEFAULT_TABS.map((tab_id) => ({ tab_id, label: TAB_ID_LABELS[tab_id] ?? tab_id }))
+  ).filter((t) => !SIDEBAR_EXCLUDED_TAB_IDS.has(t.tab_id))
   const showAccount = allTabs.some((t) => t.tab_id === "account") || !portalTabs
   const showPayments = allTabs.some((t) => t.tab_id === "payments") || !portalTabs
   const paymentsTabEntry = allTabs.find((t) => t.tab_id === "payments")
@@ -122,7 +127,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
         />
       </div>
 
-      {isMobile && (showAccount || showPayments) ? (
+      {isMobile && (showAccount || showPayments || onLogout) ? (
         <div
           style={{
             marginTop: 14,
@@ -183,6 +188,27 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
               <span>{t("layout.account")}</span>
             </button>
           ) : null}
+          {onLogout ? (
+            <button
+              type="button"
+              onClick={() => { onLogout?.(); onClose?.() }}
+              style={{
+                minHeight: 44,
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                color: theme.primary,
+                fontWeight: 600,
+                fontSize: 14,
+                textAlign: "left",
+              }}
+            >
+              {t("layout.logout")}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -232,28 +258,6 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
         <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
           {HELP_DESK_PHONE_DISPLAY}
         </a>
-        {onLogout && (
-          <button
-            type="button"
-            onClick={() => { onLogout?.(); onClose?.() }}
-            style={{
-              display: "block",
-              marginTop: 12,
-              marginBottom: 4,
-              padding: "8px 0",
-              width: "100%",
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              color: theme.primary,
-              fontSize: 14,
-              fontWeight: 500,
-              textAlign: "left",
-            }}
-          >
-            {t("layout.logout")}
-          </button>
-        )}
         {!isMobile && showPayments ? (
           <p
             onClick={() => {
@@ -264,6 +268,16 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           >
             {formatPortalTabLabel("payments", paymentsTabEntry?.label ?? null, t)}
           </p>
+        ) : null}
+        {!isMobile && showPayments && showAccount ? (
+          <div
+            role="separator"
+            style={{
+              height: 1,
+              margin: "10px 0 4px",
+              background: "linear-gradient(90deg, transparent, rgba(249,115,22,0.45), transparent)",
+            }}
+          />
         ) : null}
         {!isMobile && showAccount ? (
           <button
@@ -293,6 +307,28 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
                 style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.35)", display: "block" }}
               />
             ) : null}
+          </button>
+        ) : null}
+        {onLogout && !isMobile ? (
+          <button
+            type="button"
+            onClick={() => { onLogout?.(); onClose?.() }}
+            style={{
+              display: "block",
+              marginTop: 10,
+              marginBottom: 4,
+              padding: "8px 0",
+              width: "100%",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: theme.primary,
+              fontSize: 14,
+              fontWeight: 500,
+              textAlign: "left",
+            }}
+          >
+            {t("layout.logout")}
           </button>
         ) : null}
       </div>

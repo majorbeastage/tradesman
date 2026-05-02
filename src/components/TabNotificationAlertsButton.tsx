@@ -87,6 +87,9 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [urgencyEscalationEnabled, setUrgencyEscalationEnabled] = useState(false)
+  const [urgencyEscalationUnit, setUrgencyEscalationUnit] = useState<"hours" | "days">("days")
+  const [urgencyEscalationAmount, setUrgencyEscalationAmount] = useState("")
   const statuses = statusOptionsForTab(tab)
 
   useEffect(() => {
@@ -104,6 +107,20 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
         const meta = (data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>
         const map = parseTabNotificationsMap(meta)
         setPrefs(getPrefsForTab(map, tab))
+        if (tab === "customers") {
+          const ua = meta.customers_urgency_automation
+          if (ua && typeof ua === "object" && !Array.isArray(ua)) {
+            const o = ua as Record<string, unknown>
+            setUrgencyEscalationEnabled(o.enabled === true)
+            setUrgencyEscalationUnit(o.unit === "hours" ? "hours" : "days")
+            const amt = typeof o.amount === "number" ? o.amount : Number.parseFloat(String(o.amount ?? ""))
+            setUrgencyEscalationAmount(Number.isFinite(amt) && amt > 0 ? String(amt) : "")
+          } else {
+            setUrgencyEscalationEnabled(false)
+            setUrgencyEscalationUnit("days")
+            setUrgencyEscalationAmount("")
+          }
+        }
       })
       .finally(() => setLoading(false))
   }, [open, profileUserId, tab])
@@ -122,6 +139,15 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
     const prevMap = parseTabNotificationsMap(meta)
     const nextMap = setPrefsForTab(prevMap, tab, prefs)
     meta[NOTIFICATION_METADATA_KEY] = nextMap
+    if (tab === "customers") {
+      const amtN = Number.parseFloat(String(urgencyEscalationAmount).replace(/[^0-9.]/g, ""))
+      meta.customers_urgency_automation = {
+        v: 1,
+        enabled: urgencyEscalationEnabled,
+        unit: urgencyEscalationUnit,
+        amount: Number.isFinite(amtN) && amtN > 0 ? amtN : 0,
+      }
+    }
     const { error: upErr } = await supabase.from("profiles").update({ metadata: meta }).eq("id", profileUserId)
     setSaving(false)
     if (upErr) setMsg(upErr.message)
@@ -188,6 +214,43 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
                 <ChannelBlock label="Send mobile push when job / record status changes" channel="push" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
                 <ChannelBlock label="Send email when job / record status changes" channel="email" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
                 <ChannelBlock label="Send text (SMS) when job / record status changes" channel="sms" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
+                {tab === "customers" && (
+                  <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#fffbeb" }}>
+                    <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Customers — urgency automation</div>
+                    <p style={{ fontSize: 12, color: "#4b5563", margin: "0 0 10px", lineHeight: 1.45 }}>
+                      When enabled, the Customers list periodically raises workflow urgency one step (In Process → Needs Attention → Critical) if there has been no
+                      communication activity for the time you set. <strong>Complete</strong> and <strong>Lost</strong> are not changed. Uses each row&apos;s last update time.
+                    </p>
+                    <label style={{ ...CALENDAR_ALERT_OPTION_LABEL, marginBottom: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={urgencyEscalationEnabled}
+                        onChange={(e) => setUrgencyEscalationEnabled(e.target.checked)}
+                      />
+                      Auto-raise urgency after no communication for…
+                    </label>
+                    {urgencyEscalationEnabled ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 8 }}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder={urgencyEscalationUnit === "hours" ? "e.g. 48" : "e.g. 3"}
+                          value={urgencyEscalationAmount}
+                          onChange={(e) => setUrgencyEscalationAmount(e.target.value)}
+                          style={{ ...theme.formInput, width: 100, margin: 0 }}
+                        />
+                        <select
+                          value={urgencyEscalationUnit}
+                          onChange={(e) => setUrgencyEscalationUnit(e.target.value === "hours" ? "hours" : "days")}
+                          style={{ ...theme.formInput, width: 120 }}
+                        >
+                          <option value="hours">hours</option>
+                          <option value="days">days</option>
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
                 {tab === "calendar" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#f0f9ff" }}>
                     <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Calendar — customer &amp; schedule assists</div>

@@ -4,6 +4,7 @@
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
  * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
+ * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (A2P; bundled public/sms-consent.html)
  */
@@ -29,7 +30,7 @@ import {
   runLeadCaptureSideEffects,
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
-import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
@@ -351,6 +352,23 @@ async function authCanAccessLeadOwner(
   return !!om
 }
 
+async function authCanAccessCustomerOwner(
+  service: SupabaseClient,
+  authUserId: string,
+  customerOwnerUserId: string,
+): Promise<boolean> {
+  if (authUserId === customerOwnerUserId) return true
+  const { data: prof } = await service.from("profiles").select("role").eq("id", authUserId).maybeSingle()
+  if ((prof as { role?: string } | null)?.role === "admin") return true
+  const { data: om } = await service
+    .from("office_manager_clients")
+    .select("user_id")
+    .eq("office_manager_id", authUserId)
+    .eq("user_id", customerOwnerUserId)
+    .maybeSingle()
+  return !!om
+}
+
 /** Rules-first lead fit evaluation (optional force to re-run). */
 async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
@@ -394,6 +412,55 @@ async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): P
       ok: true,
       skipped: true,
       message: "Auto filter is off, this lead was already scored, or it is locked after a manual override.",
+    })
+    return
+  }
+  res.status(200).json({ ok: true, ...result })
+}
+
+/** Customer hub: same fit engine as leads (optional force to re-run). */
+async function handleCustomerEvaluateFit(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const { userId: actorUserId } = auth
+  let service: SupabaseClient
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    const fallback = createUserJwtSupabaseClient(req)
+    if (!fallback) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+      return
+    }
+    service = fallback
+  }
+  const body = jsonBody(req)
+  const customerId = pickFirstString(body.customerId).trim()
+  if (!customerId) {
+    res.status(400).json({ error: "customerId required" })
+    return
+  }
+  const force = body.force === true
+  const { data: row, error } = await service.from("customers").select("id,user_id").eq("id", customerId).maybeSingle()
+  const c = row as { id: string; user_id: string } | null
+  if (error || !c) {
+    res.status(404).json({ error: "Customer not found" })
+    return
+  }
+  if (!(await authCanAccessCustomerOwner(service, actorUserId, c.user_id))) {
+    res.status(404).json({ error: "Customer not found" })
+    return
+  }
+  const result = await evaluateAndPersistCustomerFit(service, customerId, { force })
+  if (result == null) {
+    res.status(200).json({
+      ok: true,
+      skipped: true,
+      message: "Auto filter is off, this customer was already scored, or fit is locked after a manual override.",
     })
     return
   }
@@ -650,6 +717,229 @@ async function handleAiSummarize(req: VercelRequest, res: VercelResponse): Promi
       ],
       max_tokens: 600,
       temperature: 0.4,
+    }),
+  })
+
+  const raw = await oa.text()
+  if (!oa.ok) {
+    res.status(502).json({ error: "OpenAI request failed", detail: raw.slice(0, 800) })
+    return
+  }
+  let summary = ""
+  try {
+    const j = JSON.parse(raw) as {
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    summary = j.choices?.[0]?.message?.content?.trim() || ""
+  } catch {
+    summary = ""
+  }
+  if (!summary) {
+    res.status(502).json({ error: "Could not parse OpenAI response", detail: raw.slice(0, 400) })
+    return
+  }
+
+  res.status(200).json({ ok: true, summary })
+}
+
+/**
+ * Summarize customer communication up to a specific message or communication_event (Customers hub).
+ * Body: { profileUserId?: string (scoped profile for AI prefs), communicationEventId?: string, messageId?: string, customerId?: string } — event id or (messageId + customerId).
+ */
+async function handleAiSummarizeCustomerCommunication(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing authorization" })
+    return
+  }
+  const token = authHeader.slice("Bearer ".length).trim()
+  const { supabaseUrl, anonKey } = resolveSupabasePublicForUserJwt(req)
+  if (!supabaseUrl || !anonKey) {
+    res.status(500).json({
+      error:
+        "Missing Supabase URL/anon key on server. Set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*) on Vercel, or send supabaseUrl + supabaseAnonKey in the JSON body.",
+    })
+    return
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  })
+  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  if (userErr || !userData.user) {
+    res.status(401).json({ error: "Invalid session" })
+    return
+  }
+  const userId = userData.user.id
+  const body = jsonBody(req)
+  const profileUserIdForAi = pickFirstString(body.profileUserId).trim() || userId
+
+  const userDb = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+
+  const { data: profile } = await userDb
+    .from("profiles")
+    .select("ai_thread_summary_enabled, ai_assistant_visible")
+    .eq("id", profileUserIdForAi)
+    .maybeSingle()
+  const row = profile as { ai_thread_summary_enabled?: boolean; ai_assistant_visible?: boolean } | null
+  if (row?.ai_assistant_visible === false) {
+    res.status(403).json({ error: "AI automations are disabled for your account (My T)." })
+    return
+  }
+  if (row?.ai_thread_summary_enabled !== true) {
+    res.status(403).json({ error: "AI thread summary is not enabled. Turn it on under Conversations → Settings." })
+    return
+  }
+
+  const communicationEventId = pickFirstString(body.communicationEventId).trim()
+  const messageId = pickFirstString(body.messageId).trim()
+  const customerIdRaw = pickFirstString(body.customerId).trim()
+
+  let customerId = ""
+  let untilIso = ""
+
+  if (communicationEventId) {
+    const { data: ev, error: evErr } = await userDb
+      .from("communication_events")
+      .select("id, customer_id, conversation_id, created_at, event_type, direction, body, subject")
+      .eq("id", communicationEventId)
+      .maybeSingle()
+    if (evErr || !ev) {
+      res.status(404).json({
+        error: "Communication event not found or not visible with your login.",
+        hint: "If this timeline entry was synced without a customer link, open it from a conversation tied to this customer and try again.",
+      })
+      return
+    }
+    const er = ev as {
+      customer_id?: string | null
+      conversation_id?: string | null
+      created_at?: string | null
+    }
+    customerId = String(er.customer_id ?? "").trim()
+    untilIso = String(er.created_at ?? "").trim()
+    if (!customerId && er.conversation_id) {
+      const { data: convoRow } = await userDb
+        .from("conversations")
+        .select("customer_id")
+        .eq("id", String(er.conversation_id))
+        .maybeSingle()
+      customerId = String((convoRow as { customer_id?: string | null } | null)?.customer_id ?? "").trim()
+    }
+    if (!customerId || !untilIso) {
+      res.status(400).json({ error: "Event is missing customer or timestamp." })
+      return
+    }
+  } else if (messageId && customerIdRaw) {
+    customerId = customerIdRaw
+    const { data: msg, error: mErr } = await userDb
+      .from("messages")
+      .select("id, conversation_id, sender, content, created_at")
+      .eq("id", messageId)
+      .maybeSingle()
+    if (mErr || !msg) {
+      res.status(404).json({
+        error: "Message not found or not visible with your login.",
+        hint: "Refresh Customers and try again; the message may have been removed.",
+      })
+      return
+    }
+    const mr = msg as { conversation_id?: string | null; created_at?: string | null }
+    const convoId = String(mr.conversation_id ?? "").trim()
+    untilIso = String(mr.created_at ?? "").trim()
+    if (!convoId || !untilIso) {
+      res.status(400).json({ error: "Message is missing conversation or timestamp." })
+      return
+    }
+    const { data: convo } = await userDb.from("conversations").select("id, customer_id").eq("id", convoId).maybeSingle()
+    const cr = convo as { customer_id?: string | null } | null
+    if (!cr || String(cr.customer_id ?? "").trim() !== customerId) {
+      res.status(404).json({ error: "Message does not belong to this customer." })
+      return
+    }
+  } else {
+    res.status(400).json({ error: "Provide communicationEventId or messageId and customerId." })
+    return
+  }
+
+  const untilMs = Date.parse(untilIso)
+  if (!Number.isFinite(untilMs)) {
+    res.status(400).json({ error: "Invalid anchor time." })
+    return
+  }
+
+  const { data: convos } = await userDb.from("conversations").select("id").eq("customer_id", customerId)
+  const convoIds = (convos ?? []).map((c: { id: string }) => c.id).filter(Boolean)
+  const parts: string[] = []
+
+  if (convoIds.length > 0) {
+    const { data: msgs } = await userDb
+      .from("messages")
+      .select("sender, content, created_at, conversation_id")
+      .in("conversation_id", convoIds)
+      .lte("created_at", untilIso)
+      .order("created_at", { ascending: true })
+      .limit(120)
+    for (const m of msgs || []) {
+      const r = m as { sender?: string; content?: string; created_at?: string }
+      parts.push(`[${r.created_at || ""}] ${r.sender || "?"}: ${(r.content || "").slice(0, 2000)}`)
+    }
+  }
+
+  const { data: evs } = await userDb
+    .from("communication_events")
+    .select("event_type, direction, body, subject, created_at")
+    .eq("customer_id", customerId)
+    .lte("created_at", untilIso)
+    .order("created_at", { ascending: true })
+    .limit(120)
+  for (const e of evs || []) {
+    const r = e as { event_type?: string; direction?: string; body?: string; subject?: string; created_at?: string }
+    const head = `${r.event_type || "event"} ${r.direction || ""} ${r.created_at || ""}`
+    const text = (r.subject ? `Subject: ${r.subject}\n` : "") + (r.body || "")
+    parts.push(`[${head}] ${text.slice(0, 2000)}`)
+  }
+
+  const transcript = parts.join("\n\n").slice(0, 14000)
+  if (!transcript.trim()) {
+    res.status(400).json({ error: "No messages or events to summarize for this customer before this point." })
+    return
+  }
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(503).json({
+      error: "OpenAI is not configured on the server.",
+      hint: "Set OPENAI_API_KEY on Vercel for this deployment.",
+    })
+    return
+  }
+
+  const oa = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: firstEnv("OPENAI_MODEL") || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You summarize customer communication for a home-services contractor. Focus on what was discussed up to the anchor time: requests, commitments, blockers, and suggested next steps. Stay under 220 words. Plain sentences or short bullets.",
+        },
+        { role: "user", content: transcript },
+      ],
+      max_tokens: 550,
+      temperature: 0.35,
     }),
   })
 
@@ -1022,8 +1312,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "estimate-legal-draft",
         "quote-estimate-review",
         "lead-evaluate-fit",
+        "customer-evaluate-fit",
         "helcim-js-return",
         "billing-portal-config",
+        "ai-summarize-customer-event",
       ],
     })
     return
@@ -1040,6 +1332,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "ai-summarize") {
       await handleAiSummarize(req, res)
+      return
+    }
+    if (route === "ai-summarize-customer-event") {
+      await handleAiSummarizeCustomerCommunication(req, res)
       return
     }
     if (route === "ai-lead-assist") {
@@ -1068,6 +1364,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "lead-evaluate-fit") {
       await handleLeadEvaluateFit(req, res)
+      return
+    }
+    if (route === "customer-evaluate-fit") {
+      await handleCustomerEvaluateFit(req, res)
       return
     }
     if (route === "billing-portal-config") {

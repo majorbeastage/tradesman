@@ -28,9 +28,11 @@ type PushTestPayload = {
 
 type Props = {
   profileUserId: string
+  /** When wrapped in a collapsible section that already shows the title */
+  hideTitle?: boolean
 }
 
-export default function MobileAppPreferencesCard({ profileUserId }: Props) {
+export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: Props) {
   const { user } = useAuth()
   const canTestPushThisDevice = !!user?.id && user.id === profileUserId
   const [pushOptIn, setPushOptIn] = useState(false)
@@ -75,8 +77,8 @@ export default function MobileAppPreferencesCard({ profileUserId }: Props) {
   }
 
   return (
-    <div style={CARD}>
-      <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Mobile app (MyT)</h2>
+    <div style={{ ...CARD, ...(hideTitle ? { padding: 0, border: "none", background: "transparent", gap: 10 } : {}) }}>
+      {!hideTitle ? <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Mobile app</h2> : null}
       <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
         Tradesman on Android / iPhone uses your profile here. Enable push and GPS when you want dispatch, en-route messages, and (for office managers) live maps.
         {isNativeApp()

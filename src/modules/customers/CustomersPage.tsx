@@ -2,16 +2,32 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
+import { useAuth } from "../../contexts/AuthContext"
+import { useLocale } from "../../i18n/LocaleContext"
 import { theme } from "../../styles/theme"
+import CommunicationUrgencyBadge, { communicationUrgencySelectOptions } from "../../components/CommunicationUrgencyBadge"
+import LeadFilterPreferencesModal, { type LeadFilterPrefsState } from "../../components/LeadFilterPreferencesModal"
+import {
+  normalizeCommunicationUrgency,
+  nextUrgencyAfterSilence,
+  parseCustomersUrgencyAutomation,
+  type CommunicationUrgency,
+  urgencyRank,
+  type CustomersUrgencyAutomationPrefs,
+} from "../../lib/customerUrgency"
+import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
+import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
-import { consumeQueuedCustomerFocus } from "../../lib/customerNavigation"
+import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
+import { queueQuotesCustomerPrefill, queueSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { getControlItemsForUser } from "../../types/portal-builder"
+import { leadFitBadgeEl } from "../../lib/leadFitUi"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -56,8 +72,15 @@ type CustomerRow = {
   service_lng?: number | null
   best_contact_method?: string | null
   job_pipeline_status?: string | null
+  communication_urgency?: string | null
   last_activity_at?: string | null
   updated_at?: string | null
+  fit_classification?: string | null
+  fit_confidence?: number | null
+  fit_reason?: string | null
+  fit_source?: string | null
+  fit_manually_overridden?: boolean | null
+  fit_evaluated_at?: string | null
 }
 
 function inferDefaultBestContact(c: CustomerRow): string {
@@ -85,8 +108,10 @@ function lastUpdateDisplay(c: CustomerRow): string {
   return formatWhen(raw)
 }
 
-export default function CustomersPage() {
+export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
+  const { session } = useAuth()
+  const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const isMobile = useIsMobile()
@@ -97,6 +122,7 @@ export default function CustomersPage() {
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
+  const [filterUrgency, setFilterUrgency] = useState<string>("")
   const [sortField, setSortField] = useState<string>("name")
   const [sortAsc, setSortAsc] = useState(true)
   const [section, setSection] = useState<"active" | "archived">("active")
@@ -115,6 +141,7 @@ export default function CustomersPage() {
     serviceLng: string
     bestContact: string
     jobStatus: string
+    urgency: CommunicationUrgency
   }>({
     customerName: "",
     phone: "",
@@ -124,6 +151,7 @@ export default function CustomersPage() {
     serviceLng: "",
     bestContact: DEFAULT_BEST_CONTACT_OPTIONS[0],
     jobStatus: JOB_PIPELINE_OPTIONS[0],
+    urgency: "In Process",
   })
 
   const [customerMessages, setCustomerMessages] = useState<any[]>([])
@@ -139,6 +167,24 @@ export default function CustomersPage() {
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [completeBusy, setCompleteBusy] = useState(false)
   const [removeBusy, setRemoveBusy] = useState(false)
+  const [showLeadFilterPrefs, setShowLeadFilterPrefs] = useState(false)
+  const [leadFilterSaveBusy, setLeadFilterSaveBusy] = useState(false)
+  const [leadFilterPrefs, setLeadFilterPrefs] = useState<LeadFilterPrefsState>({
+    accepted_job_types: "",
+    minimum_job_size: "",
+    service_radius_miles: "",
+    use_account_service_radius: true,
+    availability: "flexible",
+    enable_auto_filter: false,
+    use_ai_for_unclear: true,
+  })
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null)
+  const [timelineExpanded, setTimelineExpanded] = useState<Record<string, boolean>>({})
+  const [aiSummaryByKey, setAiSummaryByKey] = useState<Record<string, string>>({})
+  const [aiSummaryBusy, setAiSummaryBusy] = useState<Record<string, boolean>>({})
+  const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
+  const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
+  const [fitReRunBusy, setFitReRunBusy] = useState(false)
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -165,35 +211,6 @@ export default function CustomersPage() {
     return items
   }, [customerMessages, customerCommEvents])
 
-  const inboundSmsItems = useMemo(
-    () =>
-      customerActivityItems.filter((item) => {
-        if (item.kind === "msg") return item.payload?.sender === "customer"
-        const ev = item.payload
-        return ev?.event_type === "sms" && ev?.direction === "inbound"
-      }),
-    [customerActivityItems],
-  )
-
-  const inboundEmailItems = useMemo(
-    () =>
-      customerActivityItems.filter((item) => {
-        if (item.kind !== "ev") return false
-        const ev = item.payload
-        return ev?.event_type === "email" && ev?.direction === "inbound"
-      }),
-    [customerActivityItems],
-  )
-
-  const voicemailItems = useMemo(
-    () =>
-      customerActivityItems.filter((item) => {
-        if (item.kind !== "ev") return false
-        return item.payload?.event_type === "voicemail"
-      }),
-    [customerActivityItems],
-  )
-
   const applyDetailFromCustomer = useCallback((c: CustomerRow) => {
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
     const email = c.customer_identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
@@ -210,6 +227,7 @@ export default function CustomersPage() {
       serviceLng: c.service_lng != null && Number.isFinite(Number(c.service_lng)) ? String(c.service_lng) : "",
       bestContact: best,
       jobStatus: jobOk,
+      urgency: normalizeCommunicationUrgency(c.communication_urgency),
     })
   }, [])
 
@@ -262,7 +280,41 @@ export default function CustomersPage() {
       return
     }
 
-    const fullSelect = `
+    const profRes = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const metaRaw = profRes.data?.metadata
+    const urgencyPrefs = parseCustomersUrgencyAutomation(metaRaw)
+    const mr = metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
+    const logoGuess =
+      typeof mr.estimate_template_logo_url === "string"
+        ? mr.estimate_template_logo_url.trim()
+        : typeof mr.receipt_template_logo_url === "string"
+          ? mr.receipt_template_logo_url.trim()
+          : ""
+    setBrandLogoUrl(logoGuess || null)
+
+    const fullSelectPipeline = `
+        id,
+        display_name,
+        updated_at,
+        service_address,
+        service_lat,
+        service_lng,
+        best_contact_method,
+        job_pipeline_status,
+        communication_urgency,
+        last_activity_at,
+        fit_classification,
+        fit_confidence,
+        fit_reason,
+        fit_source,
+        fit_manually_overridden,
+        fit_evaluated_at,
+        customer_identifiers (
+          type,
+          value
+        )
+      `
+    const fullSelectPipelineNoUrgency = `
         id,
         display_name,
         updated_at,
@@ -277,18 +329,23 @@ export default function CustomersPage() {
           value
         )
       `
-    let customers: CustomerRow[] | null = null
-    let error: { message: string } | null = null
-    {
-      const r = await supabase.from("customers").select(fullSelect).in("id", idList)
-      error = r.error
-      customers = (r.data as CustomerRow[] | null) ?? null
-    }
-    if (error && (error.message.includes("best_contact") || error.message.includes("job_pipeline") || error.message.includes("last_activity"))) {
-      const r2 = await supabase
-        .from("customers")
-        .select(
-          `
+    const fullSelectPipelineNoFit = `
+        id,
+        display_name,
+        updated_at,
+        service_address,
+        service_lat,
+        service_lng,
+        best_contact_method,
+        job_pipeline_status,
+        communication_urgency,
+        last_activity_at,
+        customer_identifiers (
+          type,
+          value
+        )
+      `
+    const fullSelectLegacy = `
         id,
         display_name,
         updated_at,
@@ -299,9 +356,32 @@ export default function CustomersPage() {
           type,
           value
         )
-      `,
-        )
-        .in("id", idList)
+      `
+    let customers: CustomerRow[] | null = null
+    let error: { message: string } | null = null
+    {
+      const r0 = await supabase.from("customers").select(fullSelectPipeline).in("id", idList)
+      error = r0.error
+      customers = (r0.data as CustomerRow[] | null) ?? null
+      if (error && String(error.message || "").toLowerCase().includes("fit_")) {
+        const r1 = await supabase.from("customers").select(fullSelectPipelineNoFit).in("id", idList)
+        error = r1.error
+        customers = (r1.data as CustomerRow[] | null) ?? null
+        if (!error) {
+          setLoadError((prev) => prev || "Run supabase/customers-lead-fit.sql to enable Lead fit on customers.")
+        }
+      }
+      if (error && String(error.message || "").includes("communication_urgency")) {
+        const rU = await supabase.from("customers").select(fullSelectPipelineNoUrgency).in("id", idList)
+        error = rU.error
+        customers = (rU.data as CustomerRow[] | null) ?? null
+        if (!error) {
+          setLoadError((prev) => prev || "Run supabase/customers-communication-urgency.sql to enable the Urgency column.")
+        }
+      }
+    }
+    if (error && (error.message.includes("best_contact") || error.message.includes("job_pipeline") || error.message.includes("last_activity"))) {
+      const r2 = await supabase.from("customers").select(fullSelectLegacy).in("id", idList)
       if (!r2.error) {
         customers = (r2.data as CustomerRow[] | null) ?? null
         error = null
@@ -316,8 +396,28 @@ export default function CustomersPage() {
     }
 
     const list = (customers || []) as CustomerRow[]
-    const active = list.filter((c) => activeIds.has(c.id))
-    const archived = list.filter((c) => !activeIds.has(c.id))
+
+    async function escalateList(rows: CustomerRow[], prefs: CustomersUrgencyAutomationPrefs | null): Promise<CustomerRow[]> {
+      if (!prefs?.enabled || prefs.amount <= 0 || !supabase) return rows
+      const now = Date.now()
+      const next = [...rows]
+      for (let i = 0; i < next.length; i++) {
+        const c = next[i]
+        const cur = normalizeCommunicationUrgency(c.communication_urgency)
+        const lastMs = Date.parse(c.last_activity_at || c.updated_at || "") || 0
+        const bumped = nextUrgencyAfterSilence(cur, prefs, lastMs, now)
+        if (bumped) {
+          const { error: upErr } = await supabase.from("customers").update({ communication_urgency: bumped }).eq("id", c.id)
+          if (!upErr) next[i] = { ...c, communication_urgency: bumped }
+        }
+      }
+      return next
+    }
+
+    let active = list.filter((c) => activeIds.has(c.id))
+    let archived = list.filter((c) => !activeIds.has(c.id))
+    active = await escalateList(active, urgencyPrefs)
+    archived = await escalateList(archived, urgencyPrefs)
     setActiveCustomers(active)
     setArchivedCustomers(archived)
   }, [userId])
@@ -404,6 +504,48 @@ export default function CustomersPage() {
   }, [userId])
 
   useEffect(() => {
+    if (!supabase || !userId) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
+        const meta = data.metadata as Record<string, unknown>
+        const lf = meta.lead_filter_preferences
+        if (lf && typeof lf === "object" && !Array.isArray(lf)) {
+          const p = lf as Record<string, unknown>
+          const minRaw = p.minimum_job_size
+          const radRaw = p.service_radius_miles
+          setLeadFilterPrefs({
+            accepted_job_types: typeof p.accepted_job_types === "string" ? p.accepted_job_types : "",
+            minimum_job_size:
+              typeof minRaw === "number" && Number.isFinite(minRaw)
+                ? String(minRaw)
+                : typeof minRaw === "string"
+                  ? minRaw
+                  : "",
+            service_radius_miles:
+              typeof radRaw === "number" && Number.isFinite(radRaw)
+                ? String(radRaw)
+                : typeof radRaw === "string"
+                  ? radRaw
+                  : "",
+            use_account_service_radius: p.use_account_service_radius !== false,
+            availability: p.availability === "asap" ? "asap" : "flexible",
+            enable_auto_filter: p.enable_auto_filter === true,
+            use_ai_for_unclear: p.use_ai_for_unclear !== false,
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
     void loadCustomers()
   }, [loadCustomers])
 
@@ -449,7 +591,9 @@ export default function CustomersPage() {
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || ""
     const searchLower = search.toLowerCase().trim()
     const phoneFilter = filterPhone.trim()
-    return (!searchLower || name.includes(searchLower)) && (!phoneFilter || phone.includes(phoneFilter))
+    const urg = normalizeCommunicationUrgency(c.communication_urgency)
+    const urgOk = !filterUrgency.trim() || urg === filterUrgency
+    return (!searchLower || name.includes(searchLower)) && (!phoneFilter || phone.includes(phoneFilter)) && urgOk
   })
   const sorted = [...filtered].sort((a, b) => {
     let aVal = ""
@@ -466,6 +610,9 @@ export default function CustomersPage() {
     } else if (sortField === "last_update") {
       aVal = String(Date.parse(a.last_activity_at || a.updated_at || "") || 0)
       bVal = String(Date.parse(b.last_activity_at || b.updated_at || "") || 0)
+    } else if (sortField === "urgency") {
+      aVal = String(urgencyRank(normalizeCommunicationUrgency(a.communication_urgency))).padStart(3, "0")
+      bVal = String(urgencyRank(normalizeCommunicationUrgency(b.communication_urgency))).padStart(3, "0")
     } else {
       aVal = (a.customer_identifiers?.find((i) => i.type === "phone")?.value || "").toLowerCase()
       bVal = (b.customer_identifiers?.find((i) => i.type === "phone")?.value || "").toLowerCase()
@@ -527,11 +674,20 @@ export default function CustomersPage() {
         service_lng: Number.isFinite(lngN) ? lngN : null,
         best_contact_method: detailForm.bestContact.trim() || null,
         job_pipeline_status: detailForm.jobStatus.trim() || null,
+        communication_urgency: detailForm.urgency,
         last_activity_at: nowIso,
       }
       let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", cid)
+      if (custErr && String(custErr.message || "").toLowerCase().match(/communication_urgency/)) {
+        const { communication_urgency: _co, ...restNoU } = custPatch
+        const rTry = await supabase.from("customers").update(restNoU).eq("id", cid)
+        custErr = rTry.error
+        if (!custErr) {
+          setLoadError((prev) => prev || "Saved without urgency — run supabase/customers-communication-urgency.sql.")
+        }
+      }
       if (custErr && String(custErr.message || "").toLowerCase().match(/service_|best_contact|job_pipeline|last_activity/)) {
-        const { best_contact_method: _bc, job_pipeline_status: _js, last_activity_at: _la, ...rest } = custPatch
+        const { best_contact_method: _bc, job_pipeline_status: _js, last_activity_at: _la, communication_urgency: _cu, ...rest } = custPatch
         const r = await supabase.from("customers").update(rest).eq("id", cid)
         custErr = r.error
         if (!custErr) {
@@ -578,6 +734,7 @@ export default function CustomersPage() {
         service_lng,
         best_contact_method,
         job_pipeline_status,
+        communication_urgency,
         last_activity_at,
         customer_identifiers ( type, value )
       `
@@ -698,7 +855,7 @@ export default function CustomersPage() {
       const tried = await supabase
         .from("customers")
         .select(
-          `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, last_activity_at, customer_identifiers ( type, value )`,
+          `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, communication_urgency, last_activity_at, customer_identifiers ( type, value )`,
         )
         .eq("id", selectedCustomer.id)
         .maybeSingle()
@@ -707,6 +864,109 @@ export default function CustomersPage() {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
       setCompleteBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const fc = selectedCustomer?.fit_classification
+    setManualFitChoice(fc === "hot" || fc === "maybe" || fc === "bad" ? fc : "")
+  }, [selectedCustomer?.id, selectedCustomer?.fit_classification])
+
+  async function applyManualCustomerFit() {
+    if (!supabase || !userId || !selectedCustomer?.id || !manualFitChoice) return
+    setFitOverrideBusy(true)
+    try {
+      const now = new Date().toISOString()
+      const { error: uErr } = await supabase
+        .from("customers")
+        .update({
+          fit_classification: manualFitChoice,
+          fit_confidence: null,
+          fit_reason: "Updated manually from the Customers screen.",
+          fit_source: "manual",
+          fit_manually_overridden: true,
+          fit_evaluated_at: now,
+        })
+        .eq("id", selectedCustomer.id)
+        .eq("user_id", userId)
+      if (uErr) {
+        alert(uErr.message)
+        return
+      }
+      setSelectedCustomer((prev) =>
+        prev && prev.id === selectedCustomer.id
+          ? {
+              ...prev,
+              fit_classification: manualFitChoice,
+              fit_confidence: null,
+              fit_reason: "Updated manually from the Customers screen.",
+              fit_source: "manual",
+              fit_manually_overridden: true,
+              fit_evaluated_at: now,
+            }
+          : prev,
+      )
+      await loadCustomers()
+    } finally {
+      setFitOverrideBusy(false)
+    }
+  }
+
+  async function reRunCustomerFit() {
+    if (!supabase || !selectedCustomer?.id || !session) return
+    setFitReRunBusy(true)
+    try {
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=customer-evaluate-fit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+          body: platformToolsJsonBody({ customerId: selectedCustomer.id, force: true }),
+        })
+      let res = await run(token)
+      if (res.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) res = await run(t2)
+      }
+      const raw = await res.text()
+      if (!res.ok) {
+        alert(formatFetchApiError(res, raw))
+        return
+      }
+      try {
+        const j = JSON.parse(raw) as {
+          skipped?: boolean
+          classification?: string
+          confidence?: number
+          reason?: string
+          source?: string
+        }
+        if (!j.skipped && j.classification) {
+          const evaluatedAt = new Date().toISOString()
+          setSelectedCustomer((prev) =>
+            prev && prev.id === selectedCustomer.id
+              ? {
+                  ...prev,
+                  fit_classification: j.classification ?? prev.fit_classification,
+                  fit_confidence: typeof j.confidence === "number" ? j.confidence : prev.fit_confidence,
+                  fit_reason: typeof j.reason === "string" ? j.reason : prev.fit_reason,
+                  fit_source: typeof j.source === "string" ? j.source : prev.fit_source,
+                  fit_manually_overridden: false,
+                  fit_evaluated_at: evaluatedAt,
+                }
+              : prev,
+          )
+        }
+      } catch {
+        /* ignore parse */
+      }
+      await loadCustomers()
+    } finally {
+      setFitReRunBusy(false)
     }
   }
 
@@ -733,6 +993,127 @@ export default function CustomersPage() {
     }
   }
 
+  async function saveLeadFilterPreferences() {
+    if (!supabase || !userId) return
+    setLeadFilterSaveBusy(true)
+    try {
+      const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) {
+        alert(fetchErr.message)
+        return
+      }
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      const minN = Number.parseFloat(leadFilterPrefs.minimum_job_size.replace(/[^0-9.]/g, ""))
+      const radN = Number.parseFloat(leadFilterPrefs.service_radius_miles.replace(/[^0-9.]/g, ""))
+      prevMeta.lead_filter_preferences = {
+        v: 1,
+        accepted_job_types: leadFilterPrefs.accepted_job_types.slice(0, 4000),
+        minimum_job_size: Number.isFinite(minN) && minN >= 0 ? minN : null,
+        service_radius_miles: Number.isFinite(radN) && radN > 0 ? radN : null,
+        use_account_service_radius: leadFilterPrefs.use_account_service_radius,
+        availability: leadFilterPrefs.availability,
+        enable_auto_filter: leadFilterPrefs.enable_auto_filter,
+        use_ai_for_unclear: leadFilterPrefs.use_ai_for_unclear,
+      }
+      const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setShowLeadFilterPrefs(false)
+    } finally {
+      setLeadFilterSaveBusy(false)
+    }
+  }
+
+  async function patchCustomerUrgencyRow(c: CustomerRow, next: CommunicationUrgency) {
+    if (!supabase) return
+    const { error } = await supabase.from("customers").update({ communication_urgency: next }).eq("id", c.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    const bump = (rows: CustomerRow[]) =>
+      rows.map((x) => (x.id === c.id ? { ...x, communication_urgency: next } : x))
+    setActiveCustomers(bump)
+    setArchivedCustomers(bump)
+    if (selectedCustomer?.id === c.id) {
+      setSelectedCustomer({ ...c, communication_urgency: next })
+      setDetailForm((p) => ({ ...p, urgency: next }))
+    }
+  }
+
+  const fetchAiSummaryForTimelineItem = useCallback(
+    async (item: { kind: "msg" | "ev"; key: string; payload: any }) => {
+      if (!supabase || !selectedCustomer?.id) return
+      setAiSummaryBusy((m) => ({ ...m, [item.key]: true }))
+      try {
+        let token = await getFreshAccessToken(supabase, session)
+        const origin = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
+        const basePayload = { profileUserId: userId }
+        const body =
+          item.kind === "msg"
+            ? platformToolsJsonBody({
+                ...basePayload,
+                messageId: String(item.payload?.id ?? ""),
+                customerId: selectedCustomer.id,
+              })
+            : platformToolsJsonBody({
+                ...basePayload,
+                communicationEventId: String(item.payload?.id ?? ""),
+              })
+        let r = await fetch(`${origin}/api/platform-tools?__route=ai-summarize-customer-event`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body,
+        })
+        if (r.status === 401) {
+          const t2 = await forceRefreshAccessToken(supabase)
+          if (t2)
+            r = await fetch(`${origin}/api/platform-tools?__route=ai-summarize-customer-event`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${t2}`, "Content-Type": "application/json" },
+              body,
+            })
+        }
+        const raw = await r.text()
+        let msgErr = ""
+        if (!r.ok) {
+          try {
+            const j = JSON.parse(raw) as { error?: string; hint?: string }
+            const parts = [j.error, j.hint].filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+            msgErr = parts.length > 0 ? parts.join("\n\n") : raw.slice(0, 300)
+          } catch {
+            msgErr = raw.slice(0, 300)
+          }
+          alert(msgErr || `Request failed (${r.status})`)
+          return
+        }
+        try {
+          const j = JSON.parse(raw) as { summary?: string }
+          const sum = typeof j.summary === "string" ? j.summary.trim() : ""
+          if (sum) {
+            setAiSummaryByKey((prev) => ({ ...prev, [item.key]: sum }))
+          }
+        } catch {
+          alert("Could not read summary.")
+        }
+      } finally {
+        setAiSummaryBusy((m) => ({ ...m, [item.key]: false }))
+      }
+    },
+    [supabase, selectedCustomer?.id, session, userId],
+  )
+
+  useEffect(() => {
+    setTimelineExpanded({})
+    setAiSummaryByKey({})
+    setAiSummaryBusy({})
+  }, [selectedCustomer?.id])
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", minWidth: 0, position: "relative" }}>
       <div>
@@ -758,8 +1139,34 @@ export default function CustomersPage() {
         >
           {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
         </button>
+        <button
+          type="button"
+          onClick={() => setShowLeadFilterPrefs(true)}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "6px",
+            border: "1px solid #d1d5db",
+            background: "white",
+            cursor: "pointer",
+            color: theme.text,
+            fontWeight: 600,
+          }}
+        >
+          Lead filter preferences
+        </button>
         {userId ? <TabNotificationAlertsButton tab="customers" profileUserId={userId} /> : null}
       </div>
+
+      <LeadFilterPreferencesModal
+        open={showLeadFilterPrefs}
+        onClose={() => setShowLeadFilterPrefs(false)}
+        leadFilterPrefs={leadFilterPrefs}
+        setLeadFilterPrefs={setLeadFilterPrefs}
+        onSave={() => void saveLeadFilterPreferences()}
+        saveBusy={leadFilterSaveBusy}
+        aiAutomationsEnabled={aiAutomationsEnabled}
+        t={t}
+      />
 
       <ConversationAutoRepliesModal
         open={showAutoReplies}
@@ -849,6 +1256,26 @@ export default function CustomersPage() {
               onChange={(e) => setFilterPhone(e.target.value)}
               style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
             />
+            <select
+              value={filterUrgency}
+              onChange={(e) => setFilterUrgency(e.target.value)}
+              style={{
+                padding: "6px 10px",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                background: "white",
+                color: theme.text,
+                cursor: "pointer",
+                maxWidth: isMobile ? "100%" : 200,
+              }}
+            >
+              <option value="">All urgencies</option>
+              {communicationUrgencySelectOptions().map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
@@ -863,7 +1290,7 @@ export default function CustomersPage() {
               <option value="best_contact">Best contact</option>
               <option value="job_status">Job status</option>
               <option value="last_update">Last update</option>
-              <option value="phone">Phone</option>
+              <option value="urgency">Urgency</option>
             </select>
             <button
               type="button"
@@ -917,8 +1344,8 @@ export default function CustomersPage() {
               <th onClick={() => { setSortField("last_update"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>
                 Last update
               </th>
-              <th onClick={() => { setSortField("phone"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>
-                Phone
+              <th onClick={() => { setSortField("urgency"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>
+                Urgency
               </th>
             </tr>
           </thead>
@@ -931,7 +1358,6 @@ export default function CustomersPage() {
               </tr>
             ) : (
               sorted.map((c) => {
-                const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || "—"
                 const isRowSelected = selectedCustomer?.id === c.id
                 const cellBase = {
                   padding: "8px" as const,
@@ -956,8 +1382,30 @@ export default function CustomersPage() {
                         {c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]}
                       </td>
                       <td style={{ ...cellBase, fontSize: 13, color: isRowSelected ? selectedRowText : "#64748b" }}>{lastUpdateDisplay(c)}</td>
-                      <td style={{ ...cellBase, maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis" }} title={phone !== "—" ? phone : undefined}>
-                        {phone}
+                      <td style={{ ...cellBase, maxWidth: "220px" }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <CommunicationUrgencyBadge level={c.communication_urgency} brandLogoUrl={brandLogoUrl} />
+                          <select
+                            value={normalizeCommunicationUrgency(c.communication_urgency)}
+                            onChange={(e) => void patchCustomerUrgencyRow(c, e.target.value as CommunicationUrgency)}
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              border: `1px solid ${theme.border}`,
+                              fontSize: 12,
+                              maxWidth: 170,
+                              background: "#fff",
+                              cursor: "pointer",
+                              color: theme.text,
+                            }}
+                          >
+                            {communicationUrgencySelectOptions().map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </td>
                     </tr>
                     {isRowSelected ? (
@@ -1009,6 +1457,28 @@ export default function CustomersPage() {
 
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                {setPage ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      queueSchedulingCustomerPrefill(c.id)
+                                      queueCustomerFocus(c.id)
+                                      setPage("calendar")
+                                    }}
+                                    style={{
+                                      padding: "10px 16px",
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: theme.primary,
+                                      color: "white",
+                                      cursor: "pointer",
+                                      fontWeight: 600,
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    Add to calendar
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   disabled={completeBusy || !selectedCustomer}
@@ -1059,8 +1529,6 @@ export default function CustomersPage() {
                                 >
                                   {detailEditMode ? "Stop editing" : "Edit details"}
                                 </button>
-                              </div>
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1068,23 +1536,111 @@ export default function CustomersPage() {
                                     setNotesCustomerName(c.display_name ?? "")
                                   }}
                                   style={{
-                                    padding: "4px 10px",
-                                    fontSize: "12px",
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: "none",
                                     background: theme.primary,
                                     color: "white",
-                                    border: "none",
-                                    borderRadius: "6px",
                                     cursor: "pointer",
-                                    fontWeight: 600,
+                                    fontWeight: 700,
+                                    fontSize: 13,
                                   }}
                                 >
                                   Notes
                                 </button>
+                              </div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                 {(() => {
                                   const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
                                   return ph.trim() ? <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact /> : null
                                 })()}
                               </div>
+                            </div>
+
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                marginBottom: 12,
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead fit</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
+                                {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
+                                  <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                    Confidence: {Math.round(c.fit_confidence * 100)}%
+                                  </span>
+                                ) : null}
+                                {c.fit_source ? (
+                                  <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
+                                ) : null}
+                                {c.fit_manually_overridden ? (
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: "#7c3aed" }}>Manual override</span>
+                                ) : null}
+                              </div>
+                              {c.fit_reason ? (
+                                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
+                              ) : (
+                                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                                  No score yet. Turn on <strong>Enable auto filter</strong> in Lead Filter Preferences, or run a check
+                                  below.
+                                </p>
+                              )}
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                <select
+                                  value={manualFitChoice}
+                                  onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                                  style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
+                                >
+                                  <option value="">Set manually…</option>
+                                  <option value="hot">Hot</option>
+                                  <option value="maybe">Maybe</option>
+                                  <option value="bad">Bad</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={!manualFitChoice || fitOverrideBusy}
+                                  onClick={() => void applyManualCustomerFit()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    borderRadius: 6,
+                                    border: "none",
+                                    background: theme.primary,
+                                    color: "#fff",
+                                    cursor: fitOverrideBusy ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {fitOverrideBusy ? "Saving…" : "Apply"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
+                                  onClick={() => void reRunCustomerFit()}
+                                  style={{
+                                    padding: "6px 12px",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    borderRadius: 6,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                    color: theme.text,
+                                    cursor: fitReRunBusy ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                                </button>
+                              </div>
+                              {!aiAutomationsEnabled ? (
+                                <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8" }}>
+                                  Enable AI automations under Account to use auto scoring.
+                                </p>
+                              ) : null}
                             </div>
 
                             <div style={{ display: "grid", gap: 10, fontSize: 14, color: theme.text }}>
@@ -1139,6 +1695,28 @@ export default function CustomersPage() {
                                     </select>
                                   ) : (
                                     <div style={{ marginTop: 2 }}>{c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]}</div>
+                                  )}
+                                </div>
+                                <div>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Urgency</span>
+                                  {detailEditMode ? (
+                                    <select
+                                      value={detailForm.urgency}
+                                      onChange={(e) =>
+                                        setDetailForm((p) => ({ ...p, urgency: e.target.value as CommunicationUrgency }))
+                                      }
+                                      style={{ ...theme.formInput, marginTop: 4, maxWidth: 280 }}
+                                    >
+                                      {communicationUrgencySelectOptions().map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div style={{ marginTop: 6 }}>
+                                      <CommunicationUrgencyBadge level={c.communication_urgency} brandLogoUrl={brandLogoUrl} />
+                                    </div>
                                   )}
                                 </div>
                                 <div>
@@ -1254,105 +1832,109 @@ export default function CustomersPage() {
                                   <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Received</div>
                                   {customerActivityLoading ? (
                                     <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading messages…</p>
+                                  ) : customerActivityItems.length === 0 ? (
+                                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No communication activity logged yet.</p>
                                   ) : (
-                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-                                      <div
-                                        style={{
-                                          border: `1px solid ${theme.border}`,
-                                          borderRadius: 8,
-                                          padding: 10,
-                                          background: "#fff",
-                                          maxHeight: 200,
-                                          overflow: "auto",
-                                        }}
-                                      >
-                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Text messages</div>
-                                        {inboundSmsItems.length === 0 ? (
-                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No inbound texts yet.</p>
-                                        ) : (
-                                          inboundSmsItems.map((item) => (
-                                            <div key={item.key} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
-                                              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-                                                {item.payload?.created_at
-                                                  ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
-                                                  : ""}
-                                              </div>
-                                              <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>
-                                                {item.kind === "msg" ? item.payload?.content ?? "—" : item.payload?.body ?? "—"}
-                                              </p>
-                                            </div>
-                                          ))
-                                        )}
-                                      </div>
-                                      <div
-                                        style={{
-                                          border: `1px solid ${theme.border}`,
-                                          borderRadius: 8,
-                                          padding: 10,
-                                          background: "#fff",
-                                          maxHeight: 200,
-                                          overflow: "auto",
-                                        }}
-                                      >
-                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Email</div>
-                                        {inboundEmailItems.length === 0 ? (
-                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No inbound email logged yet.</p>
-                                        ) : (
-                                          inboundEmailItems.map((item) => {
-                                            const ev = item.payload
-                                            return (
-                                              <div key={item.key} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #f1f5f9" }}>
-                                                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-                                                  {ev?.created_at
-                                                    ? new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
-                                                    : ""}
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 440, overflow: "auto" }}>
+                                      {customerActivityItems.map((item) => {
+                                        const open = !!timelineExpanded[item.key]
+                                        const ev = item.kind === "ev" ? item.payload : null
+                                        const isVm = item.kind === "ev" && ev?.event_type === "voicemail"
+                                        const label =
+                                          item.kind === "msg"
+                                            ? item.payload?.sender === "customer"
+                                              ? "Inbound text"
+                                              : "Message"
+                                            : `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
+                                        return (
+                                          <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, background: "#fff" }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTimelineExpanded((m) => ({ ...m, [item.key]: !open }))}
+                                              style={{
+                                                width: "100%",
+                                                textAlign: "left",
+                                                border: "none",
+                                                background: "transparent",
+                                                cursor: "pointer",
+                                                padding: 0,
+                                                fontWeight: 700,
+                                                fontSize: 13,
+                                                color: "#0f172a",
+                                              }}
+                                            >
+                                              {label} ·{" "}
+                                              {item.payload?.created_at
+                                                ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                : ""}{" "}
+                                              <span style={{ color: "#64748b", fontWeight: 500 }}>{open ? "−" : "+"}</span>
+                                            </button>
+                                            {open ? (
+                                              <div style={{ marginTop: 10 }}>
+                                                {item.kind === "msg" ? (
+                                                  <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>
+                                                    {item.payload?.content ?? "—"}
+                                                  </p>
+                                                ) : isVm && ev ? (
+                                                  <>
+                                                    <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
+                                                    <VoicemailTranscriptBlock
+                                                      ev={ev}
+                                                      profileVoicemailDisplay={voicemailProfileDisplay}
+                                                      conversationPortalValues={conversationPortalDefaults}
+                                                    />
+                                                    {ev?.body ? (
+                                                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                                    ) : null}
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    {ev?.subject?.trim() ? (
+                                                      <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
+                                                    ) : null}
+                                                    <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
+                                                  </>
+                                                )}
+                                                <div style={{ marginTop: 12 }}>
+                                                  <button
+                                                    type="button"
+                                                    disabled={!!aiSummaryBusy[item.key]}
+                                                    onClick={() => void fetchAiSummaryForTimelineItem(item)}
+                                                    style={{
+                                                      padding: "6px 12px",
+                                                      borderRadius: 6,
+                                                      border: `1px solid ${theme.border}`,
+                                                      background: "#f8fafc",
+                                                      fontSize: 12,
+                                                      fontWeight: 600,
+                                                      cursor: aiSummaryBusy[item.key] ? "wait" : "pointer",
+                                                      color: "#0f172a",
+                                                    }}
+                                                  >
+                                                    {aiSummaryBusy[item.key] ? "Working…" : "Provide AI summary of job"}
+                                                  </button>
+                                                  {aiSummaryByKey[item.key] ? (
+                                                    <div
+                                                      style={{
+                                                        marginTop: 8,
+                                                        padding: 10,
+                                                        borderRadius: 8,
+                                                        background: "#f1f5f9",
+                                                        fontSize: 13,
+                                                        color: "#0f172a",
+                                                        lineHeight: 1.5,
+                                                        whiteSpace: "pre-wrap",
+                                                      }}
+                                                    >
+                                                      {aiSummaryByKey[item.key]}
+                                                    </div>
+                                                  ) : null}
                                                 </div>
-                                                {ev?.subject?.trim() ? (
-                                                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
-                                                ) : null}
-                                                <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
                                               </div>
-                                            )
-                                          })
-                                        )}
-                                      </div>
-                                      <div
-                                        style={{
-                                          border: `1px solid ${theme.border}`,
-                                          borderRadius: 8,
-                                          padding: 10,
-                                          background: "#fff",
-                                          maxHeight: 220,
-                                          overflow: "auto",
-                                        }}
-                                      >
-                                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>Voicemails</div>
-                                        {voicemailItems.length === 0 ? (
-                                          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No voicemails yet.</p>
-                                        ) : (
-                                          voicemailItems.map((item) => {
-                                            const ev = item.payload
-                                            return (
-                                              <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f1f5f9" }}>
-                                                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
-                                                  {ev?.created_at
-                                                    ? new Date(ev.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
-                                                    : ""}
-                                                </div>
-                                                <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
-                                                <VoicemailTranscriptBlock
-                                                  ev={ev}
-                                                  profileVoicemailDisplay={voicemailProfileDisplay}
-                                                  conversationPortalValues={conversationPortalDefaults}
-                                                />
-                                                {ev?.body ? (
-                                                  <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
-                                                ) : null}
-                                              </div>
-                                            )
-                                          })
-                                        )}
-                                      </div>
+                                            ) : null}
+                                          </div>
+                                        )
+                                      })}
                                     </div>
                                   )}
 
@@ -1421,6 +2003,66 @@ export default function CustomersPage() {
                                       {customerEmailSending ? "Sending…" : "Send email"}
                                     </button>
                                   </div>
+
+                                  {setPage ? (
+                                    <div
+                                      style={{
+                                        marginTop: 14,
+                                        paddingTop: 14,
+                                        borderTop: `1px solid ${theme.border}`,
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 10,
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling &amp; estimates</div>
+                                      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                        Open Scheduling with this customer prefilled, or start an estimate draft linked to this customer.
+                                      </p>
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            queueSchedulingCustomerPrefill(c.id)
+                                            queueCustomerFocus(c.id)
+                                            setPage("calendar")
+                                          }}
+                                          style={{
+                                            padding: "8px 14px",
+                                            borderRadius: 6,
+                                            border: "none",
+                                            background: theme.primary,
+                                            color: "#fff",
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          Scheduling
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            queueQuotesCustomerPrefill(c.id)
+                                            queueCustomerFocus(c.id)
+                                            setPage("quotes")
+                                          }}
+                                          style={{
+                                            padding: "8px 14px",
+                                            borderRadius: 6,
+                                            border: `1px solid ${theme.border}`,
+                                            background: "#fff",
+                                            color: theme.text,
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          Estimate
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             </div>

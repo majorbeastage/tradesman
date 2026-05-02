@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
+import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
+import { useLocale } from "../../i18n/LocaleContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
@@ -110,6 +112,7 @@ function req(cfg: SignupRequirementsValue, field: keyof SignupRequirementsValue[
 }
 
 export default function SignupPage({ onBack, initialProductPackage }: Props) {
+  const { t } = useLocale()
   const [signupCfg, setSignupCfg] = useState<SignupRequirementsValue>({
     ...DEFAULT_SIGNUP_REQUIREMENTS,
     fields: { ...DEFAULT_SIGNUP_REQUIREMENTS.fields },
@@ -541,14 +544,44 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             Login email <span style={{ color: "#b91c1c" }}>*</span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} autoComplete="email" />
           </label>
-          <label style={labelStyle}>
-            Password <span style={{ color: "#b91c1c" }}>*</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} style={inputStyle} autoComplete="new-password" />
-          </label>
-          <label style={labelStyle}>
-            Confirm password <span style={{ color: "#b91c1c" }}>*</span>
-            <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} required minLength={6} style={inputStyle} autoComplete="new-password" />
-          </label>
+          <PasswordFieldWithReveal
+            label={
+              <>
+                Password <span style={{ color: "#b91c1c" }}>*</span>
+              </>
+            }
+            value={password}
+            onChange={setPassword}
+            autoComplete="new-password"
+            revealLabelShow={t("login.showPassword")}
+            revealLabelHide={t("login.hidePassword")}
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            wrapMarginBottom={0}
+            innerGapTop={6}
+            name="new-password"
+            required
+            minLength={6}
+          />
+          <PasswordFieldWithReveal
+            label={
+              <>
+                Confirm password <span style={{ color: "#b91c1c" }}>*</span>
+              </>
+            }
+            value={password2}
+            onChange={setPassword2}
+            autoComplete="new-password"
+            revealLabelShow={t("login.showPassword")}
+            revealLabelHide={t("login.hidePassword")}
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            wrapMarginBottom={0}
+            innerGapTop={6}
+            name="confirm-password"
+            required
+            minLength={6}
+          />
           <label style={labelStyle}>
             Business / display name {mark("display_name")}
             <input

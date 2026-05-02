@@ -11,10 +11,44 @@ import {
   TextRun,
   WidthType,
 } from "docx"
-import type { QuotePdfLineItem } from "./documentPdf"
+import { fetchImageBytesForQuotePdf, type QuotePdfCustomerCopyAttachment, type QuotePdfLineItem } from "./documentPdf"
 
 function money(n: number): string {
   return `$${n.toFixed(2)}`
+}
+
+/** Split plain text into visual lines (~Word column width) so long strings don’t run off the page. */
+function plainTextToWrappedLines(text: string, maxCharsPerLine = 90): string[] {
+  const out: string[] = []
+  for (const block of text.split(/\n+/)) {
+    const t = block.trim()
+    if (!t) continue
+    const words = t.split(/\s+/).filter(Boolean)
+    let line = ""
+    const flush = () => {
+      if (line) {
+        out.push(line)
+        line = ""
+      }
+    }
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w
+      if (next.length <= maxCharsPerLine) {
+        line = next
+        continue
+      }
+      flush()
+      if (w.length <= maxCharsPerLine) {
+        line = w
+        continue
+      }
+      for (let i = 0; i < w.length; i += maxCharsPerLine) {
+        out.push(w.slice(i, i + maxCharsPerLine))
+      }
+    }
+    flush()
+  }
+  return out
 }
 
 function readPngDimensions(bytes: Uint8Array): { w: number; h: number } | null {
@@ -48,6 +82,7 @@ export async function buildQuoteDocxBlob(params: {
   title: string
   businessLabel: string
   customerName: string
+  customerLastName?: string | null
   items: QuotePdfLineItem[]
   templateHeader?: string | null
   templateFooter?: string | null
@@ -59,6 +94,7 @@ export async function buildQuoteDocxBlob(params: {
     cancellation?: string | null
     showSignatures: boolean
   } | null
+  customerCopyAttachments?: QuotePdfCustomerCopyAttachment[]
 }): Promise<Blob> {
   const includeDate = params.includePreparedDate !== false
   const showNums = params.showLineNumbers === true
@@ -100,6 +136,16 @@ export async function buildQuoteDocxBlob(params: {
       children: [new TextRun({ text: `Customer: ${(params.customerName || "Customer").slice(0, 200)}`, size: 22 })],
     }),
   )
+
+  const ln = params.customerLastName?.trim()
+  if (ln) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 80 },
+        children: [new TextRun({ text: `Customer last name (search): ${ln.slice(0, 120)}`, size: 20, color: "444444" })],
+      }),
+    )
+  }
 
   children.push(
     new Paragraph({
@@ -222,13 +268,93 @@ export async function buildQuoteDocxBlob(params: {
   if (params.templateFooter?.trim()) {
     for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 24)) {
       const t = para.trim()
-      if (t)
+      if (t) {
+        for (const line of plainTextToWrappedLines(t.slice(0, 8000))) {
+          children.push(
+            new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: line.slice(0, 2000), size: 20, color: "444444" })],
+            }),
+          )
+        }
+      }
+    }
+  }
+
+  const copyAtts = params.customerCopyAttachments?.filter((a) => a.publicUrl?.trim()) ?? []
+  if (copyAtts.length > 0) {
+    children.push(
+      new Paragraph({
+        spacing: { before: 240, after: 120 },
+        children: [new TextRun({ text: "Photos & files (customer copy)", bold: true, size: 24 })],
+      }),
+    )
+    for (const att of copyAtts.slice(0, 15)) {
+      if (att.description.trim()) {
+        for (const line of plainTextToWrappedLines(att.description.trim().slice(0, 8000))) {
+          children.push(
+            new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: line.slice(0, 2000), size: 20, color: "333333" })],
+            }),
+          )
+        }
+      }
+      const fetched = await fetchImageBytesForQuotePdf(att.publicUrl.trim())
+      if (fetched) {
+        const docxType = fetched.kind === "png" ? "png" : "jpg"
+        const maxW = 420
+        const maxH = 280
+        let w = maxW
+        let h = maxH
+        try {
+          if (fetched.kind === "png") {
+            const dim = readPngDimensions(fetched.bytes)
+            if (dim) {
+              const sc = Math.min(maxW / dim.w, maxH / dim.h, 1)
+              w = Math.round(dim.w * sc)
+              h = Math.round(dim.h * sc)
+            }
+          } else {
+            w = maxW
+            h = Math.min(200, maxH)
+          }
+          children.push(
+            new Paragraph({
+              spacing: { after: 160 },
+              children: [
+                new ImageRun({
+                  type: docxType,
+                  data: fetched.bytes,
+                  transformation: { width: w, height: h },
+                }),
+              ],
+            }),
+          )
+        } catch {
+          children.push(
+            new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: (att.fileName || "Image") + " (could not embed)", size: 20, color: "666666" })],
+            }),
+          )
+        }
+      } else {
         children.push(
           new Paragraph({
-            spacing: { after: 100 },
-            children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "444444" })],
+            spacing: { after: 80 },
+            children: [new TextRun({ text: (att.fileName || "Attachment").slice(0, 500), size: 20, color: "333333" })],
           }),
         )
+        if (att.publicUrl.trim().startsWith("https://")) {
+          children.push(
+            new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: att.publicUrl.trim().slice(0, 500), size: 18, color: "666666" })],
+            }),
+          )
+        }
+      }
     }
   }
 
@@ -241,24 +367,30 @@ export async function buildQuoteDocxBlob(params: {
     )
     for (const para of params.legal.body.trim().split(/\n+/).slice(0, 28)) {
       const t = para.trim()
-      if (t)
-        children.push(
-          new Paragraph({
-            spacing: { after: 100 },
-            children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "333333" })],
-          }),
-        )
+      if (t) {
+        for (const line of plainTextToWrappedLines(t.slice(0, 8000))) {
+          children.push(
+            new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: line.slice(0, 2000), size: 20, color: "333333" })],
+            }),
+          )
+        }
+      }
     }
     if (params.legal.cancellation?.trim()) {
       for (const para of params.legal.cancellation.trim().split(/\n+/).slice(0, 10)) {
         const t = para.trim()
-        if (t)
-          children.push(
-            new Paragraph({
-              spacing: { after: 100 },
-              children: [new TextRun({ text: t.slice(0, 2000), size: 20, color: "333333" })],
-            }),
-          )
+        if (t) {
+          for (const line of plainTextToWrappedLines(t.slice(0, 8000))) {
+            children.push(
+              new Paragraph({
+                spacing: { after: 80 },
+                children: [new TextRun({ text: line.slice(0, 2000), size: 20, color: "333333" })],
+              }),
+            )
+          }
+        }
       }
     }
     if (params.legal.showSignatures) {

@@ -1,7 +1,5 @@
 /** Map a Conversations automatic-replies field id to its Quotes counterpart. */
 export function mapConvAutoReplyKeyToQuote(convKey: string): string | null {
-  if (convKey === "conv_auto_quote_when_qualified") return "quote_auto_notify_when_qualified"
-  if (convKey === "conv_auto_ai_infer_status") return null
   if (!convKey.startsWith("conv_auto_")) return null
   return `quote_auto_${convKey.slice("conv_auto_".length)}`
 }
@@ -20,7 +18,6 @@ const CLEAR_TEXT_ON_CARRY_TO_QUOTES = new Set([
  */
 /** Map a Quotes automatic-replies field id to its Conversations counterpart. */
 export function mapQuoteAutoReplyKeyToConv(qKey: string): string | null {
-  if (qKey === "quote_auto_notify_when_qualified") return "conv_auto_quote_when_qualified"
   if (!qKey.startsWith("quote_auto_")) return null
   return `conv_auto_${qKey.slice("quote_auto_".length)}`
 }
@@ -37,11 +34,6 @@ export function carryQuoteToConversationValues(
     const cKey = mapQuoteAutoReplyKeyToConv(qKey)
     if (cKey && convItemIds.has(cKey)) out[cKey] = val
   }
-  if (convItemIds.has("conv_auto_ai_infer_status")) {
-    const crit = String(quoteVals.quote_auto_qualified_criteria ?? "").trim().toLowerCase()
-    if (crit.includes("ai")) out.conv_auto_ai_infer_status = "checked"
-    else out.conv_auto_ai_infer_status = "unchecked"
-  }
   return out
 }
 
@@ -53,10 +45,6 @@ export function carryConversationAutoRepliesToQuoteValues(
   for (const [cKey, val] of Object.entries(convVals)) {
     const qKey = mapConvAutoReplyKeyToQuote(cKey)
     if (qKey && quoteItemIds.has(qKey)) out[qKey] = val
-  }
-  if (quoteItemIds.has("quote_auto_qualified_criteria")) {
-    if (convVals.conv_auto_ai_infer_status === "checked") out.quote_auto_qualified_criteria = "AI decision"
-    else out.quote_auto_qualified_criteria = "Signed quote attachment returned"
   }
   if (quoteItemIds.has("quote_auto_reply_ai_require_approval")) {
     out.quote_auto_reply_ai_require_approval = "checked"

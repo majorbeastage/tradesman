@@ -1449,6 +1449,58 @@ function AdminAppInner() {
             {error && <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>}
             </AdminSettingBlock>
 
+            <AdminSettingBlock id="admin:portal:legacy_flags">
+              <h2 style={{ fontSize: 16, margin: "0 0 12px", color: theme.text }}>Legacy portal options</h2>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: theme.text, opacity: 0.85, maxWidth: 640 }}>
+                Defaults match the current product. Turn these on only for rollback or internal testing.
+              </p>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                  marginBottom: 12,
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontSize: 14,
+                  lineHeight: 1.45,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 3 }}
+                  checked={config.show_legacy_contractor_leads_conversations === true}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      show_legacy_contractor_leads_conversations: e.target.checked ? true : false,
+                    })
+                  }
+                />
+                <span>
+                  Show <strong>Leads</strong> and <strong>Conversations</strong> in the sidebar (contractor and office manager portals)
+                </span>
+              </label>
+              <label
+                style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", color: theme.text, fontSize: 14, lineHeight: 1.45 }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 3 }}
+                  checked={config.office_manager_show_working_as_bar === true}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      office_manager_show_working_as_bar: e.target.checked ? true : false,
+                    })
+                  }
+                />
+                <span>
+                  Office manager portal: show the top <strong>Working as</strong> scoped-user bar
+                </span>
+              </label>
+            </AdminSettingBlock>
+
             <AdminPortalAssistant
               previewPage={previewPage}
               selectedControl={selectedControl?.tab === previewPage ? selectedControl : null}

@@ -3,6 +3,8 @@
  * `profiles.metadata.om_calendar_policy` (JSON). OM edits in Team Management and saves per user.
  */
 export type OmCalendarPolicyV1 = {
+  /** When false or omitted for OM-managed users, the Estimate / Quotes tool stays locked until the office manager enables it. */
+  allow_estimates_tool?: boolean
   allow_add_to_calendar?: boolean
   /** Legacy + current flag for advanced scheduling options. */
   scheduling_tools?: boolean
@@ -57,6 +59,7 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     }
   }
   return {
+    allow_estimates_tool: o.allow_estimates_tool === true,
     allow_add_to_calendar: o.allow_add_to_calendar === false ? false : true,
     scheduling_tools: advancedScheduling,
     advanced_scheduling_tools: advancedScheduling,

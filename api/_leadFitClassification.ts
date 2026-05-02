@@ -359,3 +359,169 @@ async function persistFit(
     nextFit: result.classification,
   }).catch((e) => console.warn("[leadFit] qualified convo side effect", e instanceof Error ? e.message : e))
 }
+
+async function persistCustomerFit(
+  supabase: SupabaseClient,
+  customerId: string,
+  result: EvaluateLeadFitResult,
+): Promise<void> {
+  const evaluatedAt = new Date().toISOString()
+  const up: Record<string, unknown> = {
+    fit_classification: result.classification,
+    fit_confidence: result.confidence,
+    fit_reason: result.reason.slice(0, 2000),
+    fit_source: result.source,
+    fit_manually_overridden: false,
+    fit_evaluated_at: evaluatedAt,
+  }
+  const { error: upErr } = await supabase.from("customers").update(up).eq("id", customerId)
+  if (upErr) {
+    console.error("[customerFit] update customer failed (run supabase/customers-lead-fit.sql?)", upErr.message)
+  }
+}
+
+/**
+ * Same rules engine as leads, using customer display + site + pipeline fields as corpus.
+ */
+export async function evaluateAndPersistCustomerFit(
+  supabase: SupabaseClient,
+  customerId: string,
+  opts?: { force?: boolean },
+): Promise<EvaluateLeadFitResult | null> {
+  const { data: row, error: rowErr } = await supabase
+    .from("customers")
+    .select(
+      "id, user_id, display_name, service_address, job_pipeline_status, communication_urgency, fit_manually_overridden, fit_evaluated_at, fit_classification",
+    )
+    .eq("id", customerId)
+    .maybeSingle()
+  if (rowErr || !row) {
+    console.warn("[customerFit] load customer", rowErr?.message)
+    return null
+  }
+  const cust = row as {
+    id: string
+    user_id: string
+    display_name?: string | null
+    service_address?: string | null
+    job_pipeline_status?: string | null
+    communication_urgency?: string | null
+    fit_manually_overridden?: boolean | null
+    fit_evaluated_at?: string | null
+    fit_classification?: string | null
+  }
+  const prevFitForPersist = cust.fit_classification ?? null
+  const force = opts?.force === true
+  if (!force && cust.fit_manually_overridden) return null
+  if (!force && cust.fit_evaluated_at) return null
+
+  const { data: prof, error: profErr } = await supabase
+    .from("profiles")
+    .select("metadata, service_radius_enabled, service_radius_miles, ai_assistant_visible")
+    .eq("id", cust.user_id)
+    .maybeSingle()
+  if (profErr || !prof) {
+    console.warn("[customerFit] profile", profErr?.message)
+    return null
+  }
+  const prefs = parseLeadFilterPreferences((prof as { metadata?: unknown }).metadata)
+  if (!prefs.enable_auto_filter && !force) return null
+
+  const aiVisible = (prof as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false
+
+  const corpusRaw = `${cust.display_name ?? ""}\n${cust.service_address ?? ""}\n${cust.job_pipeline_status ?? ""}\n${cust.communication_urgency ?? ""}`
+  let corpus = corpusRaw.toLowerCase()
+  const accepted = tokenizeJobTypes(prefs.accepted_job_types)
+  const minSize = prefs.minimum_job_size
+  const extracted = extractMaxDollars(corpusRaw)
+  const effectiveValue = extracted
+
+  let source: EvaluateLeadFitResult["source"] = "rules"
+  let aiSignals: AiSignals | null = null
+
+  const ambiguousJob = accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)
+  const ambiguousBudget = minSize != null && effectiveValue == null
+
+  if (prefs.use_ai_for_unclear && aiVisible && (ambiguousJob || ambiguousBudget || corpus.trim().length < 24)) {
+    aiSignals = await interpretWithAi(corpusRaw, prefs)
+    if (aiSignals) {
+      source = "hybrid"
+      corpus = mergeHintsIntoCorpus(corpus, aiSignals).toLowerCase()
+    }
+  }
+
+  if (accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)) {
+    const result: EvaluateLeadFitResult = {
+      classification: "bad",
+      confidence: aiSignals ? 0.78 : 0.88,
+      reason: "Job type does not match the types you said you accept.",
+      source,
+    }
+    await persistCustomerFit(supabase, customerId, result)
+    return result
+  }
+
+  if (minSize != null && effectiveValue != null && effectiveValue < minSize) {
+    const result: EvaluateLeadFitResult = {
+      classification: "bad",
+      confidence: 0.85,
+      reason: `Stated or estimated job size ($${Math.round(effectiveValue)}) is below your minimum ($${Math.round(minSize)}).`,
+      source: "rules",
+    }
+    await persistCustomerFit(supabase, customerId, result)
+    return result
+  }
+
+  if (
+    aiSignals?.budgetSignal === "low" &&
+    minSize != null &&
+    effectiveValue == null &&
+    accepted.length > 0 &&
+    corpusMatchesAnyJobType(corpus, accepted)
+  ) {
+    const result: EvaluateLeadFitResult = {
+      classification: "maybe",
+      confidence: 0.55,
+      reason: "Budget is unclear; AI suggests a smaller job — follow up before deprioritizing.",
+      source: "hybrid",
+    }
+    await persistCustomerFit(supabase, customerId, result)
+    return result
+  }
+
+  const urgent = URGENT_RE.test(corpusRaw) || aiSignals?.urgency === "asap"
+  const typeOk = accepted.length === 0 || corpusMatchesAnyJobType(corpus, accepted)
+  const budgetOk = minSize == null || effectiveValue == null || effectiveValue >= minSize
+
+  if (typeOk && budgetOk) {
+    if (prefs.availability === "asap" && !urgent) {
+      const result: EvaluateLeadFitResult = {
+        classification: "maybe",
+        confidence: 0.5,
+        reason: "You prefer ASAP jobs; timing for this customer is unclear — worth a quick call.",
+        source: aiSignals ? "hybrid" : "rules",
+      }
+      await persistCustomerFit(supabase, customerId, result)
+      return result
+    }
+    const result: EvaluateLeadFitResult = {
+      classification: "hot",
+      confidence: urgent ? 0.74 : 0.62,
+      reason: urgent
+        ? "Strong fit: urgency matches a priority lead."
+        : "Matches your filters; follow up to confirm scope and schedule.",
+      source: aiSignals ? "hybrid" : "rules",
+    }
+    await persistCustomerFit(supabase, customerId, result)
+    return result
+  }
+
+  const result: EvaluateLeadFitResult = {
+    classification: "maybe",
+    confidence: 0.45,
+    reason: "Not enough detail to confirm fit — kept for manual review.",
+    source: aiSignals ? "hybrid" : "rules",
+  }
+  await persistCustomerFit(supabase, customerId, result)
+  return result
+}

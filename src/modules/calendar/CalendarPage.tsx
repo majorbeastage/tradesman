@@ -40,9 +40,11 @@ import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerFocus } from "../../lib/customerNavigation"
+import { consumeCalendarSuiteNavigation, consumeSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
+  isProbablyImageAttachment,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
@@ -291,6 +293,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
   const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
   const managedByOfficeManager = useManagedByOfficeManager()
+
+  useEffect(() => {
+    const next = consumeCalendarSuiteNavigation()
+    if (next) setCalendarSuite(next)
+  }, [])
   const [managedSelfPolicy, setManagedSelfPolicy] = useState(() => parseOmCalendarPolicy({}))
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
@@ -1788,6 +1795,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddCustomerId(null)
     setAddMileage("")
   }
+
+  useEffect(() => {
+    const cid = consumeSchedulingCustomerPrefill()
+    if (!cid || !userId) return
+    resetAddForm()
+    setAddCustomerId(cid)
+    setShowAddItem(true)
+    setAddTargetUserId(userId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
+  }, [userId])
 
   async function saveJobType() {
     if (!jtName.trim()) {
@@ -3734,30 +3751,59 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 <span style={{ fontSize: 11, color: "#6b7280", display: "block", marginTop: 4 }}>Uploading…</span>
               ) : null}
               {calendarEventEntityRows.length > 0 ? (
-                <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 13, color: theme.text }}>
-                  {calendarEventEntityRows.map((row) => (
-                    <li key={row.id} style={{ marginBottom: 4 }}>
-                      <a href={row.public_url} target="_blank" rel="noopener noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
-                        {row.file_name || "File"}
-                      </a>
-                      {" · "}
-                      <button
-                        type="button"
-                        onClick={() => void removeCalendarEntityRowLocal(row)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "#b91c1c",
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                          padding: 0,
-                          fontSize: 12,
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
+                <ul style={{ margin: "8px 0 0", paddingLeft: 0, listStyle: "none", fontSize: 13, color: theme.text }}>
+                  {calendarEventEntityRows.map((row) => {
+                    const showThumb = isProbablyImageAttachment(row.content_type, row.public_url, row.file_name)
+                    return (
+                      <li key={row.id} style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <a
+                          href={row.public_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={row.file_name || undefined}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            color: theme.primary,
+                            fontWeight: 600,
+                            textDecoration: "none",
+                          }}
+                        >
+                          {showThumb ? (
+                            <img
+                              src={row.public_url}
+                              alt={row.file_name || "Attachment"}
+                              style={{
+                                width: 48,
+                                height: 48,
+                                objectFit: "cover",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                display: "block",
+                              }}
+                            />
+                          ) : (
+                            row.file_name || "File"
+                          )}
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => void removeCalendarEntityRowLocal(row)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#b91c1c",
+                            cursor: "pointer",
+                            textDecoration: "underline",
+                            padding: 0,
+                            fontSize: 12,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    )
+                  })}
                 </ul>
               ) : (
                 <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>No files attached to this event yet.</p>

@@ -51,9 +51,9 @@ export const USER_PORTAL_TAB_IDS = [
   'dashboard',
   'leads',
   'conversations',
+  'customers',
   'quotes',
   'calendar',
-  'customers',
   'payments',
   'account',
   'web-support',
@@ -65,9 +65,9 @@ export const OFFICE_PORTAL_TAB_IDS = [
   'dashboard',
   'leads',
   'conversations',
+  'customers',
   'quotes',
   'calendar',
-  'customers',
   'payments',
   'account',
   'web-support',
@@ -78,10 +78,11 @@ export const TAB_ID_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
   leads: 'Leads',
   conversations: 'Conversations',
-  quotes: 'Quotes',
+  quotes: 'Estimates Tool',
   calendar: 'Scheduling',
   customers: 'Customers',
   payments: 'Payments',
+  'insurance-options': "Insurance Options — Coming Soon",
   account: 'Account',
   'web-support': 'Web Support',
   'tech-support': 'Tech Support',
@@ -185,6 +186,16 @@ export type PortalConfig = {
   sidebarTabOrder?: string[]
   /** Account (My T) section rows order in admin builder + user-facing block order when present. */
   accountSectionOrder?: string[]
+  /**
+   * When true, contractor portals (user + office manager) show legacy **Leads** and **Conversations** sidebar tabs.
+   * Default omitted or false: those tabs stay hidden (admin can re-enable for rollback/testing).
+   */
+  show_legacy_contractor_leads_conversations?: boolean
+  /**
+   * Office manager portal: show the top **Working as** scoped-user bar.
+   * Default omitted or false: hidden (legacy; enable from Admin portal if needed).
+   */
+  office_manager_show_working_as_bar?: boolean
 }
 
 /** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
@@ -353,7 +364,6 @@ export const PORTAL_ITEM_IDS_HIDDEN_WHEN_AI_DISABLED = new Set([
   "conv_auto_reply_ai_require_approval",
   "conv_auto_phone_tts_script",
   "conv_auto_phone_tts_require_approval",
-  "conv_auto_ai_infer_status",
   "ar_use_ai_customer_message",
   "ar_use_ai_customer_message_require_approval",
   "ar_customer_reminder_use_ai",
@@ -976,12 +986,6 @@ export const DEFAULT_QUOTE_JOB_TYPES_ITEMS: PortalSettingItem[] = [
 /** Estimate export template (Quotes tab). Notes → profiles.document_template_quote; other options → profiles.metadata */
 export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
-    id: "estimate_template_output_format",
-    type: "dropdown",
-    label: "Download format",
-    options: ["PDF", "Microsoft Word (.docx)"],
-  },
-  {
     id: "estimate_template_notes",
     type: "custom_field",
     label: "Intro / header text (plain text, below the title — both PDF and Word)",
@@ -1003,13 +1007,13 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     id: "estimate_template_show_line_numbers",
     type: "checkbox",
     label: "Number line items (1, 2, 3…)",
-    defaultChecked: false,
+    defaultChecked: true,
   },
   {
     id: "estimate_template_show_logo",
     type: "checkbox",
-    label: "Show company logo at the top of PDF and Word exports",
-    defaultChecked: false,
+    label: "Show company logo at the top of PDF and Word exports (when a logo URL is set)",
+    defaultChecked: true,
   },
   {
     id: "estimate_template_logo_url",
@@ -1020,7 +1024,7 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "estimate_template_include_legal",
     type: "checkbox",
-    label: "Include legal terms and signature block (lite acknowledgment — not a substitute for attorney review)",
+    label: "Include legal terms (lite acknowledgment — not a substitute for attorney review)",
     defaultChecked: false,
   },
   {
@@ -1042,12 +1046,11 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     type: "checkbox",
     label: "Include signature and date lines on the document",
     defaultChecked: true,
-    dependency: { dependsOnItemId: "estimate_template_include_legal", showWhenValue: "checked" },
   },
   {
     id: "estimate_template_use_ai",
     type: "checkbox",
-    label: "Use AI assistant to help refine estimate wording (when AI is enabled for your account)",
+    label: "Use AI assistant to help refine estimate wording",
     defaultChecked: false,
   },
 ]
@@ -1453,20 +1456,6 @@ export const DEFAULT_CONVERSATION_AUTOMATIC_REPLIES_ITEMS: PortalSettingItem[] =
       { dependsOnItemId: "conv_auto_phone_allow_automation", showWhenValue: "checked" },
       { dependsOnItemId: "conv_auto_phone_delivery", showWhenValue: CONV_AUTO_PHONE_TTS_OPTION },
     ],
-  },
-  {
-    id: "conv_auto_quote_when_qualified",
-    type: "checkbox",
-    label: "When status is Qualified — auto-send to Quotes",
-    defaultChecked: false,
-    dependency: { dependsOnItemId: "conv_auto_reply_enabled", showWhenValue: "checked" },
-  },
-  {
-    id: "conv_auto_ai_infer_status",
-    type: "checkbox",
-    label: "Allow AI to set status from conversation (estimate-ready vs not)",
-    defaultChecked: false,
-    dependency: { dependsOnItemId: "conv_auto_quote_when_qualified", showWhenValue: "checked" },
   },
 ]
 

@@ -2,10 +2,6 @@ import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "
 import { supabase } from "../../lib/supabase"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
-import {
-  mergeConversationAutomaticRepliesPrefs,
-  runQualifiedConversationToQuotesAutomation,
-} from "../../lib/conversationQuoteAutomation"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { theme } from "../../styles/theme"
@@ -1272,7 +1268,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     }
     setDetailSaving(true)
     try {
-      const statusBeforeSave = selectedConversation.status
       const cleanedIdentifiers = detailForm.identifiers
         .map((item) => ({ ...item, value: item.value.trim() }))
         .filter((item) => item.value)
@@ -1329,32 +1324,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         }))
         const { error: insertErr } = await supabase.from("customer_identifiers").insert(payload)
         if (insertErr) throw insertErr
-      }
-
-      const convoId = selectedConversation.id
-      const prefsMerged = mergeConversationAutomaticRepliesPrefs(conversationsAutoRepliesProfile, autoRepliesFormValues)
-      const autoQuotes = await runQualifiedConversationToQuotesAutomation({
-        supabase,
-        userId,
-        conversationId: convoId,
-        customerId: selectedConversation.customer_id,
-        prevStatusRaw: statusBeforeSave,
-        nextStatusRaw: detailForm.status,
-        prefs: prefsMerged,
-      })
-      if (autoQuotes.action === "error") {
-        alert(autoQuotes.message)
-      }
-      if (autoQuotes.action === "moved") {
-        setSelectedConversation(null)
-        setSelectedConversationId(null)
-        setMessages([])
-        setCommunicationEvents([])
-        setCommAttachmentsByEvent({})
-        setConversations((prev) => prev.filter((c) => c.id !== convoId))
-        await loadConversations()
-        setDetailEditMode(false)
-        return
       }
 
       await openConversation(selectedConversation.id)

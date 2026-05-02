@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import AppLayout from "../../layout/AppLayout"
 import CustomersPage from "../customers/CustomersPage"
 import LeadsPage from "../leads/LeadsPage"
@@ -10,6 +10,8 @@ import TechSupportPage from "../tech-support/TechSupportPage"
 import SettingsPage from "../settings/SettingsPage"
 import AccountPage from "../account/AccountPage"
 import PaymentsPage from "../payments/PaymentsPage"
+import InsuranceOptionsPage from "../insurance/InsuranceOptionsPage"
+import ReportingPage from "../reporting/ReportingPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   OfficeManagerScopeProvider,
@@ -17,6 +19,8 @@ import {
 } from "../../contexts/OfficeManagerScopeContext"
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
+import { useIsMobile } from "../../hooks/useIsMobile"
+import { useLocale } from "../../i18n/LocaleContext"
 import { supabase } from "../../lib/supabase"
 import {
   getOfficePortalTabListForConfig,
@@ -26,6 +30,7 @@ import {
   type PortalConfig,
 } from "../../types/portal-builder"
 import BillingDueDashboardBanner from "../../components/BillingDueDashboardBanner"
+import DashboardQuickActions from "../../components/DashboardQuickActions"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -47,7 +52,6 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
 }
 
 const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
-  { id: "add_customer", label: "Add Customer to quotes" },
   { id: "auto_response", label: "Automatic replies" },
   { id: "settings", label: "Settings" },
   { id: "estimate_template", label: "Estimate template" },
@@ -347,8 +351,10 @@ function ManagedUserOmToolbarEditor() {
 }
 
 function ManagedUserBar() {
+  const { portalConfig } = useAuth()
   const ctx = useOfficeManagerScopeOptional()
   if (!ctx) return null
+  if (portalConfig?.office_manager_show_working_as_bar !== true) return null
   const { clients, selectedUserId, setSelectedUserId, loadingClients, loadingPortalConfig, error } = ctx
   const selected = clients.find((c) => c.userId === selectedUserId)
   const managedCount = clients.filter((c) => !c.isSelf).length
@@ -448,16 +454,30 @@ function ManagedUserBar() {
 
 function OfficeManagerAppContent() {
   const [page, setPage] = useState("dashboard")
-  const { clientId, user } = useAuth()
+  const { clientId, user, portalConfig } = useAuth()
+  const isMobile = useIsMobile()
+  const { t } = useLocale()
   const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
   const scope = useOfficeManagerScopeOptional()
   const hasClients = (scope?.clients.length ?? 0) > 0
-  const resolvedPortalTabs = buildPortalTabsFromConfig(scope?.scopedPortalConfig ?? null) ?? portalTabs
+  const resolvedPortalTabs = useMemo(() => {
+    let r = buildPortalTabsFromConfig(scope?.scopedPortalConfig ?? null) ?? portalTabs
+    if (portalConfig?.show_legacy_contractor_leads_conversations !== true) {
+      r = r.filter((t) => t.tab_id !== "leads" && t.tab_id !== "conversations")
+    }
+    return r
+  }, [scope?.scopedPortalConfig, portalTabs, portalConfig?.show_legacy_contractor_leads_conversations])
   const selectedRow = scope?.clients.find((c) => c.userId === scope.selectedUserId) ?? null
   /** Bundled managed users (no Payments tab) do not get separate Helcim / dashboard billing alerts. */
   const separateBillingForScope =
     Boolean(scope?.selectedUserId) && (selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
   const omPaymentsTabAvailable = hasClients && resolvedPortalTabs.some((t) => t.tab_id === "payments")
+  const omSettingsTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "settings")
+
+  useEffect(() => {
+    if (portalConfig?.show_legacy_contractor_leads_conversations === true) return
+    if (page === "leads" || page === "conversations") setPage("dashboard")
+  }, [page, portalConfig?.show_legacy_contractor_leads_conversations])
 
   return (
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
@@ -472,22 +492,43 @@ function OfficeManagerAppContent() {
             paymentsTabAvailable={omPaymentsTabAvailable}
             onOpenPayments={omPaymentsTabAvailable ? () => setPage("payments") : undefined}
           />
-          <p style={{ marginTop: 12, lineHeight: 1.65, color: "#e5e7eb" }}>
-            Use the sidebar for the same areas as your team. You can work as <strong>office manager (me)</strong> or switch to
-            any assigned user to load their leads, quotes, calendar, and customers. Calendar <strong>team view</strong> and
-            drag-and-drop scheduling are planned next.
-          </p>
-          {hasClients && (
-            <div style={{ maxWidth: "720px", marginTop: "24px", padding: "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "8px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
-              <p style={{ margin: "0 0 1em" }}>
-                Data and actions on other tabs apply to the <strong>selected user</strong>. Use <strong>User portal tabs</strong> to
-                show or hide tabs for that user&apos;s login experience.
-              </p>
-            </div>
-          )}
+          <DashboardQuickActions
+            officeManager
+            isMobile={isMobile}
+            setPage={setPage}
+            sectionTitle={t("dashboard.quickSection")}
+            authRole="office_manager"
+            managedByOfficeManager={false}
+            managedSchedulingToolsEnabled={false}
+            showSettingsShortcut={omSettingsTabAvailable}
+            showPaymentsShortcut={omPaymentsTabAvailable}
+            profileUserId={user?.id ?? null}
+            dashboardDataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            labels={{
+              customers: t("dashboard.quickCustomers"),
+              estimates: t("dashboard.quickEstimates"),
+              calendar: t("dashboard.quickCalendar"),
+              teamManagement: t("dashboard.quickTeamManagement"),
+              schedulingTools: t("dashboard.quickSchedulingTools"),
+              settings: t("dashboard.quickSettings"),
+              payments: t("dashboard.quickPayments"),
+              insurance: t("dashboard.quickInsurance"),
+              customerPaymentsSoon: t("dashboard.quickCustomerPaymentsSoon"),
+              reporting: t("dashboard.quickReporting"),
+              jobTypes: t("dashboard.quickJobTypes"),
+              todayTodo: t("dashboard.quickTodayTodo"),
+              customizeHint: t("dashboard.customizeQuickLinks"),
+              customizeDone: t("dashboard.customizeQuickLinksDone"),
+              customizePaletteTitle: t("dashboard.customizePaletteTitle"),
+              customizeAddHint: t("dashboard.customizeAddHint"),
+              customizeRemove: t("dashboard.customizeRemove"),
+              savedCloud: t("dashboard.quickLinksSavedCloud"),
+              savedDeviceOnly: t("dashboard.quickLinksSavedLocal"),
+            }}
+          />
         </>
       )}
-      {hasClients && page === "customers" && <CustomersPage />}
+      {hasClients && page === "customers" && <CustomersPage setPage={setPage} />}
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}
       {hasClients && page === "quotes" && <QuotesPage setPage={setPage} />}
@@ -496,6 +537,8 @@ function OfficeManagerAppContent() {
       {hasClients && page === "tech-support" && <TechSupportPage />}
       {hasClients && page === "settings" && <SettingsPage />}
       {hasClients && page === "payments" && <PaymentsPage />}
+      {page === "insurance-options" && <InsuranceOptionsPage />}
+      {page === "reporting" && <ReportingPage />}
       {page === "account" && <AccountPage />}
       {!hasClients && page !== "dashboard" && (
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>

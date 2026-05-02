@@ -11,6 +11,8 @@ import TechSupportPage from "./modules/tech-support/TechSupportPage"
 import SettingsPage from "./modules/settings/SettingsPage"
 import AccountPage from "./modules/account/AccountPage"
 import PaymentsPage from "./modules/payments/PaymentsPage"
+import InsuranceOptionsPage from "./modules/insurance/InsuranceOptionsPage"
+import ReportingPage from "./modules/reporting/ReportingPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -30,6 +32,7 @@ import type { UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
+import { useManagedOmCalendarPolicy } from "./hooks/useManagedOmCalendarPolicy"
 import { useIsMobile } from "./hooks/useIsMobile"
 import {
   endUserHasSeparateBillingPortal,
@@ -39,6 +42,7 @@ import {
   type PortalTab,
 } from "./types/portal-builder"
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
+import DashboardQuickActions from "./components/DashboardQuickActions"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
@@ -64,6 +68,10 @@ function MainApp() {
   const { clientId, portalConfig, role: authRole, user } = useAuth()
   const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
   const managedByOfficeManager = useManagedByOfficeManager()
+  const omCalendarPolicy = useManagedOmCalendarPolicy()
+  const managedSchedulingToolsEnabled =
+    managedByOfficeManager &&
+    (omCalendarPolicy.scheduling_tools === true || omCalendarPolicy.advanced_scheduling_tools === true)
   const isMobile = useIsMobile()
   const { t } = useLocale()
   const mergedTabs = useMemo(() => {
@@ -74,17 +82,26 @@ function MainApp() {
     }
     return getPortalTabListForConfig({})
   }, [portalConfig, portalTabsFromApi])
-  const portalTabs = useMemo(
-    () => filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager),
-    [mergedTabs, portalConfig, managedByOfficeManager],
-  )
+  const portalTabs = useMemo(() => {
+    let t = filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager)
+    if (portalConfig?.show_legacy_contractor_leads_conversations !== true) {
+      t = t.filter((x) => x.tab_id !== "leads" && x.tab_id !== "conversations")
+    }
+    return t
+  }, [mergedTabs, portalConfig, managedByOfficeManager])
   const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
   const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
+  const settingsTabAvailable = portalTabs.some((t) => t.tab_id === "settings")
 
   useEffect(() => {
     if (page !== "payments") return
     if (!portalTabs.some((t) => t.tab_id === "payments")) setPage("dashboard")
   }, [page, portalTabs])
+
+  useEffect(() => {
+    if (portalConfig?.show_legacy_contractor_leads_conversations === true) return
+    if (page === "leads" || page === "conversations") setPage("dashboard")
+  }, [page, portalConfig?.show_legacy_contractor_leads_conversations, setPage])
 
   useEffect(() => {
     if (!supabase) {
@@ -163,50 +180,72 @@ function MainApp() {
             paymentsTabAvailable={paymentsTabAvailable}
             onOpenPayments={paymentsTabAvailable ? () => setPage("payments") : undefined}
           />
+          <DashboardQuickActions
+            isMobile={isMobile}
+            setPage={setPage}
+            sectionTitle={t("dashboard.quickSection")}
+            authRole={authRole}
+            managedByOfficeManager={managedByOfficeManager}
+            managedSchedulingToolsEnabled={managedSchedulingToolsEnabled}
+            showSettingsShortcut={settingsTabAvailable}
+            showPaymentsShortcut={paymentsTabAvailable}
+            profileUserId={user?.id ?? null}
+            dashboardDataUserId={user?.id ?? null}
+            labels={{
+              customers: t("dashboard.quickCustomers"),
+              estimates: t("dashboard.quickEstimates"),
+              calendar: t("dashboard.quickCalendar"),
+              teamManagement: t("dashboard.quickTeamManagement"),
+              schedulingTools: t("dashboard.quickSchedulingTools"),
+              settings: t("dashboard.quickSettings"),
+              payments: t("dashboard.quickPayments"),
+              insurance: t("dashboard.quickInsurance"),
+              customerPaymentsSoon: t("dashboard.quickCustomerPaymentsSoon"),
+              reporting: t("dashboard.quickReporting"),
+              jobTypes: t("dashboard.quickJobTypes"),
+              todayTodo: t("dashboard.quickTodayTodo"),
+              customizeHint: t("dashboard.customizeQuickLinks"),
+              customizeDone: t("dashboard.customizeQuickLinksDone"),
+              customizePaletteTitle: t("dashboard.customizePaletteTitle"),
+              customizeAddHint: t("dashboard.customizeAddHint"),
+              customizeRemove: t("dashboard.customizeRemove"),
+              savedCloud: t("dashboard.quickLinksSavedCloud"),
+              savedDeviceOnly: t("dashboard.quickLinksSavedLocal"),
+            }}
+          />
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 14,
-              marginTop: 10,
-              marginBottom: 14,
+              maxWidth: "920px",
+              marginTop: "12px",
+              padding: isMobile ? "20px" : "26px",
+              background: "linear-gradient(135deg, rgba(30, 41, 59, 0.92) 0%, rgba(15, 23, 42, 0.98) 100%)",
+              border: "1px solid rgba(249, 115, 22, 0.35)",
+              borderRadius: "14px",
+              lineHeight: 1.65,
+              color: "var(--text, #e5e7eb)",
+              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.22)",
             }}
           >
-            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.pipeline")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.pipeline")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.pipelineSub")}</p>
-            </div>
-            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.comm")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.comm")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.commSub")}</p>
-            </div>
-            <div style={{ padding: 16, borderRadius: 10, border: "1px solid #e5e7eb", background: "#ffffff" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{t("dashboard.kicker.schedule")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color: "#111827" }}>{t("dashboard.card.schedule")}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>{t("dashboard.card.scheduleSub")}</p>
-            </div>
-          </div>
-          <div style={{ maxWidth: "920px", marginTop: "8px", padding: isMobile ? "18px" : "24px", background: "var(--charcoal-smoke, #1f2937)", border: "1px solid var(--border, #374151)", borderRadius: "10px", lineHeight: 1.6, color: "var(--text, #e5e7eb)" }}>
-            <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#fff" }}>{t("dashboard.welcomeTitle")}</h2>
-            <p style={{ margin: "0 0 10px" }}>{t("dashboard.welcomeBody1")}</p>
-            <p style={{ margin: 0 }}>{t("dashboard.welcomeBody2")}</p>
+            <h2 style={{ margin: "0 0 10px", fontSize: 22, color: "#fff" }}>{t("dashboard.welcomeTitle")}</h2>
+            <p style={{ margin: "0 0 10px", opacity: 0.95 }}>{t("dashboard.welcomeBody1")}</p>
+            <p style={{ margin: 0, opacity: 0.88 }}>{t("dashboard.welcomeBody2")}</p>
           </div>
         </>
       )}
 
-      {page === "customers" && <CustomersPage />}
+      {page === "customers" && <CustomersPage setPage={setPage} />}
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
-      {page === "quotes" && <QuotesPage />}
+      {page === "quotes" && <QuotesPage setPage={setPage} />}
       {page === "calendar" && <CalendarPage setPage={setPage} />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
       {page === "settings" && <SettingsPage />}
       {page === "payments" && <PaymentsPage />}
+      {page === "insurance-options" && <InsuranceOptionsPage />}
+      {page === "reporting" && <ReportingPage />}
       {page === "account" && <AccountPage />}
-      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "payments", "account", "web-support", "tech-support", "settings"].includes(page) && (
+      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
           <p style={{ color: "var(--text, #6b7280)", margin: "0 0 8px" }}>{t("app.customTab.title")}</p>

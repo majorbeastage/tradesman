@@ -7,12 +7,24 @@ import { createClient } from "@supabase/supabase-js"
 import { firstEnv, firstEnvCaseInsensitive, pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
 
 function pickHelcimPaymentPortalUrlForServer(): string | null {
-  const direct = firstEnv("HELCIM_PAYMENT_PORTAL_URL", "VITE_HELCIM_PAYMENT_PORTAL_URL").trim()
+  const direct = firstEnv(
+    "HELCIM_PAYMENT_PORTAL_URL",
+    "VITE_HELCIM_PAYMENT_PORTAL_URL",
+    "NEXT_PUBLIC_HELCIM_PAYMENT_PORTAL_URL",
+  ).trim()
   if (direct) return direct
-  const ci1 = firstEnvCaseInsensitive("HELCIM_PAYMENT_PORTAL_URL").trim()
-  if (ci1) return ci1
-  const ci2 = firstEnvCaseInsensitive("VITE_HELCIM_PAYMENT_PORTAL_URL").trim()
-  if (ci2) return ci2
+  for (const name of ["HELCIM_PAYMENT_PORTAL_URL", "VITE_HELCIM_PAYMENT_PORTAL_URL", "NEXT_PUBLIC_HELCIM_PAYMENT_PORTAL_URL"]) {
+    const ci = firstEnvCaseInsensitive(name).trim()
+    if (ci) return ci
+  }
+  // Some dashboards paste a single mis-cased or variant key
+  for (const key of Object.keys(process.env)) {
+    const up = key.toUpperCase()
+    if (!up.includes("HELCIM") || !up.includes("PAYMENT") || !up.includes("PORTAL")) continue
+    const v = process.env[key]
+    const t = v != null ? String(v).trim() : ""
+    if (t.startsWith("http")) return t
+  }
   return null
 }
 

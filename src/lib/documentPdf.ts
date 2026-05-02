@@ -1,11 +1,83 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
+import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib"
 
 export type QuotePdfLineItem = { description: string; quantity: number; unitPrice: number; total: number }
+
+/** Optional photos/files for the customer-facing estimate PDF (from entity_attachments + metadata). */
+export type QuotePdfCustomerCopyAttachment = {
+  publicUrl: string
+  fileName: string
+  contentType: string | null
+  /** From saved “Write description” when enabled */
+  description: string
+}
+
+/** Fetch PNG/JPEG bytes for embedding in PDF/DOCX (browser or Node). WebP and others return null. */
+export async function fetchImageBytesForQuotePdf(url: string): Promise<{ bytes: Uint8Array; kind: "png" | "jpeg" } | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const buf = new Uint8Array(await res.arrayBuffer())
+    if (buf.length < 4) return null
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { bytes: buf, kind: "png" }
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { bytes: buf, kind: "jpeg" }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Break a paragraph into lines that fit within maxWidth (points), using PDF font metrics. */
+function wrapParagraphToLines(text: string, font: PDFFont, maxWidth: number, size: number): string[] {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let current = ""
+  const pushCurrent = () => {
+    if (current) {
+      lines.push(current)
+      current = ""
+    }
+  }
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      current = candidate
+      continue
+    }
+    pushCurrent()
+    if (font.widthOfTextAtSize(word, size) <= maxWidth) {
+      current = word
+      continue
+    }
+    let chunk = ""
+    for (const ch of word) {
+      const next = chunk + ch
+      if (font.widthOfTextAtSize(next, size) <= maxWidth) {
+        chunk = next
+      } else {
+        if (chunk) lines.push(chunk)
+        chunk = ch
+        if (font.widthOfTextAtSize(chunk, size) > maxWidth) {
+          lines.push(chunk)
+          chunk = ""
+        }
+      }
+    }
+    if (chunk) {
+      current = chunk
+    }
+  }
+  pushCurrent()
+  return lines
+}
 
 export async function buildQuotePdfBytes(params: {
   title: string
   businessLabel: string
   customerName: string
+  /** Shown on its own line so archived PDFs are searchable by surname. */
+  customerLastName?: string | null
   items: QuotePdfLineItem[]
   /** Optional header note from profile template (plain text). */
   templateHeader?: string | null
@@ -23,6 +95,8 @@ export async function buildQuotePdfBytes(params: {
     cancellation?: string | null
     showSignatures: boolean
   } | null
+  /** Photos/files marked for customer copy (shown after footer, before legal). */
+  customerCopyAttachments?: QuotePdfCustomerCopyAttachment[]
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   let page = doc.addPage([612, 792])
@@ -31,6 +105,8 @@ export async function buildQuotePdfBytes(params: {
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
   let y = pageHeight - 50
   const left = 50
+  const rightMargin = 50
+  const maxTextWidth = 612 - left - rightMargin
   const lineH = 14
 
   const newPageIfNeeded = (minY: number) => {
@@ -49,6 +125,31 @@ export async function buildQuotePdfBytes(params: {
       color: rgb(gray, gray, gray),
     })
     y -= lineH + (size > 11 ? 4 : 0)
+  }
+
+  /** Multi-line draw with word wrap (and hard breaks inside the string). */
+  const drawWrappedParagraph = (text: string, size = 9, gray = 0.28) => {
+    const f = font
+    const lh = size + 3
+    for (const segment of text.trim().split(/\n+/)) {
+      const t = segment.trim()
+      if (!t) {
+        y -= lh * 0.5
+        continue
+      }
+      const visualLines = wrapParagraphToLines(t, f, maxTextWidth, size)
+      for (const vl of visualLines) {
+        newPageIfNeeded(56)
+        page.drawText(vl.length > 500 ? `${vl.slice(0, 497)}…` : vl, {
+          x: left,
+          y,
+          size,
+          font: f,
+          color: rgb(gray, gray, gray),
+        })
+        y -= lh
+      }
+    }
   }
 
   const includeDate = params.includePreparedDate !== false
@@ -76,6 +177,10 @@ export async function buildQuotePdfBytes(params: {
   draw(params.businessLabel || "Quote", 16, true, 0.15)
   y -= 6
   draw(`Customer: ${params.customerName}`, 11, false, 0.25)
+  const ln = params.customerLastName?.trim()
+  if (ln) {
+    draw(`Customer last name (search): ${ln}`, 10, false, 0.32)
+  }
   draw(params.title, 12, true, 0.2)
   if (includeDate) {
     const d = new Date().toLocaleDateString(undefined, { dateStyle: "medium" })
@@ -85,7 +190,7 @@ export async function buildQuotePdfBytes(params: {
 
   if (params.templateHeader?.trim()) {
     for (const para of params.templateHeader.trim().split(/\n+/).slice(0, 12)) {
-      draw(para, 10, false, 0.35)
+      drawWrappedParagraph(para, 10, 0.35)
     }
     y -= 6
   }
@@ -104,7 +209,47 @@ export async function buildQuotePdfBytes(params: {
   if (params.templateFooter?.trim()) {
     y -= 12
     for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 12)) {
-      draw(para, 9, false, 0.45)
+      drawWrappedParagraph(para, 9, 0.45)
+    }
+  }
+
+  const copyAtts = params.customerCopyAttachments?.filter((a) => a.publicUrl?.trim()) ?? []
+  if (copyAtts.length > 0) {
+    y -= 16
+    newPageIfNeeded(140)
+    draw("Photos & files (customer copy)", 11, true, 0.12)
+    y -= 8
+    for (const att of copyAtts.slice(0, 15)) {
+      if (att.description.trim()) {
+        drawWrappedParagraph(att.description.trim(), 9, 0.32)
+        y -= 4
+      }
+      const fetched = await fetchImageBytesForQuotePdf(att.publicUrl.trim())
+      if (fetched) {
+        try {
+          const embedded =
+            fetched.kind === "png" ? await doc.embedPng(fetched.bytes) : await doc.embedJpg(fetched.bytes)
+          const maxImgW = maxTextWidth
+          const maxImgH = 220
+          const scale = Math.min(maxImgW / embedded.width, maxImgH / embedded.height, 1)
+          const iw = embedded.width * scale
+          const ih = embedded.height * scale
+          const gap = 14
+          newPageIfNeeded(ih + gap + 56)
+          const imgLowerLeftY = y - gap - ih
+          page.drawImage(embedded, { x: left, y: imgLowerLeftY, width: iw, height: ih })
+          y = imgLowerLeftY - 16
+        } catch {
+          drawWrappedParagraph(`${att.fileName || "Image"} (could not embed in PDF)`, 9, 0.38)
+        }
+      } else {
+        const label = att.fileName?.trim() || "Attachment"
+        drawWrappedParagraph(label, 10, 0.34)
+        if (att.publicUrl.trim().startsWith("https://")) {
+          drawWrappedParagraph(att.publicUrl.trim(), 8, 0.48)
+        }
+        y -= 6
+      }
     }
   }
 
@@ -115,20 +260,38 @@ export async function buildQuotePdfBytes(params: {
     y -= 4
     for (const para of params.legal.body.trim().split(/\n+/).slice(0, 28)) {
       if (!para.trim()) continue
-      draw(para.trim(), 9, false, 0.28)
+      drawWrappedParagraph(para.trim(), 9, 0.28)
     }
     if (params.legal.cancellation?.trim()) {
       y -= 6
       for (const para of params.legal.cancellation.trim().split(/\n+/).slice(0, 10)) {
         if (!para.trim()) continue
-        draw(para.trim(), 9, false, 0.32)
+        drawWrappedParagraph(para.trim(), 9, 0.32)
       }
     }
     if (params.legal.showSignatures) {
       y -= 20
       newPageIfNeeded(80)
-      draw("Customer signature: _____________________________  Date: ______________", 9, false, 0.2)
-      draw("Authorized representative: ______________________  Date: ______________", 9, false, 0.2)
+      for (const line of wrapParagraphToLines(
+        "Customer signature: _____________________________  Date: ______________",
+        font,
+        maxTextWidth,
+        9,
+      )) {
+        newPageIfNeeded(56)
+        page.drawText(line, { x: left, y, size: 9, font, color: rgb(0.2, 0.2, 0.2) })
+        y -= lineH + 2
+      }
+      for (const line of wrapParagraphToLines(
+        "Authorized representative: ______________________  Date: ______________",
+        font,
+        maxTextWidth,
+        9,
+      )) {
+        newPageIfNeeded(56)
+        page.drawText(line, { x: left, y, size: 9, font, color: rgb(0.2, 0.2, 0.2) })
+        y -= lineH + 2
+      }
     }
   }
 

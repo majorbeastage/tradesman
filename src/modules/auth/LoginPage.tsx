@@ -8,6 +8,7 @@ import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } fro
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { useLocale } from "../../i18n/LocaleContext"
+import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 
 type LoginType = "user" | "office_manager" | "admin"
 
@@ -216,30 +217,32 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           />
         </label>
         {mode !== "forgot" && (
-          <label style={labelStyle}>
-            {t("login.password")}
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
-              style={inputStyle}
-              placeholder="••••••••"
-            />
-          </label>
+          <PasswordFieldWithReveal
+            label={t("login.password")}
+            value={password}
+            onChange={setPassword}
+            autoComplete={mode === "signin" ? "current-password" : "new-password"}
+            placeholder="••••••••"
+            revealLabelShow={t("login.showPassword")}
+            revealLabelHide={t("login.hidePassword")}
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            name="password"
+          />
         )}
         {mode === "signup" && !isAdminLogin && (
-          <label style={labelStyle}>
-            {t("login.confirmPassword")}
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-              style={inputStyle}
-              placeholder="••••••••"
-            />
-          </label>
+          <PasswordFieldWithReveal
+            label={t("login.confirmPassword")}
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            autoComplete="new-password"
+            placeholder="••••••••"
+            revealLabelShow={t("login.showPassword")}
+            revealLabelHide={t("login.hidePassword")}
+            labelStyle={labelStyle}
+            inputStyle={inputStyle}
+            name="confirmPassword"
+          />
         )}
         {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
         {message && <p style={{ color: "#059669", fontSize: 14, margin: "0 0 12px" }}>{message}</p>}

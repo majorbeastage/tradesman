@@ -363,6 +363,19 @@ function TeamUserCard({
                 Allow User to add items to Calendar
               </label>
 
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_estimates_tool === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_estimates_tool: e.target.checked })}
+                />
+                Allow Estimate tool (Quotes tab)
+              </label>
+              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
+                When unchecked, managed users cannot open Estimates until you enable it here (defaults off for office-manager-managed accounts).
+              </p>
+
               <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: 8 }}>
                 <button
                   type="button"
@@ -881,8 +894,8 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.55, maxWidth: 900 }}>
         Configure roster members linked to your office. Use <strong>Schedule</strong> for a quick read on jobs and job types; use{" "}
-        <strong>Edit permissions</strong> for colors, calendar defaults, and managed-user access. Open shifts appear in{" "}
-        <strong>Time clock</strong> below (run the SQL in <code style={{ fontSize: 12 }}>supabase/user-time-clock-sessions.sql</code> if this section errors).
+        <strong>Edit permissions</strong> for colors, calendar defaults, and managed-user access. Open shifts appear in <strong>Time clock</strong>{" "}
+        below.
       </p>
 
       <div style={clockPanelStyle}>
