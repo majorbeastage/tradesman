@@ -17,6 +17,11 @@ type UserRow = {
   account_disabled: boolean
 }
 
+type AdminUsersSectionProps = {
+  /** When role change updates `profiles.portal_config`, keep Portal builder in sync without a full reload. */
+  onUserPortalConfigUpdated?: (userId: string, portalConfig: PortalConfig) => void
+}
+
 /** `profiles.display_name` is stored as "First Last" from admin create; split for table columns. */
 function splitDisplayName(displayName: string | null | undefined): { first: string; last: string } {
   const t = displayName?.trim() ?? ""
@@ -35,7 +40,7 @@ function userRowSearchText(u: UserRow): string {
   return [dn, first, last, u.email ?? "", u.role, u.id, access].join(" ").toLowerCase()
 }
 
-export default function AdminUsersSection() {
+export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUsersSectionProps) {
   const { session, user: currentAuthUser } = useAuth()
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -190,15 +195,16 @@ export default function AdminUsersSection() {
       if (nextRole === "demo_user") payload.portal_config = {}
       if (prevRole === "new_user" && nextRole === "user") {
         const { data: prof, error: cfgErr } = await supabase.from("profiles").select("portal_config").eq("id", userId).maybeSingle()
-        if (!cfgErr) {
-          const prevCfg = (prof?.portal_config as PortalConfig | null | undefined) ?? undefined
-          payload.portal_config = upgradePortalConfigFromNewUserToUser(prevCfg) as Record<string, unknown>
-        }
+        const prevCfg = !cfgErr ? ((prof?.portal_config as PortalConfig | null | undefined) ?? undefined) : undefined
+        payload.portal_config = upgradePortalConfigFromNewUserToUser(prevCfg) as Record<string, unknown>
       }
       const { error: err } = await supabase.from("profiles").update(payload).eq("id", userId)
       if (err) {
         setError(err.message)
         return
+      }
+      if (payload.portal_config !== undefined && onUserPortalConfigUpdated) {
+        onUserPortalConfigUpdated(userId, payload.portal_config as PortalConfig)
       }
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: nextRole } : u)))
     } finally {

@@ -30,7 +30,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
   }
 
   return (
-    <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", background: theme.charcoalSmoke }}>
+    <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", background: theme.background }}>
       {isMobile ? (
         <Sidebar
           setPage={setPage}
@@ -121,7 +121,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
             minWidth: 0,
             maxWidth: "100%",
             overflowX: isMobile ? "hidden" : undefined,
-            background: theme.charcoalSmoke,
+            background: "transparent",
           }}
         >
           {children}

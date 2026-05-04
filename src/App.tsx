@@ -299,7 +299,7 @@ function App() {
   if (pathname === "/terms") {
     return <TermsPage />
   }
-  if (pathname === "/sms-consent") {
+  if (pathname === "/sms-consent" || pathname === "/sms") {
     return <SmsConsentPage />
   }
   if (pathname === "/about") {

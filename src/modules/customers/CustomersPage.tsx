@@ -28,6 +28,13 @@ import { queueQuotesCustomerPrefill, queueSchedulingCustomerPrefill } from "../.
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { getControlItemsForUser } from "../../types/portal-builder"
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
+import {
+  clampSmsUserPortion,
+  DEFAULT_SMS_POLICIES_URL,
+  maxUserCharsForFirstSmsVariant,
+  SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
+} from "../../lib/smsComplianceLimits"
+import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -179,6 +186,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     use_ai_for_unclear: true,
   })
   const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null)
+  /** profiles.display_name — used in SMS compliance footer preview and character budget. */
+  const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
   const [timelineExpanded, setTimelineExpanded] = useState<Record<string, boolean>>({})
   const [aiSummaryByKey, setAiSummaryByKey] = useState<Record<string, string>>({})
   const [aiSummaryBusy, setAiSummaryBusy] = useState<Record<string, boolean>>({})
@@ -210,6 +219,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     items.sort((a, b) => a.sortMs - b.sortMs)
     return items
   }, [customerMessages, customerCommEvents])
+
+  const smsFirstComplianceVariant = useMemo(
+    () => resolveSmsFirstComplianceVariant(customerCommEvents),
+    [customerCommEvents],
+  )
+
+  const smsComposeMaxChars = useMemo(() => {
+    if (!smsFirstComplianceVariant) return SMS_OUTBOUND_BODY_HARD_MAX_CHARS
+    const biz = contractorSmsDisplayName.trim() || "Your business"
+    return maxUserCharsForFirstSmsVariant(smsFirstComplianceVariant, biz, DEFAULT_SMS_POLICIES_URL)
+  }, [smsFirstComplianceVariant, contractorSmsDisplayName])
+
+  useEffect(() => {
+    setCustomerReplySms((prev) => (prev.length <= smsComposeMaxChars ? prev : prev.slice(0, smsComposeMaxChars)))
+  }, [smsComposeMaxChars])
 
   const applyDetailFromCustomer = useCallback((c: CustomerRow) => {
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
@@ -280,8 +304,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       return
     }
 
-    const profRes = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const profRes = await supabase.from("profiles").select("metadata, display_name").eq("id", userId).maybeSingle()
     const metaRaw = profRes.data?.metadata
+    const dn = (profRes.data as { display_name?: string | null } | null)?.display_name
+    setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
     const urgencyPrefs = parseCustomersUrgencyAutomation(metaRaw)
     const mr = metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
     const logoGuess =
@@ -759,7 +785,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   async function sendCustomerSms() {
     if (!userId || !selectedCustomer?.id) return
-    const trimmed = customerReplySms.trim()
+    const trimmed = clampSmsUserPortion(customerReplySms, smsComposeMaxChars)
     const to = detailForm.phone.trim() || selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() || ""
     if (!trimmed) {
       alert("Enter a message to send.")
@@ -1116,12 +1142,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", minWidth: 0, position: "relative" }}>
-      <div>
-        <h1 style={{ margin: 0 }}>Customers</h1>
-        <p style={{ fontSize: "14px", color: "#cbd5e1", marginTop: "6px", marginBottom: 0 }}>
-          All customers from Leads, Conversations, Quotes, and Calendar. Active = has open work; Archived = everything removed or completed.
-        </p>
-      </div>
+      <h1 style={{ margin: 0 }}>Customers</h1>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <button
@@ -1944,10 +1965,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     <textarea
                                       placeholder="SMS reply…"
                                       value={customerReplySms}
-                                      onChange={(e) => setCustomerReplySms(e.target.value)}
+                                      maxLength={smsComposeMaxChars}
+                                      onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
                                       rows={2}
                                       style={{ ...theme.formInput, resize: "vertical", maxWidth: 560, color: "#0f172a" }}
                                     />
+                                    <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
+                                      {customerReplySms.length}/{smsComposeMaxChars}
+                                      {smsFirstComplianceVariant === "manual_long"
+                                        ? " — First SMS includes the full opt-out block (manual customer / no inbound call or text on your Twilio line yet)."
+                                        : smsFirstComplianceVariant === "twilio_short"
+                                          ? " — First SMS includes a short opt-out line (they already contacted you on your Twilio line)."
+                                          : " — No compliance footer on this text (not your first SMS to them, or send without a saved customer)."}
+                                    </span>
                                     <button
                                       type="button"
                                       onClick={() => void sendCustomerSms()}

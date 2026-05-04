@@ -18,14 +18,26 @@ function toIcsUtcDateTime(iso: string): string {
 }
 
 export function buildCalendarIcs(events: CalendarIcsRow[]): string {
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Tradesman//EN", "CALSCALE:GREGORIAN"]
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Tradesman//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+  ]
   const stamp = toIcsUtcDateTime(new Date().toISOString())
   for (const ev of events) {
+    const startMs = new Date(ev.start_at).getTime()
+    let endAt = ev.end_at
+    const endMs = new Date(endAt).getTime()
+    if (!Number.isFinite(endMs) || endMs <= startMs) {
+      endAt = new Date(startMs + 60 * 60 * 1000).toISOString()
+    }
     lines.push("BEGIN:VEVENT")
     lines.push(`UID:tradesman-${ev.id}@com.tradesmanus.com`)
     lines.push(`DTSTAMP:${stamp}`)
     lines.push(`DTSTART:${toIcsUtcDateTime(ev.start_at)}`)
-    lines.push(`DTEND:${toIcsUtcDateTime(ev.end_at)}`)
+    lines.push(`DTEND:${toIcsUtcDateTime(endAt)}`)
     lines.push(`SUMMARY:${escapeIcsText(ev.title)}`)
     if (ev.notes?.trim()) lines.push(`DESCRIPTION:${escapeIcsText(ev.notes.trim())}`)
     lines.push("END:VEVENT")

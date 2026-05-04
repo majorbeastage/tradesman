@@ -67,7 +67,7 @@ button:focus-visible {
   }
 }
 
-/* User / office-manager portal: charcoal shell; light-scheme :root color must not apply here */
+/* User / office-manager portal: sidebar stays dark; main column uses theme.background + dark text */
 .portal-charcoal {
   color: #e5e7eb;
 }
@@ -76,4 +76,14 @@ button:focus-visible {
 }
 .portal-charcoal a:hover {
   color: #dbeafe;
+}
+
+.portal-charcoal main.app-main-safe {
+  color: #111827;
+}
+.portal-charcoal main.app-main-safe a {
+  color: #1d4ed8;
+}
+.portal-charcoal main.app-main-safe a:hover {
+  color: #1e3a8a;
 }

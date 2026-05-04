@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { theme } from "../styles/theme"
 import { platformToolsJsonBody } from "../lib/platformToolsJsonBody"
+import { supabase } from "../lib/supabase"
 
 type Suggestion = {
   description: string
@@ -104,9 +105,19 @@ export default function EstimateScopeAssistantPanel({
   }
 
   const analyzeScope = async () => {
-    const tok = accessToken?.trim()
+    let tok = accessToken?.trim() ?? ""
+    if (supabase) {
+      const { data: refreshed } = await supabase.auth.refreshSession()
+      if (refreshed.session?.access_token) {
+        tok = refreshed.session.access_token.trim()
+      } else {
+        const { data: snap } = await supabase.auth.getSession()
+        if (snap.session?.access_token) tok = snap.session.access_token.trim()
+      }
+    }
+    if (!tok) tok = accessToken?.trim() ?? ""
     if (!tok) {
-      alert("Sign in again to use scope suggestions.")
+      alert("Sign in again to use scope analysis.")
       return
     }
     const scopeText = draft.trim()
@@ -172,9 +183,9 @@ export default function EstimateScopeAssistantPanel({
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Scope & line suggestions</div>
-          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            Describe the job in plain language (or tap Voice). Analyze to preview suggested rows — approve to add them to your spreadsheet.
+          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Job Details</div>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
+            Describe the job in plain language (or tap Voice). Analyze scope to preview suggested rows — approve to add them to your spreadsheet.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -185,9 +196,10 @@ export default function EstimateScopeAssistantPanel({
             style={{
               padding: "6px 12px",
               borderRadius: 8,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              fontWeight: 600,
+              border: "1px solid #94a3b8",
+              background: "#f8fafc",
+              color: "#0f172a",
+              fontWeight: 700,
               fontSize: 12,
               cursor: listening ? "wait" : "pointer",
               whiteSpace: "nowrap",

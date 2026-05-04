@@ -8,7 +8,12 @@ const linkStyle: CSSProperties = {
   textDecoration: "none",
 }
 
-export function PublicLegalNav() {
+type PublicLegalNavProps = {
+  /** When false, omit the top rule so a parent section can own the divider (e.g. marketing home footer). */
+  borderTop?: boolean
+}
+
+export function PublicLegalNav({ borderTop = true }: PublicLegalNavProps) {
   return (
     <nav
       style={{
@@ -16,9 +21,9 @@ export function PublicLegalNav() {
         flexWrap: "wrap",
         gap: "12px 20px",
         alignItems: "center",
-        padding: "14px 0",
-        borderTop: `1px solid ${theme.border}`,
-        marginTop: 8,
+        padding: borderTop ? "14px 0" : "8px 0 12px",
+        borderTop: borderTop ? `1px solid ${theme.border}` : "none",
+        marginTop: borderTop ? 8 : 0,
         fontSize: 14,
       }}
       aria-label="Legal and messaging"

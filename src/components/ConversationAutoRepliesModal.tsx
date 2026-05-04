@@ -13,6 +13,7 @@ import {
   type PortalSettingItem,
 } from "../types/portal-builder"
 import { carryConversationAutoRepliesToQuoteValues } from "../lib/automaticRepliesCarryOver"
+import { MessagingComplianceGuardrailsCard } from "./MessagingComplianceGuardrailsCard"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -295,6 +296,7 @@ export default function ConversationAutoRepliesModal({
         <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
           Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.
         </p>
+        <MessagingComplianceGuardrailsCard />
         <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
           <div style={{ marginTop: 10 }}>

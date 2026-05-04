@@ -57,7 +57,7 @@ import {
   type ReceiptQuoteOverride,
 } from "../../lib/calendarReceiptMetadata"
 import { calendarEventEffectiveStatus } from "../../lib/calendarEventStatus"
-import { shareCalendarEventsToDevice } from "../../lib/shareCalendarIcs"
+import { shareCalendarEventsToDevice, type CalendarIcsRow } from "../../lib/shareCalendarIcs"
 import { isNativeApp } from "../../lib/capacitorMobile"
 import {
   type EstimateLinePresetRow,
@@ -928,28 +928,84 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (error) console.warn("notify-calendar-status:", error.message)
   }
 
-  async function shareActiveJobsToDeviceCalendar() {
-    if (!userId) return
-    const horizon = Date.now() + 60 * 86400000
-    const list = events
-      .filter(
-        (e) =>
-          (e.user_id ?? userId) === userId &&
-          !e.removed_at &&
-          !e.completed_at &&
-          new Date(e.start_at).getTime() < horizon,
-      )
-      .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
-      .slice(0, 120)
-      .map((e) => ({ id: e.id, title: e.title, start_at: e.start_at, end_at: e.end_at, notes: e.notes }))
-    setCalendarShareMsg(null)
-    if (list.length === 0) {
-      setCalendarShareMsg("No active upcoming jobs in the next 60 days to export.")
-      return
+  /** Loads upcoming jobs for the next 60 days — not limited to the current calendar grid view. */
+  async function fetchUpcomingJobsForPhoneCalendar(): Promise<
+    { ok: true; rows: CalendarIcsRow[] } | { ok: false; error: string }
+  > {
+    if (!supabase || !userId) return { ok: true, rows: [] }
+    const client = supabase
+    const now = new Date()
+    const horizon = new Date(now.getTime() + 60 * 86400000)
+
+    const buildQuery = (select: string, filterCompleted: boolean) => {
+      let q = client
+        .from("calendar_events")
+        .select(select)
+        .eq("user_id", userId)
+        .is("removed_at", null)
+        .gte("start_at", now.toISOString())
+        .lte("start_at", horizon.toISOString())
+        .order("start_at")
+        .limit(120)
+      if (filterCompleted) q = q.is("completed_at", null)
+      return q
     }
+
+    let select = "id, title, start_at, end_at, notes, completed_at"
+    let { data, error } = await buildQuery(select, hasCompletedAtColumn)
+
+    const errMsg = (error?.message ?? "").toLowerCase()
+    if (error && (errMsg.includes("completed_at") || (errMsg.includes("column") && errMsg.includes("does not exist")))) {
+      select = "id, title, start_at, end_at, notes"
+      const r = await buildQuery(select, false)
+      data = r.data
+      error = r.error
+    }
+
+    if (error) {
+      console.warn("Phone calendar export query:", error.message)
+      return { ok: false, error: error.message }
+    }
+
+    const raw = data ?? []
+    const rows = (Array.isArray(raw) ? raw : []) as unknown as Array<{
+      id: string
+      title: string
+      start_at: string
+      end_at: string
+      notes?: string | null
+      completed_at?: string | null
+    }>
+
+    return {
+      ok: true,
+      rows: rows
+        .filter((e) => !e.completed_at)
+        .map((e) => ({
+          id: e.id,
+          title: e.title,
+          start_at: e.start_at,
+          end_at: e.end_at,
+          notes: e.notes ?? null,
+        })),
+    }
+  }
+
+  async function shareActiveJobsToDeviceCalendar() {
+    if (!userId || !supabase) return
+    setCalendarShareMsg(null)
     setCalendarShareBusy(true)
     try {
-      const r = await shareCalendarEventsToDevice(list)
+      const fetched = await fetchUpcomingJobsForPhoneCalendar()
+      if (!fetched.ok) {
+        setCalendarShareMsg(`Could not load jobs: ${fetched.error}`)
+        return
+      }
+      if (fetched.rows.length === 0) {
+        setCalendarShareMsg("No active upcoming jobs in the next 60 days to export.")
+        return
+      }
+      const r = await shareCalendarEventsToDevice(fetched.rows)
       setCalendarShareMsg(r.message || (r.ok ? "Done." : "Could not export."))
       if (!r.ok) alert(r.message || "Could not export calendar.")
     } finally {
@@ -1984,47 +2040,63 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         <section
           aria-labelledby="calendar-phone-sync-heading"
           style={{
-            borderRadius: 12,
-            border: `2px solid ${theme.primary}`,
-            background: "linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)",
-            padding: "16px 18px",
-            boxShadow: "0 4px 14px rgba(15, 23, 42, 0.08)",
+            borderRadius: 8,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            padding: "10px 12px",
           }}
         >
-          <h2 id="calendar-phone-sync-heading" style={{ margin: "0 0 8px", fontSize: 17, fontWeight: 800, color: theme.text }}>
-            Sync jobs to your phone calendar
-          </h2>
-          <p style={{ margin: "0 0 14px", fontSize: 14, color: "#374151", lineHeight: 1.55, maxWidth: 820 }}>
-            Put your upcoming Tradesman jobs on Apple Calendar or Google Calendar. We build a standard calendar file (
-            <strong>.ics</strong>) from jobs shown for this account (active work in the next 60 days). On the{" "}
-            <strong>Tradesman phone app</strong>, tap the button below, then choose <strong>Calendar</strong> (or your calendar app) from
-            the system share sheet — you do <strong>not</strong> need a separate &quot;allow calendar access&quot; permission for that. In a
-            <strong> desktop browser</strong>, the same button downloads the file; open it to import.
-          </p>
-          <button
-            type="button"
-            disabled={calendarShareBusy}
-            onClick={() => void shareActiveJobsToDeviceCalendar()}
+          <div
             style={{
-              padding: "14px 22px",
-              borderRadius: 10,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 800,
-              fontSize: 16,
-              cursor: calendarShareBusy ? "wait" : "pointer",
-              boxShadow: "0 2px 8px rgba(37, 99, 235, 0.35)",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 10,
+              justifyContent: "space-between",
             }}
           >
-            {calendarShareBusy
-              ? "Preparing calendar file…"
-              : isNativeApp()
-                ? "Send jobs to my phone calendar"
-                : "Download calendar file for my phone (.ics)"}
-          </button>
+            <div style={{ minWidth: 0, flex: "1 1 180px" }}>
+              <h2 id="calendar-phone-sync-heading" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.text }}>
+                Phone calendar (.ics)
+              </h2>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                Export active jobs starting in the next 60 days (not just the month on screen).
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={calendarShareBusy}
+              onClick={() => void shareActiveJobsToDeviceCalendar()}
+              style={{
+                padding: "8px 14px",
+                borderRadius: 8,
+                border: "none",
+                background: theme.primary,
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: calendarShareBusy ? "wait" : "pointer",
+                flexShrink: 0,
+              }}
+            >
+              {calendarShareBusy
+                ? "Preparing…"
+                : isNativeApp()
+                  ? "Share to calendar"
+                  : "Download .ics"}
+            </button>
+          </div>
+          <details style={{ marginTop: 8, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>How it works</summary>
+            <p style={{ margin: "8px 0 0" }}>
+              Standard <strong>.ics</strong> file from your upcoming Tradesman jobs. On the{" "}
+              <strong>phone app</strong>, tap the button and choose Calendar (or another app) from the share sheet — no separate calendar
+              permission in Tradesman. In a <strong>desktop browser</strong>, the file downloads; open it to import into Apple or Google
+              Calendar.
+            </p>
+          </details>
           {calendarShareMsg ? (
-            <p style={{ margin: "12px 0 0", fontSize: 13, color: "#1e293b", fontWeight: 600, maxWidth: 820 }}>{calendarShareMsg}</p>
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "#0f172a", fontWeight: 600 }}>{calendarShareMsg}</p>
           ) : null}
         </section>
       ) : null}

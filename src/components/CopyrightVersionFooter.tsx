@@ -16,9 +16,9 @@ const variantStyles: Record<
 > = {
   default: { color: "#6b7280", paddingTop: 12 },
   portal: {
-    color: "#9ca3af",
-    versionColor: "#94a3b8",
-    borderTop: "1px solid rgba(255,255,255,0.12)",
+    color: "#6b7280",
+    versionColor: "#64748b",
+    borderTop: "1px solid #e5e7eb",
     paddingTop: 14,
   },
   about: {

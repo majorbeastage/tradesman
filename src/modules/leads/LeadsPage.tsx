@@ -28,6 +28,13 @@ import CustomerCallButton from "../../components/CustomerCallButton"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import {
+  clampSmsUserPortion,
+  DEFAULT_SMS_POLICIES_URL,
+  maxUserCharsForFirstSmsVariant,
+  SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
+} from "../../lib/smsComplianceLimits"
+import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = {
@@ -135,6 +142,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [leadCommEvents, setLeadCommEvents] = useState<any[]>([])
   const [leadAttachmentsByEvent, setLeadAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
+  const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [leadsProfileSettings, setLeadsProfileSettings] = useState<Record<string, string>>({})
@@ -244,12 +252,19 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("metadata, embed_lead_enabled, embed_lead_slug")
+        .select("metadata, embed_lead_enabled, embed_lead_slug, display_name")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled) return
       if (error || !data) return
-      const row = data as { embed_lead_enabled?: boolean; embed_lead_slug?: string | null; metadata?: unknown }
+      const row = data as {
+        embed_lead_enabled?: boolean
+        embed_lead_slug?: string | null
+        metadata?: unknown
+        display_name?: string | null
+      }
+      const dn = row.display_name
+      setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
       setLeadEmbedProfile({
         enabled: row.embed_lead_enabled === true,
         slug: String(row.embed_lead_slug ?? "").trim(),
@@ -316,7 +331,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, supabase])
 
   useEffect(() => {
     if (!showSettings || leadsSettingsItems.length === 0) return
@@ -907,7 +922,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
   async function sendLeadSms() {
     if (!userId || !selectedLead?.id || !selectedLead.customer_id) return
-    const trimmed = leadReplySms.trim()
+    const trimmed = clampSmsUserPortion(leadReplySms, smsComposeMaxChars)
     const to =
       detailForm.phone.trim() ||
       (selectedLead.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ?? "")
@@ -1011,12 +1026,13 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     setLeadPendingAiBusy(true)
     try {
       if (pendingLeadAiReply.channel === "sms") {
+        const smsBody = clampSmsUserPortion(finalBody, smsComposeMaxChars)
         const response = await fetch("/api/send-sms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: pendingLeadAiReply.to,
-            body: finalBody,
+            body: smsBody,
             userId,
             leadId: selectedLead.id,
             customerId: selectedLead.customer_id,
@@ -1576,6 +1592,21 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
     items.sort((a, b) => a.sortMs - b.sortMs)
     return items
   }, [messages, leadCommEvents])
+
+  const smsFirstComplianceVariant = useMemo(
+    () => resolveSmsFirstComplianceVariant(leadCommEvents),
+    [leadCommEvents],
+  )
+
+  const smsComposeMaxChars = useMemo(() => {
+    if (!smsFirstComplianceVariant) return SMS_OUTBOUND_BODY_HARD_MAX_CHARS
+    const biz = contractorSmsDisplayName.trim() || "Your business"
+    return maxUserCharsForFirstSmsVariant(smsFirstComplianceVariant, biz, DEFAULT_SMS_POLICIES_URL)
+  }, [smsFirstComplianceVariant, contractorSmsDisplayName])
+
+  useEffect(() => {
+    setLeadReplySms((prev) => (prev.length <= smsComposeMaxChars ? prev : prev.slice(0, smsComposeMaxChars)))
+  }, [smsComposeMaxChars])
 
   const selectedRowText = theme.text
 
@@ -2577,10 +2608,19 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                               <textarea
                                 placeholder="Text message to customer…"
                                 value={leadReplySms}
-                                onChange={(e) => setLeadReplySms(e.target.value)}
+                                maxLength={smsComposeMaxChars}
+                                onChange={(e) => setLeadReplySms(e.target.value.slice(0, smsComposeMaxChars))}
                                 rows={2}
                                 style={{ ...theme.formInput, resize: "vertical", maxWidth: 560 }}
                               />
+                              <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
+                                {leadReplySms.length}/{smsComposeMaxChars}
+                                {smsFirstComplianceVariant === "manual_long"
+                                  ? " — First SMS adds the full opt-out block (no inbound on your Twilio line yet)."
+                                  : smsFirstComplianceVariant === "twilio_short"
+                                    ? " — First SMS adds a short opt-out line (they already reached you on your Twilio line)."
+                                    : " — No compliance footer on this text."}
+                              </span>
                               <button
                                 type="button"
                                 onClick={() => void sendLeadSms()}

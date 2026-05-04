@@ -31,7 +31,15 @@ import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprova
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import { MessagingComplianceGuardrailsCard } from "../../components/MessagingComplianceGuardrailsCard"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import {
+  clampSmsUserPortion,
+  DEFAULT_SMS_POLICIES_URL,
+  maxUserCharsForFirstSmsVariant,
+  SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
+} from "../../lib/smsComplianceLimits"
+import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = {
@@ -82,27 +90,6 @@ type ConversationRow = {
   customers: CustomerRow | null
   messages?: MessageRow[] | null
   communication_events?: CommEventListRow[] | null
-}
-
-function ConversationsSmsComplianceNotice() {
-  return (
-    <div
-      role="note"
-      style={{
-        marginBottom: 12,
-        padding: "10px 12px",
-        borderRadius: 8,
-        border: "1px solid #fcd34d",
-        background: "#fffbeb",
-        color: "#92400e",
-        fontSize: 12,
-        lineHeight: 1.55,
-      }}
-    >
-      <strong>SMS and automated calls:</strong> You cannot send text messages or automated phone messages to customers through this platform until they have already contacted you here and, where applicable, accepted SMS consent.{" "}
-      <strong>First SMS</strong> you send to a customer through Tradesman Systems may require the customer to accept an opt-in SMS consent message before your message is delivered.
-    </div>
-  )
 }
 
 function lastReceivedAtIso(convo: ConversationRow): string | null {
@@ -419,6 +406,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const [smsMediaFiles, setSmsMediaFiles] = useState<File[]>([])
   /** profiles.voicemail_conversations_display for the portal user (scoped). */
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
+  const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
@@ -473,6 +461,21 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     [communicationEvents],
   )
 
+  const smsFirstComplianceVariant = useMemo(
+    () => resolveSmsFirstComplianceVariant(communicationEvents),
+    [communicationEvents],
+  )
+
+  const smsComposeMaxChars = useMemo(() => {
+    if (!smsFirstComplianceVariant) return SMS_OUTBOUND_BODY_HARD_MAX_CHARS
+    const biz = contractorSmsDisplayName.trim() || "Your business"
+    return maxUserCharsForFirstSmsVariant(smsFirstComplianceVariant, biz, DEFAULT_SMS_POLICIES_URL)
+  }, [smsFirstComplianceVariant, contractorSmsDisplayName])
+
+  useEffect(() => {
+    setReplyBody((prev) => (prev.length <= smsComposeMaxChars ? prev : prev.slice(0, smsComposeMaxChars)))
+  }, [smsComposeMaxChars])
+
   useEffect(() => {
     try {
       const s = localStorage.getItem("tradesman_email_signature")
@@ -488,7 +491,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("voicemail_conversations_display, ai_thread_summary_enabled")
+        .select("voicemail_conversations_display, ai_thread_summary_enabled, display_name")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled) return
@@ -496,11 +499,13 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       const v = (data as { voicemail_conversations_display?: string }).voicemail_conversations_display
       if (typeof v === "string" && v.trim()) setVoicemailProfileDisplay(v.trim())
       setAiThreadSummaryEnabled((data as { ai_thread_summary_enabled?: boolean }).ai_thread_summary_enabled === true)
+      const dn = (data as { display_name?: string | null }).display_name
+      setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
     })()
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, supabase])
 
   useEffect(() => {
     setAutoRepliesRecordingSupported(
@@ -1350,7 +1355,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
 
   async function sendReply() {
     if (!supabase || !selectedConversation?.id) return
-    const trimmed = replyBody.trim()
+    const trimmed = clampSmsUserPortion(replyBody, smsComposeMaxChars)
     const to = selectedConversation.customers?.customer_identifiers?.find((i: any) => i.type === "phone")?.value?.trim?.() ?? ""
     if (!trimmed) {
       alert("Enter a message to send.")
@@ -1375,6 +1380,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
           body: trimmed,
           userId,
           conversationId: selectedConversation.id,
+          ...(selectedConversation.customer_id ? { customerId: selectedConversation.customer_id } : {}),
           ...(mediaPublicUrls?.length ? { mediaPublicUrls } : {}),
         }),
       })
@@ -1536,12 +1542,13 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     setConvoPendingAiBusy(true)
     try {
       if (pendingConvoAiReply.channel === "sms") {
+        const smsBody = clampSmsUserPortion(finalBody, smsComposeMaxChars)
         const response = await fetch("/api/send-sms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: pendingConvoAiReply.to,
-            body: finalBody,
+            body: smsBody,
             userId,
             conversationId: selectedConversation.id,
             customerId: selectedConversation.customer_id,
@@ -1552,12 +1559,12 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         const { error } = await supabase.from("messages").insert({
           conversation_id: selectedConversation.id,
           sender: "user",
-          content: finalBody,
+          content: smsBody,
         })
         if (error) throw error
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), sender: "user", content: finalBody, created_at: new Date().toISOString() },
+          { id: crypto.randomUUID(), sender: "user", content: smsBody, created_at: new Date().toISOString() },
         ])
       } else {
         const subj = pendingConvoAiReply.subject?.trim() || "Message from us"
@@ -1827,11 +1834,13 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         {showSettings && (
           <PortalSettingsModal
             title="Conversations Settings"
+            intro={<MessagingComplianceGuardrailsCard />}
             items={conversationSettingsItems}
             formValues={settingsFormValues}
             setFormValue={(id, value) => setSettingsFormValues((prev) => ({ ...prev, [id]: value }))}
             isItemVisible={isSettingItemVisible}
             onClose={closeConversationSettingsModal}
+            maxWidthPx={560}
           />
         )}
 
@@ -1874,6 +1883,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
               <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                 Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.
               </p>
+              <MessagingComplianceGuardrailsCard />
               <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
                 <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
                 <div style={{ marginTop: 10 }}>
@@ -2530,7 +2540,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 )}
               </div>
 
-              <ConversationsSmsComplianceNotice />
+              <MessagingComplianceGuardrailsCard banner />
 
               <div style={{ display: "flex", flexDirection: "column", gap: 0, width: "100%", maxWidth: 720 }}>
               <ConvoCollapsible
@@ -2801,11 +2811,20 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <textarea
                       value={replyBody}
-                      onChange={(e) => setReplyBody(e.target.value)}
+                      maxLength={smsComposeMaxChars}
+                      onChange={(e) => setReplyBody(e.target.value.slice(0, smsComposeMaxChars))}
                       rows={3}
                       placeholder="Reply to this text conversation..."
                       style={{ ...theme.formInput, resize: "vertical" }}
                     />
+                    <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45, display: "block" }}>
+                      {replyBody.length}/{smsComposeMaxChars}
+                      {smsFirstComplianceVariant === "manual_long"
+                        ? " — First SMS adds the full opt-out block (no inbound call/text on your Twilio line yet for this thread)."
+                        : smsFirstComplianceVariant === "twilio_short"
+                          ? " — First SMS adds a short opt-out line (they already reached you on your Twilio line)."
+                          : " — No compliance footer on this text."}
+                    </span>
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
                       MMS images (optional)
                       <input

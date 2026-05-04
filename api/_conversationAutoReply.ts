@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
 import { openAiText } from "./_leadAutomation.js"
+import { SMS_OUTBOUND_BODY_HARD_MAX_CHARS } from "./_smsComplianceLimits.js"
 
 const PENDING_AI_KEY = "pending_ai_consumer_reply"
 
@@ -108,7 +109,7 @@ export async function runConversationInboundSmsAutoReply(
       ...prev,
       [PENDING_AI_KEY]: {
         v: 1,
-        body: replyText.slice(0, 1500),
+        body: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
         channel: "sms",
         to,
         created_at,
@@ -127,7 +128,7 @@ export async function runConversationInboundSmsAutoReply(
     body: JSON.stringify({
       userId,
       to,
-      body: replyText.slice(0, 1500),
+      body: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
       conversationId,
       customerId,
     }),
@@ -136,7 +137,7 @@ export async function runConversationInboundSmsAutoReply(
   const { error: insErr } = await supabase.from("messages").insert({
     conversation_id: conversationId,
     sender: "user",
-    content: replyText.slice(0, 1500),
+    content: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
   })
   if (insErr) console.warn("[conversationAutoReply] log outbound message", insErr.message)
 }

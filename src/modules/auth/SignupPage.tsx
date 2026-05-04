@@ -14,6 +14,7 @@ import {
   type SignupRequirementsValue,
 } from "../../types/signup-requirements"
 import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, type ProductPackageId } from "../../lib/productPackages"
+import { PublicLegalNav } from "../public/PublicLegalNav"
 
 type Props = {
   onBack: () => void
@@ -509,6 +510,9 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
               reliable delivery). The confirmation link must match your <strong>Site URL</strong> and allowed redirect URLs.
             </div>
           </div>
+          <div style={{ maxWidth: 520, margin: "0 auto", padding: "0 8px" }}>
+            <PublicLegalNav borderTop={false} />
+          </div>
           <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 8, marginTop: 24 }} />
         </div>
       </div>
@@ -795,6 +799,9 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             {submitting ? "Creating account…" : "Create account"}
           </button>
         </form>
+      </div>
+      <div style={{ maxWidth: 520, margin: "0 auto", padding: "0 8px" }}>
+        <PublicLegalNav borderTop={false} />
       </div>
       <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 8 }} />
     </div>

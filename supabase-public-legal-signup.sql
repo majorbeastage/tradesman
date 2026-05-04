@@ -23,15 +23,15 @@ INSERT INTO public.platform_settings (key, value)
 VALUES
   (
     'tradesman_privacy_policy',
-    '{"title":"Privacy Policy","subtitle":"Edit in Admin → Sign up requirements.","body":""}'::jsonb
+    '{"title":"Privacy Policy","subtitle":"","body":""}'::jsonb
   ),
   (
     'tradesman_terms',
-    '{"title":"Terms & Conditions","subtitle":"Edit in Admin → Sign up requirements.","body":""}'::jsonb
+    '{"title":"Terms & Conditions","subtitle":"","body":""}'::jsonb
   ),
   (
     'tradesman_sms_consent',
-    '{"title":"SMS Consent and Messaging Terms","subtitle":"Edit in Admin → Sign up requirements.","body":"","consent_statement":"","sample_message":""}'::jsonb
+    '{"title":"SMS Consent and Messaging Terms","subtitle":"","body":"","consent_statement":"","sample_message":""}'::jsonb
   ),
   (
     'tradesman_signup_requirements',

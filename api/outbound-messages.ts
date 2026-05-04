@@ -12,6 +12,11 @@ import {
   pickSupabaseUrlForServer,
   toTwilioE164,
 } from "./_communications.js"
+import {
+  finalizeOutboundSmsBody,
+  type SmsOutboundComplianceVariant,
+} from "./_smsComplianceLimits.js"
+import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResolve.js"
 
 /**
  * Single Hobby-plan function for outbound email (Resend) + SMS (Twilio / webhook).
@@ -36,6 +41,8 @@ type OutboundPayload = {
   attachmentPublicUrls?: unknown
   /** Twilio MMS: public URLs of images/files (max ~10). */
   mediaPublicUrls?: unknown
+  /** Optional override for policy URL in long first-SMS footer (https). */
+  smsPolicyUrl?: string
   /** With Bearer JWT, used when Vercel has no service role (same pattern as platform-tools). */
   supabaseUrl?: string
   supabaseAnonKey?: string
@@ -408,13 +415,11 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
 async function handleSms(req: VercelRequest, res: VercelResponse): Promise<VercelResponse> {
   const payload = parseJsonBody(req)
   const to = toTwilioE164(typeof payload.to === "string" ? payload.to : "")
-  const body = typeof payload.body === "string" ? payload.body.trim() : ""
+  const rawBody = typeof payload.body === "string" ? payload.body : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
   const leadIdSms = typeof payload.leadId === "string" ? payload.leadId.trim() : ""
   const mediaUrls = coercePublicUrlList(payload.mediaPublicUrls).slice(0, 10)
-
-  if (!to || !body) return res.status(400).json({ error: "to and body are required" })
 
   const accountSid = firstEnv("TWILIO_ACCOUNT_SID")
   const authToken = firstEnv("TWILIO_AUTH_TOKEN")
@@ -432,6 +437,34 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
     )
     // Per-user From needs DB; see fallback below using TWILIO_FROM_NUMBER.
   }
+
+  let customerIdForCompliance = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
+  if (!customerIdForCompliance && conversationId && supabase) {
+    const { data: convoRow } = await supabase
+      .from("conversations")
+      .select("customer_id")
+      .eq("id", conversationId)
+      .maybeSingle()
+    const cid = (convoRow?.customer_id as string | null | undefined)?.trim()
+    if (cid) customerIdForCompliance = cid
+  }
+
+  let complianceVariant: SmsOutboundComplianceVariant = "none"
+  let businessDisplayName = ""
+  if (supabase && userId) {
+    const resolved = await resolveFirstSmsComplianceForOutbound(supabase, userId, customerIdForCompliance || null)
+    complianceVariant = resolved.variant
+    businessDisplayName = resolved.businessDisplayName
+  }
+
+  const body = finalizeOutboundSmsBody({
+    rawBody,
+    variant: complianceVariant,
+    businessDisplayName: businessDisplayName || "Your business",
+    smsPolicyUrl: typeof payload.smsPolicyUrl === "string" ? payload.smsPolicyUrl.trim() : undefined,
+  })
+
+  if (!to || !body) return res.status(400).json({ error: "to and body are required" })
 
   const envFallbackFrom = toTwilioE164(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null

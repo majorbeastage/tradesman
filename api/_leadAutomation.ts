@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv, getPrimaryEmailChannelForUser, getPrimarySmsChannelForUser } from "./_communications.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+import { SMS_OUTBOUND_BODY_HARD_MAX_CHARS } from "./_smsComplianceLimits.js"
 
 export type LeadsSettingsValues = Record<string, string>
 
@@ -133,7 +134,7 @@ export async function runLeadCaptureSideEffects(
           body: JSON.stringify({
             userId,
             to: rawTo,
-            body: `New lead (campaign/embed). ${snapshot.title.slice(0, 120)}`.slice(0, 1500),
+            body: `New lead (campaign/embed). ${snapshot.title.slice(0, 120)}`.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
             leadId,
             customerId,
           }),
@@ -178,7 +179,7 @@ export async function runLeadCaptureSideEffects(
         ...prev,
         [PENDING_AI_KEY]: {
           v: 1,
-          body: replyText.slice(0, 1500),
+          body: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
           channel: "sms",
           to: snapshot.phone,
           created_at,
@@ -209,7 +210,7 @@ export async function runLeadCaptureSideEffects(
       body: JSON.stringify({
         userId,
         to: snapshot.phone,
-        body: replyText.slice(0, 1500),
+        body: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
         leadId,
         customerId,
       }),

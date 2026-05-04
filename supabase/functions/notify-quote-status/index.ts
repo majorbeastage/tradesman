@@ -10,6 +10,7 @@ import {
   shouldNotifyChannel,
 } from "../_shared/tab-notification-prefs.ts"
 import { userCanAccessQuoteUser } from "../_shared/quote-access.ts"
+import { buildAutomatedNotifySmsBody } from "../_shared/sms-compliance-limits.ts"
 import { getTwilioCredentials, getTwilioFromNumber, twilioAccountBasicAuth } from "../_shared/twilio-env.ts"
 
 const corsHeaders = {
@@ -173,7 +174,7 @@ Deno.serve(async (req) => {
       const form = new URLSearchParams({
         To: dest,
         From: fromNum,
-        Body: `Tradesman: ${textBody}`,
+        Body: buildAutomatedNotifySmsBody(textBody),
       })
       const r = await fetch(url, {
         method: "POST",

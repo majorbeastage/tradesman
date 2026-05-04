@@ -4,6 +4,7 @@ import { theme } from "../../styles/theme"
 import logo from "../../assets/logo.png"
 import { consumeAuthHashErrorMessage } from "../../lib/authRedirectBase"
 import { useLocale } from "../../i18n/LocaleContext"
+import { PublicLegalNav } from "../public/PublicLegalNav"
 
 type HomePageProps = {
   onLogin: () => void
@@ -388,6 +389,14 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
         </div>
 
         <div style={{ marginTop: "auto", paddingTop: 26 }}>
+          <div
+            style={{
+              borderTop: `1px solid ${theme.border}`,
+              marginBottom: 4,
+            }}
+          >
+            <PublicLegalNav borderTop={false} />
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <CopyrightVersionFooter variant="default" style={{ borderTop: "none", paddingTop: 0, paddingBottom: 0, marginTop: 0 }} />
             <div style={{ color: theme.text, opacity: 0.7, fontSize: 12, paddingBottom: 2 }}>

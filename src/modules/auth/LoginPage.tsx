@@ -9,6 +9,7 @@ import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
+import { PublicLegalNav } from "../public/PublicLegalNav"
 
 type LoginType = "user" | "office_manager" | "admin"
 
@@ -304,6 +305,9 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           </p>
         )}
       </form>
+      </div>
+      <div style={{ maxWidth: 420, margin: "0 auto", width: "100%", padding: "0 20px 8px", boxSizing: "border-box" }}>
+        <PublicLegalNav borderTop={false} />
       </div>
       <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 20 }} />
     </div>

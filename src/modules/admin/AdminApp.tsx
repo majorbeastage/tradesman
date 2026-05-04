@@ -1358,7 +1358,14 @@ function AdminAppInner() {
               Assign each <strong>user</strong> to an <strong>office manager</strong> (or admin) so they appear in the office manager portal. This is not in the Supabase dashboard—it lives here in the app.
             </p>
             </AdminSettingBlock>
-            <AdminUsersSection />
+            <AdminUsersSection
+              onUserPortalConfigUpdated={(userId, portalConfig) => {
+                setProfiles((prev) => prev.map((p) => (p.id === userId ? { ...p, portal_config: portalConfig } : p)))
+                if (selectedId === userId) {
+                  setConfig(portalConfig)
+                }
+              }}
+            />
           </div>
         ) : adminPanel === "billing" ? (
           <AdminPaymentsSection />
