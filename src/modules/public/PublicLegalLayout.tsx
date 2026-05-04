@@ -9,6 +9,8 @@ type Props = {
   subtitle: string
   /** Upper line above the title (never empty at call sites). */
   heroKicker: string
+  /** Optional muted line under the subtitle in the hero (e.g. “Last updated: …”). */
+  heroSubline?: string
   /** Optional notice card between hero and main content. */
   noticeTitle?: string
   noticeBody?: string
@@ -16,6 +18,11 @@ type Props = {
   footerNote?: string
   /** When false, hides the default SMS-compliance strapline under the nav (nav links still show). */
   showSmsComplianceStrapline?: boolean
+  /**
+   * When true (with no custom footerNote), shows the Privacy + Terms strapline used on the SMS consent page.
+   * Ignored if footerNote is set.
+   */
+  footerPrivacyTermsStrapline?: boolean
   children: ReactNode
 }
 
@@ -23,10 +30,12 @@ export function PublicLegalLayout({
   title,
   subtitle,
   heroKicker,
+  heroSubline,
   noticeTitle,
   noticeBody,
   footerNote,
   showSmsComplianceStrapline = true,
+  footerPrivacyTermsStrapline = false,
   children,
 }: Props) {
   const showNotice = Boolean((noticeTitle ?? "").trim() || (noticeBody ?? "").trim())
@@ -60,6 +69,9 @@ export function PublicLegalLayout({
           <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>{heroKicker}</div>
           <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>{title}</h1>
           <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{subtitle}</p>
+          {heroSubline?.trim() ? (
+            <p style={{ margin: "14px 0 0", fontSize: 13, opacity: 0.75 }}>{heroSubline.trim()}</p>
+          ) : null}
         </div>
         {showNotice ? (
           <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
@@ -74,6 +86,18 @@ export function PublicLegalLayout({
           <PublicLegalNav />
           {footerNote?.trim() ? (
             <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280", whiteSpace: "pre-wrap" }}>{footerNote.trim()}</p>
+          ) : footerPrivacyTermsStrapline ? (
+            <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
+              For general privacy practices see{" "}
+              <a href={LEGAL_LINKS.privacy} style={{ color: theme.primary, fontWeight: 600 }}>
+                Privacy Policy
+              </a>{" "}
+              and{" "}
+              <a href={LEGAL_LINKS.terms} style={{ color: theme.primary, fontWeight: 600 }}>
+                Terms &amp; Conditions
+              </a>
+              .
+            </p>
           ) : showSmsComplianceStrapline ? (
             <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
               For SMS opt-in and carrier compliance details, see{" "}

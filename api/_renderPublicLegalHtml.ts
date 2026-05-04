@@ -146,7 +146,6 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:
 .hero .sub{margin:0;opacity:0.92;max-width:760px;}
 .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:22px;margin-bottom:18px;}
 .card h2{margin:0 0 10px;font-size:1.15rem;color:#111827;}
-.disclosure{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;color:#374151;white-space:pre-wrap;}
 .navcard{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px;}
 .navcard a{color:#ea580c;font-weight:600;text-decoration:none;}
 </style>
@@ -160,9 +159,9 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:
 ${lastBlock}
 </header>
 ${noticeSection}
-<section class="card"><h2>${detailsTitle}</h2><p style="margin:0;color:#4b5563;white-space:pre-wrap">${body}</p></section>
-<section class="card"><h2>${consentTitle}</h2><div class="disclosure">${consent}</div></section>
-<section class="card"><h2>${sampleTitle}</h2>${sampleIntroBlock}<div class="disclosure">${sample}</div></section>
+<section class="card"><h2>${detailsTitle}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${body}</p></section>
+<section class="card"><h2>${consentTitle}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${consent}</p></section>
+<section class="card"><h2>${sampleTitle}</h2>${sampleIntroBlock}<p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${sample}</p></section>
 <div class="navcard">
 <p style="margin:0 0 8px"><a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms &amp; Conditions</a> &middot; <a href="/">Home</a></p>
 ${footerInner}

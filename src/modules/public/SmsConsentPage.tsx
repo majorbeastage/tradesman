@@ -1,8 +1,7 @@
+import type { CSSProperties } from "react"
 import { useEffect, useState } from "react"
-import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
-import { LEGAL_LINKS } from "../../lib/legalLinks"
-import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
+import { supabase } from "../../lib/supabase"
 import {
   DEFAULT_SMS_CONSENT_PAGE,
   SMS_CONSENT_SETTINGS_KEY,
@@ -14,11 +13,26 @@ import {
   smsNoticeCardVisible,
   type SmsConsentLegalPage,
 } from "../../types/legal-pages"
-import { PublicLegalNav } from "./PublicLegalNav"
+import { PublicLegalLayout } from "./PublicLegalLayout"
+
+/** Same document-style card as Privacy / Terms (plain text, no “disclosure” chrome). */
+const card: CSSProperties = {
+  background: "#fff",
+  border: `1px solid ${theme.border}`,
+  borderRadius: 14,
+  padding: 22,
+}
+
+const bodyText: CSSProperties = {
+  margin: 0,
+  color: "#4b5563",
+  lineHeight: 1.65,
+  whiteSpace: "pre-wrap",
+}
 
 /**
- * In-app SMS consent (loads copy from platform_settings).
- * Crawlable `/sms` and `/sms-consent` are served as HTML from the API using the same keys (see Vercel rewrite).
+ * SMS consent — same shell and “legal document” look as Privacy and Terms (`PublicLegalLayout` + white cards).
+ * Crawlable HTML: `/sms` via API rewrite (same `platform_settings` data).
  */
 export default function SmsConsentPage() {
   const [content, setContent] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })
@@ -55,121 +69,38 @@ export default function SmsConsentPage() {
     (content.sample_section_intro ?? "").trim() ||
     (DEFAULT_SMS_CONSENT_PAGE.sample_section_intro ?? "").trim()
   const showNotice = smsNoticeCardVisible(content)
-  const noticeHeading = (content.notice_title ?? "").trim() || "Notice"
-  const noticeBody = (content.notice_body ?? "").trim()
   const lastUpdated = (content.hero_last_updated ?? "").trim()
+  const customFooter = content.footer_note?.trim()
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: theme.background,
-        padding: "24px 16px 48px",
-        boxSizing: "border-box",
-      }}
+    <PublicLegalLayout
+      title={content.title}
+      subtitle={content.subtitle}
+      heroKicker={kicker}
+      heroSubline={lastUpdated || undefined}
+      noticeTitle={showNotice ? (content.notice_title ?? "").trim() || "Notice" : undefined}
+      noticeBody={showNotice ? (content.notice_body ?? "").trim() || undefined : undefined}
+      footerNote={customFooter}
+      showSmsComplianceStrapline={false}
+      footerPrivacyTermsStrapline={!customFooter}
     >
-      <div
-        style={{
-          maxWidth: 920,
-          margin: "0 auto",
-          display: "grid",
-          gap: 18,
-        }}
-      >
-        <div
-          style={{
-            background: theme.charcoalSmoke,
-            color: "#fff",
-            borderRadius: 16,
-            padding: 24,
-            border: `1px solid ${theme.charcoal}`,
-          }}
-        >
-          <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>{kicker}</div>
-          <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>{content.title}</h1>
-          <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{content.subtitle}</p>
-          {lastUpdated ? (
-            <p style={{ margin: "14px 0 0", fontSize: 13, opacity: 0.75 }}>{lastUpdated}</p>
-          ) : null}
+      {bodyExtra ? (
+        <div style={card}>
+          <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{detailsTitle}</h2>
+          <p style={bodyText}>{loading ? "Loading…" : bodyExtra}</p>
         </div>
+      ) : null}
 
-        {showNotice ? (
-          <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-            <h2 style={{ margin: "0 0 10px", color: theme.text }}>{noticeHeading}</h2>
-            {noticeBody ? (
-              <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{noticeBody}</p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {bodyExtra ? (
-          <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-            <h2 style={{ margin: "0 0 10px", color: theme.text }}>{detailsTitle}</h2>
-            <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
-              {loading ? "Loading…" : bodyExtra}
-            </p>
-          </div>
-        ) : null}
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>{consentTitle}</h2>
-          <div
-            style={{
-              background: "#f9fafb",
-              border: `1px solid ${theme.border}`,
-              borderRadius: 10,
-              padding: 16,
-              color: "#374151",
-              lineHeight: 1.65,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {consent}
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 22 }}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text }}>{sampleTitle}</h2>
-          {sampleIntro ? (
-            <p style={{ margin: "0 0 12px", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>{sampleIntro}</p>
-          ) : null}
-          <div
-            style={{
-              background: "#f9fafb",
-              border: `1px solid ${theme.border}`,
-              borderRadius: 10,
-              padding: 16,
-              color: "#374151",
-              lineHeight: 1.65,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {sample}
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 18 }}>
-          <PublicLegalNav />
-          {content.footer_note?.trim() ? (
-            <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280", whiteSpace: "pre-wrap" }}>
-              {content.footer_note.trim()}
-            </p>
-          ) : (
-            <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
-              For general privacy practices see{" "}
-              <a href={LEGAL_LINKS.privacy} style={{ color: theme.primary, fontWeight: 600 }}>
-                Privacy Policy
-              </a>{" "}
-              and{" "}
-              <a href={LEGAL_LINKS.terms} style={{ color: theme.primary, fontWeight: 600 }}>
-                Terms &amp; Conditions
-              </a>
-              .
-            </p>
-          )}
-        </div>
-        <CopyrightVersionFooter variant="default" align="center" style={{ borderTop: "none", paddingTop: 8 }} />
+      <div style={card}>
+        <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{consentTitle}</h2>
+        <p style={bodyText}>{consent}</p>
       </div>
-    </div>
+
+      <div style={card}>
+        <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{sampleTitle}</h2>
+        {sampleIntro ? <p style={{ ...bodyText, marginBottom: 12, fontSize: 14 }}>{sampleIntro}</p> : null}
+        <p style={bodyText}>{sample}</p>
+      </div>
+    </PublicLegalLayout>
   )
 }
