@@ -23,7 +23,8 @@
     "api/platform-tools.ts": { "maxDuration": 60 },
     "api/privacy.ts": { "maxDuration": 30 },
     "api/terms.ts": { "maxDuration": 30 },
-    "api/sms.ts": { "maxDuration": 30 }
+    "api/sms.ts": { "maxDuration": 30 },
+    "api/legal-health.ts": { "maxDuration": 10 }
   },
   "rewrites": [
     {

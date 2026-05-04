@@ -3,6 +3,7 @@
  * GET /api/terms — also routed as /terms via vercel.json rewrite.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { setLegalSupabaseEnvHeader } from "./_legalSupabaseEnv.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -17,6 +18,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(405).setHeader("Allow", "GET, OPTIONS").json({ error: "Method not allowed" })
     return
   }
+
+  setLegalSupabaseEnvHeader(res)
 
   try {
     const html = await renderPublicLegalHtmlPage("terms")
