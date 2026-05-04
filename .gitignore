@@ -46,3 +46,5 @@ android/*.keystore
 
 # Firebase Android client config (project-specific; add locally from Firebase Console)
 android/app/google-services.json
+
+.vercel
