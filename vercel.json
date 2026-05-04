@@ -51,35 +51,35 @@
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
     {
       "source": "/privacy",
-      "destination": "/privacy-policy.html"
+      "destination": "/privacy.html"
     },
     {
       "source": "/privacy/",
-      "destination": "/privacy-policy.html"
+      "destination": "/privacy.html"
     },
     {
       "source": "/terms",
-      "destination": "/terms-conditions.html"
+      "destination": "/terms.html"
     },
     {
       "source": "/terms/",
-      "destination": "/terms-conditions.html"
+      "destination": "/terms.html"
     },
     {
       "source": "/sms-consent",
-      "destination": "/sms-consent.html"
+      "destination": "/sms.html"
     },
     {
       "source": "/sms-consent/",
-      "destination": "/sms-consent.html"
+      "destination": "/sms.html"
     },
     {
       "source": "/sms",
-      "destination": "/sms-consent.html"
+      "destination": "/sms.html"
     },
     {
       "source": "/sms/",
-      "destination": "/sms-consent.html"
+      "destination": "/sms.html"
     },
     {
       "source": "/account-deletion",

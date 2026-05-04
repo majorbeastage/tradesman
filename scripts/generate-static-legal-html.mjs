@@ -46,7 +46,7 @@ a{color:#ea580c;font-weight:600}
 </header>
 <main><pre class="legal">${esc(body)}</pre></main>
 <footer>
-<p>Tradesman Systems — public legal document (readable without JavaScript). <a href="/">Home</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/sms-consent">SMS consent</a></p>
+<p>Tradesman Systems — public legal document (readable without JavaScript). <a href="/">Home</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/sms">SMS consent</a></p>
 </footer>
 </body>
 </html>`
@@ -54,6 +54,18 @@ a{color:#ea580c;font-weight:600}
 
 const priv = grab("DEFAULT_PRIVACY_PAGE")
 const terms = grab("DEFAULT_TERMS_PAGE")
-fs.writeFileSync(path.join(root, "public/privacy-policy.html"), wrap(priv))
-fs.writeFileSync(path.join(root, "public/terms-conditions.html"), wrap(terms))
-console.log("OK: public/privacy-policy.html, public/terms-conditions.html")
+const pub = path.join(root, "public")
+const privHtml = wrap(priv)
+const termsHtml = wrap(terms)
+fs.writeFileSync(path.join(pub, "privacy.html"), privHtml)
+fs.writeFileSync(path.join(pub, "terms.html"), termsHtml)
+fs.writeFileSync(path.join(pub, "privacy-policy.html"), privHtml)
+fs.writeFileSync(path.join(pub, "terms-conditions.html"), termsHtml)
+const smsSrc = path.join(pub, "sms-consent.html")
+const smsSimple = path.join(pub, "sms.html")
+if (fs.existsSync(smsSrc)) {
+  fs.copyFileSync(smsSrc, smsSimple)
+} else {
+  console.warn("Missing public/sms-consent.html — did not write sms.html")
+}
+console.log("OK: public/privacy.html, public/terms.html, public/sms.html (+ policy/conditions aliases)")

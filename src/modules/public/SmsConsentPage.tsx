@@ -13,7 +13,7 @@ import { PublicLegalNav } from "./PublicLegalNav"
 
 /**
  * In-app SMS consent (loads optional copy from platform_settings).
- * Production https://…/sms-consent is rewritten to GET /api/platform-tools?__route=sms-consent, which returns `public/sms-consent.html` (no extra serverless function slot).
+ * Public crawlable copy: `/sms` and `/sms-consent` serve static `public/sms.html` (synced from `sms-consent.html` via `npm run legal:static-html`).
  */
 export default function SmsConsentPage() {
   const [content, setContent] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })

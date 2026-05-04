@@ -11,14 +11,14 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8")
 /** Matches vercel.json: crawlable legal URLs serve static HTML from `public/` (same as production `dist/`). */
 function legalStaticRewritesDev(): Plugin {
   const map: Record<string, string> = {
-    "/privacy": "/privacy-policy.html",
-    "/privacy/": "/privacy-policy.html",
-    "/terms": "/terms-conditions.html",
-    "/terms/": "/terms-conditions.html",
-    "/sms-consent": "/sms-consent.html",
-    "/sms-consent/": "/sms-consent.html",
-    "/sms": "/sms-consent.html",
-    "/sms/": "/sms-consent.html",
+    "/privacy": "/privacy.html",
+    "/privacy/": "/privacy.html",
+    "/terms": "/terms.html",
+    "/terms/": "/terms.html",
+    "/sms-consent": "/sms.html",
+    "/sms-consent/": "/sms.html",
+    "/sms": "/sms.html",
+    "/sms/": "/sms.html",
     "/account-deletion": "/account-deletion.html",
     "/account-deletion/": "/account-deletion.html",
   }
