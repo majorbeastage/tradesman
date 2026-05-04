@@ -18,26 +18,36 @@ import {
   smsNoticeCardVisible,
   type SimpleLegalPage,
   type SmsConsentLegalPage,
-} from "../src/types/legal-pages"
+} from "./legal-pages-ssr.js"
 import { pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+function esc(s: unknown): string {
+  const t = s == null ? "" : String(s)
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
 async function fetchPlatformSettingValue(key: string): Promise<unknown> {
-  const supabaseUrl = pickSupabaseUrlForServer()
-  const anonKey = pickSupabaseAnonKeyForServer()
-  if (!supabaseUrl || !anonKey) return null
-  const supabase = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { data } = await supabase.from("platform_settings").select("value").eq("key", key).maybeSingle()
-  return data?.value ?? null
+  try {
+    const supabaseUrl = pickSupabaseUrlForServer().trim()
+    const anonKey = pickSupabaseAnonKeyForServer().trim()
+    if (!supabaseUrl || !anonKey) {
+      console.error("[fetchPlatformSettingValue] Missing SUPABASE_URL / anon key for server (check Vercel env).")
+      return null
+    }
+    const supabase = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    const { data, error } = await supabase.from("platform_settings").select("value").eq("key", key).maybeSingle()
+    if (error) console.error("[fetchPlatformSettingValue]", key, error.message)
+    return data?.value ?? null
+  } catch (e) {
+    console.error("[fetchPlatformSettingValue]", key, e)
+    return null
+  }
 }
 
 function wrapSimplePage(page: SimpleLegalPage, opts: { pathLabel: string; defaultCrossFooter: string }): string {
   const kicker = esc(resolvedLegalHeroKicker(page))
   const title = esc(page.title)
-  const subtitle = esc(page.subtitle)
+  const subtitle = esc(String(page.subtitle ?? ""))
   const body = esc(page.body?.trim() ? page.body : "")
   const showNotice = Boolean((page.notice_title ?? "").trim() || (page.notice_body ?? "").trim())
   const noticeHeading = esc((page.notice_title ?? "").trim() || "Notice")
@@ -56,7 +66,7 @@ function wrapSimplePage(page: SimpleLegalPage, opts: { pathLabel: string; defaul
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title} | Tradesman Systems</title>
-<meta name="description" content="${esc(page.subtitle.slice(0, 240))}"/>
+<meta name="description" content="${esc(String(page.subtitle ?? "").slice(0, 240))}"/>
 <meta name="robots" content="index,follow"/>
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65;color:#111827;margin:0;background:#f3f4f6;}
@@ -103,7 +113,7 @@ ${footerInner}
 function renderSmsHtml(page: SmsConsentLegalPage): string {
   const kicker = esc(resolvedLegalHeroKicker(page))
   const title = esc(page.title)
-  const subtitle = esc(page.subtitle)
+  const subtitle = esc(String(page.subtitle ?? ""))
   const lastUp = (page.hero_last_updated ?? "").trim()
   const lastBlock = lastUp ? `<p style="margin:14px 0 0;font-size:13px;opacity:0.75">${esc(lastUp)}</p>` : ""
   const showNotice = smsNoticeCardVisible(page)
@@ -135,7 +145,7 @@ function renderSmsHtml(page: SmsConsentLegalPage): string {
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title} | Tradesman Systems</title>
-<meta name="description" content="${esc(page.subtitle.slice(0, 240))}"/>
+<meta name="description" content="${esc(String(page.subtitle ?? "").slice(0, 240))}"/>
 <meta name="robots" content="index,follow"/>
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65;color:#111827;margin:0;background:#f3f4f6;}
@@ -172,23 +182,40 @@ ${footerInner}
 }
 
 export async function renderPublicLegalHtmlPage(slug: "privacy" | "terms" | "sms"): Promise<string> {
-  if (slug === "privacy") {
-    const raw = await fetchPlatformSettingValue(PRIVACY_SETTINGS_KEY)
-    const page = parseSimpleLegalPage(raw, DEFAULT_PRIVACY_PAGE)
-    return wrapSimplePage(page, {
-      pathLabel: "/privacy",
-      defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
-    })
+  try {
+    if (slug === "privacy") {
+      const raw = await fetchPlatformSettingValue(PRIVACY_SETTINGS_KEY)
+      const page = parseSimpleLegalPage(raw, DEFAULT_PRIVACY_PAGE)
+      return wrapSimplePage(page, {
+        pathLabel: "/privacy",
+        defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+      })
+    }
+    if (slug === "terms") {
+      const raw = await fetchPlatformSettingValue(TERMS_SETTINGS_KEY)
+      const page = parseSimpleLegalPage(raw, DEFAULT_TERMS_PAGE)
+      return wrapSimplePage(page, {
+        pathLabel: "/terms",
+        defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+      })
+    }
+    const raw = await fetchPlatformSettingValue(SMS_CONSENT_SETTINGS_KEY)
+    const page = parseSmsConsentLegalPage(raw, DEFAULT_SMS_CONSENT_PAGE)
+    return renderSmsHtml(page)
+  } catch (e) {
+    console.error("[renderPublicLegalHtmlPage]", slug, e)
+    if (slug === "privacy") {
+      return wrapSimplePage(DEFAULT_PRIVACY_PAGE, {
+        pathLabel: "/privacy",
+        defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+      })
+    }
+    if (slug === "terms") {
+      return wrapSimplePage(DEFAULT_TERMS_PAGE, {
+        pathLabel: "/terms",
+        defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+      })
+    }
+    return renderSmsHtml(DEFAULT_SMS_CONSENT_PAGE)
   }
-  if (slug === "terms") {
-    const raw = await fetchPlatformSettingValue(TERMS_SETTINGS_KEY)
-    const page = parseSimpleLegalPage(raw, DEFAULT_TERMS_PAGE)
-    return wrapSimplePage(page, {
-      pathLabel: "/terms",
-      defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
-    })
-  }
-  const raw = await fetchPlatformSettingValue(SMS_CONSENT_SETTINGS_KEY)
-  const page = parseSmsConsentLegalPage(raw, DEFAULT_SMS_CONSENT_PAGE)
-  return renderSmsHtml(page)
 }
