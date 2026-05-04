@@ -20,7 +20,10 @@
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
-    "api/platform-tools.ts": { "maxDuration": 60 }
+    "api/platform-tools.ts": { "maxDuration": 60 },
+    "api/privacy.ts": { "maxDuration": 30 },
+    "api/terms.ts": { "maxDuration": 30 },
+    "api/sms.ts": { "maxDuration": 30 }
   },
   "rewrites": [
     {
@@ -51,35 +54,35 @@
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
     {
       "source": "/privacy",
-      "destination": "/privacy.html"
+      "destination": "/api/privacy"
     },
     {
       "source": "/privacy/",
-      "destination": "/privacy.html"
+      "destination": "/api/privacy"
     },
     {
       "source": "/terms",
-      "destination": "/terms.html"
+      "destination": "/api/terms"
     },
     {
       "source": "/terms/",
-      "destination": "/terms.html"
+      "destination": "/api/terms"
     },
     {
       "source": "/sms-consent",
-      "destination": "/sms.html"
+      "destination": "/api/sms"
     },
     {
       "source": "/sms-consent/",
-      "destination": "/sms.html"
+      "destination": "/api/sms"
     },
     {
       "source": "/sms",
-      "destination": "/sms.html"
+      "destination": "/api/sms"
     },
     {
       "source": "/sms/",
-      "destination": "/sms.html"
+      "destination": "/api/sms"
     },
     {
       "source": "/account-deletion",
