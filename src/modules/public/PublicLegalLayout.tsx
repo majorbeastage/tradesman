@@ -37,7 +37,9 @@ export function PublicLegalLayout({ title, subtitle, children }: Props) {
             border: `1px solid ${theme.charcoal}`,
           }}
         >
-          <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>Tradesman</div>
+          <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>
+            Tradesman Systems
+          </div>
           <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>{title}</h1>
           <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{subtitle}</p>
         </div>
