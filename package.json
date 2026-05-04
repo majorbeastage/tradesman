@@ -19,7 +19,8 @@
     "mobile:open:android": "npx cap open android",
     "mobile:open:ios": "npx cap open ios",
     "icons:generate": "node scripts/generate-app-icons.mjs",
-    "legal:static-html": "node scripts/generate-static-legal-html.mjs"
+    "legal:static-html": "node scripts/generate-static-legal-html.mjs",
+    "legal:sync-ssr": "node scripts/sync-legal-pages-ssr.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

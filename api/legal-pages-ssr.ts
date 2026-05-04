@@ -1,7 +1,7 @@
 /**
  * Serverless bundle copy of `src/types/legal-pages.ts` — imported only from `api/_renderPublicLegalHtml.ts`
  * so Vercel always packages this file with the function (avoids missing `../src/...` at runtime).
- * When changing defaults or parsers, update both files (or replace with a shared package later).
+ * Regenerate after editing the source file: `npm run legal:sync-ssr`
  */
 /** Stored in platform_settings for public legal pages. */
 
