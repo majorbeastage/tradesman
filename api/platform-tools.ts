@@ -6,7 +6,8 @@
  * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
  * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
- * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (A2P; bundled public/sms-consent.html)
+ * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (bundled public/sms-consent.html; legacy)
+ * GET  /api/platform-tools?__route=legal-html&page=privacy|terms|sms  — HTML from platform_settings (crawlable; no JS)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { existsSync, readFileSync } from "fs"
@@ -32,6 +33,7 @@ import {
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
+import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
 function parseHelcimJsUrlEncodedBody(req: VercelRequest): Record<string, string> {
@@ -1408,6 +1410,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const route = pickFirstString(req.query?.__route, req.query?.route).toLowerCase()
 
+  if (req.method === "GET" && route === "legal-html") {
+    const page = pickFirstString(req.query?.page, req.query?.p).toLowerCase()
+    if (page !== "privacy" && page !== "terms" && page !== "sms") {
+      res.status(400).json({ error: "Invalid or missing page", hint: "Use ?page=privacy, ?page=terms, or ?page=sms" })
+      return
+    }
+    try {
+      const html = await renderPublicLegalHtmlPage(page)
+      res.setHeader("Content-Type", "text/html; charset=utf-8")
+      res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300")
+      res.status(200).send(html)
+    } catch (e) {
+      console.error("[platform-tools] legal-html", e)
+      res.status(500).setHeader("Content-Type", "text/html; charset=utf-8").send("<!DOCTYPE html><html><body><p>Legal page temporarily unavailable.</p></body></html>")
+    }
+    return
+  }
+
   if (req.method === "GET" && route === "sms-consent") {
     const html = loadSmsConsentHtml()
     res.setHeader("Content-Type", "text/html; charset=utf-8")
@@ -1436,7 +1456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(200).json({
       ok: true,
       route: "platform-tools",
-      getHtml: ["sms-consent", "privacy-policy", "terms-conditions"],
+      getHtml: ["legal-html", "sms-consent", "privacy-policy", "terms-conditions"],
       post: [
         "public-lead",
         "ai-summarize",

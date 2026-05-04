@@ -6,6 +6,7 @@ import {
   DEFAULT_PRIVACY_PAGE,
   PRIVACY_SETTINGS_KEY,
   parseSimpleLegalPage,
+  resolvedLegalHeroKicker,
   type SimpleLegalPage,
 } from "../../types/legal-pages"
 import { PublicLegalLayout } from "./PublicLegalLayout"
@@ -46,7 +47,14 @@ export default function PrivacyPage() {
   const bodyText = content.body?.trim() ? content.body : DEFAULT_PRIVACY_PAGE.body
 
   return (
-    <PublicLegalLayout title={content.title || DEFAULT_PRIVACY_PAGE.title} subtitle={content.subtitle}>
+    <PublicLegalLayout
+      title={content.title || DEFAULT_PRIVACY_PAGE.title}
+      subtitle={content.subtitle}
+      heroKicker={resolvedLegalHeroKicker(content)}
+      noticeTitle={content.notice_title}
+      noticeBody={content.notice_body}
+      footerNote={content.footer_note}
+    >
       <div style={card}>
         {loading ? (
           <p style={{ margin: 0, color: "#6b7280" }}>Loading…</p>

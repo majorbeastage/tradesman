@@ -22,6 +22,8 @@ export default function AccountDeletionPage() {
     <PublicLegalLayout
       title="Delete your Tradesman account"
       subtitle="How to request that we close your account and remove your personal data, subject to law and legitimate business records."
+      heroKicker="Tradesman Systems"
+      showSmsComplianceStrapline={false}
     >
       <div style={card}>
         <ol style={{ margin: "0 0 16px", paddingLeft: 22, color: "#374151", lineHeight: 1.65 }}>

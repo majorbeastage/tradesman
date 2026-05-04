@@ -2,7 +2,13 @@ import type { CSSProperties } from "react"
 import { useEffect, useState } from "react"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { DEFAULT_TERMS_PAGE, TERMS_SETTINGS_KEY, parseSimpleLegalPage, type SimpleLegalPage } from "../../types/legal-pages"
+import {
+  DEFAULT_TERMS_PAGE,
+  TERMS_SETTINGS_KEY,
+  parseSimpleLegalPage,
+  resolvedLegalHeroKicker,
+  type SimpleLegalPage,
+} from "../../types/legal-pages"
 import { PublicLegalLayout } from "./PublicLegalLayout"
 
 const card: CSSProperties = {
@@ -38,7 +44,14 @@ export default function TermsPage() {
   const bodyText = content.body?.trim() ? content.body : DEFAULT_TERMS_PAGE.body
 
   return (
-    <PublicLegalLayout title={content.title || DEFAULT_TERMS_PAGE.title} subtitle={content.subtitle}>
+    <PublicLegalLayout
+      title={content.title || DEFAULT_TERMS_PAGE.title}
+      subtitle={content.subtitle}
+      heroKicker={resolvedLegalHeroKicker(content)}
+      noticeTitle={content.notice_title}
+      noticeBody={content.notice_body}
+      footerNote={content.footer_note}
+    >
       <div style={card}>
         {loading ? (
           <p style={{ margin: 0, color: "#6b7280" }}>Loading…</p>

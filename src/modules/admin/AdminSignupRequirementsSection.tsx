@@ -105,9 +105,9 @@ export default function AdminSignupRequirementsSection() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
-  const [privacyOpen, setPrivacyOpen] = useState(false)
-  const [termsOpen, setTermsOpen] = useState(false)
-  const [smsOpen, setSmsOpen] = useState(false)
+  const [privacyOpen, setPrivacyOpen] = useState(true)
+  const [termsOpen, setTermsOpen] = useState(true)
+  const [smsOpen, setSmsOpen] = useState(true)
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -149,17 +149,7 @@ export default function AdminSignupRequirementsSection() {
         { key: SIGNUP_REQUIREMENTS_KEY, value: signup, updated_at: now },
         { key: PRIVACY_SETTINGS_KEY, value: privacy, updated_at: now },
         { key: TERMS_SETTINGS_KEY, value: terms, updated_at: now },
-        {
-          key: SMS_CONSENT_SETTINGS_KEY,
-          value: {
-            title: sms.title,
-            subtitle: sms.subtitle,
-            body: sms.body,
-            consent_statement: sms.consent_statement,
-            sample_message: sms.sample_message,
-          },
-          updated_at: now,
-        },
+        { key: SMS_CONSENT_SETTINGS_KEY, value: sms, updated_at: now },
       ]
       const { error: err } = await supabase.from("platform_settings").upsert(rows, { onConflict: "key" })
       if (err) throw err
@@ -202,7 +192,10 @@ export default function AdminSignupRequirementsSection() {
             <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Sign up requirements</h1>
             <p style={{ color: theme.text, opacity: 0.85, margin: 0, lineHeight: 1.55, fontSize: 14 }}>
               Control which fields are required on the public sign-up form, add custom questions (saved on the profile as{" "}
-              <code style={{ fontSize: 12 }}>signup_extras</code>), and edit Privacy, Terms, and SMS consent copy. Run{" "}
+              <code style={{ fontSize: 12 }}>signup_extras</code>), and edit Privacy, Terms, and SMS consent copy. Public pages{" "}
+              <code style={{ fontSize: 12 }}>/privacy</code>, <code style={{ fontSize: 12 }}>/terms</code>, and{" "}
+              <code style={{ fontSize: 12 }}>/sms</code> read from the same saved JSON (including crawlable HTML from the API). Saving
+              requires an admin account (<code style={{ fontSize: 12 }}>is_admin()</code> on <code style={{ fontSize: 12 }}>platform_settings</code>). Run{" "}
               <code style={{ fontSize: 12 }}>supabase-public-legal-signup.sql</code> once so anon users can read these keys and{" "}
               <code style={{ fontSize: 12 }}>signup_extras</code> exists on <code style={{ fontSize: 12 }}>profiles</code>.
             </p>
@@ -374,8 +367,16 @@ export default function AdminSignupRequirementsSection() {
         onToggle={() => setPrivacyOpen((v) => !v)}
       >
         <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
-          This matches the public <code style={{ fontSize: 12 }}>/privacy</code> page. If the body was saved empty in the database, the full default copy is shown here so you can edit it.
+          Same JSON as the public <code style={{ fontSize: 12 }}>/privacy</code> page and crawlable HTML. Leave optional fields blank to use product defaults where noted.
         </p>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Hero line (small caps above title; blank = “Tradesman Systems”)
+          <input
+            value={privacy.hero_kicker ?? ""}
+            onChange={(e) => setPrivacy((p) => ({ ...p, hero_kicker: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={privacy.title} onChange={(e) => setPrivacy((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
@@ -384,9 +385,33 @@ export default function AdminSignupRequirementsSection() {
           Subtitle
           <textarea value={privacy.subtitle} onChange={(e) => setPrivacy((p) => ({ ...p, subtitle: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 640, marginTop: 6, minHeight: 64, display: "block" }} />
         </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice heading (optional card above body; leave heading and body empty to hide)
+          <input
+            value={privacy.notice_title ?? ""}
+            onChange={(e) => setPrivacy((p) => ({ ...p, notice_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice body
+          <textarea
+            value={privacy.notice_body ?? ""}
+            onChange={(e) => setPrivacy((p) => ({ ...p, notice_body: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Main body
+          <textarea value={privacy.body} onChange={(e) => setPrivacy((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 220, display: "block" }} />
+        </label>
         <label style={{ display: "block", fontWeight: 600, color: theme.text }}>
-          Body
-          <textarea value={privacy.body} onChange={(e) => setPrivacy((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 200, display: "block" }} />
+          Footer note under nav (plain text; blank = default line with link to SMS consent)
+          <textarea
+            value={privacy.footer_note ?? ""}
+            onChange={(e) => setPrivacy((p) => ({ ...p, footer_note: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 56, display: "block" }}
+          />
         </label>
       </CollapsibleLegalBlock>
 
@@ -397,8 +422,16 @@ export default function AdminSignupRequirementsSection() {
         onToggle={() => setTermsOpen((v) => !v)}
       >
         <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
-          This matches the public <code style={{ fontSize: 12 }}>/terms</code> page. If the body was saved empty in the database, the full default copy is shown here so you can edit it.
+          Same JSON as the public <code style={{ fontSize: 12 }}>/terms</code> page and crawlable HTML.
         </p>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Hero line (blank = “Tradesman Systems”)
+          <input
+            value={terms.hero_kicker ?? ""}
+            onChange={(e) => setTerms((p) => ({ ...p, hero_kicker: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={terms.title} onChange={(e) => setTerms((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
@@ -407,37 +440,136 @@ export default function AdminSignupRequirementsSection() {
           Subtitle
           <textarea value={terms.subtitle} onChange={(e) => setTerms((p) => ({ ...p, subtitle: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 640, marginTop: 6, minHeight: 64, display: "block" }} />
         </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice heading (optional; hide when heading and body both empty)
+          <input
+            value={terms.notice_title ?? ""}
+            onChange={(e) => setTerms((p) => ({ ...p, notice_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice body
+          <textarea
+            value={terms.notice_body ?? ""}
+            onChange={(e) => setTerms((p) => ({ ...p, notice_body: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Main body
+          <textarea value={terms.body} onChange={(e) => setTerms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 220, display: "block" }} />
+        </label>
         <label style={{ display: "block", fontWeight: 600, color: theme.text }}>
-          Body
-          <textarea value={terms.body} onChange={(e) => setTerms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 200, display: "block" }} />
+          Footer note under nav (blank = default SMS strapline)
+          <textarea
+            value={terms.footer_note ?? ""}
+            onChange={(e) => setTerms((p) => ({ ...p, footer_note: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 56, display: "block" }}
+          />
         </label>
       </CollapsibleLegalBlock>
 
       <CollapsibleLegalBlock
         sectionId="admin:signup:sms"
-        title="SMS consent page (/sms-consent)"
+        title="SMS consent (/sms and /sms-consent)"
         open={smsOpen}
         onToggle={() => setSmsOpen((v) => !v)}
       >
+        <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
+          Order matches the public page: hero → notice (optional) → details body → consent box → samples → footer. Clear both notice fields to hide that card. Section titles fall back to sensible defaults when left blank.
+        </p>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Hero line (blank = “Tradesman Systems”)
+          <input
+            value={sms.hero_kicker ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, hero_kicker: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Title
           <input value={sms.title} onChange={(e) => setSms((p) => ({ ...p, title: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }} />
         </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Subtitle
+          Subtitle (under title in hero)
           <textarea value={sms.subtitle} onChange={(e) => setSms((p) => ({ ...p, subtitle: e.target.value }))} style={{ ...theme.formInput, width: "100%", maxWidth: 640, marginTop: 6, minHeight: 64, display: "block" }} />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Hero “last updated” line (optional; e.g. Last updated: May 4, 2026)
+          <input
+            value={sms.hero_last_updated ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, hero_last_updated: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice heading (blank with blank body = hide notice card)
+          <input
+            value={sms.notice_title ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, notice_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Notice body
+          <textarea
+            value={sms.notice_body ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, notice_body: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 80, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Details section title (blank = “Details”)
+          <input
+            value={sms.details_section_title ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, details_section_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Details body (main narrative; pre-wrap)
+          <textarea value={sms.body} onChange={(e) => setSms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 220, display: "block" }} />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Consent section title (blank = default consent heading)
+          <input
+            value={sms.consent_section_title ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, consent_section_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
         </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Consent language (highlighted block)
           <textarea value={sms.consent_statement} onChange={(e) => setSms((p) => ({ ...p, consent_statement: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 100, display: "block" }} />
         </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Sample message
-          <textarea value={sms.sample_message} onChange={(e) => setSms((p) => ({ ...p, sample_message: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }} />
+          Sample section title (blank = default)
+          <input
+            value={sms.sample_section_title ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, sample_section_title: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Sample section intro (line above sample block)
+          <textarea
+            value={sms.sample_section_intro ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, sample_section_intro: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 48, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Sample messages (examples; pre-wrap)
+          <textarea value={sms.sample_message} onChange={(e) => setSms((p) => ({ ...p, sample_message: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 120, display: "block" }} />
         </label>
         <label style={{ display: "block", fontWeight: 600, color: theme.text }}>
-          Remaining body (pre-wrap; optional sections, bullet lines, etc.)
-          <textarea value={sms.body} onChange={(e) => setSms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 180, display: "block" }} />
+          Footer note under nav (plain text; blank = default Privacy/Terms links line)
+          <textarea
+            value={sms.footer_note ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, footer_note: e.target.value }))}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 56, display: "block" }}
+          />
         </label>
       </CollapsibleLegalBlock>
     </div>

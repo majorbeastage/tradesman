@@ -9,11 +9,28 @@ export type SimpleLegalPage = {
   subtitle: string
   /** Main body; line breaks preserved (pre-wrap). */
   body: string
+  /** Line above the main title (empty = product default “Tradesman Systems”). */
+  hero_kicker?: string
+  /** Optional notice card above the main body. */
+  notice_title?: string
+  notice_body?: string
+  /**
+   * Optional footer line under the nav links. When empty, the public layout uses its built-in
+   * cross-link sentence (Privacy/Terms pages point to SMS; SMS page points to Privacy/Terms).
+   */
+  footer_note?: string
 }
 
 export type SmsConsentLegalPage = SimpleLegalPage & {
   consent_statement: string
   sample_message: string
+  /** Shown under the hero subtitle (e.g. “Last updated: …”). */
+  hero_last_updated?: string
+  details_section_title?: string
+  consent_section_title?: string
+  sample_section_title?: string
+  /** Line of copy above the sample message block. */
+  sample_section_intro?: string
 }
 
 /** Subtitles saved from early seeds pointed editors at Admin; strip so public pages never show that line. */
@@ -155,24 +172,32 @@ If a provision is unenforceable, the remainder stays in effect. These Terms are 
 export const DEFAULT_SMS_CONSENT_PAGE: SmsConsentLegalPage = {
   title: "SMS Consent and Messaging Terms",
   subtitle:
-    "Who sends texts, how consent works with Tradesman Systems, first-message notices, STOP/HELP, and carrier (A2P) alignment.",
+    "This page explains how SMS works when businesses use Tradesman Systems. Message frequency varies. Message and data rates may apply. Keep your live intake, Privacy Policy, and Terms aligned with what you actually do.",
+  hero_last_updated: "",
+  notice_title: "Notice",
+  notice_body:
+    "Tradesman Systems LLC is a South Carolina limited liability company doing business as Tradesman Systems. This page is a practical summary for SMS opt-in and carrier (A2P) transparency. It is not legal advice; align it with your live intake, Privacy Policy, and Terms, and have counsel review when you engage a firm.",
+  details_section_title: "Details",
+  consent_section_title: "Consent language (opt-in disclosure)",
+  sample_section_title: "Sample messages (examples)",
+  sample_section_intro:
+    "Patterns for contractor-led operational messaging; the sending number is the business line on Tradesman Systems.",
   consent_statement:
     "By providing your mobile number and agreeing to receive texts, you consent to receive automated and manual text messages from the business you interacted with (and its authorized users)—for example scheduling, job updates, estimates, and account notifications—sent using the Tradesman Systems platform and connected carrier numbers. Message and data rates may apply. Msg & data rates may apply. Your phone number and consent will not be shared with third parties for marketing purposes. Message frequency varies. Reply STOP to opt out where supported. Reply HELP for help when offered.",
-  sample_message: `Hi [Name], this is Dave from Dave\u2019s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.`,
-  body: `Effective date: April 6, 2026
+  sample_message: `1. Hi [Name], this is Dave from Dave\u2019s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.
 
-This page explains how SMS works when businesses use Tradesman Systems. Message frequency varies. Message and data rates may apply. Msg & data rates may apply. Keep your live intake, Privacy Policy, and Terms aligned with what you actually do. See also https://www.tradesman-us.com/privacy and https://www.tradesman-us.com/terms.
+2. Hi [Name], your appointment with [Contractor] is confirmed for [Date] at [Time]. Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.
 
-1. Who sends messages
-SMS is sent by the business or contractor you interact with. The platform is provided by Tradesman Systems LLC, a South Carolina limited liability company doing business as Tradesman Systems; messages typically route through telecommunications carriers (for example Twilio). The “from” number is assigned to the business’s account.
+3. [Contractor] is on the way and will arrive in approximately 30 minutes. Reply STOP to opt out or HELP for help. Msg sent via Tradesman Systems.`,
+  body: `Opt-in method
 
-2. Opt-in method
 Customers may receive SMS messages from a business after:
 
 • Contacting that business directly, or
 • Providing their phone number to the business and agreeing to receive communication
 
-3. Use case; one-to-one messaging
+Use case
+
 Tradesman Systems facilitates one-to-one messaging between businesses and their customers. Messages are sent by the business, not by Tradesman Systems.
 
 Messages may include:
@@ -183,52 +208,50 @@ Messages may include:
 
 All messaging is conducted on a one-to-one basis between a business and its customer. Tradesman Systems does not support bulk messaging or unsolicited outreach.
 
-4. Consent; what customers agree to
+Consent; what customers agree to
+
 Customers may receive SMS messages from businesses they interact with using the Tradesman Systems platform.
 
 Customers provide consent by:
 • Contacting a business directly, or
 • Providing their phone number to a business and agreeing to receive communication
 
-Tradesman Systems facilitates messaging but does not independently send unsolicited messages.
+Tradesman Systems facilitates messaging but does not independently send unsolicited messages. Message frequency varies. Message and data rates may apply. Customers may reply STOP at any time to opt out where the carrier supports it.
 
-Message frequency varies. Message and data rates may apply. Msg & data rates may apply. Customers may reply STOP at any time to opt out where the carrier supports it.
+Users of the platform (businesses)
 
-5. Users of the platform (businesses)
 Users must obtain proper consent before contacting any individual. Tradesman Systems does not verify consent on behalf of users.
 
 Users may not send unsolicited messages, use purchased contact lists, or engage in bulk messaging.
 
 Accounts may be suspended or terminated for violations of messaging policies.
 
-Businesses using the platform are required to confirm that they have obtained consent before sending messages to manually added contacts.
+Tradesman Systems is built for conversational messaging when customers contact your business first, or when you have documented consent through your own intake. The product does not offer list-based or simultaneous bulk SMS to many numbers at once. You may not use Tradesman Systems—or any third-party tool, script, or device together with Tradesman Systems—to message people who have not agreed to hear from you, or to get around these limits.
 
-6. Message types and automation
-Messages are operational (for example scheduling, job updates, estimates, and customer support). Some texts may be automated for those operational purposes where the account enables them; this is not bulk or automated marketing.
+First SMS disclosures (product behavior)
 
-7. Opt-out and help
-Reply STOP to opt out at any time where the carrier supports it. Reply HELP for assistance when you implement it. Message and data rates may apply. Msg & data rates may apply. Businesses must honor opt-outs as required by law and carrier rules.
+The first outbound SMS (and automated operational texts such as appointment or “on the way” updates) appends a standard tail: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems. Appointment-style messages may use: Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems. Character limits in the app adjust accordingly. See your Terms & Conditions for enforcement, fees, and misuse.
 
-8. First message notice
-The first outbound SMS in a conversation (and automated operational texts such as appointment or “on the way” updates) appends a standard compliance tail: “Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.” Appointment-style texts may use a close variant: “Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.” The app shows how many characters remain for your message on that send. Footers support transparency and carrier (A2P) expectations.
+Enforcement
 
-9. Prohibited use
-Users may not use the Tradesman Systems platform together with unapproved tools to send spam, cold lists, or simultaneous bulk SMS; to forge origin; or to evade STOP or consent rules. Tradesman Systems may suspend accounts for abuse or non-compliance.
+Misuse of messaging—including attempts to hack, reverse engineer, or use unapproved third-party software to bypass limits—may result in suspension, termination, and financial remedies described in the Terms & Conditions (https://www.tradesman-us.com/terms).
 
-10. Data
-SMS content and metadata are processed to deliver and display messages and for security and legal compliance. See the Privacy Policy for broader practices.
+Help and opt-out
 
-11. Sample messages (examples)
-Use patterns like these for contractor-led operational messaging; the sending number is the business’s line on Tradesman Systems. Automated tools append the same compliance tail unless an appointment-specific variant is selected where noted.
+• Customers can reply STOP at any time to opt out of SMS messages.
+• Customers can reply HELP for assistance.
+• Message frequency varies based on the customer’s support, scheduling, and service activity.
+• Message and data rates may apply.
 
-1. Hi [Name], this is Dave from Dave’s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.
+Contact for messaging notifications
 
-2. Hi [Name], your appointment with [Contractor] is confirmed for [Date] at [Time]. Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.
+Notification and compliance contact email: Admin@tradesman-us.com
+For support related to messaging, customers can also reply HELP or contact Tradesman Systems through the business support channels listed on the main site.`,
+}
 
-3. [Contractor] is on the way and will arrive in approximately 30 minutes. Reply STOP to opt out or HELP for help. Msg sent via Tradesman Systems.
-
-12. Contact
-Tradesman Systems — messaging compliance: Admin@tradesman-us.com`,
+function pickOptionalString(o: Record<string, unknown>, key: string): string | undefined {
+  if (!(key in o)) return undefined
+  return typeof o[key] === "string" ? (o[key] as string) : undefined
 }
 
 export function parseSimpleLegalPage(raw: unknown, fallback: SimpleLegalPage): SimpleLegalPage {
@@ -243,6 +266,10 @@ export function parseSimpleLegalPage(raw: unknown, fallback: SimpleLegalPage): S
     title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : fallback.title,
     subtitle,
     body,
+    hero_kicker: pickOptionalString(o, "hero_kicker") ?? fallback.hero_kicker,
+    notice_title: pickOptionalString(o, "notice_title") ?? fallback.notice_title,
+    notice_body: pickOptionalString(o, "notice_body") ?? fallback.notice_body,
+    footer_note: pickOptionalString(o, "footer_note") ?? fallback.footer_note,
   }
 }
 
@@ -258,5 +285,34 @@ export function parseSmsConsentLegalPage(raw: unknown, fallback: SmsConsentLegal
         : fallback.consent_statement,
     sample_message:
       typeof o.sample_message === "string" && o.sample_message.trim() ? o.sample_message : fallback.sample_message,
+    hero_last_updated: pickOptionalString(o, "hero_last_updated") ?? fallback.hero_last_updated,
+    details_section_title: pickOptionalString(o, "details_section_title") ?? fallback.details_section_title,
+    consent_section_title: pickOptionalString(o, "consent_section_title") ?? fallback.consent_section_title,
+    sample_section_title: pickOptionalString(o, "sample_section_title") ?? fallback.sample_section_title,
+    sample_section_intro: pickOptionalString(o, "sample_section_intro") ?? fallback.sample_section_intro,
   }
+}
+
+const DEFAULT_HERO_KICKER = "Tradesman Systems"
+
+export function resolvedLegalHeroKicker(page: SimpleLegalPage): string {
+  const t = (page.hero_kicker ?? "").trim()
+  return t || DEFAULT_HERO_KICKER
+}
+
+export function resolvedSmsDetailsSectionTitle(page: SmsConsentLegalPage): string {
+  return (page.details_section_title ?? "").trim() || "Details"
+}
+
+export function resolvedSmsConsentSectionTitle(page: SmsConsentLegalPage): string {
+  return (page.consent_section_title ?? "").trim() || "Consent language (opt-in disclosure)"
+}
+
+export function resolvedSmsSampleSectionTitle(page: SmsConsentLegalPage): string {
+  return (page.sample_section_title ?? "").trim() || "Sample messages (examples)"
+}
+
+/** True when the optional notice card should render (both empty → hidden). */
+export function smsNoticeCardVisible(page: SmsConsentLegalPage): boolean {
+  return Boolean((page.notice_title ?? "").trim() || (page.notice_body ?? "").trim())
 }
