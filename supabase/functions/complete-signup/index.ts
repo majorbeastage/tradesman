@@ -66,7 +66,7 @@ const DEFAULT_RULES: SignupRules = {
   custom_fields: [],
   require_terms_ack: false,
   require_privacy_ack: false,
-  require_sms_consent_ack: false,
+  require_sms_consent_ack: true,
   show_terms_link: true,
   show_privacy_link: true,
   show_sms_consent_link: true,

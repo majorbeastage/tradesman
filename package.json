@@ -18,7 +18,8 @@
     "mobile:build:all": "npm run mobile:sync",
     "mobile:open:android": "npx cap open android",
     "mobile:open:ios": "npx cap open ios",
-    "icons:generate": "node scripts/generate-app-icons.mjs"
+    "icons:generate": "node scripts/generate-app-icons.mjs",
+    "legal:static-html": "node scripts/generate-static-legal-html.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

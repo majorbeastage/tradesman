@@ -15,6 +15,7 @@ import {
 } from "../../types/signup-requirements"
 import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, type ProductPackageId } from "../../lib/productPackages"
 import { PublicLegalNav } from "../public/PublicLegalNav"
+import { LEGAL_LINKS } from "../../lib/legalLinks"
 
 type Props = {
   onBack: () => void
@@ -769,11 +770,34 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                   <span>I acknowledge the Privacy Policy.</span>
                 </label>
               ) : null}
-              {signupCfg.require_sms_consent_ack && signupCfg.show_sms_consent_link ? (
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, fontWeight: 500, cursor: "pointer" }}>
-                  <input type="checkbox" checked={ackSms} onChange={(e) => setAckSms(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span>I consent to SMS messaging as described on the SMS consent page.</span>
-                </label>
+              {signupCfg.show_sms_consent_link ? (
+                <div style={{ marginTop: 14 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#4b5563", lineHeight: 1.55 }}>
+                    If you provide a mobile number, SMS may be used for scheduling, job updates, estimates, and account notifications.
+                    Message and data rates may apply. Reply STOP to opt out where supported; reply HELP for help when offered. Your phone
+                    number and consent will not be shared with third parties for marketing purposes. See our{" "}
+                    {legalLink(LEGAL_LINKS.privacy, "Privacy Policy")}, {legalLink(LEGAL_LINKS.terms, "Terms & Conditions")}, and{" "}
+                    {legalLink(LEGAL_LINKS.smsConsent, "SMS consent & messaging")}.
+                  </p>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={ackSms}
+                      onChange={(e) => setAckSms(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                      required={signupCfg.require_sms_consent_ack}
+                    />
+                    <span>
+                      I consent to receive SMS messages as described above and in the SMS consent terms.
+                      {signupCfg.require_sms_consent_ack ? (
+                        <span style={{ color: "#b91c1c", fontWeight: 700 }} aria-hidden>
+                          {" "}
+                          *
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                </div>
               ) : null}
             </div>
           )}

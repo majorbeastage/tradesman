@@ -16,6 +16,14 @@ import {
 import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
 import { runConversationInboundSmsAutoReply } from "./_conversationAutoReply.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+import {
+  detectInboundSmsKeyword,
+  deleteSmsOptOut,
+  loadProfileDisplayLabel,
+  notifyAdminSmsKeyword,
+  sendPlatformOptOutConfirmationSms,
+  upsertSmsOptOut,
+} from "./_smsOptOut.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -142,6 +150,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err), step: "resolve_customer_or_conversation" })
   }
 
+  const smsKeyword = detectInboundSmsKeyword(body)
+  const keywordMeta: Record<string, unknown> = {}
+  if (smsKeyword === "start") {
+    const cleared = await deleteSmsOptOut(supabase, targetUserId, from)
+    if (!cleared.ok) console.warn("[incoming-sms] START — remove opt-out", cleared.error)
+    keywordMeta.sms_keyword = "start"
+    keywordMeta.sms_opt_out_cleared = cleared.ok
+  }
+  if (smsKeyword === "stop") {
+    const recorded = await upsertSmsOptOut(supabase, {
+      userId: targetUserId,
+      customerPhoneE164: from,
+      inboundBody: body,
+      messageSid: messageId || null,
+    })
+    if (!recorded.ok) console.warn("[incoming-sms] STOP — record opt-out", recorded.error)
+    keywordMeta.sms_keyword = "stop"
+    keywordMeta.sms_opt_out_recorded = recorded.ok
+    const businessLabel = await loadProfileDisplayLabel(supabase, targetUserId)
+    void notifyAdminSmsKeyword({
+      kind: "stop",
+      businessUserId: targetUserId,
+      businessLabel,
+      customerPhone: from,
+      businessLine: to || "",
+      inboundBody: body,
+      messageSid: messageId || null,
+    }).catch(() => {})
+    void sendPlatformOptOutConfirmationSms({
+      toCustomerE164: from,
+      fromBusinessLineE164: to || "",
+    }).catch((e) => console.warn("[incoming-sms] opt-out confirmation SMS", e instanceof Error ? e.message : e))
+  }
+  if (smsKeyword === "help") {
+    keywordMeta.sms_keyword = "help"
+    const businessLabel = await loadProfileDisplayLabel(supabase, targetUserId)
+    void notifyAdminSmsKeyword({
+      kind: "help",
+      businessUserId: targetUserId,
+      businessLabel,
+      customerPhone: from,
+      businessLine: to || "",
+      inboundBody: body,
+      messageSid: messageId || null,
+    }).catch(() => {})
+  }
+
   const content = messageId ? `${body}\n\n[Inbound message ID: ${messageId}]` : body
 
   const eventId = await insertCommunicationEventReturningId(supabase, {
@@ -156,7 +211,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body,
     unread: true,
     previous_customer: previousCustomer,
-    metadata: { from, to, provider: channel?.provider ?? "twilio-webhook", num_media: numMedia },
+    metadata: {
+      from,
+      to,
+      provider: channel?.provider ?? "twilio-webhook",
+      num_media: numMedia,
+      ...keywordMeta,
+    },
   })
 
   if (eventId && numMedia > 0) {
@@ -216,13 +277,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
     try {
-      await runConversationInboundSmsAutoReply(supabase, {
-        userId: targetUserId,
-        conversationId,
-        customerId,
-        customerPhone: from,
-        inboundBody: body,
-      })
+      if (smsKeyword !== "stop") {
+        await runConversationInboundSmsAutoReply(supabase, {
+          userId: targetUserId,
+          conversationId,
+          customerId,
+          customerPhone: from,
+          inboundBody: body,
+        })
+      }
     } catch (e) {
       console.warn("[incoming-sms] conversation auto-reply", e instanceof Error ? e.message : e)
     }
@@ -237,5 +300,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     channelId: channel?.id ?? null,
     normalizedFrom: from,
     normalizedTo: to || null,
+    smsKeyword: smsKeyword ?? null,
   })
 }

@@ -1972,11 +1972,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     />
                                     <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
                                       {customerReplySms.length}/{smsComposeMaxChars}
-                                      {smsFirstComplianceVariant === "manual_long"
-                                        ? " — First SMS includes the full opt-out block (manual customer / no inbound call or text on your Twilio line yet)."
-                                        : smsFirstComplianceVariant === "twilio_short"
-                                          ? " — First SMS includes a short opt-out line (they already contacted you on your Twilio line)."
-                                          : " — No compliance footer on this text (not your first SMS to them, or send without a saved customer)."}
+                                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
+                                        ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
+                                        : " — No compliance footer on this text (not your first SMS to them, or send without a saved customer)."}
                                     </span>
                                     <button
                                       type="button"

@@ -2036,71 +2036,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
 
-      {userId ? (
-        <section
-          aria-labelledby="calendar-phone-sync-heading"
-          style={{
-            borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#fff",
-            padding: "10px 12px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: 10,
-              justifyContent: "space-between",
-            }}
-          >
-            <div style={{ minWidth: 0, flex: "1 1 180px" }}>
-              <h2 id="calendar-phone-sync-heading" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.text }}>
-                Phone calendar (.ics)
-              </h2>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                Export active jobs starting in the next 60 days (not just the month on screen).
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={calendarShareBusy}
-              onClick={() => void shareActiveJobsToDeviceCalendar()}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 8,
-                border: "none",
-                background: theme.primary,
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 13,
-                cursor: calendarShareBusy ? "wait" : "pointer",
-                flexShrink: 0,
-              }}
-            >
-              {calendarShareBusy
-                ? "Preparing…"
-                : isNativeApp()
-                  ? "Share to calendar"
-                  : "Download .ics"}
-            </button>
-          </div>
-          <details style={{ marginTop: 8, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>How it works</summary>
-            <p style={{ margin: "8px 0 0" }}>
-              Standard <strong>.ics</strong> file from your upcoming Tradesman jobs. On the{" "}
-              <strong>phone app</strong>, tap the button and choose Calendar (or another app) from the share sheet — no separate calendar
-              permission in Tradesman. In a <strong>desktop browser</strong>, the file downloads; open it to import into Apple or Google
-              Calendar.
-            </p>
-          </details>
-          {calendarShareMsg ? (
-            <p style={{ margin: "8px 0 0", fontSize: 12, color: "#0f172a", fontWeight: 600 }}>{calendarShareMsg}</p>
-          ) : null}
-        </section>
-      ) : null}
-
       <div
         style={{
           display: "flex",
@@ -2136,6 +2071,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </button>
               ) : null}
               {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
+              {userId ? (
+                <button
+                  type="button"
+                  disabled={calendarShareBusy}
+                  onClick={() => void shareActiveJobsToDeviceCalendar()}
+                  title="Active jobs in the next 60 days. On the app, share sheet → Calendar; in a browser, downloads an .ics file to import."
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                    color: theme.text,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: calendarShareBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {calendarShareBusy
+                    ? "Preparing…"
+                    : isNativeApp()
+                      ? "Add to phone calendar"
+                      : "Export calendar (.ics)"}
+                </button>
+              ) : null}
             </div>
             {showCalAutoResponse ? (
               <button
@@ -2288,6 +2247,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           </>
         )}
       </div>
+
+      {calendarShareMsg ? (
+        <p
+          role="status"
+          style={{
+            margin: "0 0 8px",
+            fontSize: 13,
+            color: calendarShareMsg.startsWith("Could not") || calendarShareMsg.startsWith("No active") ? "#b45309" : theme.text,
+            fontWeight: 500,
+            lineHeight: 1.4,
+          }}
+        >
+          {calendarShareMsg}
+        </p>
+      ) : null}
 
       {calendarSuite.id === "calendar" ? (
       <>

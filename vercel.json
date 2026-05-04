@@ -20,7 +20,7 @@
     "api/voicemail-result.ts": { "maxDuration": 60 },
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
-    "api/platform-tools.ts": { "maxDuration": 60, "includeFiles": "public/sms-consent.html" }
+    "api/platform-tools.ts": { "maxDuration": 60 }
   },
   "rewrites": [
     {
@@ -49,11 +49,46 @@
     { "source": "/reset-password", "destination": "/index.html" },
     { "source": "/api/send-email", "destination": "/api/outbound-messages?__channel=email" },
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
-    { "source": "/privacy", "destination": "/" },
-    { "source": "/terms", "destination": "/" },
-    { "source": "/account-deletion", "destination": "/" },
-    { "source": "/sms-consent", "destination": "/api/platform-tools?__route=sms-consent" },
-    { "source": "/sms", "destination": "/" },
+    {
+      "source": "/privacy",
+      "destination": "/privacy-policy.html"
+    },
+    {
+      "source": "/privacy/",
+      "destination": "/privacy-policy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms-conditions.html"
+    },
+    {
+      "source": "/terms/",
+      "destination": "/terms-conditions.html"
+    },
+    {
+      "source": "/sms-consent",
+      "destination": "/sms-consent.html"
+    },
+    {
+      "source": "/sms-consent/",
+      "destination": "/sms-consent.html"
+    },
+    {
+      "source": "/sms",
+      "destination": "/sms-consent.html"
+    },
+    {
+      "source": "/sms/",
+      "destination": "/sms-consent.html"
+    },
+    {
+      "source": "/account-deletion",
+      "destination": "/account-deletion.html"
+    },
+    {
+      "source": "/account-deletion/",
+      "destination": "/account-deletion.html"
+    },
     { "source": "/about", "destination": "/" },
     { "source": "/pricing", "destination": "/" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" }

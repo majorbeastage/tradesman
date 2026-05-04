@@ -5,34 +5,36 @@
 
 import type { SmsFirstComplianceVariant } from "./smsFirstOutboundCompliance"
 
-/** Inner text of automated "Tradesman: …" quote/calendar SMS (content after the prefix). */
+/** Inner text cap for automated notify SMS (before compliance tail). */
 export const SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS = 280
 
 /** Practical cap for a single Twilio outbound body (concatenated segments). */
 export const SMS_OUTBOUND_BODY_HARD_MAX_CHARS = 1600
 
-/** Default policies link in long first-SMS footer (public SMS consent page). */
 /** Public SMS / consent page (short URL for footers; same content as /sms-consent). */
 export const DEFAULT_SMS_POLICIES_URL = "https://www.tradesman-us.com/sms"
 
-const SMS_AUTOMATED_PREFIX = "Tradesman: "
+/** Unified tail for first outbound SMS (manual vs Twilio-contact variants use the same footer now). */
+export const SMS_COMPLIANCE_TAIL_DEFAULT =
+  "\n\nReply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
 
-function truncateBusinessDisplayName(name: string): string {
-  const t = name.trim() || "Your business"
-  return t.length > 48 ? `${t.slice(0, 45)}…` : t
+export const SMS_COMPLIANCE_TAIL_APPOINTMENT =
+  "\n\nReply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems."
+
+export type SmsComplianceTailKind = "default" | "appointment"
+
+export function getSmsComplianceTail(kind: SmsComplianceTailKind = "default"): string {
+  return kind === "appointment" ? SMS_COMPLIANCE_TAIL_APPOINTMENT : SMS_COMPLIANCE_TAIL_DEFAULT
 }
 
-/** Long footer: manual customer entry / no prior inbound Twilio contact. */
-export function buildLongManualFirstSmsFooter(businessDisplayName: string, policiesUrl?: string): string {
-  const short = truncateBusinessDisplayName(businessDisplayName)
-  const policies = (policiesUrl ?? DEFAULT_SMS_POLICIES_URL).trim() || DEFAULT_SMS_POLICIES_URL
-  return `\n\n-- Msg from ${short} via tradesman-us.com.\nReply STOP to opt out. Msg & data rates may apply.\nPolicies: ${policies}`
+/** @deprecated Unified footer — kept for call-site compatibility. */
+export function buildLongManualFirstSmsFooter(_businessDisplayName: string, _policiesUrl?: string): string {
+  return SMS_COMPLIANCE_TAIL_DEFAULT
 }
 
-/** Short footer: customer already contacted this business via the Twilio line (inbound sms/call/voicemail). */
-export function buildShortTwilioInitiatedSmsFooter(businessDisplayName: string): string {
-  const short = truncateBusinessDisplayName(businessDisplayName)
-  return `\n\nReply STOP to opt out. ${short} via tradesman-us.com`
+/** @deprecated Unified footer — kept for call-site compatibility. */
+export function buildShortTwilioInitiatedSmsFooter(_businessDisplayName: string): string {
+  return SMS_COMPLIANCE_TAIL_DEFAULT
 }
 
 export function buildSmsFirstComplianceFooter(
@@ -40,9 +42,10 @@ export function buildSmsFirstComplianceFooter(
   businessDisplayName: string,
   policiesUrl?: string,
 ): string {
-  return variant === "manual_long"
-    ? buildLongManualFirstSmsFooter(businessDisplayName, policiesUrl)
-    : buildShortTwilioInitiatedSmsFooter(businessDisplayName)
+  void variant
+  void businessDisplayName
+  void policiesUrl
+  return SMS_COMPLIANCE_TAIL_DEFAULT
 }
 
 export function maxUserCharsForFirstSmsVariant(
@@ -50,7 +53,10 @@ export function maxUserCharsForFirstSmsVariant(
   businessDisplayName: string,
   policiesUrl?: string,
 ): number {
-  const footer = buildSmsFirstComplianceFooter(variant, businessDisplayName, policiesUrl)
+  void variant
+  void businessDisplayName
+  void policiesUrl
+  const footer = SMS_COMPLIANCE_TAIL_DEFAULT
   return Math.max(60, SMS_OUTBOUND_BODY_HARD_MAX_CHARS - footer.length - 4)
 }
 
@@ -71,6 +77,8 @@ export function clampAutomatedNotifyInnerText(raw: string): string {
   return `${t.slice(0, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS - 1).trimEnd()}…`
 }
 
-export function buildAutomatedNotifySmsBody(inner: string): string {
-  return `${SMS_AUTOMATED_PREFIX}${clampAutomatedNotifyInnerText(inner)}`
+/** Automated SMS (calendar/quote/tools): inner operational text + compliance tail (no “Tradesman:” prefix). */
+export function buildAutomatedNotifySmsBody(inner: string, tail: SmsComplianceTailKind = "default"): string {
+  const tailStr = getSmsComplianceTail(tail)
+  return `${clampAutomatedNotifyInnerText(inner)}${tailStr}`
 }

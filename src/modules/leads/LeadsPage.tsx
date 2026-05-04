@@ -2615,11 +2615,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                               />
                               <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
                                 {leadReplySms.length}/{smsComposeMaxChars}
-                                {smsFirstComplianceVariant === "manual_long"
-                                  ? " — First SMS adds the full opt-out block (no inbound on your Twilio line yet)."
-                                  : smsFirstComplianceVariant === "twilio_short"
-                                    ? " — First SMS adds a short opt-out line (they already reached you on your Twilio line)."
-                                    : " — No compliance footer on this text."}
+                                {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
+                                  ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
+                                  : " — No compliance footer on this text."}
                               </span>
                               <button
                                 type="button"

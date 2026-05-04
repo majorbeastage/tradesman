@@ -113,6 +113,18 @@ function loadSmsConsentHtml(): string {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>SMS consent</title></head><body><p>SMS consent document is not deployed. Ensure public/sms-consent.html exists and vercel.json includes it in api/platform-tools.ts includeFiles.</p></body></html>`
 }
 
+/** Crawler-friendly legal HTML shipped under `public/` (same content family as SPA defaults). */
+function loadPublicLegalHtml(fileBaseName: string): string {
+  const candidates = [
+    join(process.cwd(), "public", `${fileBaseName}.html`),
+    join(process.cwd(), "dist", `${fileBaseName}.html`),
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) return readFileSync(p, "utf8")
+  }
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>${fileBaseName}</title></head><body><p>Legal document ${fileBaseName}.html is not deployed.</p></body></html>`
+}
+
 /** Parse JSON POST body (Vercel may deliver `Buffer` or a pre-parsed object). */
 function bodyAsRecord(req: VercelRequest): Record<string, unknown> {
   const raw = req.body as unknown
@@ -1404,11 +1416,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return
   }
 
+  if (req.method === "GET" && route === "privacy-policy") {
+    const html = loadPublicLegalHtml("privacy-policy")
+    res.setHeader("Content-Type", "text/html; charset=utf-8")
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=3600")
+    res.status(200).send(html)
+    return
+  }
+
+  if (req.method === "GET" && route === "terms-conditions") {
+    const html = loadPublicLegalHtml("terms-conditions")
+    res.setHeader("Content-Type", "text/html; charset=utf-8")
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=3600")
+    res.status(200).send(html)
+    return
+  }
+
   if (req.method === "GET") {
     res.status(200).json({
       ok: true,
       route: "platform-tools",
-      getHtml: ["sms-consent"],
+      getHtml: ["sms-consent", "privacy-policy", "terms-conditions"],
       post: [
         "public-lead",
         "ai-summarize",

@@ -41,7 +41,7 @@ export const DEFAULT_PRIVACY_PAGE: SimpleLegalPage = {
     "A concise summary of how Tradesman Systems collects, uses, and shares information—including SMS and security practices—for our websites and software.",
   body: `Effective date: April 6, 2026
 
-Tradesman Systems (“Company,” “we,” “our,” or “us”) respects your privacy. This Privacy Policy describes what we collect and how we use it when you use our websites, applications, APIs, and related services (the “Services”). By using the Services, you agree to this Policy.
+Tradesman Systems (“Company,” “we,” “our,” or “us”) respects your privacy and is committed to protecting it through this Privacy Policy. This Privacy Policy describes what we collect and how we use it when you use our websites, applications, APIs, and related services (the “Services”). By using the Services, you agree to this Policy.
 
 1. Information we collect
 We may collect:
@@ -60,22 +60,14 @@ We use information to:
 • Detect misuse (including messaging abuse or attempts to circumvent technical limits) and protect users and the Services
 • Comply with law and carrier or telecommunications obligations (including SMS programs such as A2P 10DLC where applicable)
 
-3. SMS and communication consent; users of the platform
+3. SMS and communication consent
 Customers may receive SMS messages from businesses they interact with using the Tradesman Systems platform.
 
 Customers provide consent by:
 • Contacting a business directly, or
 • Providing their phone number to a business and agreeing to receive communication
 
-Consent to receive SMS messages is not required as a condition of purchasing any goods or services.
-
-Tradesman Systems facilitates messaging but does not independently send unsolicited messages. Message frequency varies. Message and data rates may apply. Msg & data rates may apply. Customers may reply STOP at any time to opt out where the carrier supports it, and HELP when offered.
-
-Users of the platform (including businesses and their authorized users) must obtain proper consent before contacting any individual. Tradesman Systems does not verify consent on behalf of users.
-
-Users may not send unsolicited messages, use purchased contact lists, or engage in bulk messaging. Accounts may be suspended or terminated for violations of messaging policies.
-
-All messaging is conducted on a one-to-one basis between a business and its customer. Tradesman Systems does not support bulk messaging or unsolicited outreach.
+Messages may include service updates, appointment coordination, and customer support communication. Message frequency varies. Message and data rates may apply.
 
 4. Information sharing
 We do not sell personal information for monetary value. We may share information with service providers solely to operate the platform and deliver messaging services.
@@ -166,9 +158,7 @@ export const DEFAULT_SMS_CONSENT_PAGE: SmsConsentLegalPage = {
     "Who sends texts, how consent works with Tradesman Systems, first-message notices, STOP/HELP, and carrier (A2P) alignment.",
   consent_statement:
     "By providing your mobile number and agreeing to receive texts, you consent to receive automated and manual text messages from the business you interacted with (and its authorized users)—for example scheduling, job updates, estimates, and account notifications—sent using the Tradesman Systems platform and connected carrier numbers. Message and data rates may apply. Msg & data rates may apply. Your phone number and consent will not be shared with third parties for marketing purposes. Message frequency varies. Reply STOP to opt out where supported. Reply HELP for help when offered.",
-  sample_message: `Hi, this is Dave from Dave\u2019s Gutters. I\u2019m following up on your recent request.
-
-Reply STOP to opt out. Reply HELP for help.`,
+  sample_message: `Hi [Name], this is Dave from Dave\u2019s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.`,
   body: `Effective date: April 6, 2026
 
 This page explains how SMS works when businesses use Tradesman Systems. Message frequency varies. Message and data rates may apply. Msg & data rates may apply. Keep your live intake, Privacy Policy, and Terms aligned with what you actually do. See also https://www.tradesman-us.com/privacy and https://www.tradesman-us.com/terms.
@@ -220,7 +210,7 @@ Messages are operational (for example scheduling, job updates, estimates, and cu
 Reply STOP to opt out at any time where the carrier supports it. Reply HELP for assistance when you implement it. Message and data rates may apply. Msg & data rates may apply. Businesses must honor opt-outs as required by law and carrier rules.
 
 8. First message notice
-The first outbound SMS in a conversation may include a compliance footer. It is often longer when the customer has not yet texted, called, or left voicemail on the business’s Tradesman Systems-connected line, and shorter when they already have. The app shows how many characters remain for your message on that send. Footers support transparency and carrier (A2P) expectations.
+The first outbound SMS in a conversation (and automated operational texts such as appointment or “on the way” updates) appends a standard compliance tail: “Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.” Appointment-style texts may use a close variant: “Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.” The app shows how many characters remain for your message on that send. Footers support transparency and carrier (A2P) expectations.
 
 9. Prohibited use
 Users may not use the Tradesman Systems platform together with unapproved tools to send spam, cold lists, or simultaneous bulk SMS; to forge origin; or to evade STOP or consent rules. Tradesman Systems may suspend accounts for abuse or non-compliance.
@@ -229,19 +219,13 @@ Users may not use the Tradesman Systems platform together with unapproved tools 
 SMS content and metadata are processed to deliver and display messages and for security and legal compliance. See the Privacy Policy for broader practices.
 
 11. Sample messages (examples)
-The “Sample message” block on this page shows a realistic contractor follow-up. Your actual first outbound SMS may also include an automatic compliance footer (see Section 8). The following are additional patterns—wording is from the business; the sending number is the business’s configured line on Tradesman Systems.
+Use patterns like these for contractor-led operational messaging; the sending number is the business’s line on Tradesman Systems. Automated tools append the same compliance tail unless an appointment-specific variant is selected where noted.
 
-Hi, this is Dave from Dave’s Gutters. I’m following up on your recent request.
+1. Hi [Name], this is Dave from Dave’s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.
 
-Reply STOP to opt out. Reply HELP for help.
+2. Hi [Name], your appointment with [Contractor] is confirmed for [Date] at [Time]. Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.
 
-[Contractor]: Hi [Name], your appointment with [Contractor] is confirmed for [Date] at [Time]. Reply STOP to opt out or HELP for assistance.
-
-[Contractor]: Your job estimate is ready. Log in to review and approve: [link]. Reply STOP to opt out, HELP for help.
-
-[Contractor]: We received your support request and will follow up within 1 business day. Reply STOP to opt out or HELP for assistance.
-
-[Contractor] is on the way and will arrive in approximately 30 minutes. Reply STOP to opt out or HELP for help.
+3. [Contractor] is on the way and will arrive in approximately 30 minutes. Reply STOP to opt out or HELP for help. Msg sent via Tradesman Systems.
 
 12. Contact
 Tradesman Systems — messaging compliance: Admin@tradesman-us.com`,

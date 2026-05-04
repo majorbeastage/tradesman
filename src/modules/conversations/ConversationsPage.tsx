@@ -2819,11 +2819,9 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                     />
                     <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45, display: "block" }}>
                       {replyBody.length}/{smsComposeMaxChars}
-                      {smsFirstComplianceVariant === "manual_long"
-                        ? " — First SMS adds the full opt-out block (no inbound call/text on your Twilio line yet for this thread)."
-                        : smsFirstComplianceVariant === "twilio_short"
-                          ? " — First SMS adds a short opt-out line (they already reached you on your Twilio line)."
-                          : " — No compliance footer on this text."}
+                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
+                        ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
+                        : " — No compliance footer on this text."}
                     </span>
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
                       MMS images (optional)

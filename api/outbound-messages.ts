@@ -17,6 +17,7 @@ import {
   type SmsOutboundComplianceVariant,
 } from "./_smsComplianceLimits.js"
 import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResolve.js"
+import { isPhoneSmsOptedOut } from "./_smsOptOut.js"
 
 /**
  * Single Hobby-plan function for outbound email (Resend) + SMS (Twilio / webhook).
@@ -465,6 +466,15 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   })
 
   if (!to || !body) return res.status(400).json({ error: "to and body are required" })
+
+  if (supabase && userId && (await isPhoneSmsOptedOut(supabase, userId, to))) {
+    return res.status(403).json({
+      error:
+        "This phone number has opted out of SMS (STOP). Do not send until the customer texts START or you remove the opt-out in the database.",
+      code: "sms_opt_out",
+      to,
+    })
+  }
 
   const envFallbackFrom = toTwilioE164(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
