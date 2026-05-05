@@ -66,6 +66,7 @@ import {
 } from "../../lib/estimateLinePresets"
 import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistantPanel"
 import EstimateStartGuideModal, { EstimateGuideStatusMarker } from "../../components/EstimateStartGuideModal"
+import InspectionVarianceWizardModal from "../../components/InspectionVarianceWizardModal"
 import {
   loadEstimateGuideFlags,
   saveEstimateGuideFlags,
@@ -74,6 +75,26 @@ import {
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
+
+/** Card chrome for estimate workflow sections (Customer, templates, conversations, …). */
+const ESTIMATE_WORKFLOW_SECTION_BASE: CSSProperties = {
+  marginBottom: 12,
+  border: `1px solid ${theme.border}`,
+  borderRadius: 10,
+  padding: "10px 12px",
+}
+const ESTIMATE_WORKFLOW_SUMMARY_STYLE: CSSProperties = {
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 15,
+  color: theme.text,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  listStylePosition: "outside",
+  width: "100%",
+  boxSizing: "border-box",
+}
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
@@ -140,6 +161,52 @@ function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): bool
   return m.includes("job_type_id") && (m.includes("does not exist") || m.includes("schema cache"))
 }
 
+/** PostgREST when `quotes.metadata` has not been migrated yet */
+function supabaseQuotesMissingMetadataColumn(message: string | undefined): boolean {
+  const m = (message ?? "").toLowerCase()
+  return m.includes("metadata") && (m.includes("does not exist") || m.includes("schema cache"))
+}
+
+function quoteRowJobDetailsFromMetadata(meta: unknown): string {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return ""
+  const raw = (meta as Record<string, unknown>).job_details
+  return typeof raw === "string" ? raw : ""
+}
+
+/** PostgREST `quotes` row for the estimate workspace (columns vary by migration). */
+function buildQuoteDetailSelect(opts: { withJobType: boolean; fullCustomer: boolean; withMetadata: boolean }): string {
+  const customerBlock =
+    opts.fullCustomer
+      ? `        customers (
+          display_name,
+          service_address,
+          service_lat,
+          service_lng,
+          customer_identifiers (
+            type,
+            value
+          )
+        )`
+      : `        customers (
+          display_name,
+          customer_identifiers (
+            type,
+            value
+          )
+        )`
+  const metaLine = opts.withMetadata ? "\n        metadata," : ""
+  return `
+        id,
+        status,
+        created_at,
+        updated_at,
+        customer_id,
+        conversation_id,
+${opts.withJobType ? "        job_type_id,\n" : ""}        scheduled_at,${metaLine}
+${customerBlock}
+      `
+}
+
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = {
   display_name: string | null
@@ -159,6 +226,7 @@ type QuoteRow = {
   conversation_id: string | null
   job_type_id?: string | null
   archived_at?: string | null
+  metadata?: Record<string, unknown> | null
   customers: CustomerRow | null
   conversations?: { messages?: MessageRow[] | null } | null
 }
@@ -280,7 +348,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [customerSummaryExpanded, setCustomerSummaryExpanded] = useState(false)
   const [estimateGuideFlags, setEstimateGuideFlags] = useState<EstimateGuideFlags>({})
   const [estimateStartGuideOpen, setEstimateStartGuideOpen] = useState(false)
-  const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<1 | 2>(1)
+  const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1)
   const [estimateGuideCustomerPick, setEstimateGuideCustomerPick] = useState("")
   const [estimateGuideTemplatePick, setEstimateGuideTemplatePick] = useState("")
   const [estimateGuideBusy, setEstimateGuideBusy] = useState(false)
@@ -289,6 +357,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
   const [bottomActionEmailOpen, setBottomActionEmailOpen] = useState(false)
+  const [jobDetailsText, setJobDetailsText] = useState("")
+  const [inspectionVarianceWizardOpen, setInspectionVarianceWizardOpen] = useState(false)
+  const [specialtyInspectionWorkflowEnabled, setSpecialtyInspectionWorkflowEnabled] = useState(false)
   const [quotes, setQuotes] = useState<QuoteRow[]>([])
   const [quotesError, setQuotesError] = useState<string>("")
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
@@ -395,6 +466,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [calNotes, setCalNotes] = useState("")
   /** 15 = duration input in minutes; 60 = input in hours (stored as minutes for calendar math). */
   const [quoteCalTimeIncrement, setQuoteCalTimeIncrement] = useState<15 | 60>(15)
+  const conversationsSectionRef = useRef<HTMLDetailsElement | null>(null)
+  const mediaSectionRef = useRef<HTMLDetailsElement | null>(null)
+  const jobDetailsSectionRef = useRef<HTMLDetailsElement | null>(null)
+  const quoteItemsSectionRef = useRef<HTMLDetailsElement | null>(null)
+  const reviewSendSectionRef = useRef<HTMLDetailsElement | null>(null)
   const [quoteCustomerEditMode, setQuoteCustomerEditMode] = useState(false)
   const [quoteCustomerSaving, setQuoteCustomerSaving] = useState(false)
   const [quoteCustomerGeocodeBusy, setQuoteCustomerGeocodeBusy] = useState(false)
@@ -426,6 +502,58 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
   }, [selectedQuoteId])
+
+  const jobDetailsDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selectedQuotePersistRef = useRef<QuoteRow | null>(null)
+  useEffect(() => {
+    selectedQuotePersistRef.current = selectedQuote
+  }, [selectedQuote])
+
+  useEffect(() => {
+    if (!selectedQuoteId) setJobDetailsText("")
+  }, [selectedQuoteId])
+
+  useEffect(() => {
+    if (!supabase || !userId || !selectedQuoteId) return
+    const client = supabase
+    const qRow = selectedQuotePersistRef.current
+    if (!qRow || qRow.id !== selectedQuoteId) return
+    if (jobDetailsDbSaveTimerRef.current) clearTimeout(jobDetailsDbSaveTimerRef.current)
+    jobDetailsDbSaveTimerRef.current = setTimeout(() => {
+      jobDetailsDbSaveTimerRef.current = null
+      void (async () => {
+        const latest = selectedQuotePersistRef.current
+        if (!latest || latest.id !== selectedQuoteId) return
+        const prevMeta =
+          latest.metadata && typeof latest.metadata === "object" && !Array.isArray(latest.metadata)
+            ? { ...(latest.metadata as Record<string, unknown>) }
+            : {}
+        const nextMeta: Record<string, unknown> = { ...prevMeta, job_details: jobDetailsText }
+        const { error } = await client
+          .from("quotes")
+          .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+          .eq("id", selectedQuoteId)
+          .eq("user_id", userId)
+        if (error) {
+          if (!supabaseQuotesMissingMetadataColumn(error.message)) console.error("[quotes] job_details save", error.message)
+          return
+        }
+        setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuoteId ? { ...q, metadata: nextMeta } : q))
+      })()
+    }, 650)
+    return () => {
+      if (jobDetailsDbSaveTimerRef.current) clearTimeout(jobDetailsDbSaveTimerRef.current)
+    }
+  }, [jobDetailsText, selectedQuoteId, supabase, userId])
+
+  useEffect(() => {
+    if (!selectedQuoteId) return
+    try {
+      sessionStorage.setItem(`tradesman_quote_job_details_${selectedQuoteId}`, jobDetailsText)
+    } catch {
+      /* ignore */
+    }
+  }, [selectedQuoteId, jobDetailsText])
 
   useEffect(() => {
     try {
@@ -583,6 +711,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
       else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
       setEstimateLinePresets(parseEstimateLinePresetsFromMetadata(meta))
+      setSpecialtyInspectionWorkflowEnabled(meta.estimate_template_specialty_inspection === true)
     })()
     return () => {
       cancelled = true
@@ -657,6 +786,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
         else if (item.id === "estimate_template_cancellation_fee") next[item.id] = legalCancel
         else if (item.id === "estimate_template_legal_signatures") next[item.id] = legalSigs ? "checked" : "unchecked"
         else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_specialty_inspection")
+          next[item.id] = meta.estimate_template_specialty_inspection === true ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
         else next[item.id] = ""
@@ -687,6 +818,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const hasItem = (id: string) => estimateTemplateItems.some((i) => i.id === id)
 
     prevMeta.estimate_template_use_ai = useAi
+    if (hasItem("estimate_template_specialty_inspection")) {
+      prevMeta.estimate_template_specialty_inspection =
+        estimateTemplateFormValues.estimate_template_specialty_inspection === "checked"
+      setSpecialtyInspectionWorkflowEnabled(prevMeta.estimate_template_specialty_inspection === true)
+    }
     if (hasItem("estimate_template_output_format")) {
       const fmt = dropdownToExportFormat(estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF)
       prevMeta.estimate_template_output_format = fmt
@@ -1456,6 +1592,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setQuoteThreadMessages([])
     setQuoteAttachmentsByEvent({})
     setQuoteEntityRows([])
+    setJobDetailsText("")
   }
 
   async function closeEstimateWorkspaceAndNewDraft() {
@@ -1658,10 +1795,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateGuideBusy(true)
     try {
       await applyQuickAccessTemplate(estimateGuideTemplatePick.trim(), { silent: true })
-      setEstimateStartGuideOpen(false)
-      setEstimateStartGuideStep(1)
-      setEstimateGuideTemplatePick("")
-      setEstimateGuideCustomerPick("")
+      setEstimateStartGuideStep(3)
     } finally {
       setEstimateGuideBusy(false)
     }
@@ -1672,6 +1806,117 @@ export default function QuotesPage(_props: QuotesPageProps) {
       saveEstimateGuideFlags(selectedQuote.id, { templateSkipped: true })
       setEstimateGuideFlags((f) => ({ ...f, templateSkipped: true }))
     }
+    setEstimateStartGuideStep(3)
+  }
+
+  function openGuideSection(ref: { current: HTMLDetailsElement | null }) {
+    const el = ref.current
+    if (!el) return
+    el.open = true
+    el.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  function handleGuideConversationNeedInfo() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, {
+        conversationNeedsInfo: true,
+        conversationReady: false,
+        conversationSkipped: false,
+      })
+      setEstimateGuideFlags((f) => ({
+        ...f,
+        conversationNeedsInfo: true,
+        conversationReady: false,
+        conversationSkipped: false,
+      }))
+    }
+    setEstimateStartGuideStep(4)
+  }
+
+  function handleGuideConversationReady() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, {
+        conversationNeedsInfo: false,
+        conversationReady: true,
+        conversationSkipped: false,
+      })
+      setEstimateGuideFlags((f) => ({
+        ...f,
+        conversationNeedsInfo: false,
+        conversationReady: true,
+        conversationSkipped: false,
+      }))
+    }
+    setEstimateStartGuideStep(4)
+  }
+
+  function handleGuideConversationSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, {
+        conversationSkipped: true,
+        conversationNeedsInfo: false,
+        conversationReady: false,
+      })
+      setEstimateGuideFlags((f) => ({
+        ...f,
+        conversationSkipped: true,
+        conversationNeedsInfo: false,
+        conversationReady: false,
+      }))
+    }
+    setEstimateStartGuideStep(4)
+  }
+
+  function handleGuideMediaContinue() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { mediaAdded: quoteEntityRows.length > 0, mediaSkipped: false })
+      setEstimateGuideFlags((f) => ({ ...f, mediaAdded: quoteEntityRows.length > 0, mediaSkipped: false }))
+    }
+    setEstimateStartGuideStep(5)
+  }
+
+  function handleGuideMediaSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { mediaSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, mediaSkipped: true }))
+    }
+    setEstimateStartGuideStep(5)
+  }
+
+  function handleGuideJobDetailsContinue() {
+    if (selectedQuote?.id) {
+      const provided = Boolean(jobDetailsText.trim())
+      saveEstimateGuideFlags(selectedQuote.id, { jobDetailsProvided: provided, jobDetailsSkipped: !provided })
+      setEstimateGuideFlags((f) => ({ ...f, jobDetailsProvided: provided, jobDetailsSkipped: !provided }))
+    }
+    setEstimateStartGuideStep(6)
+  }
+
+  function handleGuideJobDetailsSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { jobDetailsSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, jobDetailsSkipped: true }))
+    }
+    setEstimateStartGuideStep(6)
+  }
+
+  function handleGuideQuoteItemsContinue() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { quoteItemsReady: selectedQuoteItems.length > 0, quoteItemsSkipped: false })
+      setEstimateGuideFlags((f) => ({ ...f, quoteItemsReady: selectedQuoteItems.length > 0, quoteItemsSkipped: false }))
+    }
+    setEstimateStartGuideStep(7)
+  }
+
+  function handleGuideQuoteItemsSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { quoteItemsSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, quoteItemsSkipped: true }))
+    }
+    setEstimateStartGuideStep(7)
+  }
+
+  function closeGuideWizard() {
     setEstimateStartGuideOpen(false)
     setEstimateStartGuideStep(1)
     setEstimateGuideTemplatePick("")
@@ -1844,90 +2089,52 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setQuoteThreadMessages([])
     setQuoteAttachmentsByEvent({})
     setQuoteEntityRows([])
+    try {
+      setJobDetailsText(sessionStorage.getItem(`tradesman_quote_job_details_${quoteId}`) ?? "")
+    } catch {
+      setJobDetailsText("")
+    }
     if (!supabase) return false
-    const quoteDetailSelect = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        job_type_id,
-        scheduled_at,
-        customers (
-          display_name,
-          service_address,
-          service_lat,
-          service_lng,
-          customer_identifiers (
-            type,
-            value
-          )
+    let quotesSelectIncludesMetadata = true
+    async function fetchQuoteDetailSingle(withJobType: boolean, fullCustomer: boolean) {
+      let r = await supabase!
+        .from("quotes")
+        .select(
+          buildQuoteDetailSelect({
+            withJobType,
+            fullCustomer,
+            withMetadata: quotesSelectIncludesMetadata,
+          }),
         )
-      `
-    const quoteDetailSelectBasic = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        job_type_id,
-        scheduled_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
+        .eq("id", quoteId)
+        .single()
+      if (r.error && quotesSelectIncludesMetadata && supabaseQuotesMissingMetadataColumn(r.error.message)) {
+        quotesSelectIncludesMetadata = false
+        r = await supabase!
+          .from("quotes")
+          .select(
+            buildQuoteDetailSelect({
+              withJobType,
+              fullCustomer,
+              withMetadata: false,
+            }),
           )
-        )
-      `
-    const quoteDetailSelectNoJobType = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        scheduled_at,
-        customers (
-          display_name,
-          service_address,
-          service_lat,
-          service_lng,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `
-    const quoteDetailSelectNoJobTypeBasic = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        scheduled_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `
-    let detailFirst = await supabase.from("quotes").select(quoteDetailSelect).eq("id", quoteId).single()
+          .eq("id", quoteId)
+          .single()
+      }
+      return r
+    }
+    let detailFirst = await fetchQuoteDetailSingle(true, true)
     if (detailFirst.error && String(detailFirst.error.message || "").toLowerCase().includes("service_")) {
-      detailFirst = await supabase.from("quotes").select(quoteDetailSelectBasic).eq("id", quoteId).single()
+      detailFirst = await fetchQuoteDetailSingle(true, false)
     }
     let row: any = detailFirst.data
     let error = detailFirst.error
 
     if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
-      let r = await supabase.from("quotes").select(quoteDetailSelectNoJobType).eq("id", quoteId).single()
+      let r = await fetchQuoteDetailSingle(false, true)
       if (r.error && String(r.error.message || "").toLowerCase().includes("service_")) {
-        r = await supabase.from("quotes").select(quoteDetailSelectNoJobTypeBasic).eq("id", quoteId).single()
+        r = await fetchQuoteDetailSingle(false, false)
       }
       row = r.data
       error = r.error
@@ -1939,6 +2146,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
           supabaseQuotesMissingJobTypeIdColumn(error.message)
             ? "\n\nRun supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id (and RLS if needed)."
             : ""
+        }${
+          supabaseQuotesMissingMetadataColumn(error.message)
+            ? "\n\nOptional: run supabase/quotes-metadata-job-details.sql to save Job Details on the quote row (for AI and email checks)."
+            : ""
         }`,
       )
       return false
@@ -1948,6 +2159,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return false
     }
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
+    const jobDetailsFromDb = quoteRowJobDetailsFromMetadata(row.metadata)
+    if (jobDetailsFromDb.trim()) setJobDetailsText(jobDetailsFromDb)
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
     const { data: items } = await supabase
       .from("quote_items")
@@ -2960,7 +3173,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const p = parseQuoteAttachmentMeta(row.metadata)
       return Boolean(p.note.trim())
     })
-    const hasDetails = quoteActivityFiltered.length > 0
+    const hasDetails = quoteActivityFiltered.length > 0 || Boolean(jobDetailsText.trim())
     if (!hasFileOrPhoto && !hasAttachmentDescription && !hasDetails) {
       const proceed = window.confirm("You may be missing Job Details. Are you sure you want to proceed with sending this Estimate to your Customer?")
       if (!proceed) return
@@ -3131,7 +3344,80 @@ export default function QuotesPage(_props: QuotesPageProps) {
               ))}
             </div>
           </div>
+          {userId ? (
+            <>
+              <div
+                style={{
+                  ...ESTIMATE_WORKFLOW_SECTION_BASE,
+                  background: "#fff",
+                  maxWidth: 560,
+                }}
+              >
+                <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 6 }}>New estimate</div>
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                  Start a standard estimate draft. Use <strong>Estimates Library</strong> for templates and saved lines.
+                </p>
+                <button
+                  type="button"
+                  disabled={!supabase}
+                  onClick={() => void createNewEstimate()}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: supabase ? "pointer" : "not-allowed",
+                  }}
+                >
+                  New standard estimate
+                </button>
+              </div>
+              {showQuotesEstimateTemplate && specialtyInspectionWorkflowEnabled ? (
+                <div
+                  style={{
+                    ...ESTIMATE_WORKFLOW_SECTION_BASE,
+                    background: "linear-gradient(135deg, #f8fafc 0%, #fff 100%)",
+                    maxWidth: 720,
+                  }}
+                >
+                  <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 6 }}>
+                    Specialty · inspection / variance workflow
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                    Enabled in <strong>Advanced Options</strong>. Use this when you need structured inspection-style documentation alongside pricing (sections,
+                    findings, variance notes — expanding in upcoming releases).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setInspectionVarianceWizardOpen(true)}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid #94a3b8`,
+                      background: "#fff",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      color: "#0f172a",
+                    }}
+                  >
+                    Inspection / variance wizard
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </div>
+
+        <InspectionVarianceWizardModal
+          open={inspectionVarianceWizardOpen}
+          onClose={() => setInspectionVarianceWizardOpen(false)}
+          quoteId={selectedQuoteId}
+          customerLabel={selectedQuote?.customers?.display_name ?? undefined}
+        />
 
         {showSettings && (
           <PortalSettingsModal
@@ -3385,16 +3671,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
         {showEstimateTemplateModal && (
           <PortalSettingsModal
-            title="Advanced Options"
+            title="Estimate Template options"
             maxWidthPx={560}
             closeButtonLabel="Save & close"
-            intro={
-              <p style={{ margin: 0 }}>
-                These options control how the <strong>Download quote</strong> file is built (PDF or Word). Intro and footer are plain text;
-                use line breaks for paragraphs. Optional logo appears at the top of both formats. Your admin can rename this button (for example,
-                Advanced Estimate Options) in the portal builder.
-              </p>
-            }
+            intro={null}
             items={estimateTemplateItems}
             formValues={estimateTemplateFormValues}
             setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
@@ -3904,10 +4184,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             <EstimateStartGuideModal
                               open={estimateStartGuideOpen}
                               step={estimateStartGuideStep}
-                              onClose={() => {
-                                setEstimateStartGuideOpen(false)
-                                setEstimateStartGuideStep(1)
-                              }}
+                              onClose={closeGuideWizard}
                               customers={customerList.map((c: { id: string; display_name?: string | null }) => ({
                                 id: c.id,
                                 display_name: c.display_name,
@@ -3923,30 +4200,57 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onTemplateContinue={() => void handleEstimateGuideTemplateContinue()}
                               onTemplateSkip={handleEstimateGuideTemplateSkip}
                               templateBusy={estimateGuideBusy}
+                              onConversationsNeedInfo={handleGuideConversationNeedInfo}
+                              onConversationsReady={handleGuideConversationReady}
+                              onConversationsSkip={handleGuideConversationSkip}
+                              onConversationsOpen={() => openGuideSection(conversationsSectionRef)}
+                              onMediaContinue={handleGuideMediaContinue}
+                              onMediaSkip={handleGuideMediaSkip}
+                              onMediaOpen={() => openGuideSection(mediaSectionRef)}
+                              mediaBusy={estimateGuideBusy}
+                              onJobDetailsContinue={handleGuideJobDetailsContinue}
+                              onJobDetailsSkip={handleGuideJobDetailsSkip}
+                              onJobDetailsOpen={() => openGuideSection(jobDetailsSectionRef)}
+                              jobDetailsBusy={estimateGuideBusy}
+                              onQuoteItemsContinue={handleGuideQuoteItemsContinue}
+                              onQuoteItemsSkip={handleGuideQuoteItemsSkip}
+                              onQuoteItemsOpen={() => openGuideSection(quoteItemsSectionRef)}
+                              quoteItemsBusy={estimateGuideBusy}
+                              onPreviewOnly={() => {
+                                void previewEstimateDocument()
+                                if (selectedQuote?.id) {
+                                  saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
+                                  setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
+                                }
+                              }}
+                              onPreviewOpenSection={() => openGuideSection(reviewSendSectionRef)}
+                              onPreviewSaveProfile={() => {
+                                if (!selectedQuote?.customer_id) {
+                                  alert("Select a customer first.")
+                                  return
+                                }
+                                alert("Estimate is linked to this customer profile. Edits are saved automatically.")
+                                if (selectedQuote?.id) {
+                                  saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
+                                  setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
+                                }
+                              }}
+                              onPreviewSaveAndSend={() => {
+                                setBottomActionEmailOpen(true)
+                                if (selectedQuote?.id) {
+                                  saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
+                                  setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
+                                }
+                                closeGuideWizard()
+                              }}
+                              previewBusy={quotePdfBusy}
                             />
                             <details
                               open={estimateCustomerFoldOpen}
                               onToggle={(e) => setEstimateCustomerFoldOpen((e.target as HTMLDetailsElement).open)}
-                              style={{
-                                marginBottom: 12,
-                                border: `1px solid ${theme.border}`,
-                                borderRadius: 10,
-                                padding: "10px 12px",
-                                background: "#fff",
-                              }}
+                              style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
                             >
-                              <summary
-                                style={{
-                                  cursor: "pointer",
-                                  fontWeight: 700,
-                                  fontSize: 15,
-                                  color: theme.text,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  listStylePosition: "outside",
-                                }}
-                              >
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Customer
                                 <EstimateGuideStatusMarker
                                   variant={
@@ -4256,35 +4560,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             <details
                               open={estimateTemplatesFoldOpen}
                               onToggle={(e) => setEstimateTemplatesFoldOpen((e.target as HTMLDetailsElement).open)}
-                              style={{
-                                marginBottom: 12,
-                                border: `1px solid ${theme.border}`,
-                                borderRadius: 10,
-                                padding: "10px 12px",
-                                background: "#f8fafc",
-                              }}
+                              style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}
                             >
-                              <summary
-                                style={{
-                                  cursor: "pointer",
-                                  fontWeight: 700,
-                                  fontSize: 14,
-                                  color: theme.text,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                }}
-                              >
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Templates &amp; job type
                                 <EstimateGuideStatusMarker
                                   variant={
-                                    estimateGuideFlags.templateAppliedViaGuide
-                                      ? "done"
-                                      : estimateGuideFlags.templateSkipped
-                                        ? "skipped"
-                                        : "none"
+                                    (() => {
+                                      const jt =
+                                        typeof (selectedQuote as QuoteRow)?.job_type_id === "string" &&
+                                        Boolean((selectedQuote as QuoteRow).job_type_id?.trim())
+                                      const done = estimateGuideFlags.templateAppliedViaGuide || jt
+                                      const skipped = estimateGuideFlags.templateSkipped && !done
+                                      if (done) return "done" as const
+                                      if (skipped) return "skipped" as const
+                                      return "none" as const
+                                    })()
                                   }
-                                  label="Template"
+                                  label="Template & job type"
                                 />
                               </summary>
                                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -4373,8 +4666,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 </div>
                             </details>
 
-                            <details style={{ marginBottom: 16 }}>
-                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text, display: "flex", alignItems: "center", gap: 8 }}>
+                            <details
+                              ref={conversationsSectionRef}
+                              style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
+                            >
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Conversations
                                 <EstimateGuideStatusMarker
                                   variant={
@@ -4382,7 +4678,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       ? "done"
                                       : estimateGuideFlags.conversationNeedsInfo
                                         ? "warning"
-                                        : "none"
+                                        : estimateGuideFlags.conversationSkipped
+                                          ? "skipped"
+                                          : "none"
                                   }
                                   label="Conversations"
                                 />
@@ -4393,8 +4691,46 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   type="button"
                                   onClick={() => {
                                     if (!selectedQuote?.id) return
-                                    saveEstimateGuideFlags(selectedQuote.id, { conversationNeedsInfo: true, conversationReady: false })
-                                    setEstimateGuideFlags((f) => ({ ...f, conversationNeedsInfo: true, conversationReady: false }))
+                                    saveEstimateGuideFlags(selectedQuote.id, {
+                                      conversationSkipped: true,
+                                      conversationNeedsInfo: false,
+                                      conversationReady: false,
+                                    })
+                                    setEstimateGuideFlags((f) => ({
+                                      ...f,
+                                      conversationSkipped: true,
+                                      conversationNeedsInfo: false,
+                                      conversationReady: false,
+                                    }))
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 6,
+                                    border: `1px dashed ${theme.border}`,
+                                    background: estimateGuideFlags.conversationSkipped ? "#f8fafc" : "#fff",
+                                    color: "#64748b",
+                                    fontWeight: 700,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Skip for now
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedQuote?.id) return
+                                    saveEstimateGuideFlags(selectedQuote.id, {
+                                      conversationNeedsInfo: true,
+                                      conversationReady: false,
+                                      conversationSkipped: false,
+                                    })
+                                    setEstimateGuideFlags((f) => ({
+                                      ...f,
+                                      conversationNeedsInfo: true,
+                                      conversationReady: false,
+                                      conversationSkipped: false,
+                                    }))
                                   }}
                                   style={{
                                     padding: "6px 10px",
@@ -4413,8 +4749,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   type="button"
                                   onClick={() => {
                                     if (!selectedQuote?.id) return
-                                    saveEstimateGuideFlags(selectedQuote.id, { conversationNeedsInfo: false, conversationReady: true })
-                                    setEstimateGuideFlags((f) => ({ ...f, conversationNeedsInfo: false, conversationReady: true }))
+                                    saveEstimateGuideFlags(selectedQuote.id, {
+                                      conversationNeedsInfo: false,
+                                      conversationReady: true,
+                                      conversationSkipped: false,
+                                    })
+                                    setEstimateGuideFlags((f) => ({
+                                      ...f,
+                                      conversationNeedsInfo: false,
+                                      conversationReady: true,
+                                      conversationSkipped: false,
+                                    }))
                                   }}
                                   style={{
                                     padding: "6px 10px",
@@ -4540,11 +4885,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               </div>
                             </details>
 
-                            <details style={{ marginBottom: 16 }}>
-                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
-                                Upload Photos or Files{" "}
-                                <span style={{ fontWeight: 600, color: "#64748b", marginLeft: 8 }}>
-                                  ({quoteEntityRows.length} file{quoteEntityRows.length === 1 ? "" : "s"})
+                            <details ref={mediaSectionRef} style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}>
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                                Upload photos or files
+                                <EstimateGuideStatusMarker
+                                  variant={quoteEntityRows.length > 0 ? "done" : estimateGuideFlags.mediaSkipped ? "skipped" : "none"}
+                                  label="Photos/files"
+                                />
+                                <span style={{ fontWeight: 600, color: "#64748b", marginLeft: "auto", fontSize: 13 }}>
+                                  {quoteEntityRows.length} file{quoteEntityRows.length === 1 ? "" : "s"}
                                 </span>
                               </summary>
                             <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -4669,7 +5018,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                           <strong>Saved:</strong> {parsed.note}
                                         </p>
                                       ) : null}
-                                      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
+                                      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 8, fontSize: 12, lineHeight: 1.4 }}>
                                         <input
                                           type="checkbox"
                                           checked={parsed.attachToCustomerCopy}
@@ -4681,7 +5030,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                             })
                                           }
                                         />
-                                        Attach this to customer&apos;s copy
+                                        <span>
+                                          <span style={{ display: "block", fontWeight: 600 }}>Attach this to customer&apos;s copy</span>
+                                          <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                                            Off by default — turn on only when you want this file included on the estimate you send.
+                                          </span>
+                                        </span>
                                       </label>
                                     </li>
                                   )
@@ -4692,20 +5046,52 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             )}
                             </details>
 
+                            <details ref={jobDetailsSectionRef} style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}>
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                                Job details
+                                <EstimateGuideStatusMarker
+                                  variant={jobDetailsText.trim() ? "done" : estimateGuideFlags.jobDetailsSkipped ? "skipped" : "none"}
+                                  label="Job details"
+                                />
+                              </summary>
+                              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                                <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                                  Add concise scope notes here. This feeds your estimate workflow and future AI suggestions.
+                                </p>
+                                <textarea
+                                  rows={4}
+                                  placeholder="Describe scope, observed issues, and special constraints..."
+                                  value={jobDetailsText}
+                                  onChange={(e) => setJobDetailsText(e.target.value)}
+                                  style={{ ...theme.formInput, resize: "vertical" }}
+                                />
+                              </div>
+                            </details>
+
               {selectedQuoteId ? (
                 <EstimateScopeAssistantPanel
                   quoteId={selectedQuoteId}
                   accessToken={session?.access_token}
                   tradeHint={profileDisplayNameForPdf || undefined}
                   existingLines={estimateScopeExistingLines}
+                  linkedScopeText={jobDetailsText}
+                  onLinkedScopeChange={setJobDetailsText}
                   onApproveLine={async (s) => {
                     await addQuoteLineFromSuggestion(s.description, s.quantity, s.unit_price)
                   }}
                 />
               ) : null}
 
-              <details style={{ marginTop: 16 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>Quick Add Quote Items</summary>
+              <details ref={quoteItemsSectionRef} style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}>
+                <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                  Quick add quote items
+                  <EstimateGuideStatusMarker
+                    variant={
+                      selectedQuoteItems.length > 0 ? "done" : estimateGuideFlags.quoteItemsSkipped ? "warning" : "none"
+                    }
+                    label="Quote items"
+                  />
+                </summary>
                 <div style={{ marginTop: 10 }}>
               {estimateLinePresets.length > 0 ? (
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -4937,8 +5323,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </button>
                 </div>
               </div>
-                </div>
-              </details>
 
               <table
                 style={{
@@ -4970,7 +5354,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         colSpan={7 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
                         style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
                       >
-                        No line items. Expand Quick Add Quote Items above to add a line.
+                        No line items yet — use Quick add quote items above to add a line.
                       </td>
                     </tr>
                   ) : (
@@ -5175,12 +5559,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </tfoot>
                 ) : null}
               </table>
+                </div>
+              </details>
 
+              <details
+                ref={reviewSendSectionRef}
+                style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}
+              >
+                <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                  Review &amp; send
+                  <EstimateGuideStatusMarker
+                    variant={
+                      estimateGuideFlags.previewReviewed
+                        ? "done"
+                        : selectedQuoteItems.length > 0
+                          ? "skipped"
+                          : "none"
+                    }
+                    label="Review and send"
+                  />
+                </summary>
+                <div style={{ marginTop: 10 }}>
               <div
                 style={{
-                  marginTop: 24,
-                  paddingTop: 16,
-                  borderTop: `1px solid ${theme.border}`,
+                  paddingTop: 4,
                   display: "flex",
                   flexDirection: "column",
                   gap: 12,
@@ -5208,7 +5610,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       cursor: selectedQuote?.customer_id ? "pointer" : "not-allowed",
                     }}
                   >
-                    Save Estimate to Customer
+                    Save to Customer Profile
                   </button>
                   <button
                     type="button"
@@ -5374,6 +5776,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </div>
                 ) : null}
               </div>
+                </div>
+              </details>
 
                           </div>
             ) : (

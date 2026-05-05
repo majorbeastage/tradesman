@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { theme } from "../styles/theme"
 import { platformToolsJsonBody } from "../lib/platformToolsJsonBody"
 import { supabase } from "../lib/supabase"
@@ -16,6 +16,9 @@ type Props = {
   tradeHint?: string
   existingLines: { description: string; quantity: number; unit_price: number }[]
   onApproveLine: (s: Suggestion) => Promise<void>
+  /** When set with onLinkedScopeChange, uses the same text as the Job Details field (single source of truth). */
+  linkedScopeText?: string
+  onLinkedScopeChange?: (next: string) => void
 }
 
 function storageDraftKey(quoteId: string): string {
@@ -28,7 +31,10 @@ export default function EstimateScopeAssistantPanel({
   tradeHint,
   existingLines,
   onApproveLine,
+  linkedScopeText,
+  onLinkedScopeChange,
 }: Props) {
+  const isLinkedScope = typeof onLinkedScopeChange === "function"
   const [draft, setDraft] = useState("")
   const [listening, setListening] = useState(false)
   const [analyzeBusy, setAnalyzeBusy] = useState(false)
@@ -38,18 +44,24 @@ export default function EstimateScopeAssistantPanel({
   const [approvingIdx, setApprovingIdx] = useState<number | null>(null)
 
   useEffect(() => {
-    try {
-      setDraft(localStorage.getItem(storageDraftKey(quoteId)) ?? "")
-    } catch {
-      setDraft("")
+    if (!isLinkedScope) {
+      try {
+        setDraft(localStorage.getItem(storageDraftKey(quoteId)) ?? "")
+      } catch {
+        setDraft("")
+      }
     }
     setSuggestions([])
     setClarifications([])
     setAnalyzeNote(null)
-  }, [quoteId])
+  }, [quoteId, isLinkedScope])
 
   const persistDraft = useCallback(
     (v: string) => {
+      if (isLinkedScope) {
+        onLinkedScopeChange?.(v)
+        return
+      }
       setDraft(v)
       try {
         localStorage.setItem(storageDraftKey(quoteId), v)
@@ -57,8 +69,14 @@ export default function EstimateScopeAssistantPanel({
         /* ignore */
       }
     },
-    [quoteId],
+    [quoteId, isLinkedScope, onLinkedScopeChange],
   )
+
+  const scopeDraft = isLinkedScope ? (linkedScopeText ?? "") : draft
+  const scopeDraftRef = useRef(scopeDraft)
+  useEffect(() => {
+    scopeDraftRef.current = scopeDraft
+  }, [scopeDraft])
 
   const startVoice = () => {
     const w = window as unknown as {
@@ -94,7 +112,8 @@ export default function EstimateScopeAssistantPanel({
       const r = ev as unknown as { results?: Array<Array<{ transcript?: string }>> }
       const chunk = r.results?.[0]?.[0]?.transcript?.trim()
       if (chunk) {
-        persistDraft(draft.trim() ? `${draft.trim()} ${chunk}` : chunk)
+        const base = scopeDraftRef.current.trim()
+        persistDraft(base ? `${base} ${chunk}` : chunk)
       }
       setListening(false)
     }
@@ -183,9 +202,13 @@ export default function EstimateScopeAssistantPanel({
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Job Details</div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>
+            {isLinkedScope ? "AI line suggestions" : "Job details"}
+          </div>
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
-            Describe the job in plain language (or tap Voice). Analyze scope to preview suggested rows — approve to add them to your spreadsheet.
+            {isLinkedScope
+              ? "Uses the Job Details field above. Analyze scope to preview suggested rows — approve to add them to your estimate."
+              : "Describe the job in plain language (or tap Voice). Analyze scope to preview suggested rows — approve to add them to your spreadsheet."}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -227,20 +250,26 @@ export default function EstimateScopeAssistantPanel({
           </button>
         </div>
       </div>
-      <textarea
-        value={draft}
-        onChange={(e) => persistDraft(e.target.value)}
-        rows={4}
-        placeholder="Example: Replace water heater, drain pan, expansion tank; haul away old unit; permit if city requires…"
-        style={{
-          ...theme.formInput,
-          width: "100%",
-          boxSizing: "border-box",
-          resize: "vertical",
-          fontSize: 14,
-          lineHeight: 1.45,
-        }}
-      />
+      {isLinkedScope ? (
+        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Scope text is edited in <strong style={{ color: "#334155" }}>Job Details</strong> above; voice adds to that field.
+        </p>
+      ) : (
+        <textarea
+          value={scopeDraft}
+          onChange={(e) => persistDraft(e.target.value)}
+          rows={4}
+          placeholder="Example: Replace water heater, drain pan, expansion tank; haul away old unit; permit if city requires…"
+          style={{
+            ...theme.formInput,
+            width: "100%",
+            boxSizing: "border-box",
+            resize: "vertical",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        />
+      )}
       {analyzeNote ? (
         <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b" }}>{analyzeNote}</p>
       ) : null}

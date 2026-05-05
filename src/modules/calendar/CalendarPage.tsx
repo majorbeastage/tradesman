@@ -2074,30 +2074,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </button>
               ) : null}
               {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
-              {userId ? (
-                <button
-                  type="button"
-                  disabled={calendarShareBusy}
-                  onClick={() => void shareActiveJobsToDeviceCalendar()}
-                  title="Active jobs in the next 60 days. On the app, share sheet → Calendar; in a browser, downloads an .ics file to import."
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: "6px",
-                    border: `1px solid ${theme.border}`,
-                    background: "#f8fafc",
-                    color: theme.text,
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: calendarShareBusy ? "wait" : "pointer",
-                  }}
-                >
-                  {calendarShareBusy
-                    ? "Preparing…"
-                    : isNativeApp()
-                      ? "Add to phone calendar"
-                      : "Export calendar (.ics)"}
-                </button>
-              ) : null}
             </div>
             {showCalAutoResponse ? (
               <button
@@ -4046,6 +4022,29 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           </div>
         </>
       )}
+      {calendarSuite.id === "calendar" && userId ? (
+        <div style={{ position: "fixed", bottom: 12, right: 12, zIndex: 30 }}>
+          <button
+            type="button"
+            disabled={calendarShareBusy}
+            onClick={() => void shareActiveJobsToDeviceCalendar()}
+            title="Active jobs in the next 60 days. On the app, share sheet → Calendar; in a browser, downloads an .ics file to import. Full device sync may use push/subscribe later."
+            style={{
+              padding: "6px 10px",
+              borderRadius: "6px",
+              border: `1px solid ${theme.border}`,
+              background: "#ffffffee",
+              color: "#64748b",
+              fontWeight: 600,
+              fontSize: 11,
+              cursor: calendarShareBusy ? "wait" : "pointer",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+            }}
+          >
+            {calendarShareBusy ? "Preparing…" : isNativeApp() ? "Phone calendar (.ics)" : "Export .ics"}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -13,6 +13,22 @@ export type EstimateGuideFlags = {
   conversationNeedsInfo?: boolean
   /** Conversations reviewed: enough customer info to proceed. */
   conversationReady?: boolean
+  /** User skipped the conversations step (optional). */
+  conversationSkipped?: boolean
+  /** Upload/photos step skipped for now. */
+  mediaSkipped?: boolean
+  /** At least one upload exists for this estimate. */
+  mediaAdded?: boolean
+  /** Job details step skipped for now. */
+  jobDetailsSkipped?: boolean
+  /** Job details text was entered. */
+  jobDetailsProvided?: boolean
+  /** Quote items step reviewed or filled. */
+  quoteItemsReady?: boolean
+  /** Quote items step skipped for now. */
+  quoteItemsSkipped?: boolean
+  /** Preview/review step completed. */
+  previewReviewed?: boolean
 }
 
 function key(quoteId: string): string {

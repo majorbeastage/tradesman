@@ -1053,6 +1053,12 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     label: "Use AI assistant to help refine estimate wording",
     defaultChecked: false,
   },
+  {
+    id: "estimate_template_specialty_inspection",
+    type: "checkbox",
+    label: "Enable specialty / inspection-style workflows (inspection variance wizard on Estimates)",
+    defaultChecked: false,
+  },
 ]
 
 /** Receipt PDF template (Calendar); notes map to profiles.document_template_receipt */
