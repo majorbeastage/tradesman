@@ -224,11 +224,35 @@ export default function EstimateStartGuideModal({
 
 /** Inline status next to estimate section titles — not alerts; neutral “skipped” vs success. */
 export function EstimateGuideStatusMarker(props: {
-  variant: "none" | "skipped" | "done"
+  variant: "none" | "skipped" | "done" | "warning"
   label: string
 }) {
   const { variant, label } = props
   if (variant === "none") return null
+  if (variant === "warning") {
+    return (
+      <span
+        title={`${label}: needs attention`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 22,
+          height: 22,
+          borderRadius: "50%",
+          background: "#fef2f2",
+          border: "1px solid #fca5a5",
+          color: "#b91c1c",
+          fontSize: 12,
+          fontWeight: 800,
+          flexShrink: 0,
+        }}
+        aria-hidden
+      >
+        !
+      </span>
+    )
+  }
   if (variant === "skipped") {
     return (
       <span

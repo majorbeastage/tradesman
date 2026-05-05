@@ -485,7 +485,7 @@ function OfficeManagerAppContent() {
 
       {page === "dashboard" && (
         <>
-          <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>Office manager</h1>
+          <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, color: theme.text }}>Office manager</h1>
           <BillingDueDashboardBanner
             profileUserId={scope?.selectedUserId ?? user?.id}
             separateBillingProfile={separateBillingForScope}

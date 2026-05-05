@@ -38,6 +38,7 @@ import {
 } from "../../lib/calendarRecurrence"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerFocus } from "../../lib/customerNavigation"
 import { consumeCalendarSuiteNavigation, consumeSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
@@ -1028,8 +1029,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       .eq("user_id", owner)
       .then(({ data }) => {
         const rows = (data ?? []) as { type: string; value: string }[]
-        setCompleteCustomerEmail(rows.find((r) => r.type === "email")?.value ?? null)
-        setCompleteCustomerPhone(rows.find((r) => r.type === "phone")?.value ?? null)
+        const target = readContactTargetFromMetadata(ev.metadata)
+        const picked = resolveCustomerContactByTarget(rows, target)
+        setCompleteCustomerEmail(picked.email || null)
+        setCompleteCustomerPhone(picked.phone || null)
       })
   }, [completeFlowEvent?.id, completeFlowEvent?.customer_id, completeFlowEvent?.user_id, userId])
 
@@ -2319,7 +2322,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           >
             →
           </button>
-          <span style={{ fontWeight: 600, color: theme.text, marginLeft: isMobile ? "0" : "8px", flex: isMobile ? "1 1 100%" : undefined }}>
+          <span style={{ fontWeight: 700, color: "#e2e8f0", marginLeft: isMobile ? "0" : "8px", flex: isMobile ? "1 1 100%" : undefined }}>
             {view === "month" && `${MONTH_NAMES[currentDate.getMonth()]} ${currentDate.getFullYear()}`}
             {view === "week" && `Week of ${weekStart.toLocaleDateString()}`}
             {view === "day" && currentDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}

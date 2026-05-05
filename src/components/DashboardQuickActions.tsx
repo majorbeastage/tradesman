@@ -119,19 +119,19 @@ function Tile({
     flexDirection: "column",
     justifyContent: "flex-end",
     alignItems: "flex-start",
-    minHeight: compact ? 88 : 98,
-    padding: "14px 14px 14px",
-    borderRadius: 12,
+    minHeight: compact ? 76 : 84,
+    padding: "12px 12px 12px",
+    borderRadius: 9,
     border: primaryRow ? `1px solid rgba(249, 115, 22, 0.38)` : `1px solid rgba(51, 65, 85, 0.35)`,
     background: primaryRow
-      ? "linear-gradient(152deg, #dbeafe 0%, #e0e7ef 42%, #cbd5e1 100%)"
-      : "linear-gradient(148deg, #e2e8f0 0%, #d8dee9 45%, #cbd5e1 100%)",
+      ? "linear-gradient(152deg, #dce6f2 0%, #d6dfec 46%, #c7d2df 100%)"
+      : "linear-gradient(148deg, #e4e9f0 0%, #dbe2eb 45%, #cfd9e6 100%)",
     cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left",
     overflow: "hidden",
     boxShadow: primaryRow
-      ? "0 3px 10px rgba(249, 115, 22, 0.18), 0 8px 22px rgba(15, 23, 42, 0.12)"
-      : "0 2px 8px rgba(15, 23, 42, 0.1)",
+      ? "0 2px 8px rgba(249, 115, 22, 0.14), 0 6px 16px rgba(15, 23, 42, 0.1)"
+      : "0 1px 5px rgba(15, 23, 42, 0.08)",
     opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
   }
   return (
@@ -184,19 +184,19 @@ function Tile({
         aria-hidden
         style={{
           position: "absolute",
-          top: primaryRow ? 10 : 12,
-          right: primaryRow ? 10 : 12,
-          width: primaryRow ? 42 : 38,
-          height: primaryRow ? 42 : 38,
+          top: primaryRow ? 8 : 10,
+          right: primaryRow ? 8 : 10,
+          width: primaryRow ? 30 : 26,
+          height: primaryRow ? 30 : 26,
           borderRadius: "50%",
           background: `linear-gradient(135deg, ${accent}40, ${accent}72)`,
           border: `1px solid ${accent}66`,
-          boxShadow: primaryRow ? `0 0 22px ${accent}55` : undefined,
+          boxShadow: primaryRow ? `0 0 14px ${accent}44` : undefined,
         }}
       />
       <span
         style={{
-          marginTop: 4,
+          marginTop: 2,
           fontSize: compact ? 14 : 15,
           fontWeight: 800,
           color: "#0f172a",
@@ -391,7 +391,7 @@ export default function DashboardQuickActions(props: Props) {
 
   const shell: CSSProperties = {
     padding: isMobile ? "12px 12px 14px" : "16px 16px 18px",
-    borderRadius: 16,
+    borderRadius: 12,
     background: "linear-gradient(175deg, #cbd5e1 0%, #b8c4d4 52%, #a8b6ca 100%)",
     border: "1px solid rgba(30, 41, 59, 0.35)",
     boxShadow:
@@ -559,7 +559,7 @@ export default function DashboardQuickActions(props: Props) {
             margin: 0,
             fontSize: isMobile ? 17 : 19,
             fontWeight: 800,
-            color: "#f8fafc",
+            color: "#0f172a",
             letterSpacing: -0.02,
           }}
         >
@@ -574,8 +574,8 @@ export default function DashboardQuickActions(props: Props) {
             padding: "6px 10px",
             borderRadius: 8,
             border: `1px solid rgba(249,115,22,0.45)`,
-            background: customize ? "rgba(249,115,22,0.2)" : "rgba(255,255,255,0.06)",
-            color: "#f8fafc",
+            background: customize ? "rgba(249,115,22,0.22)" : "rgba(255,255,255,0.3)",
+            color: "#0f172a",
             cursor: "pointer",
           }}
         >
@@ -583,7 +583,7 @@ export default function DashboardQuickActions(props: Props) {
         </button>
       </div>
       {customize ? (
-        <div style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(248,250,252,0.62)", maxWidth: 640, lineHeight: 1.45 }}>
+        <div style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(15,23,42,0.7)", maxWidth: 640, lineHeight: 1.45 }}>
           <span>{labels.customizeAddHint}</span>
           {persistNote === "cloud" ? (
             <span style={{ display: "block", marginTop: 4, color: "rgba(167,243,208,0.95)" }}>{labels.savedCloud}</span>

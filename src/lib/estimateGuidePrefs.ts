@@ -9,6 +9,10 @@ export type EstimateGuideFlags = {
   templateSkipped?: boolean
   /** User applied a quick-access template during the guide */
   templateAppliedViaGuide?: boolean
+  /** Conversations reviewed: request more customer info before sending estimate. */
+  conversationNeedsInfo?: boolean
+  /** Conversations reviewed: enough customer info to proceed. */
+  conversationReady?: boolean
 }
 
 function key(quoteId: string): string {

@@ -71,6 +71,7 @@ import {
   saveEstimateGuideFlags,
   type EstimateGuideFlags,
 } from "../../lib/estimateGuidePrefs"
+import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -401,10 +402,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
     name: "",
     phone: "",
     email: "",
+    additionalName: "",
+    additionalPhone: "",
+    additionalEmail: "",
     serviceAddress: "",
     serviceLat: "",
     serviceLng: "",
   })
+  const [quoteContactTarget, setQuoteContactTarget] = useState<ContactTarget>("primary")
   const [jobTypes, setJobTypes] = useState<CalendarPickerJobType[]>([])
   const [addToCalendarLoading, setAddToCalendarLoading] = useState(false)
   const [quoteCalPortalValues, setQuoteCalPortalValues] = useState<Record<string, string>>({})
@@ -1691,10 +1696,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
   function applyQuoteCustomerFormFromCustomers(cust: CustomerRow | null | undefined) {
     const phone = cust?.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
     const email = cust?.customer_identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
+    const additionalName = cust?.customer_identifiers?.find((i) => i.type === "additional_name")?.value?.trim() ?? ""
+    const additionalPhone = cust?.customer_identifiers?.find((i) => i.type === "additional_phone")?.value?.trim() ?? ""
+    const additionalEmail = cust?.customer_identifiers?.find((i) => i.type === "additional_email")?.value?.trim() ?? ""
     setQuoteCustomerForm({
       name: (cust?.display_name ?? "").trim(),
       phone,
       email: email.toLowerCase(),
+      additionalName,
+      additionalPhone,
+      additionalEmail: additionalEmail.toLowerCase(),
       serviceAddress: typeof cust?.service_address === "string" ? cust.service_address : "",
       serviceLat: cust?.service_lat != null && Number.isFinite(Number(cust.service_lat)) ? String(cust.service_lat) : "",
       serviceLng: cust?.service_lng != null && Number.isFinite(Number(cust.service_lng)) ? String(cust.service_lng) : "",
@@ -1744,11 +1755,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
         u1 = r.error
       }
       if (u1) throw u1
-      const { error: del } = await supabase.from("customer_identifiers").delete().eq("customer_id", cid).in("type", ["phone", "email", "name"])
+      const { error: del } = await supabase
+        .from("customer_identifiers")
+        .delete()
+        .eq("customer_id", cid)
+        .in("type", ["phone", "email", "name", "additional_name", "additional_phone", "additional_email"])
       if (del) throw del
       const phoneT = quoteCustomerForm.phone.trim()
       const emailT = quoteCustomerForm.email.trim().toLowerCase()
       const nameT = quoteCustomerForm.name.trim()
+      const additionalNameT = quoteCustomerForm.additionalName.trim()
+      const additionalPhoneT = quoteCustomerForm.additionalPhone.trim()
+      const additionalEmailT = quoteCustomerForm.additionalEmail.trim().toLowerCase()
       const identRows: Array<{
         user_id: string
         customer_id: string
@@ -1774,6 +1792,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
           type: "name",
           value: nameT,
           is_primary: identRows.length === 0,
+          verified: false,
+        })
+      if (additionalPhoneT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "additional_phone",
+          value: additionalPhoneT,
+          is_primary: false,
+          verified: false,
+        })
+      if (additionalEmailT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "additional_email",
+          value: additionalEmailT,
+          is_primary: false,
+          verified: false,
+        })
+      if (additionalNameT)
+        identRows.push({
+          user_id: userId,
+          customer_id: cid,
+          type: "additional_name",
+          value: additionalNameT,
+          is_primary: false,
           verified: false,
         })
       if (identRows.length > 0) {
@@ -2894,9 +2939,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Sign in again to send email.")
       return
     }
-    const email = selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value?.trim?.()
+    const contact = resolveCustomerContactByTarget(selectedQuote.customers?.customer_identifiers ?? [], quoteContactTarget)
+    const email = contact.email?.trim()
     if (!email) {
-      alert("This customer has no email on file. Add an email identifier on the customer record.")
+      alert(`No email is set for ${contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer details.`)
       return
     }
     const subject = quoteEmailSubject.trim()
@@ -2904,6 +2950,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!subject || !body) {
       alert("Enter subject and body.")
       return
+    }
+    if (!selectedQuoteItems.length) {
+      alert("Add at least one quote item before sending an estimate.")
+      return
+    }
+    const hasFileOrPhoto = quoteEntityRows.length > 0
+    const hasAttachmentDescription = quoteEntityRows.some((row) => {
+      const p = parseQuoteAttachmentMeta(row.metadata)
+      return Boolean(p.note.trim())
+    })
+    const hasDetails = quoteActivityFiltered.length > 0
+    if (!hasFileOrPhoto && !hasAttachmentDescription && !hasDetails) {
+      const proceed = window.confirm("You may be missing Job Details. Are you sure you want to proceed with sending this Estimate to your Customer?")
+      if (!proceed) return
     }
     const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
     let bodyForSend = body
@@ -4036,6 +4096,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, email: e.target.value }))}
                                     style={{ ...theme.formInput }}
                                   />
+                                  <div style={{ marginTop: 2, marginBottom: -2, fontSize: 12, fontWeight: 700, color: "#475569" }}>Additional contact (optional)</div>
+                                  <input
+                                    placeholder="Additional contact name"
+                                    value={quoteCustomerForm.additionalName}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, additionalName: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
+                                  <input
+                                    placeholder="Additional contact phone"
+                                    value={quoteCustomerForm.additionalPhone}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, additionalPhone: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
+                                  <input
+                                    placeholder="Additional contact email"
+                                    value={quoteCustomerForm.additionalEmail}
+                                    onChange={(e) => setQuoteCustomerForm((p) => ({ ...p, additionalEmail: e.target.value }))}
+                                    style={{ ...theme.formInput }}
+                                  />
                                   <textarea
                                     placeholder="Street, city, state (optional, for maps)"
                                     name="quote_customer_service_address"
@@ -4138,6 +4217,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     <strong>Email:</strong>{" "}
                                     {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "email")?.value ?? "—"}
                                   </p>
+                                  <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
+                                    <strong>Additional contact:</strong>{" "}
+                                    {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "additional_name")?.value ?? "—"}
+                                    {" · "}
+                                    {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "additional_phone")?.value ?? "—"}
+                                    {" · "}
+                                    {selectedQuote.customers?.customer_identifiers?.find((i: any) => i.type === "additional_email")?.value ?? "—"}
+                                  </p>
+                                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 12, color: "#334155" }}>
+                                    <span>Estimate contact target</span>
+                                    <select
+                                      value={quoteContactTarget}
+                                      onChange={(e) => setQuoteContactTarget(e.target.value as ContactTarget)}
+                                      style={{ ...theme.formInput, padding: "4px 8px", width: 180 }}
+                                    >
+                                      <option value="primary">Primary customer</option>
+                                      <option value="additional">Additional contact</option>
+                                    </select>
+                                  </label>
                                   {(selectedQuote.customers as CustomerRow | null)?.service_address?.trim() ||
                                   (selectedQuote.customers as CustomerRow | null)?.service_lat != null ? (
                                     <p style={{ margin: 0, fontSize: 13, color: "#475569" }}>
@@ -4276,10 +4374,62 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             </details>
 
                             <details style={{ marginBottom: 16 }}>
-                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text }}>
+                              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 14, color: theme.text, display: "flex", alignItems: "center", gap: 8 }}>
                                 Conversations
+                                <EstimateGuideStatusMarker
+                                  variant={
+                                    estimateGuideFlags.conversationReady
+                                      ? "done"
+                                      : estimateGuideFlags.conversationNeedsInfo
+                                        ? "warning"
+                                        : "none"
+                                  }
+                                  label="Conversations"
+                                />
                               </summary>
                               <div style={{ marginTop: 10 }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedQuote?.id) return
+                                    saveEstimateGuideFlags(selectedQuote.id, { conversationNeedsInfo: true, conversationReady: false })
+                                    setEstimateGuideFlags((f) => ({ ...f, conversationNeedsInfo: true, conversationReady: false }))
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 6,
+                                    border: "1px solid #fca5a5",
+                                    background: estimateGuideFlags.conversationNeedsInfo ? "#fee2e2" : "#fff",
+                                    color: "#b91c1c",
+                                    fontWeight: 700,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Request more info
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedQuote?.id) return
+                                    saveEstimateGuideFlags(selectedQuote.id, { conversationNeedsInfo: false, conversationReady: true })
+                                    setEstimateGuideFlags((f) => ({ ...f, conversationNeedsInfo: false, conversationReady: true }))
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 6,
+                                    border: "1px solid #6ee7b7",
+                                    background: estimateGuideFlags.conversationReady ? "#dcfce7" : "#fff",
+                                    color: "#166534",
+                                    fontWeight: 700,
+                                    fontSize: 12,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Ready to estimate
+                                </button>
+                              </div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                                 {(["all", "voicemail", "sms", "email"] as const).map((ch) => (
                                   <button
@@ -5103,21 +5253,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       cursor: "pointer",
                     }}
                   >
-                    Save to Device…
+                    Save to Device
                   </button>
                   <button
                     type="button"
+                    disabled={!selectedQuote?.customer_id || selectedQuoteItems.length === 0}
+                    title={
+                      !selectedQuote?.customer_id
+                        ? "Select a customer first"
+                        : selectedQuoteItems.length === 0
+                          ? "Add quote items first"
+                          : undefined
+                    }
                     onClick={() => {
                       setBottomActionEmailOpen((v) => !v)
                     }}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      color: theme.text,
+                      border: "none",
+                      background: !selectedQuote?.customer_id || selectedQuoteItems.length === 0 ? "#94a3b8" : theme.primary,
+                      color: "#fff",
                       fontWeight: 600,
-                      cursor: "pointer",
+                      cursor: !selectedQuote?.customer_id || selectedQuoteItems.length === 0 ? "not-allowed" : "pointer",
                     }}
                   >
                     {bottomActionEmailOpen ? "Hide email to customer" : "Email to Customer"}
@@ -5528,6 +5686,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                           ...rowBase,
                           start_at: s.toISOString(),
                           end_at: e.toISOString(),
+                          metadata: { contact_target: quoteContactTarget },
                         }
                         if (includeMat && materialsCombined) row.materials_list = materialsCombined
                         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
