@@ -503,6 +503,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
   }, [selectedQuoteId])
 
+  /** Section ✓ / ○ / ! only after user opens “Start quote” for this estimate (sessionStorage per quote). */
+  const showEstimateWizardMarkers = estimateGuideFlags.wizardOpened === true
+
   const jobDetailsDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const selectedQuotePersistRef = useRef<QuoteRow | null>(null)
   useEffect(() => {
@@ -4123,6 +4126,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    if (selectedQuote?.id) {
+                                      saveEstimateGuideFlags(selectedQuote.id, { wizardOpened: true })
+                                      setEstimateGuideFlags((f) => ({ ...f, wizardOpened: true }))
+                                    }
                                     setEstimateStartGuideOpen(true)
                                     setEstimateStartGuideStep(1)
                                     setEstimateGuideCustomerPick("")
@@ -4253,6 +4260,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Customer
                                 <EstimateGuideStatusMarker
+                                  show={showEstimateWizardMarkers}
                                   variant={
                                     selectedQuote?.customer_id ? "done" : estimateGuideFlags.customerSkipped ? "skipped" : "none"
                                   }
@@ -4565,6 +4573,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Templates &amp; job type
                                 <EstimateGuideStatusMarker
+                                  show={showEstimateWizardMarkers}
                                   variant={
                                     (() => {
                                       const jt =
@@ -4673,6 +4682,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Conversations
                                 <EstimateGuideStatusMarker
+                                  show={showEstimateWizardMarkers}
                                   variant={
                                     estimateGuideFlags.conversationReady
                                       ? "done"
@@ -4889,6 +4899,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Upload photos or files
                                 <EstimateGuideStatusMarker
+                                  show={showEstimateWizardMarkers}
                                   variant={quoteEntityRows.length > 0 ? "done" : estimateGuideFlags.mediaSkipped ? "skipped" : "none"}
                                   label="Photos/files"
                                 />
@@ -5050,6 +5061,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Job details
                                 <EstimateGuideStatusMarker
+                                  show={showEstimateWizardMarkers}
                                   variant={jobDetailsText.trim() ? "done" : estimateGuideFlags.jobDetailsSkipped ? "skipped" : "none"}
                                   label="Job details"
                                 />
@@ -5086,6 +5098,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                   Quick add quote items
                   <EstimateGuideStatusMarker
+                    show={showEstimateWizardMarkers}
                     variant={
                       selectedQuoteItems.length > 0 ? "done" : estimateGuideFlags.quoteItemsSkipped ? "warning" : "none"
                     }
@@ -5569,6 +5582,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                   Review &amp; send
                   <EstimateGuideStatusMarker
+                    show={showEstimateWizardMarkers}
                     variant={
                       estimateGuideFlags.previewReviewed
                         ? "done"

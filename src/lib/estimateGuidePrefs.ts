@@ -1,6 +1,8 @@
 /** Persisted per-quote “Start quote” guide flags (sessionStorage). */
 
 export type EstimateGuideFlags = {
+  /** User opened “Start quote” for this estimate — section emblems only show after this. */
+  wizardOpened?: boolean
   /** User chose Skip on customer step */
   customerSkipped?: boolean
   /** User linked a customer during the guide */

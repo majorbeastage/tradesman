@@ -388,8 +388,11 @@ const primaryBtnStyle = {
 export function EstimateGuideStatusMarker(props: {
   variant: "none" | "skipped" | "done" | "warning"
   label: string
+  /** When false, hide entirely (e.g. wizard not opened yet for this quote). */
+  show?: boolean
 }) {
-  const { variant, label } = props
+  const { variant, label, show = true } = props
+  if (!show) return null
   if (variant === "none") return null
   if (variant === "warning") {
     return (
