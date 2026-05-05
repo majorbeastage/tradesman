@@ -33,6 +33,7 @@ import {
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
+import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
@@ -1417,7 +1418,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return
     }
     try {
-      const html = await renderPublicLegalHtmlPage(page)
+      const html = await renderPublicLegalHtmlPage(page, { requestOrigin: publicRequestOrigin(req) })
       res.setHeader("Content-Type", "text/html; charset=utf-8")
       res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300")
       res.status(200).send(html)

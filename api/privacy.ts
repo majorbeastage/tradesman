@@ -4,6 +4,7 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { setLegalSupabaseEnvHeader } from "./_legalSupabaseEnv.js"
+import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -22,7 +23,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   setLegalSupabaseEnvHeader(res)
 
   try {
-    const html = await renderPublicLegalHtmlPage("privacy")
+    const html = await renderPublicLegalHtmlPage("privacy", { requestOrigin: publicRequestOrigin(req) })
     res.setHeader("Content-Type", "text/html; charset=utf-8")
     res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300")
     res.status(200).send(html)

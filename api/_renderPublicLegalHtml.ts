@@ -26,6 +26,12 @@ function esc(s: unknown): string {
   return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
+/** Turn relative /privacy etc. into absolute URLs when we know the public origin (better for crawlers + A2P). */
+function absolutizePublicLinks(html: string, origin: string | undefined): string {
+  if (!origin) return html
+  return html.replace(/href="\//g, `href="${origin}/`)
+}
+
 async function fetchPlatformSettingValue(key: string): Promise<unknown> {
   try {
     const supabaseUrl = pickSupabaseUrlForServer().trim()
@@ -44,7 +50,11 @@ async function fetchPlatformSettingValue(key: string): Promise<unknown> {
   }
 }
 
-function wrapSimplePage(page: SimpleLegalPage, opts: { pathLabel: string; defaultCrossFooter: string }): string {
+function wrapSimplePage(
+  page: SimpleLegalPage,
+  opts: { pathLabel: string; defaultCrossFooter: string; requestOrigin?: string },
+): string {
+  const o = opts.requestOrigin
   const kicker = esc(resolvedLegalHeroKicker(page))
   const title = esc(page.title)
   const subtitle = esc(String(page.subtitle ?? ""))
@@ -58,8 +68,22 @@ function wrapSimplePage(page: SimpleLegalPage, opts: { pathLabel: string; defaul
       }</section>`
     : ""
   const footerInner = page.footer_note?.trim()
-    ? `<p style="margin:12px 0 0;font-size:13px;color:#6b7280;white-space:pre-wrap">${esc(page.footer_note.trim())}</p>`
-    : `<p style="margin:12px 0 0;font-size:13px;color:#6b7280">${opts.defaultCrossFooter}</p>`
+    ? absolutizePublicLinks(
+        `<p style="margin:12px 0 0;font-size:13px;color:#6b7280;white-space:pre-wrap">${esc(page.footer_note.trim())}</p>`,
+        o,
+      )
+    : `<p style="margin:12px 0 0;font-size:13px;color:#6b7280">${absolutizePublicLinks(opts.defaultCrossFooter, o)}</p>`
+  const u = (path: string) => (o ? `${o}${path}` : path)
+  const docTitle = `${title} | Tradesman Systems`
+  const canonicalUrl = o ? `${o}${opts.pathLabel}` : ""
+  const seoHead = o
+    ? `<link rel="canonical" href="${esc(canonicalUrl)}"/>
+<meta property="og:url" content="${esc(canonicalUrl)}"/>
+<meta property="og:title" content="${docTitle}"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="Tradesman Systems"/>
+<meta name="twitter:card" content="summary"/>`
+    : ""
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -68,6 +92,7 @@ function wrapSimplePage(page: SimpleLegalPage, opts: { pathLabel: string; defaul
 <title>${title} | Tradesman Systems</title>
 <meta name="description" content="${esc(String(page.subtitle ?? "").slice(0, 240))}"/>
 <meta name="robots" content="index,follow"/>
+${seoHead}
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65;color:#111827;margin:0;background:#f3f4f6;}
 .wrap{max-width:920px;margin:0 auto;padding:24px 16px 48px;}
@@ -94,13 +119,13 @@ ${noticeBlock}
 <main><pre class="legal">${body}</pre></main>
 <div class="navcard">
 <p style="margin:0 0 8px">
-<a href="/privacy">Privacy Policy</a>
+<a href="${u("/privacy")}">Privacy Policy</a>
 <span style="color:#9ca3af">&middot;</span>
-<a href="/terms">Terms &amp; Conditions</a>
+<a href="${u("/terms")}">Terms &amp; Conditions</a>
 <span style="color:#9ca3af">&middot;</span>
-<a href="/sms">SMS consent</a>
+<a href="${u("/sms")}">SMS consent</a>
 <span style="color:#9ca3af">&middot;</span>
-<a href="/">Home</a>
+<a href="${u("/")}">Home</a>
 </p>
 ${footerInner}
 </div>
@@ -110,7 +135,9 @@ ${footerInner}
 </html>`
 }
 
-function renderSmsHtml(page: SmsConsentLegalPage): string {
+function renderSmsHtml(page: SmsConsentLegalPage, requestOrigin?: string): string {
+  const o = requestOrigin
+  const u = (path: string) => (o ? `${o}${path}` : path)
   const kicker = esc(resolvedLegalHeroKicker(page))
   const title = esc(page.title)
   const subtitle = esc(String(page.subtitle ?? ""))
@@ -136,8 +163,25 @@ function renderSmsHtml(page: SmsConsentLegalPage): string {
     : ""
   const sample = esc(page.sample_message?.trim() ? page.sample_message : DEFAULT_SMS_CONSENT_PAGE.sample_message)
   const footerInner = page.footer_note?.trim()
-    ? `<p style="margin:12px 0 0;font-size:13px;color:#6b7280;white-space:pre-wrap">${esc(page.footer_note.trim())}</p>`
-    : `<p style="margin:12px 0 0;font-size:13px;color:#6b7280">For general privacy practices see <a href="/privacy" style="color:#ea580c;font-weight:600">Privacy Policy</a> and <a href="/terms" style="color:#ea580c;font-weight:600">Terms &amp; Conditions</a>.</p>`
+    ? absolutizePublicLinks(
+        `<p style="margin:12px 0 0;font-size:13px;color:#6b7280;white-space:pre-wrap">${esc(page.footer_note.trim())}</p>`,
+        o,
+      )
+    : absolutizePublicLinks(
+        `<p style="margin:12px 0 0;font-size:13px;color:#6b7280">For general privacy practices see <a href="/privacy" style="color:#ea580c;font-weight:600">Privacy Policy</a> and <a href="/terms" style="color:#ea580c;font-weight:600">Terms &amp; Conditions</a>.</p>`,
+        o,
+      )
+
+  const docTitle = `${title} | Tradesman Systems`
+  const canonicalUrl = o ? `${o}/sms` : ""
+  const seoHead = o
+    ? `<link rel="canonical" href="${esc(canonicalUrl)}"/>
+<meta property="og:url" content="${esc(canonicalUrl)}"/>
+<meta property="og:title" content="${docTitle}"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="Tradesman Systems"/>
+<meta name="twitter:card" content="summary"/>`
+    : ""
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -147,6 +191,7 @@ function renderSmsHtml(page: SmsConsentLegalPage): string {
 <title>${title} | Tradesman Systems</title>
 <meta name="description" content="${esc(String(page.subtitle ?? "").slice(0, 240))}"/>
 <meta name="robots" content="index,follow"/>
+${seoHead}
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.65;color:#111827;margin:0;background:#f3f4f6;}
 .wrap{max-width:920px;margin:0 auto;padding:24px 16px 48px;}
@@ -173,7 +218,7 @@ ${noticeSection}
 <section class="card"><h2>${consentTitle}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${consent}</p></section>
 <section class="card"><h2>${sampleTitle}</h2>${sampleIntroBlock}<p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${sample}</p></section>
 <div class="navcard">
-<p style="margin:0 0 8px"><a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms &amp; Conditions</a> &middot; <a href="/">Home</a></p>
+<p style="margin:0 0 8px"><a href="${u("/privacy")}">Privacy Policy</a> &middot; <a href="${u("/terms")}">Terms &amp; Conditions</a> &middot; <a href="${u("/")}">Home</a></p>
 ${footerInner}
 </div>
 </div>
@@ -181,7 +226,13 @@ ${footerInner}
 </html>`
 }
 
-export async function renderPublicLegalHtmlPage(slug: "privacy" | "terms" | "sms"): Promise<string> {
+export type PublicLegalHtmlOptions = { requestOrigin?: string }
+
+export async function renderPublicLegalHtmlPage(
+  slug: "privacy" | "terms" | "sms",
+  options?: PublicLegalHtmlOptions,
+): Promise<string> {
+  const requestOrigin = options?.requestOrigin
   try {
     if (slug === "privacy") {
       const raw = await fetchPlatformSettingValue(PRIVACY_SETTINGS_KEY)
@@ -189,6 +240,7 @@ export async function renderPublicLegalHtmlPage(slug: "privacy" | "terms" | "sms
       return wrapSimplePage(page, {
         pathLabel: "/privacy",
         defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+        requestOrigin,
       })
     }
     if (slug === "terms") {
@@ -197,25 +249,28 @@ export async function renderPublicLegalHtmlPage(slug: "privacy" | "terms" | "sms
       return wrapSimplePage(page, {
         pathLabel: "/terms",
         defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+        requestOrigin,
       })
     }
     const raw = await fetchPlatformSettingValue(SMS_CONSENT_SETTINGS_KEY)
     const page = parseSmsConsentLegalPage(raw, DEFAULT_SMS_CONSENT_PAGE)
-    return renderSmsHtml(page)
+    return renderSmsHtml(page, requestOrigin)
   } catch (e) {
     console.error("[renderPublicLegalHtmlPage]", slug, e)
     if (slug === "privacy") {
       return wrapSimplePage(DEFAULT_PRIVACY_PAGE, {
         pathLabel: "/privacy",
         defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+        requestOrigin,
       })
     }
     if (slug === "terms") {
       return wrapSimplePage(DEFAULT_TERMS_PAGE, {
         pathLabel: "/terms",
         defaultCrossFooter: `For SMS opt-in and carrier compliance details, see <a href="/sms">SMS consent &amp; messaging</a>.`,
+        requestOrigin,
       })
     }
-    return renderSmsHtml(DEFAULT_SMS_CONSENT_PAGE)
+    return renderSmsHtml(DEFAULT_SMS_CONSENT_PAGE, requestOrigin)
   }
 }

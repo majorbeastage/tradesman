@@ -24,7 +24,9 @@
     "api/privacy.ts": { "maxDuration": 30 },
     "api/terms.ts": { "maxDuration": 30 },
     "api/sms.ts": { "maxDuration": 30 },
-    "api/legal-health.ts": { "maxDuration": 10 }
+    "api/legal-health.ts": { "maxDuration": 10 },
+    "api/robots.ts": { "maxDuration": 10 },
+    "api/sitemap.ts": { "maxDuration": 10 }
   },
   "rewrites": [
     {
@@ -53,6 +55,14 @@
     { "source": "/reset-password", "destination": "/index.html" },
     { "source": "/api/send-email", "destination": "/api/outbound-messages?__channel=email" },
     { "source": "/api/send-sms", "destination": "/api/outbound-messages?__channel=sms" },
+    {
+      "source": "/robots.txt",
+      "destination": "/api/robots"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/sitemap"
+    },
     {
       "source": "/privacy",
       "destination": "/api/privacy"
