@@ -674,6 +674,15 @@ export async function getPrimaryEmailChannelForUser(
   return (withPublic ?? rows[0]) ?? null
 }
 
+/** Updates `customers.last_activity_at` when a communication event is recorded (distinct from row `updated_at`). */
+export async function touchCustomerLastActivityAt(supabase: SupabaseClient, customerId: string | null | undefined): Promise<void> {
+  const id = typeof customerId === "string" ? customerId.trim() : ""
+  if (!id) return
+  const iso = new Date().toISOString()
+  const { error } = await supabase.from("customers").update({ last_activity_at: iso }).eq("id", id)
+  if (error) console.warn("[touchCustomerLastActivityAt]", error.message)
+}
+
 export async function logCommunicationEvent(
   supabase: SupabaseClient,
   payload: {

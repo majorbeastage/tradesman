@@ -16,6 +16,7 @@ import {
   insertCommunicationEventReturningId,
   pickFirstString,
   resolveInboundEmailChannel,
+  touchCustomerLastActivityAt,
 } from "./_communications.js"
 import { uploadBytesToCommAttachments } from "./_commStorage.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
@@ -415,6 +416,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       provider: "resend-inbound",
     },
   })
+
+  if (eventId && customerId) {
+    await touchCustomerLastActivityAt(supabase, customerId)
+  }
 
   if (eventId) {
     try {

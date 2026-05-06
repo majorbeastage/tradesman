@@ -428,6 +428,8 @@ Deno.serve(async (req) => {
     },
   })
 
+  await supabase.from("customers").update({ last_activity_at: new Date().toISOString() }).eq("id", customerId)
+
   const forwardTo = channel.forward_to_email?.trim()
   let forwardResult: { skipped?: string; sent?: boolean; error?: string } = {}
   if (forwardTo) {

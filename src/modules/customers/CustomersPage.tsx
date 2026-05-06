@@ -36,6 +36,8 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry, type SpecialtyReportRegistryItem } from "../../lib/specialtyReports/reportRecords"
+import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
+import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -112,8 +114,7 @@ function formatWhen(iso: string | null | undefined): string {
 }
 
 function lastUpdateDisplay(c: CustomerRow): string {
-  const raw = c.last_activity_at || c.updated_at
-  return formatWhen(raw)
+  return formatWhen(c.last_activity_at ?? null)
 }
 
 function isCompletedJobStatus(status: string | null | undefined): boolean {
@@ -133,6 +134,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
+  const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
+  const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [filterPhone, setFilterPhone] = useState("")
   const [filterUrgency, setFilterUrgency] = useState<string>("")
@@ -237,6 +240,30 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const biz = contractorSmsDisplayName.trim() || "Your business"
     return maxUserCharsForFirstSmsVariant(smsFirstComplianceVariant, biz, DEFAULT_SMS_POLICIES_URL)
   }, [smsFirstComplianceVariant, contractorSmsDisplayName])
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setCustomerPaymentProfile({})
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const m =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        setCustomerPaymentProfile(parseCustomerPaymentMetadata(m))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   useEffect(() => {
     setCustomerReplySms((prev) => (prev.length <= smsComposeMaxChars ? prev : prev.slice(0, smsComposeMaxChars)))
@@ -708,8 +735,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       aVal = (a.job_pipeline_status || inferDefaultBestContact(a)).toLowerCase()
       bVal = (b.job_pipeline_status || inferDefaultBestContact(b)).toLowerCase()
     } else if (sortField === "last_update") {
-      aVal = String(Date.parse(a.last_activity_at || a.updated_at || "") || 0)
-      bVal = String(Date.parse(b.last_activity_at || b.updated_at || "") || 0)
+      aVal = String(Date.parse(a.last_activity_at || "") || 0)
+      bVal = String(Date.parse(b.last_activity_at || "") || 0)
     } else if (sortField === "urgency") {
       aVal = String(urgencyRank(normalizeCommunicationUrgency(a.communication_urgency))).padStart(3, "0")
       bVal = String(urgencyRank(normalizeCommunicationUrgency(b.communication_urgency))).padStart(3, "0")
@@ -1663,6 +1690,22 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 >
                                   Notes
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCustomerPaymentRequestOpen(true)}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: 6,
+                                    border: `2px solid ${theme.primary}`,
+                                    background: "#fff7ed",
+                                    color: theme.text,
+                                    cursor: "pointer",
+                                    fontWeight: 800,
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  Customer payment
+                                </button>
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                 {(() => {
@@ -2247,6 +2290,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           </tbody>
         </table>
       </div>
+
+      {selectedCustomer ? (
+        <CustomerPaymentRequestModal
+          open={customerPaymentRequestOpen}
+          onClose={() => setCustomerPaymentRequestOpen(false)}
+          supabase={supabase}
+          userId={userId}
+          customerId={selectedCustomer.id}
+          customerName={selectedCustomer.display_name ?? null}
+          profile={customerPaymentProfile}
+          estimateLabel={null}
+          amountLabel={null}
+        />
+      ) : null}
 
       {notesCustomerId && (
         <CustomerNotesPanel
