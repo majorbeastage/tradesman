@@ -158,6 +158,10 @@ export default function SpecialtyReportWizardModal({
     return "Structure & property inspection"
   }, [picked])
 
+  const deficientCount = useMemo(() => {
+    return Object.values(home.subsections).filter((s) => s.condition === "deficient").length
+  }, [home.subsections])
+
   if (!open) return null
 
   const close = () => {
@@ -171,10 +175,6 @@ export default function SpecialtyReportWizardModal({
     else setPhase("generic_notes")
     void loadDraftForType(k)
   }
-
-  const deficientCount = useMemo(() => {
-    return Object.values(home.subsections).filter((s) => s.condition === "deficient").length
-  }, [home.subsections])
 
   return (
     <>

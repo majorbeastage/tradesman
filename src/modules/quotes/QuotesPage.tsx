@@ -3965,7 +3965,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       isItemVisible={isEstimateTemplateItemVisible}
                     />
                     <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                      Templates you check here add a <strong>Start Variance Report</strong> button next to <strong>Start quote</strong> on an open estimate
+                      Templates you check here add a <strong>Start report</strong> button next to <strong>Start quote</strong> on an open estimate
                       (internal label for report drafting — not customer-facing copy).
                     </p>
                   </div>
@@ -4431,7 +4431,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       color: "#0f172a",
                                     }}
                                   >
-                                    Start Variance Report
+                                    Start report
                                   </button>
                                 ) : null}
                                 <button
