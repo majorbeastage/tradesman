@@ -12,6 +12,8 @@ export type OmCalendarPolicyV1 = {
   job_types_access?: "off" | "read" | "edit"
   customer_map_access?: boolean
   allow_my_hours?: boolean
+  /** When true, this user can be selected for variance/report assignments by office managers. */
+  allow_variance_assignment?: boolean
   backup_user_id?: string | null
   teammate_user_id?: string | null
   /**
@@ -30,6 +32,7 @@ const DEFAULT_POLICY: OmCalendarPolicyV1 = {
   job_types_access: "edit",
   customer_map_access: false,
   allow_my_hours: false,
+  allow_variance_assignment: false,
   backup_user_id: null,
   teammate_user_id: null,
   job_qualifications: {},
@@ -66,6 +69,7 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     job_types_access: jt,
     customer_map_access: o.customer_map_access === true,
     allow_my_hours: o.allow_my_hours === true,
+    allow_variance_assignment: o.allow_variance_assignment === true,
     backup_user_id: backupUserId,
     teammate_user_id: teammateUserId,
     job_qualifications: quals,

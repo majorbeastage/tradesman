@@ -35,6 +35,7 @@ import {
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry, type SpecialtyReportRegistryItem } from "../../lib/specialtyReports/reportRecords"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -199,6 +200,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
+  const [customerReports, setCustomerReports] = useState<SpecialtyReportRegistryItem[]>([])
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -647,6 +649,41 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setCustomerEmailSubject(selectedCustomer.display_name?.trim() ? `Re: ${selectedCustomer.display_name.trim()}` : "Message from us")
     void loadCustomerActivity(selectedCustomer.id)
   }, [selectedCustomer?.id, userId, loadCustomerActivity])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadCustomerReports() {
+      if (!supabase || !userId || !selectedCustomer?.id) {
+        setCustomerReports([])
+        return
+      }
+      const { data, error } = await supabase
+        .from("quotes")
+        .select("id, metadata")
+        .eq("user_id", userId)
+        .eq("customer_id", selectedCustomer.id)
+      if (cancelled) return
+      if (error || !data) {
+        setCustomerReports([])
+        return
+      }
+      const rows: SpecialtyReportRegistryItem[] = []
+      for (const q of data as Array<{ id: string; metadata?: unknown }>) {
+        const meta =
+          q.metadata && typeof q.metadata === "object" && !Array.isArray(q.metadata)
+            ? (q.metadata as Record<string, unknown>)
+            : {}
+        const parsed = parseSpecialtyReportRegistry(meta[SPECIALTY_REPORT_REGISTRY_KEY]).filter((r) => r.quote_id === q.id)
+        rows.push(...parsed)
+      }
+      rows.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+      setCustomerReports(rows)
+    }
+    void loadCustomerReports()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedCustomer?.id, userId])
 
   const currentList = section === "active" ? activeCustomers : section === "in_process" ? inProcessCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {
@@ -1719,6 +1756,54 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   Enable AI automations under Account to use auto scoring.
                                 </p>
                               ) : null}
+                            </div>
+
+                            <div
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                marginBottom: 12,
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Reports</div>
+                              {customerReports.length === 0 ? (
+                                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No saved reports on this client yet.</p>
+                              ) : (
+                                <div style={{ display: "grid", gap: 8 }}>
+                                  {customerReports.map((r) => (
+                                    <div key={r.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "8px 10px" }}>
+                                      <strong style={{ fontSize: 13, color: "#0f172a" }}>{r.title}</strong>
+                                      <div style={{ marginTop: 2, fontSize: 12, color: "#64748b" }}>
+                                        Updated {new Date(r.updated_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                      </div>
+                                      {setPage ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (selectedCustomer?.id) queueQuotesCustomerPrefill(selectedCustomer.id)
+                                            setPage("quotes")
+                                          }}
+                                          style={{
+                                            marginTop: 6,
+                                            padding: "6px 10px",
+                                            borderRadius: 6,
+                                            border: `1px solid ${theme.border}`,
+                                            background: "#fff",
+                                            color: theme.text,
+                                            cursor: "pointer",
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                          }}
+                                        >
+                                          Open in Estimates
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
 
                             <div style={{ display: "grid", gap: 10, fontSize: 14, color: theme.text }}>

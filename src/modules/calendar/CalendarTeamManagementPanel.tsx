@@ -376,6 +376,19 @@ function TeamUserCard({
                 When unchecked, managed users cannot open Estimates until you enable it here (defaults off for office-manager-managed accounts).
               </p>
 
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_variance_assignment === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_variance_assignment: e.target.checked })}
+                />
+                Allow assigning variances/reports to this team member
+              </label>
+              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
+                Used in Estimates → Reports. If enabled, office managers can route variance work items to this user.
+              </p>
+
               <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: 8 }}>
                 <button
                   type="button"

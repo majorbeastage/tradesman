@@ -11,6 +11,11 @@ import {
   parseHomeInspectionReport,
 } from "../lib/specialtyReports/homeInspectionTemplate"
 import { SPECIALTY_REPORT_TYPE_LABELS, type SpecialtyReportTypeKey } from "../lib/specialtyReports/reportTypeIds"
+import {
+  SPECIALTY_REPORT_REGISTRY_KEY,
+  parseSpecialtyReportRegistry,
+  upsertSpecialtyReportRegistryItem,
+} from "../lib/specialtyReports/reportRecords"
 
 type WizardPhase =
   | "pick_type"
@@ -28,6 +33,8 @@ type Props = {
   enabledReportTypes: SpecialtyReportTypeKey[]
   propertyAddressHint?: string
   customerLabel?: string
+  customerId?: string | null
+  varianceAssigneeOptions?: Array<{ userId: string; label: string }>
 }
 
 type AiTargetField =
@@ -59,6 +66,9 @@ declare global {
 
 const META_KEY_HOME = "specialty_report_home_inspection"
 const META_KEY_GENERIC_PREFIX = "specialty_report_notes_"
+const META_KEY_GENERIC_MEDIA_PREFIX = "specialty_report_media_"
+const REPORT_MEDIA_BUCKET = "specialty-report-media"
+type FieldMediaItem = { id: string; name: string; mime: string; size: number; url: string; uploaded_at: string }
 
 export default function SpecialtyReportWizardModal({
   open,
@@ -68,6 +78,8 @@ export default function SpecialtyReportWizardModal({
   enabledReportTypes,
   propertyAddressHint = "",
   customerLabel,
+  customerId = null,
+  varianceAssigneeOptions = [],
 }: Props) {
   const [phase, setPhase] = useState<WizardPhase>("pick_type")
   const [picked, setPicked] = useState<SpecialtyReportTypeKey | null>(null)
@@ -80,6 +92,11 @@ export default function SpecialtyReportWizardModal({
   const [assistantListening, setAssistantListening] = useState(false)
   const [speechSupported, setSpeechSupported] = useState(false)
   const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
+  const [voiceFieldKey, setVoiceFieldKey] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
+  const [saveNote, setSaveNote] = useState<string | null>(null)
+  const [assignedUserId, setAssignedUserId] = useState<string>("")
   const recognitionRef = useRef<SpeechRecognition | null>(null)
 
   const loadDraftForType = useCallback(
@@ -112,6 +129,12 @@ export default function SpecialtyReportWizardModal({
           const gKey = `${META_KEY_GENERIC_PREFIX}${reportType}`
           const gRaw = meta[gKey]
           setGenericNotes(typeof gRaw === "string" ? gRaw : "")
+          const gmRaw = meta[`${META_KEY_GENERIC_MEDIA_PREFIX}${reportType}`]
+          if (gmRaw && typeof gmRaw === "object" && !Array.isArray(gmRaw)) {
+            setGenericFieldMedia(gmRaw as Record<string, FieldMediaItem[]>)
+          } else {
+            setGenericFieldMedia({})
+          }
         }
       } catch (e) {
         setSaveError(e instanceof Error ? e.message : String(e))
@@ -127,7 +150,11 @@ export default function SpecialtyReportWizardModal({
     setPicked(null)
     setHome(emptyHomeInspectionReport(propertyAddressHint))
     setGenericNotes("")
+    setGenericFieldMedia({})
     setSaveError(null)
+    setPreviewOpen(false)
+    setSaveNote(null)
+    setAssignedUserId("")
   }, [propertyAddressHint])
 
   useEffect(() => {
@@ -185,12 +212,15 @@ export default function SpecialtyReportWizardModal({
     if (!open || !quoteId || picked == null || picked === "home_inspection") return
     if (phase !== "generic_notes") return
     const t = window.setTimeout(() => {
-      void persistMetadata({ [`${META_KEY_GENERIC_PREFIX}${picked}`]: genericNotes }).catch((e) =>
+      void persistMetadata({
+        [`${META_KEY_GENERIC_PREFIX}${picked}`]: genericNotes,
+        [`${META_KEY_GENERIC_MEDIA_PREFIX}${picked}`]: genericFieldMedia,
+      }).catch((e) =>
         setSaveError(e instanceof Error ? e.message : String(e)),
       )
     }, 700)
     return () => window.clearTimeout(t)
-  }, [genericNotes, open, quoteId, picked, phase, persistMetadata])
+  }, [genericNotes, genericFieldMedia, open, quoteId, picked, phase, persistMetadata])
 
   const headerLine = useMemo(() => {
     if (picked && picked !== "home_inspection") return SPECIALTY_REPORT_TYPE_LABELS[picked]
@@ -281,6 +311,171 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
+  function readFieldValue(fieldKey: string): string {
+    if (fieldKey === "genericNotes") return genericNotes
+    if (fieldKey === "scopeLimitations") return home.scopeLimitations
+    if (fieldKey === "mediaWorkflowNotes") return home.mediaWorkflowNotes
+    if (fieldKey === "droneIntegrationNotes") return home.droneIntegrationNotes
+    if (fieldKey === "summaryFindings") return home.summaryFindings
+    if (fieldKey === "header.inspectorName") return home.header.inspectorName
+    if (fieldKey === "header.licenseId") return home.header.licenseId
+    if (fieldKey === "header.inspectionDate") return home.header.inspectionDate
+    if (fieldKey === "header.weather") return home.header.weather
+    if (fieldKey === "header.propertyAddress") return home.header.propertyAddress
+    if (fieldKey === "header.partiesPresent") return home.header.partiesPresent
+    if (fieldKey.startsWith("sub:")) return home.subsections[fieldKey.slice(4)]?.notes ?? ""
+    return ""
+  }
+
+  function writeFieldValue(fieldKey: string, value: string) {
+    if (fieldKey === "genericNotes") {
+      setGenericNotes(value)
+      return
+    }
+    if (fieldKey === "scopeLimitations") {
+      setHome((h) => ({ ...h, scopeLimitations: value }))
+      return
+    }
+    if (fieldKey === "mediaWorkflowNotes") {
+      setHome((h) => ({ ...h, mediaWorkflowNotes: value }))
+      return
+    }
+    if (fieldKey === "droneIntegrationNotes") {
+      setHome((h) => ({ ...h, droneIntegrationNotes: value }))
+      return
+    }
+    if (fieldKey === "summaryFindings") {
+      setHome((h) => ({ ...h, summaryFindings: value }))
+      return
+    }
+    if (fieldKey === "header.inspectorName") {
+      setHome((h) => ({ ...h, header: { ...h.header, inspectorName: value } }))
+      return
+    }
+    if (fieldKey === "header.licenseId") {
+      setHome((h) => ({ ...h, header: { ...h.header, licenseId: value } }))
+      return
+    }
+    if (fieldKey === "header.inspectionDate") {
+      setHome((h) => ({ ...h, header: { ...h.header, inspectionDate: value } }))
+      return
+    }
+    if (fieldKey === "header.weather") {
+      setHome((h) => ({ ...h, header: { ...h.header, weather: value } }))
+      return
+    }
+    if (fieldKey === "header.propertyAddress") {
+      setHome((h) => ({ ...h, header: { ...h.header, propertyAddress: value } }))
+      return
+    }
+    if (fieldKey === "header.partiesPresent") {
+      setHome((h) => ({ ...h, header: { ...h.header, partiesPresent: value } }))
+      return
+    }
+    if (fieldKey.startsWith("sub:")) {
+      const subId = fieldKey.slice(4)
+      setHome((h) => ({
+        ...h,
+        subsections: { ...h.subsections, [subId]: { ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }), notes: value } },
+      }))
+    }
+  }
+
+  async function attachFieldImage(fieldKey: string, file: File | null) {
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      setSaveError("Only image files can be attached to report fields.")
+      return
+    }
+    if (file.size > 2_000_000) {
+      setSaveError("Image is too large. Use files under 2MB for field-level attachments.")
+      return
+    }
+    if (!supabase || !quoteId || !userId) {
+      setSaveError("Select a saved estimate before uploading field photos.")
+      return
+    }
+    const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+    const storagePath = `${userId}/${quoteId}/${entryId}-${safeName}`
+    const { error: uploadErr } = await supabase.storage.from(REPORT_MEDIA_BUCKET).upload(storagePath, file, {
+      upsert: true,
+      contentType: file.type || "application/octet-stream",
+    })
+    if (uploadErr) {
+      setSaveError(uploadErr.message || "Could not upload image.")
+      return
+    }
+    const { data } = supabase.storage.from(REPORT_MEDIA_BUCKET).getPublicUrl(storagePath)
+    const url = data?.publicUrl?.trim() ?? ""
+    if (!url) {
+      setSaveError("Could not resolve uploaded image URL.")
+      return
+    }
+    const entry = {
+      id: entryId,
+      name: file.name,
+      mime: file.type,
+      size: file.size,
+      url,
+      uploaded_at: new Date().toISOString(),
+    }
+    if (fieldKey === "genericNotes") {
+      setGenericFieldMedia((prev) => ({ ...prev, [fieldKey]: [...(prev[fieldKey] ?? []), entry] }))
+      return
+    }
+    setHome((h) => ({ ...h, field_media: { ...h.field_media, [fieldKey]: [...(h.field_media[fieldKey] ?? []), entry] } }))
+  }
+
+  function removeFieldImage(fieldKey: string, imageId: string) {
+    if (fieldKey === "genericNotes") {
+      setGenericFieldMedia((prev) => ({ ...prev, [fieldKey]: (prev[fieldKey] ?? []).filter((x) => x.id !== imageId) }))
+      return
+    }
+    setHome((h) => ({ ...h, field_media: { ...h.field_media, [fieldKey]: (h.field_media[fieldKey] ?? []).filter((x) => x.id !== imageId) } }))
+  }
+
+  function fieldMediaList(fieldKey: string) {
+    return fieldKey === "genericNotes" ? genericFieldMedia[fieldKey] ?? [] : home.field_media[fieldKey] ?? []
+  }
+
+  async function saveCurrentReport() {
+    if (!quoteId || !userId || !picked) return
+    try {
+      setSaveError(null)
+      const nowIso = new Date().toISOString()
+      const reportId = `${quoteId}:${picked}`
+      if (picked === "home_inspection") {
+        const snap = { ...home, updatedAt: nowIso }
+        await persistMetadata({ [META_KEY_HOME]: snap })
+      } else {
+        await persistMetadata({
+          [`${META_KEY_GENERIC_PREFIX}${picked}`]: genericNotes,
+          [`${META_KEY_GENERIC_MEDIA_PREFIX}${picked}`]: genericFieldMedia,
+        })
+      }
+      const { data, error } = await supabase!.from("quotes").select("metadata").eq("id", quoteId).eq("user_id", userId).maybeSingle()
+      if (error) throw error
+      const prev = data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? { ...(data.metadata as Record<string, unknown>) } : {}
+      const rows = parseSpecialtyReportRegistry(prev[SPECIALTY_REPORT_REGISTRY_KEY])
+      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, {
+        id: reportId,
+        report_type: picked,
+        quote_id: quoteId,
+        customer_id: customerId,
+        assigned_user_id: assignedUserId || null,
+        title: picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked],
+        status: "draft",
+        updated_at: nowIso,
+      })
+      const { error: upErr } = await supabase!.from("quotes").update({ metadata: prev, updated_at: nowIso }).eq("id", quoteId).eq("user_id", userId)
+      if (upErr) throw upErr
+      setSaveNote("Report saved.")
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   function runAssistantCommand(raw: string) {
     const text = raw.trim()
     if (!text) return
@@ -319,7 +514,7 @@ export default function SpecialtyReportWizardModal({
     setAssistantNote("Added text into the selected report field.")
   }
 
-  function startDictation() {
+  function startDictation(targetFieldKey?: string) {
     if (!speechSupported || typeof window === "undefined") {
       setAssistantNote("Voice dictation is not supported in this browser.")
       return
@@ -345,12 +540,24 @@ export default function SpecialtyReportWizardModal({
           out = alt.transcript.trim()
           break
         }
-        if (out) setAssistantText(out)
+        if (out) {
+          if (targetFieldKey) {
+            const prev = readFieldValue(targetFieldKey).trim()
+            writeFieldValue(targetFieldKey, prev ? `${prev}\n${out}` : out)
+            setSaveNote("Voice text added to field.")
+          } else {
+            setAssistantText(out)
+          }
+        }
       }
       rec.onerror = () => setAssistantNote("Voice input failed. Check mic permissions and retry.")
-      rec.onend = () => setAssistantListening(false)
+      rec.onend = () => {
+        setAssistantListening(false)
+        setVoiceFieldKey(null)
+      }
       rec.start()
       setAssistantListening(true)
+      setVoiceFieldKey(targetFieldKey ?? null)
       setAssistantNote("Listening… say text, or commands like 'next step' / 'go to findings'.")
     } catch {
       setAssistantListening(false)
@@ -362,6 +569,57 @@ export default function SpecialtyReportWizardModal({
     recognitionRef.current?.stop()
     recognitionRef.current = null
     setAssistantListening(false)
+    setVoiceFieldKey(null)
+  }
+
+  function FieldTools({ fieldKey }: { fieldKey: string }) {
+    const media = fieldMediaList(fieldKey)
+    return (
+      <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={() => startDictation(fieldKey)}
+            style={secondaryBtn}
+            disabled={assistantListening && voiceFieldKey !== fieldKey}
+          >
+            {assistantListening && voiceFieldKey === fieldKey ? "Listening…" : "Voice"}
+          </button>
+          <label style={{ ...secondaryBtn, display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+            Upload photo
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null
+                void attachFieldImage(fieldKey, file)
+                e.currentTarget.value = ""
+              }}
+            />
+          </label>
+        </div>
+        {media.length > 0 ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {media.map((m) => (
+              <span key={m.id} style={{ fontSize: 11, padding: "4px 6px", border: `1px solid ${theme.border}`, borderRadius: 6, background: "#f8fafc" }}>
+                <a href={m.url} target="_blank" rel="noreferrer" style={{ color: "#0f172a", textDecoration: "none" }}>
+                  {m.name}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => removeFieldImage(fieldKey, m.id)}
+                  style={{ marginLeft: 6, border: "none", background: "transparent", cursor: "pointer", color: "#991b1b" }}
+                  aria-label="Remove image"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   return (
@@ -413,6 +671,7 @@ export default function SpecialtyReportWizardModal({
             </p>
             {loadBusy ? <p style={{ margin: "6px 0 0", fontSize: 12, color: "#94a3b8" }}>Loading saved draft…</p> : null}
             {saveError ? <p style={{ margin: "6px 0 0", fontSize: 12, color: "#b91c1c" }}>{saveError}</p> : null}
+            {saveNote ? <p style={{ margin: "6px 0 0", fontSize: 12, color: "#047857" }}>{saveNote}</p> : null}
           </div>
           <button
             type="button"
@@ -433,6 +692,34 @@ export default function SpecialtyReportWizardModal({
             ✕
           </button>
         </div>
+
+        {quoteId && varianceAssigneeOptions.length > 0 ? (
+          <section
+            style={{
+              marginBottom: 12,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+            }}
+          >
+            <label style={{ ...lbl, fontSize: 12 }}>
+              Assign variance/report to team member
+              <select
+                value={assignedUserId}
+                onChange={(e) => setAssignedUserId(e.target.value)}
+                style={{ ...theme.formInput, maxWidth: 340 }}
+              >
+                <option value="">Unassigned</option>
+                {varianceAssigneeOptions.map((opt) => (
+                  <option key={opt.userId} value={opt.userId}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+        ) : null}
 
         {quoteId ? (
           <section
@@ -485,7 +772,7 @@ export default function SpecialtyReportWizardModal({
                   Apply assistant input
                 </button>
                 {!assistantListening ? (
-                  <button type="button" onClick={startDictation} style={secondaryBtn} disabled={!speechSupported}>
+                  <button type="button" onClick={() => startDictation()} style={secondaryBtn} disabled={!speechSupported}>
                     {speechSupported ? "Start voice-to-text" : "Voice not available"}
                   </button>
                 ) : (
@@ -502,7 +789,30 @@ export default function SpecialtyReportWizardModal({
           </section>
         ) : null}
 
-        {!quoteId ? (
+        {previewOpen ? (
+          <div style={{ display: "grid", gap: 10, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, background: "#f8fafc" }}>
+            <h3 style={{ margin: 0, fontSize: 15, color: theme.text }}>Report preview</h3>
+            {picked === "home_inspection" ? (
+              <>
+                <p style={{ margin: 0, fontSize: 13, color: "#334155" }}>{home.header.propertyAddress || "No address entered yet."}</p>
+                <p style={{ margin: 0, fontSize: 13, color: "#334155", whiteSpace: "pre-wrap" }}>{home.summaryFindings || "No summary entered yet."}</p>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                  Subsection notes completed: {Object.values(home.subsections).filter((s) => String(s.notes ?? "").trim()).length}
+                </p>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                  Field photos attached: {Object.values(home.field_media).reduce((sum, items) => sum + items.length, 0)}
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{ margin: 0, fontSize: 13, color: "#334155", whiteSpace: "pre-wrap" }}>{genericNotes || "No notes entered yet."}</p>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                  Field photos attached: {Object.values(genericFieldMedia).reduce((sum, items) => sum + items.length, 0)}
+                </p>
+              </>
+            )}
+          </div>
+        ) : !quoteId ? (
           <p style={{ fontSize: 13, color: "#b45309" }}>Select an estimate in the list to attach this report draft.</p>
         ) : phase === "pick_type" ? (
           <div style={{ display: "grid", gap: 10 }}>
@@ -545,6 +855,7 @@ export default function SpecialtyReportWizardModal({
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))}
                       style={theme.formInput}
                     />
+                    <FieldTools fieldKey="header.inspectorName" />
                   </label>
                   <label style={lbl}>
                     License / cert ID
@@ -553,6 +864,7 @@ export default function SpecialtyReportWizardModal({
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, licenseId: e.target.value } }))}
                       style={theme.formInput}
                     />
+                    <FieldTools fieldKey="header.licenseId" />
                   </label>
                   <label style={lbl}>
                     Inspection date
@@ -562,6 +874,7 @@ export default function SpecialtyReportWizardModal({
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectionDate: e.target.value } }))}
                       style={theme.formInput}
                     />
+                    <FieldTools fieldKey="header.inspectionDate" />
                   </label>
                   <label style={lbl}>
                     Weather / site conditions
@@ -570,6 +883,7 @@ export default function SpecialtyReportWizardModal({
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, weather: e.target.value } }))}
                       style={theme.formInput}
                     />
+                    <FieldTools fieldKey="header.weather" />
                   </label>
                 </div>
                 <label style={lbl}>
@@ -579,6 +893,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, propertyAddress: e.target.value } }))}
                     style={theme.formInput}
                   />
+                  <FieldTools fieldKey="header.propertyAddress" />
                 </label>
                 <label style={lbl}>
                   Parties present
@@ -587,6 +902,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, partiesPresent: e.target.value } }))}
                     style={theme.formInput}
                   />
+                  <FieldTools fieldKey="header.partiesPresent" />
                 </label>
                 <label style={lbl}>
                   Scope &amp; limitations (editable boilerplate)
@@ -596,6 +912,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, scopeLimitations: e.target.value }))}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
+                  <FieldTools fieldKey="scopeLimitations" />
                 </label>
               </div>
             ) : null}
@@ -656,6 +973,7 @@ export default function SpecialtyReportWizardModal({
                               }}
                               style={{ ...theme.formInput, marginTop: 8, width: "100%", resize: "vertical" }}
                             />
+                            <FieldTools fieldKey={`sub:${sub.id}`} />
                           </div>
                         )
                       })}
@@ -675,6 +993,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, mediaWorkflowNotes: e.target.value }))}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
+                  <FieldTools fieldKey="mediaWorkflowNotes" />
                 </label>
                 <label style={lbl}>
                   Drone / flight partner notes (flight IDs, pilot of record, partner URLs — API routing later)
@@ -684,6 +1003,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, droneIntegrationNotes: e.target.value }))}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
+                  <FieldTools fieldKey="droneIntegrationNotes" />
                 </label>
                 <div style={{ padding: 12, borderRadius: 10, background: "#f1f5f9", border: `1px solid #cbd5e1` }}>
                   <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: theme.text }}>Drone platform radar (framework)</div>
@@ -722,6 +1042,7 @@ export default function SpecialtyReportWizardModal({
                     onChange={(e) => setHome((h) => ({ ...h, summaryFindings: e.target.value }))}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
+                  <FieldTools fieldKey="summaryFindings" />
                 </label>
                 <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                   Next iterations: PDF packet, photo grids pulled from entity attachments, and guided deficiency tables for customer-safe exports.
@@ -742,6 +1063,7 @@ export default function SpecialtyReportWizardModal({
               placeholder="Findings, scope, recommendations, next steps…"
               style={{ ...theme.formInput, resize: "vertical" }}
             />
+            <FieldTools fieldKey="genericNotes" />
           </div>
         )}
 
@@ -776,6 +1098,16 @@ export default function SpecialtyReportWizardModal({
             ) : null}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {picked ? (
+              <button type="button" onClick={() => void saveCurrentReport()} style={secondaryBtn}>
+                Save report
+              </button>
+            ) : null}
+            {picked ? (
+              <button type="button" onClick={() => setPreviewOpen((v) => !v)} style={secondaryBtn}>
+                {previewOpen ? "Close preview" : "Preview"}
+              </button>
+            ) : null}
             {picked === "home_inspection" && phase === "home_header" ? (
               <button type="button" onClick={() => setPhase("home_findings")} style={primaryBtn}>
                 Continue to findings →

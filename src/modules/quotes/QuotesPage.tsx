@@ -78,6 +78,8 @@ import {
   specialtyReportTypesFromMetadata,
   type SpecialtyReportTypeKey,
 } from "../../lib/specialtyReports/reportTypeIds"
+import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../../lib/specialtyReports/reportRecords"
+import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import { buildCustomerPaymentShareBody, logCustomerPaymentEvent } from "../../lib/customerPaymentsWorkflow"
@@ -364,7 +366,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const sortAsc = true
   const [estimateSuite, setEstimateSuite] = useState<"home" | "library">("home")
   const [librarySection, setLibrarySection] = useState<
-    "quick_access" | "previous_estimates" | "estimate_line_items" | "job_types"
+    "quick_access" | "previous_estimates" | "estimate_line_items" | "job_types" | "reports"
   >("quick_access")
   const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
   const [pastLibSearch, setPastLibSearch] = useState("")
@@ -396,6 +398,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [specialtyReportWizardOpen, setSpecialtyReportWizardOpen] = useState(false)
   const [specialtyInspectionWorkflowEnabled, setSpecialtyInspectionWorkflowEnabled] = useState(false)
   const [specialtyReportTypesEnabled, setSpecialtyReportTypesEnabled] = useState<SpecialtyReportTypeKey[]>([])
+  const [varianceAssigneeOptions, setVarianceAssigneeOptions] = useState<Array<{ userId: string; label: string }>>([])
   const [quotes, setQuotes] = useState<QuoteRow[]>([])
   const [quotesError, setQuotesError] = useState<string>("")
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null)
@@ -536,6 +539,39 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadVarianceAssignees() {
+      const clients = scopeCtx?.clients ?? []
+      if (!supabase || clients.length === 0) {
+        setVarianceAssigneeOptions([])
+        return
+      }
+      const ids = clients.map((c) => c.userId).filter(Boolean)
+      const { data, error } = await supabase.from("profiles").select("id, display_name, metadata").in("id", ids)
+      if (cancelled) return
+      if (error || !data) {
+        setVarianceAssigneeOptions([])
+        return
+      }
+      const out: Array<{ userId: string; label: string }> = []
+      for (const row of data as Array<{ id: string; display_name?: string | null; metadata?: unknown }>) {
+        const policy = parseOmCalendarPolicy(row.metadata)
+        if (policy.allow_variance_assignment !== true) continue
+        out.push({
+          userId: row.id,
+          label: row.display_name?.trim() || row.id.slice(0, 8),
+        })
+      }
+      out.sort((a, b) => a.label.localeCompare(b.label))
+      setVarianceAssigneeOptions(out)
+    }
+    void loadVarianceAssignees()
+    return () => {
+      cancelled = true
+    }
+  }, [scopeCtx?.clients])
 
   useEffect(() => {
     setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
@@ -4089,6 +4125,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
           userId={userId}
           enabledReportTypes={specialtyReportTypesEnabled}
           customerLabel={selectedQuote?.customers?.display_name ?? undefined}
+          customerId={selectedQuote?.customer_id ?? null}
+          varianceAssigneeOptions={varianceAssigneeOptions}
           propertyAddressHint={
             typeof (selectedQuote?.customers as CustomerRow | undefined)?.service_address === "string"
               ? String((selectedQuote?.customers as CustomerRow).service_address).trim()
@@ -4248,6 +4286,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {quoteJobTypesButtonLabel}
                 </button>
               ) : null}
+              <button
+                type="button"
+                onClick={() => setLibrarySection("reports")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: librarySection === "reports" ? theme.primary : "#e5e7eb",
+                  color: librarySection === "reports" ? "#fff" : "#0f172a",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                Reports
+              </button>
               <button
                 type="button"
                 onClick={() => setLibrarySection("previous_estimates")}
@@ -4437,6 +4491,50 @@ export default function QuotesPage(_props: QuotesPageProps) {
               <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>
                 Job types open in a modal. If it did not open, use the button in the menu row above.
               </p>
+            ) : null}
+            {librarySection === "reports" ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
+                  Open saved draft reports from any estimate, or jump into report editing.
+                </p>
+                {quotes.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>No estimates found yet.</p>
+                ) : (
+                  quotes.map((q) => {
+                    const meta = q.metadata && typeof q.metadata === "object" ? q.metadata : {}
+                    const rows = parseSpecialtyReportRegistry((meta as Record<string, unknown>)[SPECIALTY_REPORT_REGISTRY_KEY]).filter((r) => r.quote_id === q.id)
+                    return (
+                      <div
+                        key={q.id}
+                        style={{ border: `1px solid ${theme.border}`, borderRadius: 10, background: "#fff", padding: "10px 12px", display: "grid", gap: 6 }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                          <strong style={{ color: "#0f172a", fontSize: 14 }}>
+                            {q.customers?.display_name?.trim() || "Customer"} · {q.id.slice(0, 8)}
+                          </strong>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedQuoteId(q.id)
+                              setSelectedQuote(q)
+                              setEstimateSuite("home")
+                              setSpecialtyReportWizardOpen(true)
+                            }}
+                            style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#eff6ff", color: "#0f172a", cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                          >
+                            Open Reports
+                          </button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#475569" }}>
+                          {rows.length > 0
+                            ? `Saved reports: ${rows.map((r) => `${r.title} (${new Date(r.updated_at).toLocaleDateString()})`).join(", ")}`
+                            : "No saved reports yet on this estimate."}
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
             ) : null}
           </div>
         ) : null}

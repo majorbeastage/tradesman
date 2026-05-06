@@ -173,6 +173,8 @@ export type HomeInspectionReportV1 = {
   mediaWorkflowNotes: string
   /** Future: Drone API ingestion — flight IDs, partner links */
   droneIntegrationNotes: string
+  /** Per-field photo evidence references. */
+  field_media: Record<string, Array<{ id: string; name: string; mime: string; size: number; url: string; uploaded_at: string }>>
   updatedAt: string
 }
 
@@ -206,6 +208,7 @@ export function emptyHomeInspectionReport(addressFallback: string): HomeInspecti
     summaryFindings: "",
     mediaWorkflowNotes: "",
     droneIntegrationNotes: "",
+    field_media: {},
     updatedAt: new Date().toISOString(),
   }
 }
