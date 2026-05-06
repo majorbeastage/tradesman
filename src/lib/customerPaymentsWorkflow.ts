@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import type { CustomerPaymentProfileMetadata } from "./customerPaymentMetadata"
 
 export type CustomerPaymentEventType =
   | "payment_link_sent"
@@ -64,4 +65,69 @@ export async function logCustomerPaymentEvent(
   } catch {
     // Non-fatal. Sending / share action should continue even if logging backend is not ready.
   }
+}
+
+function parseAmountFromLabel(amountLabel: string | null | undefined): number | null {
+  if (!amountLabel?.trim()) return null
+  const n = Number.parseFloat(amountLabel.replace(/[^0-9.-]/g, ""))
+  return Number.isFinite(n) ? n : null
+}
+
+/** Copy payment request text to clipboard and log customer_payment_events (same behavior everywhere). */
+export async function copyCustomerPaymentShareAndLog(input: {
+  supabase: SupabaseClient | null
+  userId: string
+  customerId: string | null
+  quoteId?: string | null
+  calendarEventId?: string | null
+  profile: CustomerPaymentProfileMetadata
+  customerName: string | null
+  estimateLabel: string | null
+  amountLabel: string | null
+  includeBarcodeInMessage: boolean
+}): Promise<{ ok: boolean; error?: string }> {
+  const payLink = input.profile.customer_pay_link_url?.trim() ?? ""
+  const barcodeLink = input.profile.customer_pay_barcode_url?.trim() ?? ""
+  if (!payLink && !barcodeLink) {
+    return {
+      ok: false,
+      error:
+        "No payment URL on file. Open Payments → Send Payment Information to Customer and save your hosted pay link or barcode link.",
+    }
+  }
+  const primaryPayUrl = payLink || barcodeLink
+  const body = buildCustomerPaymentShareBody({
+    customerName: input.customerName,
+    estimateLabel: input.estimateLabel,
+    amountLabel: input.amountLabel,
+    payLink: primaryPayUrl,
+    barcodeLink: barcodeLink || undefined,
+    includeBarcode: input.includeBarcodeInMessage && Boolean(barcodeLink),
+    instructions: input.profile.customer_pay_instructions ?? null,
+  })
+  try {
+    if (typeof navigator.clipboard?.writeText === "function") {
+      await navigator.clipboard.writeText(body)
+    } else {
+      return { ok: false, error: "Clipboard is not available in this browser." }
+    }
+  } catch {
+    return { ok: false, error: "Could not copy to clipboard." }
+  }
+  const amt = parseAmountFromLabel(input.amountLabel)
+  const eventType: CustomerPaymentEventType = payLink ? "payment_link_sent" : "payment_barcode_sent"
+  await logCustomerPaymentEvent(input.supabase, {
+    userId: input.userId,
+    customerId: input.customerId,
+    quoteId: input.quoteId ?? null,
+    calendarEventId: input.calendarEventId ?? null,
+    eventType,
+    amount: amt,
+    metadata: {
+      delivery: "clipboard",
+      include_barcode_line: input.includeBarcodeInMessage,
+      provider: input.profile.customer_pay_provider ?? "helcim",
+    },
+  })
+  return { ok: true }
 }
