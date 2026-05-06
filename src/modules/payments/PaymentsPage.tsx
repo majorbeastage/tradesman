@@ -13,6 +13,10 @@ import {
 } from "../../lib/billingProfileMetadata"
 import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
+import {
+  applyCustomerPaymentFieldsToProfileMetadata,
+  parseCustomerPaymentMetadata,
+} from "../../lib/customerPaymentMetadata"
 
 declare global {
   interface Window {
@@ -38,6 +42,15 @@ const inputStyle: CSSProperties = {
   fontSize: 15,
 }
 
+const textareaStyle: CSSProperties = {
+  ...inputStyle,
+  maxWidth: "100%",
+  width: "100%",
+  minHeight: 100,
+  resize: "vertical" as const,
+  fontFamily: "inherit",
+}
+
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
   const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
@@ -49,6 +62,12 @@ export default function PaymentsPage() {
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
   /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
   const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
+  /** Homeowner/GC-facing pay link — stored on `profiles.metadata`, not subscription Helcim checkout. */
+  const [customerPayLinkDraft, setCustomerPayLinkDraft] = useState("")
+  const [customerPayInstructionsDraft, setCustomerPayInstructionsDraft] = useState("")
+  const [customerPaySaving, setCustomerPaySaving] = useState(false)
+  const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+  const [customerPayCopied, setCustomerPayCopied] = useState(false)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -171,6 +190,8 @@ export default function PaymentsPage() {
         setBillingForPayments({})
         setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL.trim() || portalFromEdge || null, null))
         setCustomerCode(null)
+        setCustomerPayLinkDraft("")
+        setCustomerPayInstructionsDraft("")
         return
       }
       const meta =
@@ -179,6 +200,9 @@ export default function PaymentsPage() {
           : {}
       const billing = parseBillingMetadata(meta)
       setBillingForPayments(billing)
+      const cp = parseCustomerPaymentMetadata(meta)
+      setCustomerPayLinkDraft(cp.customer_pay_link_url ?? "")
+      setCustomerPayInstructionsDraft(cp.customer_pay_instructions ?? "")
       const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
       setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null))
       setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
@@ -187,6 +211,22 @@ export default function PaymentsPage() {
       cancelled = true
     }
   }, [profileUserId])
+
+  useEffect(() => {
+    const scrollToCustomerPay = () => {
+      try {
+        if (window.location.hash.replace(/^#/, "") !== "customer-pay") return
+      } catch {
+        return
+      }
+      window.setTimeout(() => {
+        document.getElementById("customer-pay-collection")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }, 320)
+    }
+    scrollToCustomerPay()
+    const tid = window.setTimeout(scrollToCustomerPay, 600)
+    return () => window.clearTimeout(tid)
+  }, [])
 
   useEffect(() => {
     if (!useHelcimJs) return
@@ -225,13 +265,160 @@ export default function PaymentsPage() {
 
   const helcimJsHttpsOk = typeof window !== "undefined" && window.location.protocol === "https:"
 
+  async function persistCustomerPayments() {
+    if (!supabase || !profileUserId) return
+    setCustomerPaySaving(true)
+    setCustomerPayBanner(null)
+    try {
+      const { data: row, error: fe } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (fe) throw fe
+      const prevMeta =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const applied = applyCustomerPaymentFieldsToProfileMetadata(
+        prevMeta,
+        customerPayLinkDraft,
+        customerPayInstructionsDraft,
+      )
+      if (applied.error) {
+        setCustomerPayBanner({ kind: "err", text: applied.error })
+        return
+      }
+      const { error: ue } = await supabase.from("profiles").update({ metadata: applied.metadata }).eq("id", profileUserId)
+      if (ue) throw ue
+      const reread = parseCustomerPaymentMetadata(applied.metadata)
+      setCustomerPayLinkDraft(reread.customer_pay_link_url ?? "")
+      setCustomerPayInstructionsDraft(reread.customer_pay_instructions ?? "")
+      setCustomerPayBanner({ kind: "ok", text: "Saved your customer-payment link and note." })
+    } catch {
+      setCustomerPayBanner({
+        kind: "err",
+        text: "Could not save customer payment preferences. Refresh and try again, or contact support.",
+      })
+    } finally {
+      setCustomerPaySaving(false)
+    }
+  }
+
+  function copyCustomerPayLink() {
+    const normalized = normalizeHelcimPayPortalUrl(customerPayLinkDraft)
+    if (!normalized || typeof navigator.clipboard?.writeText !== "function") return
+    void navigator.clipboard.writeText(normalized).then(() => {
+      setCustomerPayCopied(true)
+      window.setTimeout(() => setCustomerPayCopied(false), 2400)
+    })
+  }
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb", marginBottom: 8 }}>Payments</h1>
+      <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>Payments</h1>
+
+      <p style={{ color: "#475569", margin: "0 0 14px", lineHeight: 1.55, fontSize: 14 }}>
+        <strong style={{ color: theme.text }}>Customer payments</strong> (your homeowner or GC) are separate from{' '}
+        <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> below — different portal, accounting, and payer.
+      </p>
+
+      <section
+        id="customer-pay-collection"
+        style={{
+          marginBottom: 28,
+          padding: 22,
+          borderRadius: 12,
+          border: "1px solid #0ea5e980",
+          background: "linear-gradient(145deg, #0c4a6e22, #111827)",
+        }}
+      >
+        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 800, color: "#f9fafb" }}>
+          Collect from your customers (v1)
+        </h2>
+        <p style={{ color: "#cbd5e1", margin: "0 0 16px", lineHeight: 1.65, fontSize: 14 }}>
+          Paste a hosted pay page URL from Helcim Pay, Stripe, Square, QuickBooks Payments, GoCardless, or any processor your accountant
+          approves — then reuse it in texts, invoices, or estimate emails until we wire invoice-level deep links directly from jobs and
+          quotes.
+        </p>
+        {customerPayBanner ? (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: 12,
+              borderRadius: 10,
+              border: `1px solid ${customerPayBanner.kind === "ok" ? "#047857" : "#b91c1c"}`,
+              background: customerPayBanner.kind === "ok" ? "#064e3b" : "#450a0a",
+              color: customerPayBanner.kind === "ok" ? "#d1fae5" : "#fecaca",
+              fontSize: 14,
+            }}
+          >
+            {customerPayBanner.text}
+          </div>
+        ) : null}
+        <div style={{ display: "grid", gap: 14, maxWidth: 620 }}>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+            Customer pay link
+            <input
+              type="url"
+              value={customerPayLinkDraft}
+              onChange={(e) => setCustomerPayLinkDraft(e.target.value)}
+              placeholder="https://…"
+              autoComplete="off"
+              style={{ ...inputStyle, maxWidth: "100%" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+            Short instructions (deposit terms, ACH reminder, surcharge policy…)
+            <textarea
+              value={customerPayInstructionsDraft}
+              onChange={(e) => setCustomerPayInstructionsDraft(e.target.value)}
+              placeholder="Example: Deposits are 50%. Pay at the link below. Include your job ID in checkout notes."
+              style={textareaStyle}
+            />
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+            <button
+              type="button"
+              disabled={customerPaySaving || !profileUserId}
+              onClick={() => void persistCustomerPayments()}
+              style={{
+                padding: "11px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: customerPaySaving || !profileUserId ? "#4b5563" : theme.primary,
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: customerPaySaving || !profileUserId ? "not-allowed" : "pointer",
+              }}
+            >
+              {customerPaySaving ? "Saving…" : "Save customer-pay settings"}
+            </button>
+            <button
+              type="button"
+              disabled={!normalizeHelcimPayPortalUrl(customerPayLinkDraft)}
+              onClick={copyCustomerPayLink}
+              style={{
+                padding: "11px 16px",
+                borderRadius: 8,
+                border: "1px solid #475569",
+                background: "#0f172a",
+                color: "#e2e8f0",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: normalizeHelcimPayPortalUrl(customerPayLinkDraft) ? "pointer" : "not-allowed",
+              }}
+            >
+              {customerPayCopied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#94a3b8", letterSpacing: 0.03, margin: "0 0 14px", textTransform: "uppercase" }}>
+        Subscription &amp; Tradesman billing
+      </h2>
 
       {useHelcimJs ? (
         <>
-          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+          <p style={{ color: "#475569", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
             Pay securely with your card below. You&apos;ll see whether your payment was approved right on this page.
           </p>
           {!helcimJsHttpsOk ? (
@@ -436,7 +623,7 @@ export default function PaymentsPage() {
         </>
       ) : (
         <>
-          <p style={{ color: "#d1d5db", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
+          <p style={{ color: "#475569", marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
             Your secure payment window loads below when your organization has turned on online payments.
           </p>
           {iframeUrl && !customerCode ? (

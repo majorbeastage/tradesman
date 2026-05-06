@@ -49,6 +49,7 @@ import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
+import { theme } from "./styles/theme"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
@@ -174,7 +175,7 @@ function MainApp() {
 
       {page === "dashboard" && (
         <>
-          <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: "#f9fafb" }}>{t("dashboard.title")}</h1>
+          <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: theme.text }}>{t("dashboard.title")}</h1>
           <BillingDueDashboardBanner
             profileUserId={user?.id}
             separateBillingProfile={separateBillingProfile}
