@@ -8,6 +8,7 @@ export type BillingProductTypeId =
   | "exempt"
   | "user"
   | "office_manager"
+  | "estimate_tools_only"
   | "basic_package"
   | "om_entry"
   | "om_pro"
@@ -18,6 +19,7 @@ export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string;
   { id: "exempt", label: "Exempt", monthlyUsd: 0 },
   { id: "user", label: "User", monthlyUsd: 0 },
   { id: "office_manager", label: "Office Manager", monthlyUsd: 159.99 },
+  { id: "estimate_tools_only", label: "Estimate Tools only (1-tool user)", monthlyUsd: 49.99 },
   { id: "basic_package", label: "Basic Package", monthlyUsd: 124.99 },
   { id: "om_entry", label: "Office Manager ENTRY", monthlyUsd: 159.99 },
   { id: "om_pro", label: "Office Manager PRO", monthlyUsd: 199.99 },

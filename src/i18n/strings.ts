@@ -36,6 +36,13 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.kicker.pipeline": "Pipeline",
     "dashboard.kicker.comm": "Communication",
     "dashboard.kicker.schedule": "Scheduling",
+    "dashboard.estimateOnly.welcomeTitle": "Estimate Tools workspace",
+    "dashboard.estimateOnly.welcomeBody1":
+      "Your plan focuses on building and sending estimates. Use Web Support or Tech Support from the sidebar if you need help.",
+    "dashboard.estimateOnly.welcomeBody2": "Open Estimates Tool from the sidebar to create quotes and customer-ready documents.",
+    "dashboard.estimateOnly.kicker": "Estimates",
+    "dashboard.estimateOnly.title": "Estimate Tools",
+    "dashboard.estimateOnly.sub": "Professional estimates and attachments — without full CRM or scheduling modules.",
     "dashboard.billingDueTitleToday": "Payment due today",
     "dashboard.billingDueBodyToday":
       "Your billing date is {{due}}. If you have not paid yet, open Payments to complete your subscription.",
@@ -102,6 +109,13 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.kicker.pipeline": "Embudo",
     "dashboard.kicker.comm": "Comunicación",
     "dashboard.kicker.schedule": "Programación",
+    "dashboard.estimateOnly.welcomeTitle": "Espacio de herramientas de presupuestos",
+    "dashboard.estimateOnly.welcomeBody1":
+      "Su plan se centra en crear y enviar presupuestos. Use Soporte web o Soporte técnico en el menú si necesita ayuda.",
+    "dashboard.estimateOnly.welcomeBody2": "Abra la Herramienta de presupuestos en el menú para crear cotizaciones y documentos listos para el cliente.",
+    "dashboard.estimateOnly.kicker": "Presupuestos",
+    "dashboard.estimateOnly.title": "Herramientas de presupuestos",
+    "dashboard.estimateOnly.sub": "Presupuestos profesionales y adjuntos, sin los módulos completos de CRM o agenda.",
     "dashboard.billingDueTitleToday": "Pago vence hoy",
     "dashboard.billingDueBodyToday":
       "Su fecha de facturación es {{due}}. Si aún no ha pagado, abra Pagos para completar su suscripción.",

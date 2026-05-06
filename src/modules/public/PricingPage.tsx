@@ -12,6 +12,10 @@ type Props = {
 
 const DEFAULT_EXPANDED_ID: ProductPackageId = "office_manager_pro"
 
+/** Full-featured tiers shown as large cards; Estimate Tools only uses a compact callout below. */
+const MAIN_PRODUCT_PACKAGES = PRODUCT_PACKAGES.filter((p) => p.id !== "estimate_tools_only")
+const ESTIMATE_TOOLS_PACKAGE = PRODUCT_PACKAGES.find((p) => p.id === "estimate_tools_only")
+
 const ulStyle: CSSProperties = {
   margin: "8px 0 0",
   paddingLeft: 22,
@@ -40,6 +44,8 @@ const btnPrimary: CSSProperties = {
 }
 
 const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
+  estimate_tools_only:
+    "Estimate Tools workspace only — build and send estimates; Payments & support included. No Customers or Scheduling tabs.",
   base: "Soft leads (5/mo), 1 user, conversations, estimates & calendar with receipts.",
   office_manager_entry: "1 office manager + 1 user, internal messaging, map view & calendar control.",
   office_manager_pro: "10 leads/mo, 1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
@@ -47,6 +53,17 @@ const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
 }
 
 const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
+  estimate_tools_only: (
+    <ul style={ulStyle}>
+      <li>Estimates Tool (quotes, templates, customer-ready attachments)</li>
+      <li>Payments tab (subscription &amp; customer payment setup)</li>
+      <li>Web Support &amp; Tech Support</li>
+      <li>Account (My T)</li>
+      <li style={{ marginTop: 8, fontSize: 13, color: "#64748b", listStyle: "none", paddingLeft: 0 }}>
+        Does not include Customers or Scheduling modules.
+      </li>
+    </ul>
+  ),
   base: (
     <ul style={ulStyle}>
       <li>
@@ -262,7 +279,42 @@ export default function PricingPage({ onBack, onSignupWithPackage }: Props) {
           Hover or tap a package to expand details. Click a card to keep it open while you compare.
         </p>
 
-        {PRODUCT_PACKAGES.map((pkg) => {
+        {ESTIMATE_TOOLS_PACKAGE ? (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#fafafa",
+              fontSize: 13,
+              color: theme.text,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: theme.charcoal }}>{ESTIMATE_TOOLS_PACKAGE.title}</strong>
+            <span style={{ marginLeft: 8, fontWeight: 700 }}>{ESTIMATE_TOOLS_PACKAGE.priceLine.replace(/\s*\*+\s*$/, "").trim()}</span>
+            <p style={{ margin: "8px 0 10px", opacity: 0.92 }}>{PACKAGE_SUMMARY.estimate_tools_only}</p>
+            <button
+              type="button"
+              onClick={() => onSignupWithPackage("estimate_tools_only")}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: theme.text,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Sign up — Estimate Tools only
+            </button>
+          </div>
+        ) : null}
+
+        {MAIN_PRODUCT_PACKAGES.map((pkg) => {
           const expanded = packageExpanded(pkg.id, { lockedId, hoverId, supportsHover })
           const isFeatured = pkg.id === "office_manager_pro"
 
@@ -427,8 +479,8 @@ export default function PricingPage({ onBack, onSignupWithPackage }: Props) {
         >
           <h2 style={h2Style}>Additional Users &amp; Office Managers</h2>
           <ul style={ulStyle}>
-            <li>1 Additional Office Manager Login – $49.99/month</li>
-            <li>1 Additional User Login – $39.99/month</li>
+            <li>1 Additional Office Manager Login – $59.99/month</li>
+            <li>1 Additional User Login – $49.99/month</li>
           </ul>
         </div>
 

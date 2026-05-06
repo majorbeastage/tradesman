@@ -300,7 +300,15 @@ Deno.serve(async (req) => {
   const uid = userIdRaw
   const now = new Date().toISOString()
 
-  const portal_config = {
+  const productPackage =
+    extras &&
+    typeof extras === "object" &&
+    !Array.isArray(extras) &&
+    typeof (extras as Record<string, unknown>).product_package === "string"
+      ? String((extras as Record<string, unknown>).product_package).trim()
+      : ""
+
+  const portal_config_default = {
     tabs: {
       dashboard: true,
       leads: false,
@@ -308,6 +316,7 @@ Deno.serve(async (req) => {
       quotes: false,
       calendar: false,
       customers: false,
+      payments: false,
       account: true,
       "web-support": false,
       "tech-support": true,
@@ -315,8 +324,31 @@ Deno.serve(async (req) => {
     },
   }
 
+  const portal_config_estimate_tools_only = {
+    tabs: {
+      dashboard: true,
+      leads: false,
+      conversations: false,
+      quotes: true,
+      calendar: false,
+      customers: false,
+      payments: true,
+      account: true,
+      "web-support": true,
+      "tech-support": true,
+      settings: false,
+    },
+    estimate_tools_only_package: true,
+  }
+
+  const portal_config =
+    productPackage === "estimate_tools_only" ? portal_config_estimate_tools_only : portal_config_default
+
   const useAi = body.use_ai_automation !== false
   const uiLang = body.ui_language === "es" ? "es" : "en"
+
+  const metadata: Record<string, unknown> = { ui_language: uiLang }
+  if (productPackage) metadata.product_package = productPackage
 
   const { error: profileErr } = await adminClient.from("profiles").upsert(
     {
@@ -337,7 +369,7 @@ Deno.serve(async (req) => {
       timezone,
       signup_extras: extras,
       ai_assistant_visible: useAi,
-      metadata: { ui_language: uiLang },
+      metadata,
       updated_at: now,
     },
     { onConflict: "id" },

@@ -18,6 +18,8 @@ type Copy = {
 type Props = {
   isMobile: boolean
   copy: Copy
+  /** Single spotlight card (Estimate Tools–only subscription); omits comm & scheduling cards. */
+  layout?: "three_cards" | "estimate_tools_only"
 }
 
 function IconPipeline({ color }: { color: string }) {
@@ -141,7 +143,7 @@ function FeatureCard({
   )
 }
 
-export default function DashboardHero({ isMobile, copy }: Props) {
+export default function DashboardHero({ isMobile, copy, layout = "three_cards" }: Props) {
   const outer: CSSProperties = {
     maxWidth: 1100,
     margin: "0 auto 20px",
@@ -184,20 +186,24 @@ export default function DashboardHero({ isMobile, copy }: Props) {
           accent={orange}
           icon={<IconPipeline color={orange} />}
         />
-        <FeatureCard
-          kicker={copy.commKicker}
-          title={copy.commTitle}
-          sub={copy.commSub}
-          accent={sky}
-          icon={<IconChat color={sky} />}
-        />
-        <FeatureCard
-          kicker={copy.scheduleKicker}
-          title={copy.scheduleTitle}
-          sub={copy.scheduleSub}
-          accent={violet}
-          icon={<IconCalendar color={violet} />}
-        />
+        {layout === "three_cards" ? (
+          <>
+            <FeatureCard
+              kicker={copy.commKicker}
+              title={copy.commTitle}
+              sub={copy.commSub}
+              accent={sky}
+              icon={<IconChat color={sky} />}
+            />
+            <FeatureCard
+              kicker={copy.scheduleKicker}
+              title={copy.scheduleTitle}
+              sub={copy.scheduleSub}
+              accent={violet}
+              icon={<IconCalendar color={violet} />}
+            />
+          </>
+        ) : null}
       </div>
     </section>
   )

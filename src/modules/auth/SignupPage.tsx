@@ -6,7 +6,7 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
 import { TIMEZONE_OPTIONS } from "../../constants/timezones"
-import { getDefaultPortalConfigForNewUser } from "../../types/portal-builder"
+import { getDefaultPortalConfigForNewUser, getPortalConfigForEstimateToolsOnlyUser } from "../../types/portal-builder"
 import {
   DEFAULT_SIGNUP_REQUIREMENTS,
   SIGNUP_REQUIREMENTS_KEY,
@@ -269,6 +269,9 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
       const v = (extras[f.id] ?? "").trim()
       signup_extras[f.id] = v || null
     }
+    if (productPackageChoice) {
+      signup_extras.product_package = productPackageChoice
+    }
 
     setSubmitting(true)
     try {
@@ -312,6 +315,13 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         ui_language: uiLanguage,
       }
 
+      const portalCfg =
+        productPackageChoice === "estimate_tools_only"
+          ? getPortalConfigForEstimateToolsOnlyUser()
+          : getDefaultPortalConfigForNewUser()
+      const metaPayload: Record<string, unknown> = { ui_language: uiLanguage }
+      if (productPackageChoice) metaPayload.product_package = productPackageChoice
+
       const profilePayload = {
         id: uid,
         email: em,
@@ -328,9 +338,9 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         business_address,
         timezone: tz,
         signup_extras: Object.keys(signup_extras).length ? signup_extras : {},
-        portal_config: getDefaultPortalConfigForNewUser(),
+        portal_config: portalCfg,
         ai_assistant_visible: useAiAutomation,
-        metadata: { ui_language: uiLanguage },
+        metadata: metaPayload,
         updated_at: new Date().toISOString(),
       }
 
@@ -775,7 +785,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: "#4b5563", lineHeight: 1.55 }}>
                     If you provide a mobile number, SMS may be used for scheduling, job updates, estimates, and account notifications.
                     Message and data rates may apply. Reply STOP to opt out where supported; reply HELP for help when offered. Your phone
-                    number and consent will not be shared with third parties for marketing purposes. See our{" "}
+                    number will not be shared with third parties for marketing purposes. See our{" "}
                     {legalLink(LEGAL_LINKS.privacy, "Privacy Policy")}, {legalLink(LEGAL_LINKS.terms, "Terms & Conditions")}, and{" "}
                     {legalLink(LEGAL_LINKS.smsConsent, "SMS consent & messaging")}.
                   </p>
@@ -788,7 +798,8 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                       required={signupCfg.require_sms_consent_ack}
                     />
                     <span>
-                      I consent to receive SMS messages as described above and in the SMS consent terms.
+                      I have reviewed the SMS consent &amp; messaging policy and agree to adhere to it for outbound text messages sent using
+                      Tradesman Systems (including A2P registration and messaging requirements).
                       {signupCfg.require_sms_consent_ack ? (
                         <span style={{ color: "#b91c1c", fontWeight: 700 }} aria-hidden>
                           {" "}

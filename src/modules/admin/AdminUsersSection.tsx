@@ -194,9 +194,21 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       } = { role: nextRole, updated_at: new Date().toISOString() }
       if (nextRole === "demo_user") payload.portal_config = {}
       if (prevRole === "new_user" && nextRole === "user") {
-        const { data: prof, error: cfgErr } = await supabase.from("profiles").select("portal_config").eq("id", userId).maybeSingle()
+        const { data: prof, error: cfgErr } = await supabase
+          .from("profiles")
+          .select("portal_config, metadata")
+          .eq("id", userId)
+          .maybeSingle()
         const prevCfg = !cfgErr ? ((prof?.portal_config as PortalConfig | null | undefined) ?? undefined) : undefined
-        payload.portal_config = upgradePortalConfigFromNewUserToUser(prevCfg) as Record<string, unknown>
+        const meta = prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+          ? (prof.metadata as Record<string, unknown>)
+          : {}
+        const pkg = typeof meta.product_package === "string" ? meta.product_package.trim() : ""
+        const preserveEstimate =
+          prevCfg?.estimate_tools_only_package === true || pkg === "estimate_tools_only"
+        payload.portal_config = upgradePortalConfigFromNewUserToUser(prevCfg, {
+          preserveEstimateToolsOnlyTier: preserveEstimate,
+        }) as Record<string, unknown>
       }
       const { error: err } = await supabase.from("profiles").update(payload).eq("id", userId)
       if (err) {

@@ -196,6 +196,10 @@ export type PortalConfig = {
    * Default omitted or false: hidden (legacy; enable from Admin portal if needed).
    */
   office_manager_show_working_as_bar?: boolean
+  /**
+   * Estimate Tools–only subscription ($49.99/mo): hides Customers & Scheduling, simplifies dashboard.
+   */
+  estimate_tools_only_package?: boolean
 }
 
 /** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
@@ -210,18 +214,58 @@ export function getDefaultPortalConfigForNewUser(): PortalConfig {
   return { tabs }
 }
 
+const ESTIMATE_TOOLS_ONLY_TAB_IDS: readonly string[] = [
+  "dashboard",
+  "quotes",
+  "payments",
+  "account",
+  "web-support",
+  "tech-support",
+]
+
+/** Self-serve signup when user selects **Estimate Tools only** package ($49.99/mo). */
+export function getPortalConfigForEstimateToolsOnlyUser(): PortalConfig {
+  const tabs: Record<string, boolean> = {}
+  for (const id of USER_PORTAL_TAB_IDS) {
+    tabs[id] = ESTIMATE_TOOLS_ONLY_TAB_IDS.includes(id)
+  }
+  return { tabs, estimate_tools_only_package: true }
+}
+
+export type UpgradeNewUserOptions = {
+  /** Keep Customers & Scheduling hidden after role moves from new_user → user. */
+  preserveEstimateToolsOnlyTier?: boolean
+}
+
 /**
  * When an admin changes `new_user` → `user`, merge portal config so standard tabs are no longer forced off.
  * Preserves custom tabs, pageActions, controlItems, etc.; sets every `USER_PORTAL_TAB_IDS` entry to visible.
+ * Estimate Tools–only accounts stay on the restricted tab set unless `preserveEstimateToolsOnlyTier` is cleared manually.
  */
-export function upgradePortalConfigFromNewUserToUser(prev: PortalConfig | null | undefined): PortalConfig {
+export function upgradePortalConfigFromNewUserToUser(
+  prev: PortalConfig | null | undefined,
+  opts?: UpgradeNewUserOptions,
+): PortalConfig {
+  const preserve =
+    opts?.preserveEstimateToolsOnlyTier === true ||
+    (prev && typeof prev === "object" && prev.estimate_tools_only_package === true)
+  if (preserve) {
+    const locked = getPortalConfigForEstimateToolsOnlyUser()
+    const base: PortalConfig =
+      prev && typeof prev === "object" && !Array.isArray(prev) ? { ...prev } : {}
+    return {
+      ...base,
+      tabs: { ...(locked.tabs ?? {}) },
+      estimate_tools_only_package: true,
+    }
+  }
   const base: PortalConfig =
     prev && typeof prev === "object" && !Array.isArray(prev) ? { ...prev } : {}
   const mergedTabs: Record<string, boolean> = { ...(base.tabs ?? {}) }
   for (const id of USER_PORTAL_TAB_IDS) {
     mergedTabs[id] = true
   }
-  return { ...base, tabs: mergedTabs }
+  return { ...base, tabs: mergedTabs, estimate_tools_only_package: false }
 }
 
 /** True if a standard page action should show (default visible). */

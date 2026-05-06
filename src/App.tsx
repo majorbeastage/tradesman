@@ -91,14 +91,47 @@ function MainApp() {
     }
     return t
   }, [mergedTabs, portalConfig, managedByOfficeManager])
+  const estimateToolsOnlyPackage = portalConfig?.estimate_tools_only_package === true
   const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
   const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
   const settingsTabAvailable = portalTabs.some((t) => t.tab_id === "settings")
+
+  const dashboardHeroCopy = useMemo(() => {
+    const base = {
+      welcomeTitle: t("dashboard.welcomeTitle"),
+      welcomeBody1: t("dashboard.welcomeBody1"),
+      welcomeBody2: t("dashboard.welcomeBody2"),
+      pipelineKicker: t("dashboard.kicker.pipeline"),
+      pipelineTitle: t("dashboard.card.pipeline"),
+      pipelineSub: t("dashboard.card.pipelineSub"),
+      commKicker: t("dashboard.kicker.comm"),
+      commTitle: t("dashboard.card.comm"),
+      commSub: t("dashboard.card.commSub"),
+      scheduleKicker: t("dashboard.kicker.schedule"),
+      scheduleTitle: t("dashboard.card.schedule"),
+      scheduleSub: t("dashboard.card.scheduleSub"),
+    }
+    if (!estimateToolsOnlyPackage) return base
+    return {
+      ...base,
+      welcomeTitle: t("dashboard.estimateOnly.welcomeTitle"),
+      welcomeBody1: t("dashboard.estimateOnly.welcomeBody1"),
+      welcomeBody2: t("dashboard.estimateOnly.welcomeBody2"),
+      pipelineKicker: t("dashboard.estimateOnly.kicker"),
+      pipelineTitle: t("dashboard.estimateOnly.title"),
+      pipelineSub: t("dashboard.estimateOnly.sub"),
+    }
+  }, [estimateToolsOnlyPackage, t])
 
   useEffect(() => {
     if (page !== "payments") return
     if (!portalTabs.some((t) => t.tab_id === "payments")) setPage("dashboard")
   }, [page, portalTabs])
+
+  useEffect(() => {
+    if (!estimateToolsOnlyPackage) return
+    if (page === "customers" || page === "calendar") setPage("dashboard")
+  }, [page, estimateToolsOnlyPackage, setPage])
 
   useEffect(() => {
     if (portalConfig?.show_legacy_contractor_leads_conversations === true) return
@@ -184,21 +217,10 @@ function MainApp() {
           />
           <DashboardHero
             isMobile={isMobile}
-            copy={{
-              welcomeTitle: t("dashboard.welcomeTitle"),
-              welcomeBody1: t("dashboard.welcomeBody1"),
-              welcomeBody2: t("dashboard.welcomeBody2"),
-              pipelineKicker: t("dashboard.kicker.pipeline"),
-              pipelineTitle: t("dashboard.card.pipeline"),
-              pipelineSub: t("dashboard.card.pipelineSub"),
-              commKicker: t("dashboard.kicker.comm"),
-              commTitle: t("dashboard.card.comm"),
-              commSub: t("dashboard.card.commSub"),
-              scheduleKicker: t("dashboard.kicker.schedule"),
-              scheduleTitle: t("dashboard.card.schedule"),
-              scheduleSub: t("dashboard.card.scheduleSub"),
-            }}
+            layout={estimateToolsOnlyPackage ? "estimate_tools_only" : "three_cards"}
+            copy={dashboardHeroCopy}
           />
+          {!estimateToolsOnlyPackage ? (
           <DashboardQuickActions
             isMobile={isMobile}
             setPage={setPage}
@@ -232,6 +254,7 @@ function MainApp() {
               savedDeviceOnly: t("dashboard.quickLinksSavedLocal"),
             }}
           />
+          ) : null}
         </>
       )}
 
