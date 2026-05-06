@@ -115,6 +115,10 @@ function lastUpdateDisplay(c: CustomerRow): string {
   return formatWhen(raw)
 }
 
+function isCompletedJobStatus(status: string | null | undefined): boolean {
+  return String(status ?? "").trim().toLowerCase() === "completed"
+}
+
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
   const { session } = useAuth()
@@ -123,6 +127,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const portalConfig = usePortalConfigForPage()
   const isMobile = useIsMobile()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
+  const [inProcessCustomers, setInProcessCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -132,7 +137,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [filterUrgency, setFilterUrgency] = useState<string>("")
   const [sortField, setSortField] = useState<string>("name")
   const [sortAsc, setSortAsc] = useState(true)
-  const [section, setSection] = useState<"active" | "archived">("active")
+  const [section, setSection] = useState<"active" | "in_process" | "archived">("active")
   const [loadError, setLoadError] = useState<string>("")
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
@@ -158,7 +163,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     serviceLng: "",
     bestContact: DEFAULT_BEST_CONTACT_OPTIONS[0],
     jobStatus: JOB_PIPELINE_OPTIONS[0],
-    urgency: "In Process",
+    urgency: "Good Standing",
   })
 
   const [customerMessages, setCustomerMessages] = useState<any[]>([])
@@ -263,6 +268,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setLoadError("")
 
     const activeIds = new Set<string>()
+    const recurringBookedIds = new Set<string>()
 
     const addActive = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
       if (!r.error && r.data) r.data.forEach((row) => row.customer_id && activeIds.add(row.customer_id))
@@ -273,6 +279,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       eventsRes = await supabase.from("calendar_events").select("customer_id").eq("user_id", userId).is("removed_at", null)
     }
     addActive(eventsRes)
+    let recurringRes = await supabase
+      .from("calendar_events")
+      .select("customer_id, recurrence_series_id")
+      .eq("user_id", userId)
+      .is("removed_at", null)
+      .is("completed_at", null)
+    if (recurringRes.error) {
+      recurringRes = await supabase
+        .from("calendar_events")
+        .select("customer_id, recurrence_series_id")
+        .eq("user_id", userId)
+        .is("removed_at", null)
+    }
+    if (!recurringRes.error && recurringRes.data) {
+      recurringRes.data.forEach((row) => {
+        if (row.customer_id && row.recurrence_series_id) recurringBookedIds.add(row.customer_id)
+      })
+    }
 
     const leadsRes = await supabase.from("leads").select("customer_id").eq("user_id", userId).is("removed_at", null).is("converted_at", null)
     const leadsResFallback = leadsRes.error
@@ -300,6 +324,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const idList = Array.from(allIds)
     if (idList.length === 0) {
       setActiveCustomers([])
+      setInProcessCustomers([])
       setArchivedCustomers([])
       return
     }
@@ -417,6 +442,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (error) {
       setLoadError(error.message)
       setActiveCustomers([])
+      setInProcessCustomers([])
       setArchivedCustomers([])
       return
     }
@@ -440,10 +466,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       return next
     }
 
-    let active = list.filter((c) => activeIds.has(c.id))
-    let archived = list.filter((c) => !activeIds.has(c.id))
+    // Completed customers should move to Archived even if legacy related rows still exist.
+    let inProcess = list.filter((c) => recurringBookedIds.has(c.id) && !isCompletedJobStatus(c.job_pipeline_status))
+    let active = list.filter((c) => activeIds.has(c.id) && !recurringBookedIds.has(c.id) && !isCompletedJobStatus(c.job_pipeline_status))
+    let archived = list.filter((c) => !activeIds.has(c.id) || isCompletedJobStatus(c.job_pipeline_status))
+    inProcess = await escalateList(inProcess, urgencyPrefs)
     active = await escalateList(active, urgencyPrefs)
     archived = await escalateList(archived, urgencyPrefs)
+    setInProcessCustomers(inProcess)
     setActiveCustomers(active)
     setArchivedCustomers(archived)
   }, [userId])
@@ -584,13 +614,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setPendingFocusCustomerId(null)
       return
     }
+    const inProcessMatch = inProcessCustomers.find((c) => c.id === pendingFocusCustomerId)
+    if (inProcessMatch) {
+      setSection("in_process")
+      setSelectedCustomer(inProcessMatch)
+      setPendingFocusCustomerId(null)
+      return
+    }
     const archivedMatch = archivedCustomers.find((c) => c.id === pendingFocusCustomerId)
     if (archivedMatch) {
       setSection("archived")
       setSelectedCustomer(archivedMatch)
       setPendingFocusCustomerId(null)
     }
-  }, [pendingFocusCustomerId, activeCustomers, archivedCustomers])
+  }, [pendingFocusCustomerId, activeCustomers, inProcessCustomers, archivedCustomers])
 
   useEffect(() => {
     if (selectedCustomer) applyDetailFromCustomer(selectedCustomer)
@@ -611,7 +648,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     void loadCustomerActivity(selectedCustomer.id)
   }, [selectedCustomer?.id, userId, loadCustomerActivity])
 
-  const currentList = section === "active" ? activeCustomers : archivedCustomers
+  const currentList = section === "active" ? activeCustomers : section === "in_process" ? inProcessCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {
     const name = (c.display_name || "").toLowerCase()
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || ""
@@ -886,6 +923,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         .eq("id", selectedCustomer.id)
         .maybeSingle()
       if (!tried.error && tried.data) setSelectedCustomer(tried.data as CustomerRow)
+      setSection("archived")
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1064,6 +1102,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     const bump = (rows: CustomerRow[]) =>
       rows.map((x) => (x.id === c.id ? { ...x, communication_urgency: next } : x))
+    setInProcessCustomers(bump)
     setActiveCustomers(bump)
     setArchivedCustomers(bump)
     if (selectedCustomer?.id === c.id) {
@@ -1239,6 +1278,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
               }}
             >
               Active
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSection("in_process")
+                setSelectedCustomer(null)
+              }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: section === "in_process" ? `2px solid ${theme.primary}` : "1px solid #d1d5db",
+                background: section === "in_process" ? "#eff6ff" : "white",
+                cursor: "pointer",
+                color: theme.text,
+                fontWeight: section === "in_process" ? 600 : 400,
+              }}
+            >
+              Booked
             </button>
             <button
               type="button"

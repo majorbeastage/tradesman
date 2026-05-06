@@ -1,7 +1,7 @@
 /** Workflow urgency for the Customers hub (distinct from job pipeline stage). */
 
 export const COMMUNICATION_URGENCY_LEVELS = [
-  "In Process",
+  "Good Standing",
   "Needs Attention",
   "Critical",
   "Complete",
@@ -11,7 +11,7 @@ export const COMMUNICATION_URGENCY_LEVELS = [
 export type CommunicationUrgency = (typeof COMMUNICATION_URGENCY_LEVELS)[number]
 
 const RANK: Record<string, number> = {
-  "In Process": 1,
+  "Good Standing": 1,
   "Needs Attention": 2,
   Critical: 3,
   Complete: 4,
@@ -20,13 +20,13 @@ const RANK: Record<string, number> = {
 
 export function normalizeCommunicationUrgency(raw: string | null | undefined): CommunicationUrgency {
   const t = String(raw ?? "").trim()
-  const legacy = t === "Priority" ? "Critical" : t
+  const legacy = t === "Priority" ? "Critical" : t === "In Process" ? "Good Standing" : t
   if ((COMMUNICATION_URGENCY_LEVELS as readonly string[]).includes(legacy)) return legacy as CommunicationUrgency
-  return "In Process"
+  return "Good Standing"
 }
 
 export function urgencyRank(u: CommunicationUrgency): number {
-  return RANK[u] ?? RANK["In Process"]
+  return RANK[u] ?? RANK["Good Standing"]
 }
 
 export type CustomersUrgencyAutomationPrefs = {
@@ -56,7 +56,7 @@ function thresholdMs(prefs: CustomersUrgencyAutomationPrefs): number {
 
 /**
  * If the customer has had no communication activity for longer than the configured threshold,
- * escalate one step: In Process → Needs Attention → Critical. Skips Complete, Lost, and Critical (cap).
+ * escalate one step: Good Standing → Needs Attention → Critical. Skips Complete, Lost, and Critical (cap).
  */
 export function nextUrgencyAfterSilence(
   current: CommunicationUrgency,
@@ -69,7 +69,7 @@ export function nextUrgencyAfterSilence(
   if (current === "Critical") return null
   if (!Number.isFinite(lastActivityMs) || lastActivityMs <= 0) return null
   if (nowMs - lastActivityMs <= thresholdMs(prefs)) return null
-  if (current === "In Process") return "Needs Attention"
+  if (current === "Good Standing") return "Needs Attention"
   if (current === "Needs Attention") return "Critical"
   return null
 }

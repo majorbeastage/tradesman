@@ -57,7 +57,7 @@ export default function CommunicationUrgencyBadge({ level, brandLogoUrl }: Props
       </span>
     )
   }
-  if (u === "In Process") {
+  if (u === "Good Standing") {
     return (
       <span style={{ ...wrap, color: "#0369a1" }}>
         <span style={{ fontSize: 13, color: "#38bdf8" }} aria-hidden>
@@ -88,5 +88,5 @@ export default function CommunicationUrgencyBadge({ level, brandLogoUrl }: Props
 }
 
 export function communicationUrgencySelectOptions(): CommunicationUrgency[] {
-  return ["In Process", "Needs Attention", "Critical", "Complete", "Lost"]
+  return ["Good Standing", "Needs Attention", "Critical", "Complete", "Lost"]
 }
