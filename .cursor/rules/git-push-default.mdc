@@ -1,0 +1,18 @@
+---
+description: Default to git commit + push after substantive work (Vercel deploys from GitHub)
+alwaysApply: true
+---
+
+# Git push by default (unless opt-out)
+
+The team uses **Vercel** with deployment projects tied to this repo. **After completing a task that changes application code, configuration, or infra in this repo:**
+
+1. **`npm run build`** when the change touches the front end or API scripts that the build validates (if it already passed in-session, do not rerun unnecessarily unless edits continued).
+2. **Commit** the relevant files with a clear message (complete sentences).
+3. **`git push origin main`** (or the active branch if the user is clearly on a feature branch and pushing that branch).
+
+**Do not push** scratch notes, loose `.txt` drafts, local Python one-offs, or other junk in the workspace root unless the user asked to include them.
+
+If the user **explicitly says** not to commit, not to push, or to stop before deploy, obey that for that task.
+
+Skipping push should be rare; treating “done with the fix” as “committed and pushed” avoids drift between local and production.
