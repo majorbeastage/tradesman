@@ -42,6 +42,7 @@ import {
   type PortalTab,
 } from "./types/portal-builder"
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
+import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
@@ -180,6 +181,23 @@ function MainApp() {
             paymentsTabAvailable={paymentsTabAvailable}
             onOpenPayments={paymentsTabAvailable ? () => setPage("payments") : undefined}
           />
+          <DashboardHero
+            isMobile={isMobile}
+            copy={{
+              welcomeTitle: t("dashboard.welcomeTitle"),
+              welcomeBody1: t("dashboard.welcomeBody1"),
+              welcomeBody2: t("dashboard.welcomeBody2"),
+              pipelineKicker: t("dashboard.kicker.pipeline"),
+              pipelineTitle: t("dashboard.card.pipeline"),
+              pipelineSub: t("dashboard.card.pipelineSub"),
+              commKicker: t("dashboard.kicker.comm"),
+              commTitle: t("dashboard.card.comm"),
+              commSub: t("dashboard.card.commSub"),
+              scheduleKicker: t("dashboard.kicker.schedule"),
+              scheduleTitle: t("dashboard.card.schedule"),
+              scheduleSub: t("dashboard.card.scheduleSub"),
+            }}
+          />
           <DashboardQuickActions
             isMobile={isMobile}
             setPage={setPage}
@@ -213,23 +231,6 @@ function MainApp() {
               savedDeviceOnly: t("dashboard.quickLinksSavedLocal"),
             }}
           />
-          <div
-            style={{
-              maxWidth: "920px",
-              marginTop: "12px",
-              padding: isMobile ? "20px" : "26px",
-              background: "linear-gradient(135deg, rgba(30, 41, 59, 0.92) 0%, rgba(15, 23, 42, 0.98) 100%)",
-              border: "1px solid rgba(249, 115, 22, 0.35)",
-              borderRadius: "14px",
-              lineHeight: 1.65,
-              color: "var(--text, #e5e7eb)",
-              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.22)",
-            }}
-          >
-            <h2 style={{ margin: "0 0 10px", fontSize: 22, color: "#fff" }}>{t("dashboard.welcomeTitle")}</h2>
-            <p style={{ margin: "0 0 10px", opacity: 0.95 }}>{t("dashboard.welcomeBody1")}</p>
-            <p style={{ margin: 0, opacity: 0.88 }}>{t("dashboard.welcomeBody2")}</p>
-          </div>
         </>
       )}
 

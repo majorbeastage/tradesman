@@ -119,19 +119,19 @@ function Tile({
     flexDirection: "column",
     justifyContent: "flex-end",
     alignItems: "flex-start",
-    minHeight: compact ? 76 : 84,
-    padding: "12px 12px 12px",
-    borderRadius: 9,
-    border: primaryRow ? `1px solid rgba(249, 115, 22, 0.38)` : `1px solid rgba(51, 65, 85, 0.35)`,
+    minHeight: compact ? 88 : 96,
+    padding: "14px 14px 13px",
+    borderRadius: 12,
+    border: primaryRow ? `1px solid rgba(249, 115, 22, 0.42)` : `1px solid rgba(71, 85, 105, 0.5)`,
     background: primaryRow
-      ? "linear-gradient(152deg, #dce6f2 0%, #d6dfec 46%, #c7d2df 100%)"
-      : "linear-gradient(148deg, #e4e9f0 0%, #dbe2eb 45%, #cfd9e6 100%)",
+      ? "linear-gradient(165deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 55%, #0f172a 100%)"
+      : "linear-gradient(165deg, rgba(51, 65, 85, 0.55) 0%, rgba(30, 41, 59, 0.92) 45%, rgba(15, 23, 42, 0.96) 100%)",
     cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left",
     overflow: "hidden",
     boxShadow: primaryRow
-      ? "0 2px 8px rgba(249, 115, 22, 0.14), 0 6px 16px rgba(15, 23, 42, 0.1)"
-      : "0 1px 5px rgba(15, 23, 42, 0.08)",
+      ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 20px rgba(249, 115, 22, 0.14), 0 12px 28px rgba(0,0,0,0.35)"
+      : "inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 12px rgba(0,0,0,0.28)",
     opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
   }
   return (
@@ -169,10 +169,11 @@ function Tile({
             zIndex: 2,
             fontSize: 11,
             fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 6,
-            background: "rgba(15,23,42,0.75)",
-            color: "#f8fafc",
+            padding: "3px 7px",
+            borderRadius: 8,
+            background: "rgba(249,115,22,0.22)",
+            border: "1px solid rgba(249,115,22,0.35)",
+            color: "#ffedd5",
             cursor: "pointer",
             lineHeight: 1.2,
           }}
@@ -184,22 +185,39 @@ function Tile({
         aria-hidden
         style={{
           position: "absolute",
-          top: primaryRow ? 8 : 10,
-          right: primaryRow ? 8 : 10,
-          width: primaryRow ? 30 : 26,
-          height: primaryRow ? 30 : 26,
+          top: primaryRow ? 10 : 11,
+          right: primaryRow ? 10 : 11,
+          width: primaryRow ? 34 : 28,
+          height: primaryRow ? 34 : 28,
           borderRadius: "50%",
-          background: `linear-gradient(135deg, ${accent}40, ${accent}72)`,
-          border: `1px solid ${accent}66`,
-          boxShadow: primaryRow ? `0 0 14px ${accent}44` : undefined,
+          background: `linear-gradient(145deg, ${accent}35, ${accent}14)`,
+          border: `1px solid ${accent}55`,
+          boxShadow: primaryRow ? `0 0 18px ${accent}38` : `0 0 12px ${accent}22`,
         }}
       />
       <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          bottom: 11,
+          right: 13,
+          fontSize: 17,
+          fontWeight: 700,
+          color: accent,
+          opacity: 0.85,
+          lineHeight: 1,
+          pointerEvents: "none",
+        }}
+      >
+        →
+      </span>
+      <span
         style={{
           marginTop: 2,
+          paddingRight: 22,
           fontSize: compact ? 14 : 15,
           fontWeight: 800,
-          color: "#0f172a",
+          color: "#f8fafc",
           lineHeight: 1.25,
           letterSpacing: primaryRow ? -0.02 : undefined,
         }}
@@ -478,13 +496,25 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           compact={isMobile}
           label={labels.customerPaymentsSoon}
-          accent="#64748b"
-          dimmed={!customize}
+          accent="#0ea5e9"
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
           {...dragProps}
-          onClick={() => {}}
+          onClick={() => {
+            if (customize) return
+            try {
+              window.location.hash = "customer-pay"
+            } catch {
+              /* ignore */
+            }
+            go("payments")
+            window.requestAnimationFrame(() =>
+              window.setTimeout(() => {
+                document.getElementById("customer-pay-collection")?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }, 280),
+            )
+          }}
         />
       )
     }
@@ -537,15 +567,18 @@ export default function DashboardQuickActions(props: Props) {
   }
 
   return (
-    <section style={{ marginBottom: 6 }}>
+    <section style={{ maxWidth: 1100, marginLeft: "auto", marginRight: "auto", marginBottom: 6 }}>
       <style>{`
         .tm-dash-tile {
-          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
         }
         .tm-dash-tile:hover:not(:disabled) {
           transform: translateY(-3px);
-          box-shadow: 0 14px 32px rgba(249, 115, 22, 0.22), 0 8px 20px rgba(15, 23, 42, 0.14);
-          border-color: rgba(249, 115, 22, 0.65) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.08),
+            0 14px 36px rgba(249, 115, 22, 0.2),
+            0 8px 24px rgba(0, 0, 0, 0.4);
+          border-color: rgba(249, 115, 22, 0.58) !important;
         }
         .tm-dash-tile:active:not(:disabled) {
           transform: translateY(-1px);
@@ -553,48 +586,48 @@ export default function DashboardQuickActions(props: Props) {
       `}</style>
       <DashboardTodayTodoModal open={todayOpen} onClose={() => setTodayOpen(false)} dataUserId={dashboardDataUserId ?? null} />
 
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: isMobile ? 17 : 19,
-            fontWeight: 800,
-            color: "#0f172a",
-            letterSpacing: -0.02,
-          }}
-        >
-          {sectionTitle}
-        </h2>
-        <button
-          type="button"
-          onClick={() => setCustomize((c) => !c)}
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: `1px solid rgba(249,115,22,0.45)`,
-            background: customize ? "rgba(249,115,22,0.22)" : "rgba(255,255,255,0.3)",
-            color: "#0f172a",
-            cursor: "pointer",
-          }}
-        >
-          {customize ? labels.customizeDone : labels.customizeHint}
-        </button>
-      </div>
-      {customize ? (
-        <div style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(15,23,42,0.7)", maxWidth: 640, lineHeight: 1.45 }}>
-          <span>{labels.customizeAddHint}</span>
-          {persistNote === "cloud" ? (
-            <span style={{ display: "block", marginTop: 4, color: "rgba(167,243,208,0.95)" }}>{labels.savedCloud}</span>
-          ) : persistNote === "local" ? (
-            <span style={{ display: "block", marginTop: 4 }}>{labels.savedDeviceOnly}</span>
-          ) : null}
-        </div>
-      ) : null}
-
       <div style={shell}>
-        <div style={grid4}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: isMobile ? 17 : 19,
+              fontWeight: 800,
+              color: "#f8fafc",
+              letterSpacing: -0.02,
+            }}
+          >
+            {sectionTitle}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setCustomize((c) => !c)}
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "7px 12px",
+              borderRadius: 10,
+              border: `1px solid ${customize ? "rgba(249,115,22,0.65)" : "rgba(148,163,184,0.35)"}`,
+              background: customize ? "rgba(249,115,22,0.2)" : "rgba(15,23,42,0.45)",
+              color: "#f1f5f9",
+              cursor: "pointer",
+            }}
+          >
+            {customize ? labels.customizeDone : labels.customizeHint}
+          </button>
+        </div>
+        {customize ? (
+          <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(203,213,225,0.85)", maxWidth: 640, lineHeight: 1.45 }}>
+            <span>{labels.customizeAddHint}</span>
+            {persistNote === "cloud" ? (
+              <span style={{ display: "block", marginTop: 4, color: "#6ee7b7" }}>{labels.savedCloud}</span>
+            ) : persistNote === "local" ? (
+              <span style={{ display: "block", marginTop: 4, color: "#cbd5e1" }}>{labels.savedDeviceOnly}</span>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div style={{ ...grid4, marginTop: customize ? 12 : 14 }}>
           <Tile
             compact={isMobile}
             label={labels.customers}
@@ -629,7 +662,7 @@ export default function DashboardQuickActions(props: Props) {
 
         {customize && paletteAvailable.length > 0 ? (
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
             <div style={gridOpt}>
               {paletteAvailable.map((id) => (
                 <button
@@ -640,13 +673,13 @@ export default function DashboardQuickActions(props: Props) {
                     minHeight: isMobile ? 72 : 76,
                     padding: "12px 14px",
                     borderRadius: 12,
-                    border: `1px dashed rgba(51,65,85,0.45)`,
-                    background: "rgba(255,255,255,0.35)",
+                    border: `1px dashed rgba(148,163,184,0.35)`,
+                    background: "rgba(15,23,42,0.35)",
                     cursor: "pointer",
                     textAlign: "left",
                     fontWeight: 700,
                     fontSize: compactFont(isMobile),
-                    color: "#0f172a",
+                    color: "#f1f5f9",
                   }}
                 >
                   + {id === "job_types" ? labels.jobTypes : labels.todayTodo}
