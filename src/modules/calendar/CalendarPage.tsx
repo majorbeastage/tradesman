@@ -73,6 +73,8 @@ import {
   totalFromQuoteItemRows,
 } from "../../lib/quoteItemMath"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "../../lib/quoteLogoImage"
+import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
+import { buildCustomerPaymentShareBody, logCustomerPaymentEvent } from "../../lib/customerPaymentsWorkflow"
 
 type JobType = {
   id: string
@@ -364,12 +366,37 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [receiptNewQty, setReceiptNewQty] = useState("1")
   const [receiptNewUnit, setReceiptNewUnit] = useState("0")
   const [receiptNewKind, setReceiptNewKind] = useState("misc")
+  const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
 
   const linkedQuoteLiveTotal = useMemo(() => {
     if (!selectedEvent?.quote_id) return null
     const t = totalFromQuoteItemRows(quoteItemsForReceipt)
     return t > 0 ? t : null
   }, [selectedEvent?.quote_id, quoteItemsForReceipt])
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setCustomerPaymentProfile({})
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const m =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        setCustomerPaymentProfile(parseCustomerPaymentMetadata(m))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
@@ -1257,6 +1284,49 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       alert(e instanceof Error ? e.message : String(e))
     } finally {
       setReceiptPdfBusy(false)
+    }
+  }
+
+  async function sendCustomerPaymentRequestFromCalendar(mode: "link" | "barcode") {
+    if (!selectedEvent) return
+    const link = customerPaymentProfile.customer_pay_link_url?.trim() ?? ""
+    const barcode = customerPaymentProfile.customer_pay_barcode_url?.trim() ?? ""
+    if (mode === "link" && !link) {
+      alert("Set a customer pay link first in Payments.")
+      return
+    }
+    if (mode === "barcode" && !barcode) {
+      alert("Set a barcode / QR payment link first in Payments.")
+      return
+    }
+    const total = linkedQuoteLiveTotal ?? (selectedEvent.quote_total != null ? Number(selectedEvent.quote_total) : null)
+    const body = buildCustomerPaymentShareBody({
+      customerName: selectedEvent.customers?.display_name ?? null,
+      estimateLabel: selectedEvent.quote_id ? `Estimate ${selectedEvent.quote_id.slice(0, 8)}` : selectedEvent.title,
+      amountLabel: total != null && Number.isFinite(total) ? `$${total.toFixed(2)}` : null,
+      payLink: mode === "link" ? link : link || barcode,
+      barcodeLink: barcode,
+      includeBarcode: mode === "barcode",
+      instructions: customerPaymentProfile.customer_pay_instructions ?? null,
+    })
+    if (typeof navigator.clipboard?.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(body)
+      } catch {
+        /* ignore */
+      }
+    }
+    alert("Payment request copied. Open customer contact card to send by text/email.")
+    if (userId) {
+      await logCustomerPaymentEvent(supabase, {
+        userId,
+        customerId: selectedEvent.customer_id,
+        quoteId: selectedEvent.quote_id,
+        calendarEventId: selectedEvent.id,
+        eventType: mode === "barcode" ? "payment_barcode_sent" : "payment_link_sent",
+        amount: total != null && Number.isFinite(total) ? total : null,
+        metadata: { source: "calendar", provider: customerPaymentProfile.customer_pay_provider ?? "helcim" },
+      })
     }
   }
 
@@ -3316,6 +3386,42 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   ) : quoteItemsForReceipt.length === 0 ? (
                     <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>Loading quote lines…</p>
                   ) : null}
+                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <button
+                      type="button"
+                      disabled={!customerPaymentProfile.customer_pay_link_url?.trim()}
+                      onClick={() => void sendCustomerPaymentRequestFromCalendar("link")}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        color: theme.text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: customerPaymentProfile.customer_pay_link_url?.trim() ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      Send payment link
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!customerPaymentProfile.customer_pay_barcode_url?.trim()}
+                      onClick={() => void sendCustomerPaymentRequestFromCalendar("barcode")}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        color: theme.text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: customerPaymentProfile.customer_pay_barcode_url?.trim() ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      Send payment barcode
+                    </button>
+                  </div>
                 </div>
               )}
               {selectedEvent.user_id && selectedEvent.user_id !== userId && (

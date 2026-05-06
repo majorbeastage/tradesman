@@ -82,9 +82,9 @@ function FeatureCard({
     position: "relative",
     borderRadius: 14,
     padding: "18px 18px 20px",
-    background: "linear-gradient(155deg, rgba(30, 41, 59, 0.72) 0%, rgba(15, 23, 42, 0.94) 100%)",
-    border: "1px solid rgba(148, 163, 184, 0.22)",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 18px 40px rgba(0,0,0,0.22)",
+    background: "linear-gradient(155deg, rgba(51, 65, 85, 0.55) 0%, rgba(30, 41, 59, 0.72) 100%)",
+    border: "1px solid rgba(148, 163, 184, 0.25)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(15,23,42,0.2)",
     overflow: "hidden",
   }
   return (
@@ -148,8 +148,8 @@ export default function DashboardHero({ isMobile, copy }: Props) {
     borderRadius: 18,
     overflow: "hidden",
     border: "1px solid rgba(249, 115, 22, 0.28)",
-    background: "linear-gradient(135deg, rgba(30, 41, 59, 0.55) 0%, rgba(15, 23, 42, 0.98) 55%, rgba(15, 23, 42, 1) 100%)",
-    boxShadow: "0 24px 48px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255,255,255,0.06)",
+    background: "linear-gradient(135deg, rgba(71, 85, 105, 0.5) 0%, rgba(51, 65, 85, 0.8) 56%, rgba(30, 41, 59, 0.9) 100%)",
+    boxShadow: "0 14px 34px rgba(15,23,42,0.2), inset 0 1px 0 rgba(255,255,255,0.08)",
   }
 
   const grid: CSSProperties = {
@@ -158,7 +158,7 @@ export default function DashboardHero({ isMobile, copy }: Props) {
     gap: isMobile ? 12 : 14,
     padding: isMobile ? "14px 14px 18px" : "16px 18px 22px",
     borderTop: "1px solid rgba(148, 163, 184, 0.12)",
-    background: "linear-gradient(180deg, rgba(15,23,42,0.25) 0%, rgba(15,23,42,0.65) 100%)",
+    background: "linear-gradient(180deg, rgba(51,65,85,0.18) 0%, rgba(30,41,59,0.4) 100%)",
   }
 
   const orange = "#fb923c"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { DRONE_PROVIDER_CATALOG } from "../lib/specialtyReports/droneIntegrationCatalog"
@@ -30,6 +30,33 @@ type Props = {
   customerLabel?: string
 }
 
+type AiTargetField =
+  | "scopeLimitations"
+  | "mediaWorkflowNotes"
+  | "droneIntegrationNotes"
+  | "summaryFindings"
+  | "genericNotes"
+  | `sub:${string}`
+
+declare global {
+  interface Window {
+    webkitSpeechRecognition?: new () => SpeechRecognition
+  }
+  interface SpeechRecognitionEvent extends Event {
+    readonly results: SpeechRecognitionResultList
+  }
+  interface SpeechRecognition extends EventTarget {
+    continuous: boolean
+    interimResults: boolean
+    lang: string
+    onresult: ((ev: SpeechRecognitionEvent) => void) | null
+    onerror: ((ev: Event) => void) | null
+    onend: (() => void) | null
+    start: () => void
+    stop: () => void
+  }
+}
+
 const META_KEY_HOME = "specialty_report_home_inspection"
 const META_KEY_GENERIC_PREFIX = "specialty_report_notes_"
 
@@ -48,6 +75,12 @@ export default function SpecialtyReportWizardModal({
   const [genericNotes, setGenericNotes] = useState("")
   const [loadBusy, setLoadBusy] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [assistantText, setAssistantText] = useState("")
+  const [assistantNote, setAssistantNote] = useState<string | null>(null)
+  const [assistantListening, setAssistantListening] = useState(false)
+  const [speechSupported, setSpeechSupported] = useState(false)
+  const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -113,6 +146,12 @@ export default function SpecialtyReportWizardModal({
     }
   }, [open, enabledReportTypes, reset, loadDraftForType])
 
+  useEffect(() => {
+    if (!open) return
+    const ctor = typeof window !== "undefined" ? ((window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition) : undefined
+    setSpeechSupported(Boolean(ctor))
+  }, [open])
+
   const persistMetadata = useCallback(
     async (patch: Record<string, unknown>) => {
       if (!quoteId || !userId || !supabase) return
@@ -162,8 +201,6 @@ export default function SpecialtyReportWizardModal({
     return Object.values(home.subsections).filter((s) => s.condition === "deficient").length
   }, [home.subsections])
 
-  if (!open) return null
-
   const close = () => {
     reset()
     onClose()
@@ -174,6 +211,157 @@ export default function SpecialtyReportWizardModal({
     if (k === "home_inspection") setPhase("home_header")
     else setPhase("generic_notes")
     void loadDraftForType(k)
+  }
+
+  const goNextPhase = useCallback(() => {
+    if (phase === "home_header") setPhase("home_findings")
+    else if (phase === "home_findings") setPhase("home_media")
+    else if (phase === "home_media") setPhase("home_review")
+    else if (phase === "pick_type") setAssistantNote("Choose a report template first.")
+  }, [phase])
+
+  const goBackPhase = useCallback(() => {
+    if (phase === "home_review") setPhase("home_media")
+    else if (phase === "home_media") setPhase("home_findings")
+    else if (phase === "home_findings") setPhase("home_header")
+    else if (phase === "home_header" && enabledReportTypes.length > 1) {
+      setPhase("pick_type")
+      setPicked(null)
+    }
+  }, [phase, enabledReportTypes.length])
+
+  const setDefaultTargetForPhase = useCallback((nextPhase: WizardPhase) => {
+    if (nextPhase === "home_header") setAiTarget("scopeLimitations")
+    else if (nextPhase === "home_media") setAiTarget("mediaWorkflowNotes")
+    else if (nextPhase === "home_review") setAiTarget("summaryFindings")
+    else if (nextPhase === "generic_notes") setAiTarget("genericNotes")
+  }, [])
+
+  useEffect(() => {
+    setDefaultTargetForPhase(phase)
+  }, [phase, setDefaultTargetForPhase])
+
+  if (!open) return null
+
+  function appendToTarget(target: AiTargetField, text: string) {
+    const chunk = text.trim()
+    if (!chunk) return
+    if (target === "genericNotes") {
+      setGenericNotes((prev) => (prev.trim() ? `${prev.trim()}\n${chunk}` : chunk))
+      return
+    }
+    if (target === "scopeLimitations") {
+      setHome((h) => ({ ...h, scopeLimitations: h.scopeLimitations.trim() ? `${h.scopeLimitations.trim()}\n${chunk}` : chunk }))
+      return
+    }
+    if (target === "mediaWorkflowNotes") {
+      setHome((h) => ({ ...h, mediaWorkflowNotes: h.mediaWorkflowNotes.trim() ? `${h.mediaWorkflowNotes.trim()}\n${chunk}` : chunk }))
+      return
+    }
+    if (target === "droneIntegrationNotes") {
+      setHome((h) => ({ ...h, droneIntegrationNotes: h.droneIntegrationNotes.trim() ? `${h.droneIntegrationNotes.trim()}\n${chunk}` : chunk }))
+      return
+    }
+    if (target === "summaryFindings") {
+      setHome((h) => ({ ...h, summaryFindings: h.summaryFindings.trim() ? `${h.summaryFindings.trim()}\n${chunk}` : chunk }))
+      return
+    }
+    if (target.startsWith("sub:")) {
+      const subId = target.slice(4)
+      setHome((h) => {
+        const row = h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }
+        return {
+          ...h,
+          subsections: {
+            ...h.subsections,
+            [subId]: { ...row, notes: row.notes.trim() ? `${row.notes.trim()}\n${chunk}` : chunk },
+          },
+        }
+      })
+    }
+  }
+
+  function runAssistantCommand(raw: string) {
+    const text = raw.trim()
+    if (!text) return
+    const command = text.toLowerCase()
+    if (command === "next" || command === "next step") {
+      goNextPhase()
+      setAssistantNote("Moved to the next step.")
+      return
+    }
+    if (command === "back" || command === "previous" || command === "prev") {
+      goBackPhase()
+      setAssistantNote("Moved to the previous step.")
+      return
+    }
+    if (command.includes("go to findings")) {
+      setPhase("home_findings")
+      setAssistantNote("Opened findings.")
+      return
+    }
+    if (command.includes("go to header")) {
+      setPhase("home_header")
+      setAssistantNote("Opened header & scope.")
+      return
+    }
+    if (command.includes("go to media")) {
+      setPhase("home_media")
+      setAssistantNote("Opened media / integrations.")
+      return
+    }
+    if (command.includes("go to review")) {
+      setPhase("home_review")
+      setAssistantNote("Opened review & summary.")
+      return
+    }
+    appendToTarget(aiTarget, text)
+    setAssistantNote("Added text into the selected report field.")
+  }
+
+  function startDictation() {
+    if (!speechSupported || typeof window === "undefined") {
+      setAssistantNote("Voice dictation is not supported in this browser.")
+      return
+    }
+    const Ctor = (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!Ctor) {
+      setAssistantNote("Voice dictation is not supported in this browser.")
+      return
+    }
+    try {
+      const rec = new Ctor()
+      recognitionRef.current = rec
+      rec.continuous = true
+      rec.interimResults = true
+      rec.lang = "en-US"
+      rec.onresult = (ev: SpeechRecognitionEvent) => {
+        let out = ""
+        for (let i = ev.results.length - 1; i >= 0; i -= 1) {
+          const item = ev.results[i]
+          if (!item) continue
+          const alt = item[0]
+          if (!alt?.transcript) continue
+          out = alt.transcript.trim()
+          break
+        }
+        if (out) setAssistantText(out)
+      }
+      rec.onerror = () => setAssistantNote("Voice input failed. Check mic permissions and retry.")
+      rec.onend = () => setAssistantListening(false)
+      rec.start()
+      setAssistantListening(true)
+      setAssistantNote("Listening… say text, or commands like 'next step' / 'go to findings'.")
+    } catch {
+      setAssistantListening(false)
+      setAssistantNote("Could not start voice dictation.")
+    }
+  }
+
+  function stopDictation() {
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    setAssistantListening(false)
   }
 
   return (
@@ -245,6 +433,74 @@ export default function SpecialtyReportWizardModal({
             ✕
           </button>
         </div>
+
+        {quoteId ? (
+          <section
+            style={{
+              marginBottom: 14,
+              padding: "12px 12px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(249,115,22,0.35)",
+              background: "linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%)",
+            }}
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <strong style={{ fontSize: 13, color: "#9a3412" }}>Overall AI assist (voice + navigation)</strong>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={goBackPhase} style={secondaryBtn}>
+                  ← Back
+                </button>
+                <button type="button" onClick={goNextPhase} style={primaryBtn}>
+                  Next →
+                </button>
+              </div>
+            </div>
+            <p style={{ margin: "8px 0 10px", fontSize: 12, color: "#7c2d12", lineHeight: 1.5 }}>
+              Use this as your report copilot. It can move steps and enter dictated text into a selected field. We can promote this to a full-page flow next iteration.
+            </p>
+            <div style={{ display: "grid", gap: 8 }}>
+              <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value as AiTargetField)} style={{ ...theme.formInput, maxWidth: 360 }}>
+                <option value="scopeLimitations">Header: Scope & limitations</option>
+                <option value="mediaWorkflowNotes">Media: Workflow notes</option>
+                <option value="droneIntegrationNotes">Media: Drone / integration notes</option>
+                <option value="summaryFindings">Review: Executive summary</option>
+                <option value="genericNotes">Generic report notes</option>
+                {HOME_INSPECTION_MAJOR_SECTIONS.flatMap((sec) =>
+                  sec.subsections.map((sub) => (
+                    <option key={sub.id} value={`sub:${sub.id}`}>
+                      Findings: {sub.label}
+                    </option>
+                  )),
+                )}
+              </select>
+              <textarea
+                rows={2}
+                value={assistantText}
+                onChange={(e) => setAssistantText(e.target.value)}
+                placeholder="Type or dictate here. Commands: next step, back, go to findings/header/media/review."
+                style={{ ...theme.formInput, resize: "vertical" }}
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => runAssistantCommand(assistantText)} style={primaryBtn}>
+                  Apply assistant input
+                </button>
+                {!assistantListening ? (
+                  <button type="button" onClick={startDictation} style={secondaryBtn} disabled={!speechSupported}>
+                    {speechSupported ? "Start voice-to-text" : "Voice not available"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={stopDictation} style={secondaryBtn}>
+                    Stop listening
+                  </button>
+                )}
+                <button type="button" onClick={() => setAssistantText("")} style={secondaryBtn}>
+                  Clear
+                </button>
+              </div>
+              {assistantNote ? <p style={{ margin: 0, fontSize: 12, color: "#7c2d12" }}>{assistantNote}</p> : null}
+            </div>
+          </section>
+        ) : null}
 
         {!quoteId ? (
           <p style={{ fontSize: 13, color: "#b45309" }}>Select an estimate in the list to attach this report draft.</p>

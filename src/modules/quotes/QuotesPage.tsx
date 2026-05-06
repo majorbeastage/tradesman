@@ -79,6 +79,8 @@ import {
   type SpecialtyReportTypeKey,
 } from "../../lib/specialtyReports/reportTypeIds"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
+import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
+import { buildCustomerPaymentShareBody, logCustomerPaymentEvent } from "../../lib/customerPaymentsWorkflow"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -457,6 +459,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
   const [quoteEmailSending, setQuoteEmailSending] = useState(false)
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
+  const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -537,6 +540,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
   }, [selectedQuoteId])
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setCustomerPaymentProfile({})
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const m =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        setCustomerPaymentProfile(parseCustomerPaymentMetadata(m))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   /** Section ✓ / ○ / ! only after user opens “Start quote” for this estimate (sessionStorage per quote). */
   const showEstimateWizardMarkers = estimateGuideFlags.wizardOpened === true
@@ -2007,6 +2034,37 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateStartGuideStep(7)
   }
 
+  async function handleGuideQuoteItemsLiteAdd(raw: string): Promise<string> {
+    if (!supabase || !selectedQuoteId) return "Open an estimate first."
+    const lines = raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    if (lines.length === 0) return "No lines found."
+    let added = 0
+    let skipped = 0
+    for (const line of lines) {
+      const parts = line.split("|").map((p) => p.trim())
+      const description = parts[0] ?? ""
+      if (!description) {
+        skipped += 1
+        continue
+      }
+      const qty = parts[1] ? Number.parseFloat(parts[1]) : 1
+      const price = parts[2] ? Number.parseFloat(parts[2].replace(/[^0-9.-]/g, "")) : 0
+      const result = await insertQuoteItemRowSafe(supabase, {
+        quote_id: selectedQuoteId,
+        description,
+        quantity: Number.isFinite(qty) ? qty : 1,
+        unit_price: Number.isFinite(price) ? price : 0,
+      })
+      if (result.ok) added += 1
+      else skipped += 1
+    }
+    if (added > 0) void refreshQuoteItemsOnly()
+    return `Added ${added} item${added === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped}.` : "."}`
+  }
+
   function handleGuideQuoteItemsSkip() {
     if (selectedQuote?.id) {
       saveEstimateGuideFlags(selectedQuote.id, { quoteItemsSkipped: true })
@@ -3237,6 +3295,55 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
       setQuotePdfBusy(false)
+    }
+  }
+
+  async function sendCustomerPaymentRequestFromEstimate(mode: "link" | "barcode") {
+    if (!selectedQuote) return
+    const payLink = customerPaymentProfile.customer_pay_link_url?.trim() ?? ""
+    const barcodeLink = customerPaymentProfile.customer_pay_barcode_url?.trim() ?? ""
+    const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
+    if (!payLink && mode === "link") {
+      alert("Set a customer pay link first in Payments → Collect from your customers.")
+      return
+    }
+    if (!barcodeLink && mode === "barcode") {
+      alert("Set a barcode / QR link first in Payments → Collect from your customers.")
+      return
+    }
+    if (requireReview && selectedQuoteItems.length === 0) {
+      alert("Review the estimate first: add at least one line item before sending payment requests.")
+      return
+    }
+    const subtotal = totalFromQuoteItemRows(selectedQuoteItems)
+    const amountLabel = subtotal > 0 ? `$${subtotal.toFixed(2)}` : null
+    const body = buildCustomerPaymentShareBody({
+      customerName: selectedQuote?.customers?.display_name ?? null,
+      estimateLabel: `Estimate ${selectedQuote.id.slice(0, 8)}`,
+      amountLabel,
+      payLink: mode === "link" ? payLink : payLink || barcodeLink,
+      barcodeLink,
+      includeBarcode: mode === "barcode",
+      instructions: customerPaymentProfile.customer_pay_instructions ?? null,
+    })
+    const copied = typeof navigator.clipboard?.writeText === "function"
+    if (copied) {
+      try {
+        await navigator.clipboard.writeText(body)
+      } catch {
+        /* ignore clipboard failures, still open email draft */
+      }
+    }
+    alert("Payment request copied. Open customer details to send by text/email.")
+    if (userId) {
+      await logCustomerPaymentEvent(supabase, {
+        userId,
+        customerId: selectedQuote.customer_id,
+        quoteId: selectedQuote.id,
+        eventType: mode === "barcode" ? "payment_barcode_sent" : "payment_link_sent",
+        amount: subtotal > 0 ? subtotal : null,
+        metadata: { delivery: "clipboard", provider: customerPaymentProfile.customer_pay_provider ?? "helcim" },
+      })
     }
   }
 
@@ -4513,6 +4620,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onQuoteItemsContinue={handleGuideQuoteItemsContinue}
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
                               onQuoteItemsOpen={() => openGuideSection(quoteItemsSectionRef)}
+                              onQuoteItemsLiteAdd={handleGuideQuoteItemsLiteAdd}
                               quoteItemsBusy={estimateGuideBusy}
                               onPreviewOnly={() => {
                                 void previewEstimateDocument()
@@ -6075,6 +6183,56 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     }}
                   >
                     Save to Device
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_link_url?.trim()}
+                    title={
+                      !selectedQuote?.customer_id
+                        ? "Select a customer first"
+                        : !customerPaymentProfile.customer_pay_link_url?.trim()
+                          ? "Set customer pay link in Payments first"
+                          : undefined
+                    }
+                    onClick={() => void sendCustomerPaymentRequestFromEstimate("link")}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 700,
+                      cursor:
+                        !selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_link_url?.trim() ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Send payment link
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_barcode_url?.trim()}
+                    title={
+                      !selectedQuote?.customer_id
+                        ? "Select a customer first"
+                        : !customerPaymentProfile.customer_pay_barcode_url?.trim()
+                          ? "Set barcode / QR link in Payments first"
+                          : undefined
+                    }
+                    onClick={() => void sendCustomerPaymentRequestFromEstimate("barcode")}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontWeight: 700,
+                      cursor:
+                        !selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_barcode_url?.trim()
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    Send payment barcode
                   </button>
                   <button
                     type="button"

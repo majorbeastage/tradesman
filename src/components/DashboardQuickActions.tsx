@@ -113,6 +113,8 @@ function Tile({
   onDragOver?: (e: DragEvent) => void
   onDrop?: (e: DragEvent) => void
 }) {
+  const labelColor = primaryRow ? "#f8fafc" : "#0f172a"
+  const optionalArrowColor = primaryRow ? accent : "#334155"
   const btn: CSSProperties = {
     position: "relative",
     display: "flex",
@@ -122,16 +124,16 @@ function Tile({
     minHeight: compact ? 88 : 96,
     padding: "14px 14px 13px",
     borderRadius: 12,
-    border: primaryRow ? `1px solid rgba(249, 115, 22, 0.42)` : `1px solid rgba(71, 85, 105, 0.5)`,
+    border: primaryRow ? `1px solid rgba(249, 115, 22, 0.35)` : `1px solid rgba(100, 116, 139, 0.42)`,
     background: primaryRow
-      ? "linear-gradient(165deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 55%, #0f172a 100%)"
-      : "linear-gradient(165deg, rgba(51, 65, 85, 0.55) 0%, rgba(30, 41, 59, 0.92) 45%, rgba(15, 23, 42, 0.96) 100%)",
+      ? "linear-gradient(165deg, rgba(51, 65, 85, 0.84) 0%, rgba(30, 41, 59, 0.88) 58%, rgba(30, 41, 59, 0.95) 100%)"
+      : "linear-gradient(160deg, #eef2f7 0%, #e2e8f0 46%, #dbe4ef 100%)",
     cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left",
     overflow: "hidden",
     boxShadow: primaryRow
-      ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 20px rgba(249, 115, 22, 0.14), 0 12px 28px rgba(0,0,0,0.35)"
-      : "inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 12px rgba(0,0,0,0.28)",
+      ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 18px rgba(249, 115, 22, 0.12), 0 8px 22px rgba(0,0,0,0.22)"
+      : "inset 0 1px 0 rgba(255,255,255,0.65), 0 2px 10px rgba(15, 23, 42, 0.12)",
     opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
   }
   return (
@@ -203,7 +205,7 @@ function Tile({
           right: 13,
           fontSize: 17,
           fontWeight: 700,
-          color: accent,
+          color: optionalArrowColor,
           opacity: 0.85,
           lineHeight: 1,
           pointerEvents: "none",
@@ -217,7 +219,7 @@ function Tile({
           paddingRight: 22,
           fontSize: compact ? 14 : 15,
           fontWeight: 800,
-          color: "#f8fafc",
+          color: labelColor,
           lineHeight: 1.25,
           letterSpacing: primaryRow ? -0.02 : undefined,
         }}
@@ -593,7 +595,7 @@ export default function DashboardQuickActions(props: Props) {
               margin: 0,
               fontSize: isMobile ? 17 : 19,
               fontWeight: 800,
-              color: "#f8fafc",
+            color: "#0f172a",
               letterSpacing: -0.02,
             }}
           >
@@ -605,11 +607,11 @@ export default function DashboardQuickActions(props: Props) {
             style={{
               fontSize: 12,
               fontWeight: 600,
-              padding: "7px 12px",
-              borderRadius: 10,
-              border: `1px solid ${customize ? "rgba(249,115,22,0.65)" : "rgba(148,163,184,0.35)"}`,
-              background: customize ? "rgba(249,115,22,0.2)" : "rgba(15,23,42,0.45)",
-              color: "#f1f5f9",
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: `1px solid rgba(249,115,22,0.45)`,
+            background: customize ? "rgba(249,115,22,0.22)" : "rgba(255,255,255,0.3)",
+            color: "#0f172a",
               cursor: "pointer",
             }}
           >
@@ -617,12 +619,12 @@ export default function DashboardQuickActions(props: Props) {
           </button>
         </div>
         {customize ? (
-          <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(203,213,225,0.85)", maxWidth: 640, lineHeight: 1.45 }}>
+          <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 640, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>
             {persistNote === "cloud" ? (
-              <span style={{ display: "block", marginTop: 4, color: "#6ee7b7" }}>{labels.savedCloud}</span>
+              <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
             ) : persistNote === "local" ? (
-              <span style={{ display: "block", marginTop: 4, color: "#cbd5e1" }}>{labels.savedDeviceOnly}</span>
+              <span style={{ display: "block", marginTop: 4 }}>{labels.savedDeviceOnly}</span>
             ) : null}
           </div>
         ) : null}
@@ -662,7 +664,7 @@ export default function DashboardQuickActions(props: Props) {
 
         {customize && paletteAvailable.length > 0 ? (
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
             <div style={gridOpt}>
               {paletteAvailable.map((id) => (
                 <button
@@ -673,13 +675,13 @@ export default function DashboardQuickActions(props: Props) {
                     minHeight: isMobile ? 72 : 76,
                     padding: "12px 14px",
                     borderRadius: 12,
-                    border: `1px dashed rgba(148,163,184,0.35)`,
-                    background: "rgba(15,23,42,0.35)",
+                    border: `1px dashed rgba(51,65,85,0.45)`,
+                    background: "rgba(255,255,255,0.35)",
                     cursor: "pointer",
                     textAlign: "left",
                     fontWeight: 700,
                     fontSize: compactFont(isMobile),
-                    color: "#f1f5f9",
+                    color: "#0f172a",
                   }}
                 >
                   + {id === "job_types" ? labels.jobTypes : labels.todayTodo}

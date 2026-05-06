@@ -36,6 +36,7 @@ type Props = {
   onQuoteItemsContinue: () => void
   onQuoteItemsSkip: () => void
   onQuoteItemsOpen: () => void
+  onQuoteItemsLiteAdd: (raw: string) => Promise<string>
   quoteItemsBusy: boolean
   onPreviewOnly: () => void
   onPreviewOpenSection: () => void
@@ -82,6 +83,7 @@ export default function EstimateStartGuideModal({
   onQuoteItemsContinue,
   onQuoteItemsSkip,
   onQuoteItemsOpen,
+  onQuoteItemsLiteAdd,
   quoteItemsBusy,
   onPreviewOnly,
   onPreviewOpenSection,
@@ -98,6 +100,9 @@ export default function EstimateStartGuideModal({
   onMediaPickFiles,
 }: Props) {
   const [customerQuery, setCustomerQuery] = useState("")
+  const [liteLinesText, setLiteLinesText] = useState("")
+  const [liteBusy, setLiteBusy] = useState(false)
+  const [liteNote, setLiteNote] = useState<string | null>(null)
 
   const conversationBulletLines = useMemo(
     () =>
@@ -517,6 +522,54 @@ export default function EstimateStartGuideModal({
           </div>
         ) : step === 6 ? (
           <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>
+                Lite quick-add (one line per item: Description | Qty | Unit price)
+              </label>
+              <textarea
+                rows={5}
+                value={liteLinesText}
+                onChange={(e) => setLiteLinesText(e.target.value)}
+                placeholder={"Install exhaust fan | 1 | 225\nReplace fascia board | 2 | 145"}
+                style={{ ...theme.formInput, resize: "vertical", width: "100%" }}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={liteBusy || !liteLinesText.trim()}
+                  onClick={() => {
+                    void (async () => {
+                      setLiteBusy(true)
+                      setLiteNote(null)
+                      const msg = await onQuoteItemsLiteAdd(liteLinesText)
+                      setLiteBusy(false)
+                      setLiteNote(msg)
+                    })()
+                  }}
+                  style={secondaryBtnStyle}
+                >
+                  {liteBusy ? "Adding…" : "Add lite line items"}
+                </button>
+                <button
+                  type="button"
+                  disabled={liteBusy || !liteLinesText.trim()}
+                  onClick={() => {
+                    setLiteLinesText("")
+                    setLiteNote(null)
+                  }}
+                  style={secondaryBtnStyle}
+                >
+                  Clear
+                </button>
+              </div>
+              {liteNote ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{liteNote}</p>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
+                  Tip: If qty or price is omitted, we default to qty <strong>1</strong> and price <strong>0</strong>.
+                </p>
+              )}
+            </div>
             <button type="button" onClick={onQuoteItemsOpen} style={secondaryBtnStyle}>
               Open quote items section
             </button>
