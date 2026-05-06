@@ -1056,8 +1056,36 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "estimate_template_specialty_inspection",
     type: "checkbox",
-    label: "Enable specialty / inspection-style workflows (inspection variance wizard on Estimates)",
+    label: "Enable specialty reports and documents",
     defaultChecked: false,
+  },
+  {
+    id: "estimate_template_report_home",
+    type: "checkbox",
+    label: "Home Inspection Report (structure & property)",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "estimate_template_specialty_inspection", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_report_pest",
+    type: "checkbox",
+    label: "Pest Inspection Report",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "estimate_template_specialty_inspection", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_report_survey",
+    type: "checkbox",
+    label: "Survey Report",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "estimate_template_specialty_inspection", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_report_body_shop",
+    type: "checkbox",
+    label: "Body Shop Repair documentation",
+    defaultChecked: false,
+    dependency: { dependsOnItemId: "estimate_template_specialty_inspection", showWhenValue: "checked" },
   },
 ]
 

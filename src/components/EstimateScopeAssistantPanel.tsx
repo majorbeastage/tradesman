@@ -19,6 +19,12 @@ type Props = {
   /** When set with onLinkedScopeChange, uses the same text as the Job Details field (single source of truth). */
   linkedScopeText?: string
   onLinkedScopeChange?: (next: string) => void
+  /** When false, scope analysis is disabled until earlier wizard context is complete. */
+  scopeAnalysisEnabled?: boolean
+  /** Merged job context for the model (conversations, attachments, notes, etc.); used when non-empty. */
+  mergedScopeForAnalysis?: string
+  /** Lighter chrome when nested under Job details. */
+  nested?: boolean
 }
 
 function storageDraftKey(quoteId: string): string {
@@ -33,6 +39,9 @@ export default function EstimateScopeAssistantPanel({
   onApproveLine,
   linkedScopeText,
   onLinkedScopeChange,
+  scopeAnalysisEnabled = true,
+  mergedScopeForAnalysis = "",
+  nested = false,
 }: Props) {
   const isLinkedScope = typeof onLinkedScopeChange === "function"
   const [draft, setDraft] = useState("")
@@ -139,9 +148,14 @@ export default function EstimateScopeAssistantPanel({
       alert("Sign in again to use scope analysis.")
       return
     }
-    const scopeText = draft.trim()
+    const merged = mergedScopeForAnalysis.trim()
+    const scopeText = (scopeAnalysisEnabled && merged ? merged : (isLinkedScope ? scopeDraft : draft).trim())
     if (!scopeText) {
-      alert("Describe the job scope first (text or voice).")
+      alert(
+        scopeAnalysisEnabled && merged
+          ? "Merged scope was empty. Add notes in Job details or complete earlier steps."
+          : "Describe the job scope first (text or voice).",
+      )
       return
     }
     setAnalyzeBusy(true)
@@ -190,16 +204,24 @@ export default function EstimateScopeAssistantPanel({
     }
   }
 
-  return (
-    <div
-      style={{
+  const surfaceStyle = nested
+    ? ({
+        marginBottom: 0,
+        padding: 0,
+        borderRadius: 0,
+        border: "none",
+        background: "transparent",
+      } as const)
+    : ({
         marginBottom: 18,
         padding: 14,
         borderRadius: 10,
         border: `1px solid ${theme.border}`,
         background: "linear-gradient(135deg, #f8fafc 0%, #ffffff 100%)",
-      }}
-    >
+      } as const)
+
+  return (
+    <div style={surfaceStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>
@@ -211,7 +233,7 @@ export default function EstimateScopeAssistantPanel({
               : "Describe the job in plain language (or tap Voice). Analyze scope to preview suggested rows — approve to add them to your spreadsheet."}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={startVoice}
@@ -232,17 +254,18 @@ export default function EstimateScopeAssistantPanel({
           </button>
           <button
             type="button"
-            disabled={analyzeBusy}
+            disabled={analyzeBusy || !scopeAnalysisEnabled}
             onClick={() => void analyzeScope()}
+            title={!scopeAnalysisEnabled ? "Complete customer, template, conversations, files, and job notes steps first." : undefined}
             style={{
               padding: "6px 12px",
               borderRadius: 8,
               border: "none",
-              background: theme.primary,
+              background: scopeAnalysisEnabled ? theme.primary : "#94a3b8",
               color: "#fff",
               fontWeight: 700,
               fontSize: 12,
-              cursor: analyzeBusy ? "wait" : "pointer",
+              cursor: analyzeBusy || !scopeAnalysisEnabled ? "not-allowed" : "pointer",
               whiteSpace: "nowrap",
             }}
           >
@@ -250,9 +273,16 @@ export default function EstimateScopeAssistantPanel({
           </button>
         </div>
       </div>
+      {!scopeAnalysisEnabled ? (
+        <p style={{ margin: "0 0 8px", fontSize: 12, color: "#b45309", lineHeight: 1.45 }}>
+          Finish the earlier Start quote steps (or skip them) to unlock scope analysis. The model will use your conversation summary, files, and job notes
+          together.
+        </p>
+      ) : null}
       {isLinkedScope ? (
         <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
           Scope text is edited in <strong style={{ color: "#334155" }}>Job Details</strong> above; voice adds to that field.
+          {mergedScopeForAnalysis.trim() ? " Analyze scope sends your full saved context (not only this box) to the assistant." : null}
         </p>
       ) : (
         <textarea

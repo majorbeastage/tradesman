@@ -31,6 +31,10 @@ export type EstimateGuideFlags = {
   quoteItemsSkipped?: boolean
   /** Preview/review step completed. */
   previewReviewed?: boolean
+  /** AI bullet summary from conversation thread (plain text, newline-separated). */
+  conversationScopeBullets?: string
+  /** AI bullet summary from job pack (template + conv + attachments + notes). */
+  jobScopePackBullets?: string
 }
 
 function key(quoteId: string): string {

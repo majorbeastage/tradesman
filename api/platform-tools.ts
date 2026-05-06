@@ -453,6 +453,75 @@ Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed
   res.status(200).json({ ok: true, suggestions, clarifications })
 }
 
+/**
+ * Bullet summaries for estimate wizard (conversations → scope cues; job pack → labor/materials/etc.).
+ * POST body: { mode: "conversation" | "job_pack", pack: string }
+ */
+async function handleEstimateWizardBullets(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+
+  const body = jsonBody(req)
+  const modeRaw = pickFirstString(body.mode).toLowerCase()
+  const mode = modeRaw === "job_pack" ? "job_pack" : modeRaw === "conversation" ? "conversation" : ""
+  const pack = pickFirstString(body.pack).slice(0, 12000)
+
+  if (!mode) {
+    res.status(400).json({ error: "mode must be conversation or job_pack" })
+    return
+  }
+  if (!pack.trim()) {
+    res.status(400).json({ error: "pack required" })
+    return
+  }
+
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey) {
+    res.status(200).json({
+      ok: true,
+      bullets: [] as string[],
+      fallback: true,
+      note: "Connect OpenAI (OPENAI_API_KEY) to generate AI summaries for this step.",
+    })
+    return
+  }
+
+  const instructions =
+    mode === "conversation"
+      ? `You extract contracting-relevant facts from messages between a contractor and customer.
+Reply with JSON only, no markdown: {"bullets": string[]}
+Rules: Max 14 bullets. Each bullet is one short line (no leading "•").
+Cover anything evident: scope of work requested, labor or time hints, equipment, materials, pricing mentions, scheduling/dates, access constraints, unknowns.
+If the thread is empty or useless, return {"bullets": []}.`
+      : `You summarize job execution needs for an estimate from the provided context (may include conversation summary, template/job notes, file names, contractor notes).
+Reply with JSON only, no markdown: {"bullets": string[]}
+Rules: Max 16 bullets. Short lines. Prefer categories when relevant: labor hours estimate (rough), crew size, materials list hints, equipment, scope breakdown, pricing hints, scheduling windows, special circumstances/safety/access.
+If critical info is missing, include bullets that say what is still unknown.`
+
+  const raw =
+    (await openAiText(instructions, pack.slice(0, 14000)))?.trim() ?? "{}"
+
+  let bullets: string[] = []
+  try {
+    const j = JSON.parse(raw) as { bullets?: unknown }
+    if (Array.isArray(j.bullets)) {
+      bullets = j.bullets
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.replace(/^\s*[•\-*]\s*/, "").trim().slice(0, 400))
+        .filter(Boolean)
+        .slice(0, 18)
+    }
+  } catch {
+    bullets = []
+  }
+
+  res.status(200).json({ ok: true, bullets })
+}
+
 function jsonBody(req: VercelRequest): Record<string, unknown> {
   return bodyAsRecord(req)
 }
@@ -1468,6 +1537,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "estimate-legal-draft",
         "quote-estimate-review",
         "estimate-scope-lines",
+        "estimate-wizard-bullets",
         "lead-evaluate-fit",
         "customer-evaluate-fit",
         "helcim-js-return",
@@ -1521,6 +1591,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "estimate-scope-lines") {
       await handleEstimateScopeLines(req, res)
+      return
+    }
+    if (route === "estimate-wizard-bullets") {
+      await handleEstimateWizardBullets(req, res)
       return
     }
     if (route === "lead-evaluate-fit") {
