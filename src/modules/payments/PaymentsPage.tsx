@@ -51,6 +51,16 @@ const textareaStyle: CSSProperties = {
   fontFamily: "inherit",
 }
 
+function formatProfilePaymentIso(iso: string | null | undefined): string {
+  const s = typeof iso === "string" ? iso.trim() : ""
+  if (!s) return "—"
+  const t = Date.parse(s)
+  if (!Number.isFinite(t)) return "—"
+  return new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+type PaymentsHubTab = "tradesman" | "customer" | "history"
+
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
   const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
@@ -75,6 +85,7 @@ export default function PaymentsPage() {
   const [customerPaySaving, setCustomerPaySaving] = useState(false)
   const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [customerPayCopied, setCustomerPayCopied] = useState(false)
+  const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("tradesman")
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -240,6 +251,7 @@ export default function PaymentsPage() {
       } catch {
         return
       }
+      setPaymentsHubTab("customer")
       window.setTimeout(() => {
         document.getElementById("customer-pay-collection")?.scrollIntoView({ behavior: "smooth", block: "start" })
       }, 320)
@@ -348,11 +360,77 @@ export default function PaymentsPage() {
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>Payments</h1>
 
-      <p style={{ color: "#475569", margin: "0 0 14px", lineHeight: 1.55, fontSize: 14 }}>
-        <strong style={{ color: theme.text }}>Customer payments</strong> (your homeowner or GC) are separate from{' '}
-        <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> below — different portal, accounting, and payer.
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <button
+          type="button"
+          onClick={() => setPaymentsHubTab("tradesman")}
+          style={{
+            padding: "12px 18px",
+            borderRadius: 10,
+            border: `2px solid ${paymentsHubTab === "tradesman" ? theme.primary : theme.border}`,
+            background: paymentsHubTab === "tradesman" ? "rgba(14,165,233,0.1)" : "#fff",
+            fontWeight: 700,
+            fontSize: 14,
+            color: theme.text,
+            cursor: "pointer",
+          }}
+        >
+          Manage Payments to Tradesman
+        </button>
+        <button
+          type="button"
+          onClick={() => setPaymentsHubTab("customer")}
+          style={{
+            padding: "12px 18px",
+            borderRadius: 10,
+            border: `2px solid ${paymentsHubTab === "customer" ? theme.primary : theme.border}`,
+            background: paymentsHubTab === "customer" ? "rgba(14,165,233,0.1)" : "#fff",
+            fontWeight: 700,
+            fontSize: 14,
+            color: theme.text,
+            cursor: "pointer",
+          }}
+        >
+          Send Payment Information to Customer
+        </button>
+        <button
+          type="button"
+          onClick={() => setPaymentsHubTab("history")}
+          style={{
+            padding: "12px 18px",
+            borderRadius: 10,
+            border: `2px solid ${paymentsHubTab === "history" ? theme.primary : theme.border}`,
+            background: paymentsHubTab === "history" ? "rgba(14,165,233,0.1)" : "#fff",
+            fontWeight: 700,
+            fontSize: 14,
+            color: theme.text,
+            cursor: "pointer",
+          }}
+        >
+          View Previous Payments
+        </button>
+      </div>
+
+      <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
+        {paymentsHubTab === "customer" ? (
+          <>
+            <strong style={{ color: theme.text }}>Customer collections</strong> — hosted pay links and instructions you send to homeowners or
+            GCs (not your Tradesman subscription).
+          </>
+        ) : paymentsHubTab === "tradesman" ? (
+          <>
+            <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> — your office pays Tradesman through the processor
+            below; separate from homeowner payments.
+          </>
+        ) : (
+          <>
+            <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — last successful charge we know about (from your
+            profile) plus this browser session &apos;s latest Helcim result when you pay here.
+          </>
+        )}
       </p>
 
+      {paymentsHubTab === "customer" ? (
       <section
         id="customer-pay-collection"
         style={{
@@ -537,7 +615,10 @@ export default function PaymentsPage() {
           </div>
         </div>
       </section>
+      ) : null}
 
+      {paymentsHubTab === "tradesman" ? (
+      <>
       <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#94a3b8", letterSpacing: 0.03, margin: "0 0 14px", textTransform: "uppercase" }}>
         Subscription &amp; Tradesman billing
       </h2>
@@ -871,6 +952,75 @@ export default function PaymentsPage() {
           )}
         </>
       )}
+      </>
+      ) : null}
+
+      {paymentsHubTab === "history" ? (
+        <section
+          style={{
+            padding: 22,
+            borderRadius: 12,
+            border: `1px solid ${theme.border}`,
+            background: "#f8fafc",
+          }}
+        >
+          <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+            Previous payments (subscription)
+          </h2>
+          <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
+            This page reflects metadata we store on your profile. Use Admin → Billing &amp; Helcim and your processor &apos;s dashboard for a
+            full statement.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
+            <li>
+              <strong>Last successful sync</strong> (Tradesman billing): {formatProfilePaymentIso(billingForPayments.billing_last_success_at)}
+            </li>
+            <li>
+              <strong>Next due date on file</strong>: {billingForPayments.billing_payment_due_date?.trim() || "—"}
+            </li>
+            <li>
+              <strong>Catalog monthly total</strong> (before tax):{" "}
+              {monthlyPlanTotal > 0 ? formatUsdMonthly(monthlyPlanTotal) : "—"}
+            </li>
+            <li>
+              <strong>Helcim customer code</strong>: {customerCode?.trim() || "—"}
+            </li>
+          </ul>
+          {lastResult ? (
+            <div
+              style={{
+                marginTop: 18,
+                padding: 14,
+                borderRadius: 10,
+                border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
+                background: lastResult.response === 1 ? "#ecfdf5" : "#fef2f2",
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              <strong style={{ display: "block", marginBottom: 6 }}>Latest attempt this session (embedded checkout)</strong>
+              <span>{lastResult.response === 1 ? "Approved" : "Not approved"}</span>
+              {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
+              {lastResult.transactionId ? (
+                <div style={{ marginTop: 6, fontSize: 13 }}>
+                  Reference: {lastResult.transactionId}
+                  {lastResult.amount ? (
+                    <>
+                      {" "}
+                      · Amount: {lastResult.amount} {lastResult.currency || ""}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p style={{ margin: "16px 0 0", fontSize: 13, color: "#64748b" }}>
+              Pay from the <strong>Manage Payments to Tradesman</strong> tab to see a live result here after you submit a card in this
+              browser.
+            </p>
+          )}
+        </section>
+      ) : null}
     </div>
   )
 }

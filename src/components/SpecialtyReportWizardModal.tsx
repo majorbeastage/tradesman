@@ -50,6 +50,7 @@ declare global {
     webkitSpeechRecognition?: new () => SpeechRecognition
   }
   interface SpeechRecognitionEvent extends Event {
+    readonly resultIndex: number
     readonly results: SpeechRecognitionResultList
   }
   interface SpeechRecognition extends EventTarget {
@@ -69,6 +70,86 @@ const META_KEY_GENERIC_PREFIX = "specialty_report_notes_"
 const META_KEY_GENERIC_MEDIA_PREFIX = "specialty_report_media_"
 const REPORT_MEDIA_BUCKET = "specialty-report-media"
 type FieldMediaItem = { id: string; name: string; mime: string; size: number; url: string; uploaded_at: string }
+
+function labelForAiTarget(t: AiTargetField): string {
+  if (t === "scopeLimitations") return "Scope & limitations"
+  if (t === "mediaWorkflowNotes") return "Media workflow notes"
+  if (t === "droneIntegrationNotes") return "Drone / integration notes"
+  if (t === "summaryFindings") return "Executive summary"
+  if (t === "genericNotes") return "Generic report notes"
+  if (t.startsWith("sub:")) {
+    const id = t.slice(4)
+    for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+      const sub = sec.subsections.find((s) => s.id === id)
+      if (sub) return `Findings: ${sub.label}`
+    }
+    return "Findings subsection"
+  }
+  return "Report field"
+}
+
+/** Match first words of free text to a findings subsection (for “Tradesman record …” routing). */
+function matchFindingsSubsection(rest: string): { target: AiTargetField; body: string } | null {
+  const words = rest.trim().split(/\s+/).filter(Boolean)
+  for (let take = Math.min(8, words.length); take >= 1; take -= 1) {
+    const phrase = words.slice(0, take).join(" ").toLowerCase()
+    if (phrase.length < 3) continue
+    for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+      for (const sub of sec.subsections) {
+        const L = sub.label.toLowerCase()
+        if (phrase.length >= 4 && (L.includes(phrase) || phrase.includes(L))) {
+          const body = words.slice(take).join(" ").trim()
+          return { target: `sub:${sub.id}`, body }
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Voice / typing helper: after “Tradesman record”, optional area keyword then note text.
+ * Examples: “Tradesman record summary roof needs flashing”, “Tradesman record scope. Limited attic access.”
+ */
+function parseTradesmanRecordIntent(raw: string): {
+  consumed: boolean
+  target?: AiTargetField
+  body?: string
+  hint?: string
+} {
+  const text = raw.trim()
+  if (!text) return { consumed: false }
+  const wake = /^\s*tradesman\s+record\b[,:\s]*/i
+  if (!wake.test(text)) return { consumed: false }
+  let rest = text.replace(wake, "").trim()
+  if (!rest) {
+    return {
+      consumed: true,
+      hint: 'Say where to record (scope, summary, media, drone, generic, or a findings label like “roof”), then your note — or pick the field above.',
+    }
+  }
+
+  const routesFixed: Array<{ re: RegExp; target: AiTargetField }> = [
+    { re: /^(executive\s+summary|summary)\b/i, target: "summaryFindings" },
+    { re: /^(scope|limitations|header\s+scope)\b/i, target: "scopeLimitations" },
+    { re: /^(media|workflow)\b/i, target: "mediaWorkflowNotes" },
+    { re: /^drone\b/i, target: "droneIntegrationNotes" },
+    { re: /^(generic(\s+notes)?)\b/i, target: "genericNotes" },
+  ]
+
+  for (const { re, target } of routesFixed) {
+    const m = rest.match(re)
+    if (m) {
+      const body = rest.slice(m[0].length).replace(/^[,.\s:-]+/, "").trim()
+      return { consumed: true, target, body }
+    }
+  }
+
+  const sub = matchFindingsSubsection(rest)
+  if (sub) return { consumed: true, target: sub.target, body: sub.body }
+
+  return { consumed: true, body: rest }
+}
 
 export default function SpecialtyReportWizardModal({
   open,
@@ -98,6 +179,9 @@ export default function SpecialtyReportWizardModal({
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [assignedUserId, setAssignedUserId] = useState<string>("")
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  /** Snapshot + appended finals + interim (Web Speech fires overlapping interim finals). */
+  const voiceSessionBaseRef = useRef("")
+  const voiceFinalSuffixRef = useRef("")
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -479,7 +563,30 @@ export default function SpecialtyReportWizardModal({
   function runAssistantCommand(raw: string) {
     const text = raw.trim()
     if (!text) return
-    const command = text.toLowerCase()
+    const lower = text.toLowerCase()
+    if (/\btradesman\s+record\b/i.test(lower)) {
+      const wakeParsed = parseTradesmanRecordIntent(raw)
+      if (wakeParsed.consumed) {
+        if (wakeParsed.hint) {
+          setAssistantNote(wakeParsed.hint)
+          return
+        }
+        const tgt = wakeParsed.target ?? aiTarget
+        if (wakeParsed.target) setAiTarget(wakeParsed.target)
+        const chunk = (wakeParsed.body ?? "").trim()
+        if (chunk) {
+          appendToTarget(tgt, chunk)
+          setAssistantNote(`Recorded into ${labelForAiTarget(tgt)}.`)
+        } else if (wakeParsed.target) {
+          setAssistantNote(`Recording target: ${labelForAiTarget(wakeParsed.target)}. Add your note next.`)
+        } else {
+          setAssistantNote('Say a section after “Tradesman record” (scope, summary, media, …) or pick a field above.')
+        }
+        setAssistantText("")
+        return
+      }
+    }
+    const command = lower
     if (command === "next" || command === "next step") {
       goNextPhase()
       setAssistantNote("Moved to the next step.")
@@ -525,29 +632,36 @@ export default function SpecialtyReportWizardModal({
       return
     }
     try {
+      voiceSessionBaseRef.current = targetFieldKey ? readFieldValue(targetFieldKey) : assistantText
+      voiceFinalSuffixRef.current = ""
       const rec = new Ctor()
       recognitionRef.current = rec
       rec.continuous = true
       rec.interimResults = true
       rec.lang = "en-US"
       rec.onresult = (ev: SpeechRecognitionEvent) => {
-        let out = ""
-        for (let i = ev.results.length - 1; i >= 0; i -= 1) {
+        const ri = typeof ev.resultIndex === "number" ? ev.resultIndex : 0
+        for (let i = ri; i < ev.results.length; i += 1) {
           const item = ev.results[i]
-          if (!item) continue
-          const alt = item[0]
-          if (!alt?.transcript) continue
-          out = alt.transcript.trim()
-          break
-        }
-        if (out) {
-          if (targetFieldKey) {
-            const prev = readFieldValue(targetFieldKey).trim()
-            writeFieldValue(targetFieldKey, prev ? `${prev}\n${out}` : out)
-            setSaveNote("Voice text added to field.")
-          } else {
-            setAssistantText(out)
+          const piece = item?.[0]?.transcript
+          if (!piece) continue
+          if (item.isFinal) {
+            voiceFinalSuffixRef.current += piece
           }
+        }
+        let interim = ""
+        for (let i = ri; i < ev.results.length; i += 1) {
+          const item = ev.results[i]
+          const piece = item?.[0]?.transcript
+          if (!piece || item.isFinal) continue
+          interim += piece
+        }
+        const display = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}${interim}`
+        if (targetFieldKey) {
+          writeFieldValue(targetFieldKey, display)
+          setSaveNote("Voice text added to field.")
+        } else {
+          setAssistantText(display)
         }
       }
       rec.onerror = () => setAssistantNote("Voice input failed. Check mic permissions and retry.")
@@ -558,7 +672,9 @@ export default function SpecialtyReportWizardModal({
       rec.start()
       setAssistantListening(true)
       setVoiceFieldKey(targetFieldKey ?? null)
-      setAssistantNote("Listening… say text, or commands like 'next step' / 'go to findings'.")
+      setAssistantNote(
+        "Listening… Say “Tradesman record” plus scope / summary / media / a findings label, then your note. Or use navigation: next step, go to findings.",
+      )
     } catch {
       setAssistantListening(false)
       setAssistantNote("Could not start voice dictation.")
@@ -568,6 +684,8 @@ export default function SpecialtyReportWizardModal({
   function stopDictation() {
     recognitionRef.current?.stop()
     recognitionRef.current = null
+    voiceSessionBaseRef.current = ""
+    voiceFinalSuffixRef.current = ""
     setAssistantListening(false)
     setVoiceFieldKey(null)
   }
@@ -743,7 +861,7 @@ export default function SpecialtyReportWizardModal({
               </div>
             </div>
             <p style={{ margin: "8px 0 10px", fontSize: 12, color: "#7c2d12", lineHeight: 1.5 }}>
-              Use this as your report copilot. It can move steps and enter dictated text into a selected field. We can promote this to a full-page flow next iteration.
+              Voice keeps adding text (no more single-line overwrite). Say <strong>Tradesman record</strong> then a section (scope, summary, media, drone, generic, or a findings label like “roof covering”) and your note — or pick the field first and apply.
             </p>
             <div style={{ display: "grid", gap: 8 }}>
               <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value as AiTargetField)} style={{ ...theme.formInput, maxWidth: 360 }}>
@@ -764,7 +882,7 @@ export default function SpecialtyReportWizardModal({
                 rows={2}
                 value={assistantText}
                 onChange={(e) => setAssistantText(e.target.value)}
-                placeholder="Type or dictate here. Commands: next step, back, go to findings/header/media/review."
+                placeholder='Example: Tradesman record summary Customer wants flashing replaced. Also: next step, go to findings.'
                 style={{ ...theme.formInput, resize: "vertical" }}
               />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

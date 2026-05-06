@@ -37,6 +37,11 @@ type Props = {
   onQuoteItemsSkip: () => void
   onQuoteItemsOpen: () => void
   onQuoteItemsLiteAdd: (raw: string) => Promise<string>
+  /** AI-filled quote lines from merged job details / bullets (same API as scope assistant). */
+  onQuoteItemsAiFromJobDetails?: () => Promise<string>
+  quoteItemsAiBusy?: boolean
+  /** False when job context for AI is empty — button stays disabled with tooltip via note */
+  hasJobDetailsForAiLines?: boolean
   quoteItemsBusy: boolean
   onPreviewOnly: () => void
   onPreviewOpenSection: () => void
@@ -84,6 +89,9 @@ export default function EstimateStartGuideModal({
   onQuoteItemsSkip,
   onQuoteItemsOpen,
   onQuoteItemsLiteAdd,
+  onQuoteItemsAiFromJobDetails,
+  quoteItemsAiBusy = false,
+  hasJobDetailsForAiLines = false,
   quoteItemsBusy,
   onPreviewOnly,
   onPreviewOpenSection,
@@ -103,6 +111,7 @@ export default function EstimateStartGuideModal({
   const [liteLinesText, setLiteLinesText] = useState("")
   const [liteBusy, setLiteBusy] = useState(false)
   const [liteNote, setLiteNote] = useState<string | null>(null)
+  const [aiLinesNote, setAiLinesNote] = useState<string | null>(null)
 
   const conversationBulletLines = useMemo(
     () =>
@@ -561,6 +570,26 @@ export default function EstimateStartGuideModal({
                 >
                   Clear
                 </button>
+                {typeof onQuoteItemsAiFromJobDetails === "function" ? (
+                  <button
+                    type="button"
+                    disabled={
+                      quoteItemsBusy ||
+                      quoteItemsAiBusy ||
+                      !hasJobDetailsForAiLines
+                    }
+                    onClick={() => {
+                      void (async () => {
+                        setAiLinesNote(null)
+                        const msg = await onQuoteItemsAiFromJobDetails()
+                        setAiLinesNote(msg)
+                      })()
+                    }}
+                    style={{ ...secondaryBtnStyle, fontWeight: 700, border: `2px solid ${theme.primary}` }}
+                  >
+                    {quoteItemsAiBusy ? "Generating lines…" : "AI: fill lines from job details"}
+                  </button>
+                ) : null}
               </div>
               {liteNote ? (
                 <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{liteNote}</p>
@@ -569,6 +598,9 @@ export default function EstimateStartGuideModal({
                   Tip: If qty or price is omitted, we default to qty <strong>1</strong> and price <strong>0</strong>.
                 </p>
               )}
+              {aiLinesNote ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>{aiLinesNote}</p>
+              ) : null}
             </div>
             <button type="button" onClick={onQuoteItemsOpen} style={secondaryBtnStyle}>
               Open quote items section

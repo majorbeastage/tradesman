@@ -383,6 +383,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [estimateGuideCustomerPick, setEstimateGuideCustomerPick] = useState("")
   const [estimateGuideTemplatePick, setEstimateGuideTemplatePick] = useState("")
   const [estimateGuideBusy, setEstimateGuideBusy] = useState(false)
+  const [guideQuoteItemsAiBusy, setGuideQuoteItemsAiBusy] = useState(false)
   const [estimateCustomerFoldOpen, setEstimateCustomerFoldOpen] = useState(false)
   const [estimateTemplatesFoldOpen, setEstimateTemplatesFoldOpen] = useState(false)
   const [estimateConversationsFoldOpen, setEstimateConversationsFoldOpen] = useState(false)
@@ -2101,6 +2102,72 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return `Added ${added} item${added === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped}.` : "."}`
   }
 
+  async function handleGuideQuoteItemsAiFromJobDetails(): Promise<string> {
+    const scopeText = mergedScopeForAi.trim()
+    if (!scopeText) {
+      return "Add job details, conversation or job-scope AI bullets, uploads, or template context first — then run AI line items."
+    }
+    if (!supabase || !selectedQuoteId) return "Open an estimate first."
+    let tok = session?.access_token?.trim() ?? ""
+    const { data: refreshed } = await supabase.auth.refreshSession()
+    if (refreshed.session?.access_token) tok = refreshed.session.access_token.trim()
+    else {
+      const { data: snap } = await supabase.auth.getSession()
+      if (snap.session?.access_token) tok = snap.session.access_token.trim()
+    }
+    if (!tok) return "Sign in again to use AI line items."
+    setGuideQuoteItemsAiBusy(true)
+    try {
+      const res = await fetch("/api/platform-tools?__route=estimate-scope-lines", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tok}`,
+        },
+        body: platformToolsJsonBody({
+          scopeText,
+          tradeHint: quoteTradeHintForAi,
+          existingLines: estimateScopeExistingLines,
+        }),
+      })
+      const j = (await res.json()) as {
+        ok?: boolean
+        suggestions?: Array<{ description?: string; quantity?: number; unit_price?: number }>
+        clarifications?: string[]
+        fallback?: boolean
+        error?: string
+      }
+      if (!res.ok) throw new Error(j.error || "Request failed")
+      const suggestions = Array.isArray(j.suggestions) ? j.suggestions : []
+      let added = 0
+      for (const row of suggestions) {
+        const description = String(row?.description ?? "").trim()
+        if (!description) continue
+        const qty = typeof row.quantity === "number" ? row.quantity : Number.parseFloat(String(row.quantity ?? 1)) || 1
+        const price = typeof row.unit_price === "number" ? row.unit_price : Number.parseFloat(String(row.unit_price ?? 0)) || 0
+        const result = await insertQuoteItemRowSafe(supabase, {
+          quote_id: selectedQuoteId,
+          description,
+          quantity: Number.isFinite(qty) ? qty : 1,
+          unit_price: Number.isFinite(price) ? price : 0,
+        })
+        if (result.ok) added += 1
+      }
+      if (added > 0) void refreshQuoteItemsOnly()
+      const clar = Array.isArray(j.clarifications) && j.clarifications.length ? ` ${j.clarifications.join(" ")}` : ""
+      if (j.fallback && added === 0) {
+        return `No lines added yet.${clar || " Add OPENAI_API_KEY on the server for AI line generation."}`
+      }
+      return added > 0
+        ? `Added ${added} line item${added === 1 ? "" : "s"} from your job context.${clar}`
+        : `No new lines were added (they may already match the list).${clar}`
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    } finally {
+      setGuideQuoteItemsAiBusy(false)
+    }
+  }
+
   function handleGuideQuoteItemsSkip() {
     if (selectedQuote?.id) {
       saveEstimateGuideFlags(selectedQuote.id, { quoteItemsSkipped: true })
@@ -2581,6 +2648,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return { description: String(desc), quantity, unit_price }
     })
   }, [selectedQuoteItems])
+
+  const quoteTradeHintForAi = useMemo(() => {
+    const q = selectedQuote as QuoteRow | null
+    const jtId = typeof q?.job_type_id === "string" ? q.job_type_id.trim() : ""
+    if (!jtId) return ""
+    const jt = quoteDetailJobTypes.find((j) => j.id === jtId)
+    return jt?.name?.trim() ?? ""
+  }, [selectedQuote, quoteDetailJobTypes])
 
   const estimateScopeAnalysisPreflight = useMemo(
     () =>
@@ -4719,7 +4794,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
                               onQuoteItemsOpen={() => openGuideSection(quoteItemsSectionRef)}
                               onQuoteItemsLiteAdd={handleGuideQuoteItemsLiteAdd}
-                              quoteItemsBusy={estimateGuideBusy}
+                              onQuoteItemsAiFromJobDetails={handleGuideQuoteItemsAiFromJobDetails}
+                              quoteItemsAiBusy={guideQuoteItemsAiBusy}
+                              hasJobDetailsForAiLines={mergedScopeForAi.trim().length > 0}
+                              quoteItemsBusy={estimateGuideBusy || guideQuoteItemsAiBusy}
                               onPreviewOnly={() => {
                                 void previewEstimateDocument()
                                 if (selectedQuote?.id) {
