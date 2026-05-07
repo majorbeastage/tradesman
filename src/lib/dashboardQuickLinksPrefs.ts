@@ -30,9 +30,17 @@ export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = 
   "payments",
 ]
 
+/** Visual preset for dashboard quick-link tiles (saved on profile). */
+export type DashboardTileScheme = "ember" | "ocean" | "slate" | "paper"
+
+export const DASHBOARD_TILE_SCHEMES: DashboardTileScheme[] = ["ember", "ocean", "slate", "paper"]
+
+export const DEFAULT_DASHBOARD_TILE_SCHEME: DashboardTileScheme = "ember"
+
 export type DashboardQuickLinksStored = {
   v: 1
   optional_order?: DashboardOptionalQuickLinkId[]
+  tile_scheme?: DashboardTileScheme
 }
 
 export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStored | null {
@@ -40,10 +48,16 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
   const o = raw as Record<string, unknown>
   if (o.v !== 1) return null
   const ord = o.optional_order
-  if (!Array.isArray(ord)) return { v: 1 }
   const allowed = ALL_DASHBOARD_OPTIONAL_IDS
-  const parsed = ord.filter((x): x is DashboardOptionalQuickLinkId => typeof x === "string" && allowed.has(x as DashboardOptionalQuickLinkId))
-  return { v: 1, optional_order: parsed }
+  const parsed = Array.isArray(ord)
+    ? ord.filter((x): x is DashboardOptionalQuickLinkId => typeof x === "string" && allowed.has(x as DashboardOptionalQuickLinkId))
+    : []
+  const ts = o.tile_scheme
+  const tile_scheme =
+    ts === "ember" || ts === "ocean" || ts === "slate" || ts === "paper" ? (ts as DashboardTileScheme) : undefined
+  const out: DashboardQuickLinksStored = { v: 1, tile_scheme }
+  if (parsed.length) out.optional_order = parsed
+  return out
 }
 
 export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLinkId[] | undefined): DashboardOptionalQuickLinkId[] {
@@ -63,7 +77,16 @@ export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLin
 
 export function mergeDashboardQuickLinksMetadata(
   prevMeta: Record<string, unknown>,
-  prefs: DashboardQuickLinksStored,
+  patch: Partial<Pick<DashboardQuickLinksStored, "optional_order" | "tile_scheme">>,
 ): Record<string, unknown> {
-  return { ...prevMeta, dashboard_quick_links: prefs }
+  const existing = parseDashboardQuickLinks(prevMeta.dashboard_quick_links)
+  const next: DashboardQuickLinksStored = {
+    v: 1,
+    optional_order:
+      patch.optional_order !== undefined
+        ? normalizeDashboardOptionalOrder(patch.optional_order)
+        : normalizeDashboardOptionalOrder(existing?.optional_order),
+    tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
+  }
+  return { ...prevMeta, dashboard_quick_links: next }
 }

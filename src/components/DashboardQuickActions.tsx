@@ -9,10 +9,13 @@ import { supabase } from "../lib/supabase"
 import {
   ALL_DASHBOARD_OPTIONAL_IDS,
   DASHBOARD_PALETTE_ONLY_IDS,
+  DEFAULT_DASHBOARD_TILE_SCHEME,
+  DASHBOARD_TILE_SCHEMES,
   mergeDashboardQuickLinksMetadata,
   normalizeDashboardOptionalOrder,
   parseDashboardQuickLinks,
   type DashboardOptionalQuickLinkId,
+  type DashboardTileScheme,
 } from "../lib/dashboardQuickLinksPrefs"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 
@@ -54,7 +57,175 @@ type Props = {
     customizeRemove: string
     savedCloud: string
     savedDeviceOnly: string
+    cardLookLabel: string
+    cardLookHint: string
+    cardLookEmber: string
+    cardLookOcean: string
+    cardLookSlate: string
+    cardLookPaper: string
   }
+}
+
+function schemeHoverBorder(scheme: DashboardTileScheme): string {
+  switch (scheme) {
+    case "ocean":
+      return "rgba(14, 165, 233, 0.65)"
+    case "slate":
+      return "rgba(71, 85, 105, 0.55)"
+    case "paper":
+      return "rgba(14, 165, 233, 0.45)"
+    default:
+      return "rgba(249, 115, 22, 0.58)"
+  }
+}
+
+function dashShellStyle(isMobile: boolean, scheme: DashboardTileScheme): CSSProperties {
+  const pad = isMobile ? "12px 12px 14px" : "16px 16px 18px"
+  const base: CSSProperties = {
+    padding: pad,
+    borderRadius: 12,
+    marginBottom: 8,
+  }
+  switch (scheme) {
+    case "ocean":
+      return {
+        ...base,
+        background: "linear-gradient(175deg, #e0f2fe 0%, #bae6fd 50%, #93c5fd 100%)",
+        border: "1px solid rgba(14, 116, 144, 0.32)",
+        boxShadow:
+          "inset 0 1px 0 rgba(255,255,255,0.65), 0 12px 32px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.04)",
+      }
+    case "slate":
+      return {
+        ...base,
+        background: "linear-gradient(175deg, #e2e8f0 0%, #cbd5e1 52%, #94a3b8 100%)",
+        border: "1px solid rgba(30, 41, 59, 0.38)",
+        boxShadow:
+          "inset 0 1px 0 rgba(255,255,255,0.5), 0 10px 28px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.06)",
+      }
+    case "paper":
+      return {
+        ...base,
+        background: "#f8fafc",
+        border: `1px solid ${theme.border}`,
+        boxShadow: "0 8px 26px rgba(15, 23, 42, 0.07)",
+      }
+    default:
+      return {
+        ...base,
+        background: "linear-gradient(175deg, #cbd5e1 0%, #b8c4d4 52%, #a8b6ca 100%)",
+        border: "1px solid rgba(30, 41, 59, 0.35)",
+        boxShadow:
+          "inset 0 1px 0 rgba(255,255,255,0.55), 0 12px 32px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.04)",
+      }
+  }
+}
+
+function tileButtonStyle(
+  scheme: DashboardTileScheme,
+  opts: { primaryRow: boolean; compact: boolean; disabled?: boolean; dimmed?: boolean },
+): CSSProperties {
+  const { primaryRow, compact, disabled, dimmed } = opts
+  const minHeight = compact ? 88 : 96
+  switch (scheme) {
+    case "ocean":
+      return {
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        alignItems: "flex-start",
+        minHeight,
+        padding: "14px 14px 13px",
+        borderRadius: 12,
+        border: primaryRow ? "1px solid rgba(14, 165, 233, 0.42)" : "1px solid rgba(100, 116, 139, 0.42)",
+        background: primaryRow
+          ? "linear-gradient(165deg, rgba(15, 118, 110, 0.88) 0%, rgba(15, 118, 110, 0.92) 45%, rgba(17, 94, 89, 0.96) 100%)"
+          : "linear-gradient(160deg, #f0fdfa 0%, #e0f2fe 55%, #dbeafe 100%)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        textAlign: "left",
+        overflow: "hidden",
+        boxShadow: primaryRow
+          ? "inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 18px rgba(14, 165, 233, 0.18), 0 8px 22px rgba(0,0,0,0.2)"
+          : "inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 10px rgba(15, 23, 42, 0.1)",
+        opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
+      }
+    case "slate":
+      return {
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        alignItems: "flex-start",
+        minHeight,
+        padding: "14px 14px 13px",
+        borderRadius: 12,
+        border: primaryRow ? "1px solid rgba(51, 65, 85, 0.45)" : "1px solid rgba(100, 116, 139, 0.4)",
+        background: primaryRow
+          ? "linear-gradient(165deg, rgba(51, 65, 85, 0.92) 0%, rgba(30, 41, 59, 0.95) 52%, rgba(15, 23, 42, 0.98) 100%)"
+          : "linear-gradient(160deg, #f1f5f9 0%, #e2e8f0 46%, #cbd5e1 100%)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        textAlign: "left",
+        overflow: "hidden",
+        boxShadow: primaryRow
+          ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 14px rgba(15, 23, 42, 0.35)"
+          : "inset 0 1px 0 rgba(255,255,255,0.55), 0 2px 8px rgba(15, 23, 42, 0.12)",
+        opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
+      }
+    case "paper":
+      return {
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        alignItems: "flex-start",
+        minHeight,
+        padding: "14px 14px 13px",
+        borderRadius: 12,
+        border: primaryRow ? `1px solid ${theme.border}` : "1px solid #e2e8f0",
+        background: primaryRow ? "#ffffff" : "#f1f5f9",
+        cursor: disabled ? "not-allowed" : "pointer",
+        textAlign: "left",
+        overflow: "hidden",
+        boxShadow: primaryRow ? "0 2px 14px rgba(15, 23, 42, 0.07)" : "0 1px 8px rgba(15, 23, 42, 0.05)",
+        opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
+      }
+    default:
+      return {
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        alignItems: "flex-start",
+        minHeight,
+        padding: "14px 14px 13px",
+        borderRadius: 12,
+        border: primaryRow ? `1px solid rgba(249, 115, 22, 0.35)` : `1px solid rgba(100, 116, 139, 0.42)`,
+        background: primaryRow
+          ? "linear-gradient(165deg, rgba(51, 65, 85, 0.84) 0%, rgba(30, 41, 59, 0.88) 58%, rgba(30, 41, 59, 0.95) 100%)"
+          : "linear-gradient(160deg, #eef2f7 0%, #e2e8f0 46%, #dbe4ef 100%)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        textAlign: "left",
+        overflow: "hidden",
+        boxShadow: primaryRow
+          ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 18px rgba(249, 115, 22, 0.12), 0 8px 22px rgba(0,0,0,0.22)"
+          : "inset 0 1px 0 rgba(255,255,255,0.65), 0 2px 10px rgba(15, 23, 42, 0.12)",
+        opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
+      }
+  }
+}
+
+function tileLabelColor(scheme: DashboardTileScheme, primaryRow: boolean): string {
+  if (scheme === "paper") return "#0f172a"
+  return primaryRow ? "#f8fafc" : "#0f172a"
+}
+
+function tileArrowColor(scheme: DashboardTileScheme, primaryRow: boolean, accent: string): string {
+  if (primaryRow) {
+    if (scheme === "paper") return accent
+    return accent
+  }
+  return "#334155"
 }
 
 function resolveFourthCalendarState(
@@ -83,6 +254,7 @@ function resolveFourthCalendarState(
 }
 
 function Tile({
+  scheme,
   label,
   onClick,
   accent,
@@ -98,6 +270,7 @@ function Tile({
   onRemove,
   removeChipLabel,
 }: {
+  scheme: DashboardTileScheme
   label: string
   onClick: () => void
   accent: string
@@ -113,29 +286,14 @@ function Tile({
   onDragOver?: (e: DragEvent) => void
   onDrop?: (e: DragEvent) => void
 }) {
-  const labelColor = primaryRow ? "#f8fafc" : "#0f172a"
-  const optionalArrowColor = primaryRow ? accent : "#334155"
-  const btn: CSSProperties = {
-    position: "relative",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "flex-end",
-    alignItems: "flex-start",
-    minHeight: compact ? 88 : 96,
-    padding: "14px 14px 13px",
-    borderRadius: 12,
-    border: primaryRow ? `1px solid rgba(249, 115, 22, 0.35)` : `1px solid rgba(100, 116, 139, 0.42)`,
-    background: primaryRow
-      ? "linear-gradient(165deg, rgba(51, 65, 85, 0.84) 0%, rgba(30, 41, 59, 0.88) 58%, rgba(30, 41, 59, 0.95) 100%)"
-      : "linear-gradient(160deg, #eef2f7 0%, #e2e8f0 46%, #dbe4ef 100%)",
-    cursor: disabled ? "not-allowed" : "pointer",
-    textAlign: "left",
-    overflow: "hidden",
-    boxShadow: primaryRow
-      ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 18px rgba(249, 115, 22, 0.12), 0 8px 22px rgba(0,0,0,0.22)"
-      : "inset 0 1px 0 rgba(255,255,255,0.65), 0 2px 10px rgba(15, 23, 42, 0.12)",
-    opacity: disabled ? 0.72 : dimmed ? 0.82 : 1,
-  }
+  const labelColor = tileLabelColor(scheme, Boolean(primaryRow))
+  const optionalArrowColor = tileArrowColor(scheme, Boolean(primaryRow), accent)
+  const btn: CSSProperties = tileButtonStyle(scheme, {
+    primaryRow: Boolean(primaryRow),
+    compact,
+    disabled,
+    dimmed,
+  })
   return (
     <button
       type="button"
@@ -173,9 +331,23 @@ function Tile({
             fontWeight: 700,
             padding: "3px 7px",
             borderRadius: 8,
-            background: "rgba(249,115,22,0.22)",
-            border: "1px solid rgba(249,115,22,0.35)",
-            color: "#ffedd5",
+            background:
+              scheme === "ocean"
+                ? "rgba(14,165,233,0.2)"
+                : scheme === "slate"
+                  ? "rgba(71,85,105,0.2)"
+                  : scheme === "paper"
+                    ? "rgba(14,165,233,0.12)"
+                    : "rgba(249,115,22,0.22)",
+            border:
+              scheme === "ocean"
+                ? "1px solid rgba(14,165,233,0.4)"
+                : scheme === "slate"
+                  ? "1px solid rgba(71,85,105,0.35)"
+                  : scheme === "paper"
+                    ? "1px solid rgba(14,165,233,0.35)"
+                    : "1px solid rgba(249,115,22,0.35)",
+            color: scheme === "paper" ? "#0f172a" : "#ffedd5",
             cursor: "pointer",
             lineHeight: 1.2,
           }}
@@ -269,6 +441,7 @@ export default function DashboardQuickActions(props: Props) {
     if (legacy) return legacy
     return normalizeDashboardOptionalOrder(undefined)
   })
+  const [tileScheme, setTileScheme] = useState<DashboardTileScheme>(DEFAULT_DASHBOARD_TILE_SCHEME)
   const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
   const [dragId, setDragId] = useState<DashboardOptionalQuickLinkId | null>(null)
@@ -309,6 +482,8 @@ export default function DashboardQuickActions(props: Props) {
         }
         const parsed = parseDashboardQuickLinks(data?.metadata && typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>).dashboard_quick_links : null)
         const fromCloud = parsed?.optional_order?.length ? normalizeDashboardOptionalOrder(parsed.optional_order) : null
+        if (parsed?.tile_scheme) setTileScheme(parsed.tile_scheme)
+        else setTileScheme(DEFAULT_DASHBOARD_TILE_SCHEME)
         if (fromCloud) {
           setOptionalOrder(fromCloud)
           setPersistNote("cloud")
@@ -339,7 +514,7 @@ export default function DashboardQuickActions(props: Props) {
           data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
             ? { ...(data.metadata as Record<string, unknown>) }
             : {}
-        const nextMeta = mergeDashboardQuickLinksMetadata(prevMeta, { v: 1, optional_order: optionalOrder })
+        const nextMeta = mergeDashboardQuickLinksMetadata(prevMeta, { optional_order: optionalOrder, tile_scheme: tileScheme })
         const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
         if (cancelled) return
         if (upErr) throw upErr
@@ -351,7 +526,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [optionalOrder, profileUserId, prefsHydrated])
+  }, [optionalOrder, tileScheme, profileUserId, prefsHydrated])
 
   const optionalTiles = useMemo(() => {
     const vis: { id: DashboardOptionalQuickLinkId; show: boolean }[] = [
@@ -409,14 +584,19 @@ export default function DashboardQuickActions(props: Props) {
     })
   }, [])
 
-  const shell: CSSProperties = {
-    padding: isMobile ? "12px 12px 14px" : "16px 16px 18px",
-    borderRadius: 12,
-    background: "linear-gradient(175deg, #cbd5e1 0%, #b8c4d4 52%, #a8b6ca 100%)",
-    border: "1px solid rgba(30, 41, 59, 0.35)",
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.55), 0 12px 32px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.04)",
-    marginBottom: 8,
+  const shell = dashShellStyle(isMobile, tileScheme)
+
+  const schemeChoiceLabel = (id: DashboardTileScheme): string => {
+    switch (id) {
+      case "ocean":
+        return labels.cardLookOcean
+      case "slate":
+        return labels.cardLookSlate
+      case "paper":
+        return labels.cardLookPaper
+      default:
+        return labels.cardLookEmber
+    }
   }
 
   const grid4: CSSProperties = {
@@ -451,6 +631,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.settings}
           accent="#475569"
@@ -466,6 +647,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.payments}
           accent={theme.primary}
@@ -481,6 +663,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.insurance}
           accent={theme.primary}
@@ -496,6 +679,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.customerPaymentsSoon}
           accent="#0ea5e9"
@@ -524,6 +708,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.reporting}
           accent={theme.primary}
@@ -539,6 +724,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.jobTypes}
           accent="#0ea5e9"
@@ -554,6 +740,7 @@ export default function DashboardQuickActions(props: Props) {
       return (
         <Tile
           key={id}
+          scheme={tileScheme}
           compact={isMobile}
           label={labels.todayTodo}
           accent="#8b5cf6"
@@ -568,8 +755,21 @@ export default function DashboardQuickActions(props: Props) {
     return null
   }
 
+  const hoverBorder = schemeHoverBorder(tileScheme)
+
   return (
-    <section style={{ maxWidth: 1100, marginLeft: "auto", marginRight: "auto", marginBottom: 6 }}>
+    <section
+      style={
+        {
+          maxWidth: 1100,
+          marginLeft: "auto",
+          marginRight: "auto",
+          marginBottom: 6,
+          ...shell,
+          ["--dash-hover-border" as string]: hoverBorder,
+        } as CSSProperties
+      }
+    >
       <style>{`
         .tm-dash-tile {
           transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
@@ -578,9 +778,9 @@ export default function DashboardQuickActions(props: Props) {
           transform: translateY(-3px);
           box-shadow:
             inset 0 1px 0 rgba(255,255,255,0.08),
-            0 14px 36px rgba(249, 115, 22, 0.2),
-            0 8px 24px rgba(0, 0, 0, 0.4);
-          border-color: rgba(249, 115, 22, 0.58) !important;
+            0 12px 32px rgba(15, 23, 42, 0.2),
+            0 8px 22px rgba(0, 0, 0, 0.28);
+          border-color: var(--dash-hover-border, rgba(249, 115, 22, 0.58)) !important;
         }
         .tm-dash-tile:active:not(:disabled) {
           transform: translateY(-1px);
@@ -588,7 +788,7 @@ export default function DashboardQuickActions(props: Props) {
       `}</style>
       <DashboardTodayTodoModal open={todayOpen} onClose={() => setTodayOpen(false)} dataUserId={dashboardDataUserId ?? null} />
 
-      <div style={shell}>
+      <div>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
           <h2
             style={{
@@ -609,14 +809,42 @@ export default function DashboardQuickActions(props: Props) {
               fontWeight: 600,
             padding: "6px 10px",
             borderRadius: 8,
-            border: `1px solid rgba(249,115,22,0.45)`,
-            background: customize ? "rgba(249,115,22,0.22)" : "rgba(255,255,255,0.3)",
+            border: `1px solid ${hoverBorder}`,
+            background: customize ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.3)",
             color: "#0f172a",
               cursor: "pointer",
             }}
           >
             {customize ? labels.customizeDone : labels.customizeHint}
           </button>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(15,23,42,0.75)", marginBottom: 6 }}>{labels.cardLookLabel}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {DASHBOARD_TILE_SCHEMES.map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => {
+                  userModifiedRef.current = true
+                  setTileScheme(id)
+                }}
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  border: tileScheme === id ? `2px solid ${hoverBorder}` : "1px solid rgba(51,65,85,0.35)",
+                  background: tileScheme === id ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)",
+                  color: "#0f172a",
+                }}
+              >
+                {schemeChoiceLabel(id)}
+              </button>
+            ))}
+          </div>
+          <p style={{ margin: "6px 0 0", fontSize: 10, color: "rgba(15,23,42,0.62)", maxWidth: 560, lineHeight: 1.4 }}>{labels.cardLookHint}</p>
         </div>
         {customize ? (
           <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 640, lineHeight: 1.45 }}>
@@ -631,6 +859,7 @@ export default function DashboardQuickActions(props: Props) {
 
         <div style={{ ...grid4, marginTop: customize ? 12 : 14 }}>
           <Tile
+            scheme={tileScheme}
             compact={isMobile}
             label={labels.customers}
             accent={theme.primary}
@@ -638,6 +867,7 @@ export default function DashboardQuickActions(props: Props) {
             onClick={() => go("customers")}
           />
           <Tile
+            scheme={tileScheme}
             compact={isMobile}
             label={labels.estimates}
             accent={theme.primary}
@@ -645,6 +875,7 @@ export default function DashboardQuickActions(props: Props) {
             onClick={() => go("quotes")}
           />
           <Tile
+            scheme={tileScheme}
             compact={isMobile}
             label={labels.calendar}
             accent={theme.primary}
@@ -652,6 +883,7 @@ export default function DashboardQuickActions(props: Props) {
             onClick={() => go("calendar")}
           />
           <Tile
+            scheme={tileScheme}
             compact={isMobile}
             label={fourth.label}
             accent={theme.primary}

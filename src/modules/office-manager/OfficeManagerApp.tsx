@@ -524,6 +524,12 @@ function OfficeManagerAppContent() {
               customizeRemove: t("dashboard.customizeRemove"),
               savedCloud: t("dashboard.quickLinksSavedCloud"),
               savedDeviceOnly: t("dashboard.quickLinksSavedLocal"),
+              cardLookLabel: t("dashboard.cardLookLabel"),
+              cardLookHint: t("dashboard.cardLookHint"),
+              cardLookEmber: t("dashboard.cardLookEmber"),
+              cardLookOcean: t("dashboard.cardLookOcean"),
+              cardLookSlate: t("dashboard.cardLookSlate"),
+              cardLookPaper: t("dashboard.cardLookPaper"),
             }}
           />
         </>

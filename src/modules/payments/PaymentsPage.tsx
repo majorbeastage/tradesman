@@ -51,6 +51,25 @@ const textareaStyle: CSSProperties = {
   fontFamily: "inherit",
 }
 
+const quickLinkCardBaseStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  textAlign: "left",
+  minWidth: 220,
+  padding: "12px 14px",
+  borderRadius: 12,
+  border: `1px solid ${theme.border}`,
+  background: "#f8fafc",
+  color: theme.text,
+  cursor: "pointer",
+}
+
+const quickLinkCardAltActiveStyle: CSSProperties = {
+  border: "1px solid #0ea5e9",
+  background: "linear-gradient(160deg, #e0f2fe 0%, #f8fafc 75%)",
+  boxShadow: "0 0 0 1px #bae6fd inset",
+}
+
 function formatProfilePaymentIso(iso: string | null | undefined): string {
   const s = typeof iso === "string" ? iso.trim() : ""
   if (!s) return "—"
@@ -60,6 +79,15 @@ function formatProfilePaymentIso(iso: string | null | undefined): string {
 }
 
 type PaymentsHubTab = "tradesman" | "customer" | "history"
+
+type CustomerPayStepId = "processor" | "links" | "sharing" | "save"
+
+const CUSTOMER_PAY_STEP_CARDS: { id: CustomerPayStepId; title: string; subtitle: string }[] = [
+  { id: "processor", title: "1 · Processor", subtitle: "Provider and setup status" },
+  { id: "links", title: "2 · Pay links", subtitle: "Hosted URL and optional QR" },
+  { id: "sharing", title: "3 · Sharing rules", subtitle: "What your team can send" },
+  { id: "save", title: "4 · Notes & save", subtitle: "Instructions and copy link" },
+]
 
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
@@ -86,8 +114,16 @@ export default function PaymentsPage() {
   const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [customerPayCopied, setCustomerPayCopied] = useState(false)
   const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("tradesman")
+  const [customerPayStepFocus, setCustomerPayStepFocus] = useState<CustomerPayStepId | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
+
+  function scrollToCustomerPayStep(step: CustomerPayStepId) {
+    setCustomerPayStepFocus(step)
+    window.requestAnimationFrame(() => {
+      document.getElementById(`customer-pay-step-${step}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+  }
 
   const suggestedPaymentAmount = useMemo(() => {
     const s = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
@@ -365,49 +401,34 @@ export default function PaymentsPage() {
           type="button"
           onClick={() => setPaymentsHubTab("tradesman")}
           style={{
-            padding: "12px 18px",
-            borderRadius: 10,
-            border: `2px solid ${paymentsHubTab === "tradesman" ? theme.primary : theme.border}`,
-            background: paymentsHubTab === "tradesman" ? "rgba(14,165,233,0.1)" : "#fff",
-            fontWeight: 700,
-            fontSize: 14,
-            color: theme.text,
-            cursor: "pointer",
+            ...quickLinkCardBaseStyle,
+            ...(paymentsHubTab === "tradesman" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          Manage Payments to Tradesman
+          <span style={{ fontWeight: 800, fontSize: 14 }}>Manage Payments to Tradesman</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Pay your Tradesman subscription</span>
         </button>
         <button
           type="button"
           onClick={() => setPaymentsHubTab("customer")}
           style={{
-            padding: "12px 18px",
-            borderRadius: 10,
-            border: `2px solid ${paymentsHubTab === "customer" ? theme.primary : theme.border}`,
-            background: paymentsHubTab === "customer" ? "rgba(14,165,233,0.1)" : "#fff",
-            fontWeight: 700,
-            fontSize: 14,
-            color: theme.text,
-            cursor: "pointer",
+            ...quickLinkCardBaseStyle,
+            ...(paymentsHubTab === "customer" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          Send Payment Information to Customer
+          <span style={{ fontWeight: 800, fontSize: 14 }}>Send Payment Information to Customer</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Save links and share settings</span>
         </button>
         <button
           type="button"
           onClick={() => setPaymentsHubTab("history")}
           style={{
-            padding: "12px 18px",
-            borderRadius: 10,
-            border: `2px solid ${paymentsHubTab === "history" ? theme.primary : theme.border}`,
-            background: paymentsHubTab === "history" ? "rgba(14,165,233,0.1)" : "#fff",
-            fontWeight: 700,
-            fontSize: 14,
-            color: theme.text,
-            cursor: "pointer",
+            ...quickLinkCardBaseStyle,
+            ...(paymentsHubTab === "history" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          View Previous Payments
+          <span style={{ fontWeight: 800, fontSize: 14 }}>View Previous Payments</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Review billing history and signals</span>
         </button>
       </div>
 
@@ -437,34 +458,68 @@ export default function PaymentsPage() {
           marginBottom: 28,
           padding: 22,
           borderRadius: 12,
-          border: "1px solid #0ea5e980",
-          background: "linear-gradient(145deg, #0c4a6e22, #111827)",
+          border: `1px solid ${theme.border}`,
+          background: "#f8fafc",
         }}
       >
-        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 800, color: "#f9fafb" }}>
-          Collect from your customers (v1)
+        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+          Collect from your customers
         </h2>
-        <p style={{ color: "#cbd5e1", margin: "0 0 16px", lineHeight: 1.65, fontSize: 14 }}>
-          Paste a hosted pay page URL from Helcim Pay, Stripe, Square, QuickBooks Payments, GoCardless, or any processor your accountant
-          approves — then reuse it in texts, invoices, or estimate emails until we wire invoice-level deep links directly from jobs and
-          quotes.
+        <p style={{ color: "#475569", margin: "0 0 14px", lineHeight: 1.6, fontSize: 14 }}>
+          Save your payment link once, choose how your team is allowed to share it, and reuse it in estimates, invoices, and messages.
         </p>
         <div
           style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+            gap: 10,
+            marginBottom: 16,
+          }}
+        >
+          {CUSTOMER_PAY_STEP_CARDS.map((c) => {
+            const active = customerPayStepFocus === c.id
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => scrollToCustomerPayStep(c.id)}
+                style={{
+                  textAlign: "left",
+                  padding: "12px 12px",
+                  borderRadius: 12,
+                  border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                  background: active ? "rgba(14, 165, 233, 0.08)" : "#ffffff",
+                  cursor: "pointer",
+                  display: "grid",
+                  gap: 4,
+                  minHeight: 72,
+                  boxShadow: active ? "0 2px 12px rgba(14, 165, 233, 0.12)" : "0 1px 6px rgba(15, 23, 42, 0.06)",
+                }}
+              >
+                <span style={{ fontWeight: 800, fontSize: 13, color: theme.text }}>{c.title}</span>
+                <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>{c.subtitle}</span>
+              </button>
+            )
+          })}
+        </div>
+        <div
+          id="customer-pay-step-processor"
+          style={{
+            scrollMarginTop: 12,
             marginBottom: 14,
             padding: 12,
             borderRadius: 10,
-            border: "1px solid rgba(148,163,184,0.35)",
-            background: "rgba(15,23,42,0.34)",
-            color: "#e2e8f0",
+            border: "1px solid #cbd5e1",
+            background: "#ffffff",
+            color: theme.text,
             display: "grid",
             gap: 12,
           }}
         >
           <strong style={{ fontSize: 13 }}>Processor onboarding (customer collections)</strong>
-          <p style={{ margin: 0, fontSize: 12, color: "#cbd5e1", lineHeight: 1.45 }}>
-            Helcim is first: each contractor should open and verify their own merchant account. We are storing provider setup + share
-            method preferences now so Quotes / Calendar / Customer workflows can send a link or barcode with review controls.
+          <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+            Track which processor account your team should use and whether setup is ready. These settings control future send-from-quote and
+            send-from-calendar actions.
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
@@ -493,7 +548,7 @@ export default function PaymentsPage() {
               </select>
             </label>
           </div>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
             Merchant account label (team reference)
             <input
               type="text"
@@ -520,30 +575,42 @@ export default function PaymentsPage() {
           </div>
         ) : null}
         <div style={{ display: "grid", gap: 14, maxWidth: 620 }}>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-            Customer pay link
-            <input
-              type="url"
-              value={customerPayLinkDraft}
-              onChange={(e) => setCustomerPayLinkDraft(e.target.value)}
-              placeholder="https://…"
-              autoComplete="off"
-              style={{ ...inputStyle, maxWidth: "100%" }}
-            />
-          </label>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-            Optional barcode / QR destination link
-            <input
-              type="url"
-              value={customerPayBarcodeLinkDraft}
-              onChange={(e) => setCustomerPayBarcodeLinkDraft(e.target.value)}
-              placeholder="https://... (optional)"
-              autoComplete="off"
-              style={{ ...inputStyle, maxWidth: "100%" }}
-            />
-          </label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e5e7eb", cursor: "pointer" }}>
+          <div id="customer-pay-step-links" style={{ scrollMarginTop: 12, display: "grid", gap: 14 }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+              Customer pay link
+              <input
+                type="url"
+                value={customerPayLinkDraft}
+                onChange={(e) => setCustomerPayLinkDraft(e.target.value)}
+                placeholder="https://…"
+                autoComplete="off"
+                style={{ ...inputStyle, maxWidth: "100%" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+              Optional barcode / QR destination link
+              <input
+                type="url"
+                value={customerPayBarcodeLinkDraft}
+                onChange={(e) => setCustomerPayBarcodeLinkDraft(e.target.value)}
+                placeholder="https://... (optional)"
+                autoComplete="off"
+                style={{ ...inputStyle, maxWidth: "100%" }}
+              />
+            </label>
+          </div>
+          <div
+            id="customer-pay-step-sharing"
+            style={{
+              scrollMarginTop: 12,
+              padding: "12px 0 0",
+              borderTop: "1px solid #e2e8f0",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 12,
+            }}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={customerPaySendLinkEnabled}
@@ -551,7 +618,7 @@ export default function PaymentsPage() {
               />
               Allow sending link
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e5e7eb", cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={customerPaySendBarcodeEnabled}
@@ -559,7 +626,7 @@ export default function PaymentsPage() {
               />
               Allow sending barcode / QR
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e5e7eb", cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={customerPayRequireReview}
@@ -568,50 +635,52 @@ export default function PaymentsPage() {
               Require estimate/receipt review before share
             </label>
           </div>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-            Short instructions (deposit terms, ACH reminder, surcharge policy…)
-            <textarea
-              value={customerPayInstructionsDraft}
-              onChange={(e) => setCustomerPayInstructionsDraft(e.target.value)}
-              placeholder="Example: Deposits are 50%. Pay at the link below. Include your job ID in checkout notes."
-              style={textareaStyle}
-            />
-          </label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-            <button
-              type="button"
-              disabled={customerPaySaving || !profileUserId}
-              onClick={() => void persistCustomerPayments()}
-              style={{
-                padding: "11px 20px",
-                borderRadius: 8,
-                border: "none",
-                background: customerPaySaving || !profileUserId ? "#4b5563" : theme.primary,
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: customerPaySaving || !profileUserId ? "not-allowed" : "pointer",
-              }}
-            >
-              {customerPaySaving ? "Saving…" : "Save customer-pay settings"}
-            </button>
-            <button
-              type="button"
-              disabled={!normalizeHelcimPayPortalUrl(customerPayLinkDraft)}
-              onClick={copyCustomerPayLink}
-              style={{
-                padding: "11px 16px",
-                borderRadius: 8,
-                border: "1px solid #475569",
-                background: "#0f172a",
-                color: "#e2e8f0",
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: normalizeHelcimPayPortalUrl(customerPayLinkDraft) ? "pointer" : "not-allowed",
-              }}
-            >
-              {customerPayCopied ? "Copied" : "Copy link"}
-            </button>
+          <div id="customer-pay-step-save" style={{ scrollMarginTop: 12, display: "grid", gap: 14 }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+              Short instructions (deposit terms, ACH reminder, surcharge policy…)
+              <textarea
+                value={customerPayInstructionsDraft}
+                onChange={(e) => setCustomerPayInstructionsDraft(e.target.value)}
+                placeholder="Example: Deposits are 50%. Pay at the link below. Include your job ID in checkout notes."
+                style={textareaStyle}
+              />
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                disabled={customerPaySaving || !profileUserId}
+                onClick={() => void persistCustomerPayments()}
+                style={{
+                  padding: "11px 20px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: customerPaySaving || !profileUserId ? "#4b5563" : theme.primary,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: customerPaySaving || !profileUserId ? "not-allowed" : "pointer",
+                }}
+              >
+                {customerPaySaving ? "Saving…" : "Save customer-pay settings"}
+              </button>
+              <button
+                type="button"
+                disabled={!normalizeHelcimPayPortalUrl(customerPayLinkDraft)}
+                onClick={copyCustomerPayLink}
+                style={{
+                  padding: "11px 16px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#ffffff",
+                  color: "#0f172a",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: normalizeHelcimPayPortalUrl(customerPayLinkDraft) ? "pointer" : "not-allowed",
+                }}
+              >
+                {customerPayCopied ? "Copied" : "Copy link"}
+              </button>
+            </div>
           </div>
         </div>
       </section>
