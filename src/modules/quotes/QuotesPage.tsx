@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, type ChangeEvent, type CSSProperties, type RefObject } from "react"
+import { useCallback, useEffect, useState, useMemo, useRef, type ChangeEvent, type CSSProperties, type RefObject } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
@@ -82,9 +82,29 @@ import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
-import { buildCustomerPaymentShareBody, logCustomerPaymentEvent } from "../../lib/customerPaymentsWorkflow"
+import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
+
+declare global {
+  interface Window {
+    webkitSpeechRecognition?: new () => SpeechRecognition
+  }
+  interface SpeechRecognitionEvent extends Event {
+    readonly resultIndex: number
+    readonly results: SpeechRecognitionResultList
+  }
+  interface SpeechRecognition extends EventTarget {
+    continuous: boolean
+    interimResults: boolean
+    lang: string
+    onresult: ((ev: SpeechRecognitionEvent) => void) | null
+    onerror: ((ev: Event) => void) | null
+    onend: (() => void) | null
+    start: () => void
+    stop: () => void
+  }
+}
 
 /** Advanced Options → collapsed “PDF export, logo & legal” bundle (portal item ids). */
 const ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS = new Set([
@@ -396,6 +416,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
   const [bottomActionEmailOpen, setBottomActionEmailOpen] = useState(false)
   const [jobDetailsText, setJobDetailsText] = useState("")
+  const [jobDetailsSpeechSupported, setJobDetailsSpeechSupported] = useState(false)
+  const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
+  const jobDetailsRecognitionRef = useRef<SpeechRecognition | null>(null)
+  /** Baseline textarea value when recognition session starts (+ appended finals + interim transcript). */
+  const jobDetailsVoiceSessionBaseRef = useRef("")
+  const jobDetailsVoiceFinalSuffixRef = useRef("")
   const [specialtyReportWizardOpen, setSpecialtyReportWizardOpen] = useState(false)
   const [specialtyInspectionWorkflowEnabled, setSpecialtyInspectionWorkflowEnabled] = useState(false)
   const [specialtyReportTypesEnabled, setSpecialtyReportTypesEnabled] = useState<SpecialtyReportTypeKey[]>([])
@@ -464,6 +490,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteEmailSending, setQuoteEmailSending] = useState(false)
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
+  const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
   const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -676,6 +703,87 @@ export default function QuotesPage(_props: QuotesPageProps) {
       /* ignore */
     }
   }, [selectedQuoteId, jobDetailsText])
+
+  useEffect(() => {
+    const ctor =
+      typeof window !== "undefined"
+        ? ((window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition)
+        : undefined
+    setJobDetailsSpeechSupported(Boolean(ctor))
+  }, [])
+
+  useEffect(
+    () => () => {
+      try {
+        jobDetailsRecognitionRef.current?.stop()
+      } catch {
+        /* ignore */
+      }
+      jobDetailsRecognitionRef.current = null
+    },
+    [],
+  )
+
+  const stopJobDetailsVoice = useCallback(() => {
+    try {
+      jobDetailsRecognitionRef.current?.stop()
+    } catch {
+      /* ignore */
+    }
+    jobDetailsRecognitionRef.current = null
+    jobDetailsVoiceSessionBaseRef.current = ""
+    jobDetailsVoiceFinalSuffixRef.current = ""
+    setJobDetailsVoiceListening(false)
+  }, [])
+
+  const startJobDetailsVoice = useCallback(() => {
+    if (!jobDetailsSpeechSupported || typeof window === "undefined") return
+    const Ctor =
+      (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!Ctor) return
+    stopJobDetailsVoice()
+    jobDetailsVoiceSessionBaseRef.current = jobDetailsText
+    jobDetailsVoiceFinalSuffixRef.current = ""
+    try {
+      const rec = new Ctor()
+      jobDetailsRecognitionRef.current = rec
+      rec.continuous = true
+      rec.interimResults = true
+      rec.lang = "en-US"
+      rec.onresult = (ev: SpeechRecognitionEvent) => {
+        const ri = typeof ev.resultIndex === "number" ? ev.resultIndex : 0
+        for (let i = ri; i < ev.results.length; i += 1) {
+          const item = ev.results[i]
+          const piece = item?.[0]?.transcript
+          if (!piece) continue
+          if (item.isFinal) {
+            jobDetailsVoiceFinalSuffixRef.current += piece
+          }
+        }
+        let interim = ""
+        for (let i = ri; i < ev.results.length; i += 1) {
+          const item = ev.results[i]
+          const piece = item?.[0]?.transcript
+          if (!piece || item.isFinal) continue
+          interim += piece
+        }
+        const display = `${jobDetailsVoiceSessionBaseRef.current}${jobDetailsVoiceFinalSuffixRef.current}${interim}`
+        setJobDetailsText(display)
+      }
+      rec.onerror = () => stopJobDetailsVoice()
+      rec.onend = () => {
+        stopJobDetailsVoice()
+      }
+      rec.start()
+      setJobDetailsVoiceListening(true)
+    } catch {
+      stopJobDetailsVoice()
+    }
+  }, [jobDetailsSpeechSupported, jobDetailsText, stopJobDetailsVoice])
+
+  useEffect(() => {
+    stopJobDetailsVoice()
+  }, [selectedQuoteId, stopJobDetailsVoice])
 
   useEffect(() => {
     try {
@@ -2640,6 +2748,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     [selectedQuoteItems],
   )
 
+  const customerPaymentAmountLabel = useMemo(() => {
+    const subtotal = totalFromQuoteItemRows(selectedQuoteItems)
+    return subtotal > 0 ? `$${subtotal.toFixed(2)}` : null
+  }, [selectedQuoteItems])
+
   const estimateScopeExistingLines = useMemo(() => {
     return selectedQuoteItems.map((item) => {
       const { desc, qty, up } = getItemDisplay(item)
@@ -3409,55 +3522,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
-  async function sendCustomerPaymentRequestFromEstimate(mode: "link" | "barcode") {
-    if (!selectedQuote) return
-    const payLink = customerPaymentProfile.customer_pay_link_url?.trim() ?? ""
-    const barcodeLink = customerPaymentProfile.customer_pay_barcode_url?.trim() ?? ""
-    const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
-    if (!payLink && mode === "link") {
-      alert("Set a customer pay link first in Payments → Collect from your customers.")
-      return
-    }
-    if (!barcodeLink && mode === "barcode") {
-      alert("Set a barcode / QR link first in Payments → Collect from your customers.")
-      return
-    }
-    if (requireReview && selectedQuoteItems.length === 0) {
-      alert("Review the estimate first: add at least one line item before sending payment requests.")
-      return
-    }
-    const subtotal = totalFromQuoteItemRows(selectedQuoteItems)
-    const amountLabel = subtotal > 0 ? `$${subtotal.toFixed(2)}` : null
-    const body = buildCustomerPaymentShareBody({
-      customerName: selectedQuote?.customers?.display_name ?? null,
-      estimateLabel: `Estimate ${selectedQuote.id.slice(0, 8)}`,
-      amountLabel,
-      payLink: mode === "link" ? payLink : payLink || barcodeLink,
-      barcodeLink,
-      includeBarcode: mode === "barcode",
-      instructions: customerPaymentProfile.customer_pay_instructions ?? null,
-    })
-    const copied = typeof navigator.clipboard?.writeText === "function"
-    if (copied) {
-      try {
-        await navigator.clipboard.writeText(body)
-      } catch {
-        /* ignore clipboard failures, still open email draft */
-      }
-    }
-    alert("Payment request copied. Open customer details to send by text/email.")
-    if (userId) {
-      await logCustomerPaymentEvent(supabase, {
-        userId,
-        customerId: selectedQuote.customer_id,
-        quoteId: selectedQuote.id,
-        eventType: mode === "barcode" ? "payment_barcode_sent" : "payment_link_sent",
-        amount: subtotal > 0 ? subtotal : null,
-        metadata: { delivery: "clipboard", provider: customerPaymentProfile.customer_pay_provider ?? "helcim" },
-      })
-    }
-  }
-
   async function previewEstimateDocument() {
     if (!selectedQuote) return
     setQuotePdfBusy(true)
@@ -4207,6 +4271,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
               ? String((selectedQuote?.customers as CustomerRow).service_address).trim()
               : ""
           }
+        />
+
+        <CustomerPaymentRequestModal
+          open={customerPaymentRequestOpen}
+          onClose={() => setCustomerPaymentRequestOpen(false)}
+          supabase={supabase}
+          userId={userId}
+          customerId={selectedQuote?.customer_id ?? null}
+          customerName={selectedQuote?.customers?.display_name ?? null}
+          profile={customerPaymentProfile}
+          estimateLabel={selectedQuote ? `Estimate ${selectedQuote.id.slice(0, 8)}` : null}
+          amountLabel={customerPaymentAmountLabel}
+          quoteId={selectedQuote?.id ?? null}
         />
 
         {openCustomButtonId && (() => {
@@ -5724,8 +5801,55 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   </p>
                                 )}
                                 <div style={{ display: "grid", gap: 6 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>Notes &amp; manual scope</div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>Notes &amp; manual scope</div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                      {!jobDetailsVoiceListening ? (
+                                        <button
+                                          type="button"
+                                          disabled={!jobDetailsSpeechSupported}
+                                          onClick={startJobDetailsVoice}
+                                          style={{
+                                            padding: "8px 12px",
+                                            borderRadius: 8,
+                                            border: `1px solid ${theme.border}`,
+                                            background: "#fff",
+                                            fontWeight: 700,
+                                            fontSize: 12,
+                                            cursor: !jobDetailsSpeechSupported ? "not-allowed" : "pointer",
+                                            color: "#0f172a",
+                                          }}
+                                        >
+                                          Voice to text
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={stopJobDetailsVoice}
+                                          style={{
+                                            padding: "8px 12px",
+                                            borderRadius: 8,
+                                            border: "1px solid #b45309",
+                                            background: "#fff7ed",
+                                            fontWeight: 700,
+                                            fontSize: 12,
+                                            cursor: "pointer",
+                                            color: "#9a3412",
+                                          }}
+                                        >
+                                          Stop listening
+                                        </button>
+                                      )}
+                                      {!jobDetailsSpeechSupported ? (
+                                        <span style={{ fontSize: 11, color: "#94a3b8", maxWidth: 280 }}>Voice requires a supported browser (e.g. Chrome or Edge desktop) and microphone permission.</span>
+                                      ) : jobDetailsVoiceListening ? (
+                                        <span style={{ fontSize: 11, color: "#9a3412", fontWeight: 600 }}>Listening…</span>
+                                      ) : null}
+                                    </div>
+                                  </div>
                                   <textarea
+                                    id="estimate-job-details-notes"
+                                    aria-label="Job details notes and manual scope"
                                     rows={4}
                                     placeholder="Other descriptions, constraints, and anything else you want on the record…"
                                     value={jobDetailsText}
@@ -6362,53 +6486,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </button>
                   <button
                     type="button"
-                    disabled={!selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_link_url?.trim()}
-                    title={
-                      !selectedQuote?.customer_id
-                        ? "Select a customer first"
-                        : !customerPaymentProfile.customer_pay_link_url?.trim()
-                          ? "Set customer pay link in Payments first"
-                          : undefined
-                    }
-                    onClick={() => void sendCustomerPaymentRequestFromEstimate("link")}
+                    disabled={!selectedQuote?.customer_id}
+                    title={!selectedQuote?.customer_id ? "Link a customer first" : undefined}
+                    onClick={() => {
+                      if (!selectedQuote?.customer_id) {
+                        alert("Link a customer first.")
+                        return
+                      }
+                      const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
+                      if (requireReview && selectedQuoteItems.length === 0) {
+                        alert("Review the estimate first: add at least one line item before sending payment requests.")
+                        return
+                      }
+                      setCustomerPaymentRequestOpen(true)
+                    }}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
+                      border: `2px solid ${theme.primary}`,
+                      background: "#fff7ed",
                       color: theme.text,
-                      fontWeight: 700,
-                      cursor:
-                        !selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_link_url?.trim() ? "not-allowed" : "pointer",
+                      fontWeight: 800,
+                      cursor: !selectedQuote?.customer_id ? "not-allowed" : "pointer",
                     }}
                   >
-                    Send payment link
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_barcode_url?.trim()}
-                    title={
-                      !selectedQuote?.customer_id
-                        ? "Select a customer first"
-                        : !customerPaymentProfile.customer_pay_barcode_url?.trim()
-                          ? "Set barcode / QR link in Payments first"
-                          : undefined
-                    }
-                    onClick={() => void sendCustomerPaymentRequestFromEstimate("barcode")}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      color: theme.text,
-                      fontWeight: 700,
-                      cursor:
-                        !selectedQuote?.customer_id || !customerPaymentProfile.customer_pay_barcode_url?.trim()
-                          ? "not-allowed"
-                          : "pointer",
-                    }}
-                  >
-                    Send payment barcode
+                    Customer payment
                   </button>
                   <button
                     type="button"
