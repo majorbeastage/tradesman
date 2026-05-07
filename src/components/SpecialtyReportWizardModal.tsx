@@ -461,6 +461,8 @@ export default function SpecialtyReportWizardModal({
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [assignedUserId, setAssignedUserId] = useState<string>("")
+  /** False until loadDraftForType finishes — blocks autosave from wiping metadata before hydration. */
+  const [draftHydrated, setDraftHydrated] = useState(false)
   /** Ctrl / voice: expand `<details>` for major findings sections. */
   const [findingSectionOpen, setFindingSectionOpen] = useState<Record<string, boolean>>({})
   const recognitionRef = useRef<SpeechRecognition | null>(null)
@@ -471,6 +473,7 @@ export default function SpecialtyReportWizardModal({
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
       if (!quoteId || !supabase || !userId) return
+      setDraftHydrated(false)
       setLoadBusy(true)
       setSaveError(null)
       try {
@@ -505,8 +508,20 @@ export default function SpecialtyReportWizardModal({
             setGenericFieldMedia({})
           }
         }
+        if (reportType) {
+          const reportKeyId = `${quoteId}:${reportType}`
+          const reg = parseSpecialtyReportRegistry(meta[SPECIALTY_REPORT_REGISTRY_KEY])
+          const hit =
+            reg.find((r) => r.id === reportKeyId) ??
+            reg.find((r) => r.quote_id === quoteId && r.report_type === reportType)
+          setAssignedUserId(hit?.assigned_user_id?.trim() ? hit.assigned_user_id.trim() : "")
+        } else {
+          setAssignedUserId("")
+        }
+        setDraftHydrated(true)
       } catch (e) {
         setSaveError(e instanceof Error ? e.message : String(e))
+        setDraftHydrated(false)
       } finally {
         setLoadBusy(false)
       }
@@ -524,6 +539,7 @@ export default function SpecialtyReportWizardModal({
     setPreviewOpen(false)
     setSaveNote(null)
     setAssignedUserId("")
+    setDraftHydrated(false)
     setFindingSectionOpen({})
   }, [propertyAddressHint])
 
@@ -549,6 +565,42 @@ export default function SpecialtyReportWizardModal({
     setSpeechSupported(Boolean(ctor))
   }, [open])
 
+  const persistRegistryAssignmentOnly = useCallback(async () => {
+    if (!quoteId || !userId || !supabase || !picked) return
+    try {
+      const nowIso = new Date().toISOString()
+      const reportId = `${quoteId}:${picked}`
+      const { data, error } = await supabase.from("quotes").select("metadata").eq("id", quoteId).eq("user_id", userId).maybeSingle()
+      if (error) throw error
+      const prev =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      const rows = parseSpecialtyReportRegistry(prev[SPECIALTY_REPORT_REGISTRY_KEY])
+      const existing = rows.find((r) => r.id === reportId)
+      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, {
+        id: reportId,
+        report_type: picked,
+        quote_id: quoteId,
+        customer_id: customerId,
+        assigned_user_id: assignedUserId.trim() || null,
+        title:
+          existing?.title ??
+          (picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked]),
+        status: existing?.status === "ready" ? "ready" : "draft",
+        updated_at: nowIso,
+      })
+      const { error: upErr } = await supabase
+        .from("quotes")
+        .update({ metadata: prev, updated_at: nowIso })
+        .eq("id", quoteId)
+        .eq("user_id", userId)
+      if (upErr) throw upErr
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+    }
+  }, [quoteId, userId, picked, customerId, assignedUserId])
+
   const persistMetadata = useCallback(
     async (patch: Record<string, unknown>) => {
       if (!quoteId || !userId || !supabase) return
@@ -570,16 +622,16 @@ export default function SpecialtyReportWizardModal({
   )
 
   useEffect(() => {
-    if (!open || !quoteId || phase === "pick_type" || picked !== "home_inspection") return
+    if (!draftHydrated || !open || !quoteId || phase === "pick_type" || picked !== "home_inspection") return
     const t = window.setTimeout(() => {
       const snap = { ...home, updatedAt: new Date().toISOString() }
       void persistMetadata({ [META_KEY_HOME]: snap }).catch((e) => setSaveError(e instanceof Error ? e.message : String(e)))
     }, 700)
     return () => window.clearTimeout(t)
-  }, [home, open, quoteId, phase, picked, persistMetadata])
+  }, [draftHydrated, home, open, quoteId, phase, picked, persistMetadata])
 
   useEffect(() => {
-    if (!open || !quoteId || picked == null || picked === "home_inspection") return
+    if (!draftHydrated || !open || !quoteId || picked == null || picked === "home_inspection") return
     if (phase !== "generic_notes") return
     const t = window.setTimeout(() => {
       void persistMetadata({
@@ -590,7 +642,24 @@ export default function SpecialtyReportWizardModal({
       )
     }, 700)
     return () => window.clearTimeout(t)
-  }, [genericNotes, genericFieldMedia, open, quoteId, picked, phase, persistMetadata])
+  }, [draftHydrated, genericNotes, genericFieldMedia, open, quoteId, picked, phase, persistMetadata])
+
+  useEffect(() => {
+    if (!draftHydrated || !open || !quoteId || !picked) return
+    const t = window.setTimeout(() => {
+      void persistRegistryAssignmentOnly()
+    }, 450)
+    return () => window.clearTimeout(t)
+  }, [assignedUserId, draftHydrated, open, persistRegistryAssignmentOnly, picked, quoteId])
+
+  const varianceAssigneeSelectOptions = useMemo(() => {
+    const opts = [...varianceAssigneeOptions]
+    const aid = assignedUserId.trim()
+    if (aid && !opts.some((o) => o.userId === aid)) {
+      opts.unshift({ userId: aid, label: `Saved assignee (${aid.slice(0, 8)}…)` })
+    }
+    return opts
+  }, [varianceAssigneeOptions, assignedUserId])
 
   const headerLine = useMemo(() => {
     if (picked && picked !== "home_inspection") return SPECIALTY_REPORT_TYPE_LABELS[picked]
@@ -625,6 +694,9 @@ export default function SpecialtyReportWizardModal({
     else if (phase === "home_media") setPhase("home_findings")
     else if (phase === "home_findings") setPhase("home_header")
     else if (phase === "home_header" && enabledReportTypes.length > 1) {
+      setPhase("pick_type")
+      setPicked(null)
+    } else if (phase === "generic_notes" && enabledReportTypes.length > 1) {
       setPhase("pick_type")
       setPicked(null)
     }
@@ -1162,7 +1234,7 @@ export default function SpecialtyReportWizardModal({
           </button>
         </div>
 
-        {quoteId && varianceAssigneeOptions.length > 0 ? (
+        {quoteId && varianceAssigneeSelectOptions.length > 0 ? (
           <section
             style={{
               marginBottom: 12,
@@ -1180,7 +1252,7 @@ export default function SpecialtyReportWizardModal({
                 style={{ ...theme.formInput, maxWidth: 340 }}
               >
                 <option value="">Unassigned</option>
-                {varianceAssigneeOptions.map((opt) => (
+                {varianceAssigneeSelectOptions.map((opt) => (
                   <option key={opt.userId} value={opt.userId}>
                     {opt.label}
                   </option>

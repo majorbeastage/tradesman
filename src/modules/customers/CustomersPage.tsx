@@ -1823,6 +1823,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       <strong style={{ fontSize: 13, color: "#0f172a" }}>{r.title}</strong>
                                       <div style={{ marginTop: 2, fontSize: 12, color: "#64748b" }}>
                                         Updated {new Date(r.updated_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                        {r.assigned_user_id?.trim() ? (
+                                          <span style={{ display: "block", marginTop: 4, fontSize: 11 }}>
+                                            Assignee: <strong style={{ color: "#334155" }}>{r.assigned_user_id.trim().slice(0, 8)}…</strong>
+                                          </span>
+                                        ) : null}
                                       </div>
                                       {setPage ? (
                                         <button

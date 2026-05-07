@@ -576,9 +576,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     let cancelled = false
     async function loadVarianceAssignees() {
-      const clients = scopeCtx?.clients ?? []
-      if (!supabase || clients.length === 0) {
+      if (!supabase || !userId) {
         setVarianceAssigneeOptions([])
+        return
+      }
+      const clients = scopeCtx?.clients ?? []
+      if (clients.length === 0) {
+        setVarianceAssigneeOptions([{ userId, label: "Me (this account)" }])
         return
       }
       const ids = clients.map((c) => c.userId).filter(Boolean)
@@ -598,13 +602,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
         })
       }
       out.sort((a, b) => a.label.localeCompare(b.label))
+      /** Solo contractors (no OM team list) or teams with nobody flagged still need self-route for variance/registry. */
+      if (!out.some((o) => o.userId === userId)) {
+        out.unshift({ userId, label: "Me (this account)" })
+      }
       setVarianceAssigneeOptions(out)
     }
     void loadVarianceAssignees()
     return () => {
       cancelled = true
     }
-  }, [scopeCtx?.clients])
+  }, [scopeCtx?.clients, supabase, userId])
 
   useEffect(() => {
     setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))

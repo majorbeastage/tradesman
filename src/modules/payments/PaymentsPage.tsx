@@ -120,6 +120,7 @@ export default function PaymentsPage() {
   const [collectionsBusy, setCollectionsBusy] = useState(false)
   const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
+  const [collectionsRefreshNonce, setCollectionsRefreshNonce] = useState(0)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -297,7 +298,7 @@ export default function PaymentsPage() {
     return () => {
       cancelled = true
     }
-  }, [paymentsHubTab, profileUserId])
+  }, [paymentsHubTab, profileUserId, collectionsRefreshNonce])
 
   useEffect(() => {
     const scrollToCustomerPay = () => {
@@ -1133,9 +1134,28 @@ export default function PaymentsPage() {
               background: "#f8fafc",
             }}
           >
-            <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
-              Customer collections activity
-            </h2>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+                Customer collections activity
+              </h2>
+              <button
+                type="button"
+                disabled={collectionsBusy || !profileUserId}
+                onClick={() => setCollectionsRefreshNonce((n) => n + 1)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: collectionsBusy || !profileUserId ? "not-allowed" : "pointer",
+                }}
+              >
+                {collectionsBusy ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
             <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
               Logged when you <strong>Copy payment request</strong> from an estimate, job, or customer card — and when you mark an estimate Paid
               or waived. Use your processor dashboard for authoritative settlement reporting.
