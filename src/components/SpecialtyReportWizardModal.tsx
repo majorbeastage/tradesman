@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useAuth } from "../contexts/AuthContext"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { DRONE_PROVIDER_CATALOG } from "../lib/specialtyReports/droneIntegrationCatalog"
@@ -151,6 +152,278 @@ function parseTradesmanRecordIntent(raw: string): {
   return { consumed: true, body: rest }
 }
 
+function normAssistantPhrase(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^(please|ok|okay)\s+/, "")
+}
+
+/** Major section id hints for voice / typed commands (Structure & property report). */
+const MAJOR_SECTION_ALIASES: Record<string, string> = {
+  admin: "admin_scope",
+  administrative: "admin_scope",
+  scope: "admin_scope",
+  site: "site_exterior",
+  exterior: "site_exterior",
+  shell: "site_exterior",
+  roof: "roof",
+  structure: "structure",
+  structural: "structure",
+  electrical: "electrical",
+  electric: "electrical",
+  plumbing: "plumbing",
+  hvac: "hvac",
+  heating: "hvac",
+  cooling: "hvac",
+  interior: "interior",
+  insulation: "insulation_energy",
+  energy: "insulation_energy",
+  attic: "insulation_energy",
+}
+
+function resolveMajorSectionIdFromPhrase(raw: string): string | null {
+  const p = normAssistantPhrase(raw).replace(/\b(the|section|tab)\b/g, "").trim()
+  if (!p) return null
+  if (MAJOR_SECTION_ALIASES[p]) return MAJOR_SECTION_ALIASES[p]
+  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+    if (sec.id === p || p === normAssistantPhrase(sec.title)) return sec.id
+    const t = normAssistantPhrase(sec.title)
+    if (t.includes(p) || p.includes(t.slice(0, 10))) return sec.id
+  }
+  return null
+}
+
+function majorIdContainingSubsection(subId: string): string | null {
+  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+    if (sec.subsections.some((s) => s.id === subId)) return sec.id
+  }
+  return null
+}
+
+function matchSubsectionIdFromPhrase(rest: string): string | null {
+  const cleaned = normAssistantPhrase(rest)
+  const words = cleaned.split(/\s+/).filter(Boolean)
+  for (let take = Math.min(8, words.length); take >= 1; take -= 1) {
+    const phrase = words.slice(0, take).join(" ")
+    if (phrase.length < 3) continue
+    for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+      for (const sub of sec.subsections) {
+        const L = normAssistantPhrase(sub.label)
+        if (phrase === L || (phrase.length >= 4 && (L.includes(phrase) || phrase.includes(L)))) {
+          return sub.id
+        }
+      }
+    }
+  }
+  return null
+}
+
+function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
+  const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
+  const headerPairs: Array<[string[], string]> = [
+    [["inspector name", "inspector"], "header.inspectorName"],
+    [["license id", "license", "cert id", "certification"], "header.licenseId"],
+    [["inspection date", "report date"], "header.inspectionDate"],
+    [["weather", "site conditions"], "header.weather"],
+    [["property address", "job address", "site address"], "header.propertyAddress"],
+    [["address"], "header.propertyAddress"],
+    [["parties present", "parties"], "header.partiesPresent"],
+  ]
+  for (const [hints, key] of headerPairs) {
+    for (const h of hints) {
+      if (f === h || f.includes(h) || (h.length >= 6 && h.includes(f))) return key
+    }
+  }
+  const subId = matchSubsectionIdFromPhrase(f)
+  return subId ? `sub:${subId}` : null
+}
+
+function parseConditionRating(word: string): ConditionRating | null {
+  const w = normAssistantPhrase(word).replace(/[^a-z0-9/\s_-]/g, "")
+  const map: Record<string, ConditionRating> = {
+    satisfactory: "satisfactory",
+    marginal: "marginal",
+    monitor: "marginal",
+    deficient: "deficient",
+    repair: "deficient",
+    na: "na",
+    "n/a": "na",
+    none: "na",
+    "not inspected": "not_inspected",
+    unchecked: "not_inspected",
+  }
+  return map[w] ?? null
+}
+
+type FillContext = { accountDisplayName: string; propertyAddressHint: string; customerLabel: string }
+
+function resolveFillLiteral(valueRaw: string, ctx: FillContext): string {
+  const v = valueRaw.trim().replace(/^["']|["']$/g, "").trim()
+  const n = normAssistantPhrase(v)
+  if (
+    n === "my name" ||
+    n === "me" ||
+    n === "myself" ||
+    n === "account name" ||
+    n === "the account name" ||
+    (n.includes("my name") && n.length < 24)
+  ) {
+    return ctx.accountDisplayName
+  }
+  if (n === "today's date" || n === "todays date" || n === "today" || n === "today date") {
+    return new Date().toISOString().slice(0, 10)
+  }
+  if (
+    n === "estimate address" ||
+    n === "job address" ||
+    n === "service address" ||
+    n === "from estimate" ||
+    n === "the estimate address"
+  ) {
+    return ctx.propertyAddressHint.trim()
+  }
+  if (n === "customer name" || n === "client name" || n === "the customer name" || n === "linked customer") {
+    return ctx.customerLabel.trim()
+  }
+  return v
+}
+
+type StructuredAssistantPatch = {
+  fieldKey?: string
+  value?: string
+  setCondition?: { subId: string; condition: ConditionRating }
+  openMajorSection?: string
+  phase?: WizardPhase
+  focusSubId?: string
+}
+
+/** Typed / voice commands: fill header & findings fields, navigate, open sections, set condition dropdowns. */
+function parseStructuredFillAndNavCommands(
+  raw: string,
+  ctx: FillContext,
+  allowStructure: boolean,
+): { handled: boolean; summary: string; clearInput: boolean; patch: StructuredAssistantPatch } | null {
+  const text = raw.trim()
+  if (!text || !allowStructure) return null
+
+  const copyEstimateAddress = /\b(copy|pull|fill|use)\s+(?:the\s+)?(?:estimate|job)\s+address\s+(?:into|to|for)\s+(?:the\s+)?(?:property\s+)?address\b/i.test(raw)
+  if (copyEstimateAddress && ctx.propertyAddressHint.trim()) {
+    return {
+      handled: true,
+      summary: "Property address filled from estimate service address.",
+      clearInput: true,
+      patch: { fieldKey: "header.propertyAddress", value: ctx.propertyAddressHint.trim() },
+    }
+  }
+
+  const copyCustomerToParties =
+    /\b(copy|pull|fill|use)\s+(?:the\s+)?(?:customer|client)\s+name\s+(?:into|to|for)\s+(?:parties\s+present|parties)\b/i.test(raw)
+  if (copyCustomerToParties && ctx.customerLabel.trim()) {
+    return {
+      handled: true,
+      summary: 'Parties present filled with customer name from estimate.',
+      clearInput: true,
+      patch: { fieldKey: "header.partiesPresent", value: ctx.customerLabel.trim() },
+    }
+  }
+
+  const useMyNameFor = text.match(/\b(?:use|put|apply)\s+my\s+name\s+(?:for|on|in|as)\s+(.+)$/i)
+  if (useMyNameFor?.[1] && ctx.accountDisplayName.trim()) {
+    const fieldKey = matchHeaderOrSubFieldKey(useMyNameFor[1].trim())
+    if (fieldKey?.startsWith("header.")) {
+      return {
+        handled: true,
+        summary: `Set ${fieldKey.replace("header.", "").replaceAll(".", " ")} to your account name.`,
+        clearInput: true,
+        patch: { fieldKey, value: ctx.accountDisplayName.trim() },
+      }
+    }
+  }
+
+  let fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|set\s+|put\s+)(?:the\s+)?(.+?)\s+(?:with)\s+(.+)$/is)
+  if (!fillM) {
+    fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|put\s+)(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
+  }
+  const m = fillM ?? text.match(/^(?:please\s+)?set\s+(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
+  if (m?.[1] && m[2]) {
+    const left = normAssistantPhrase(m[1])
+    if (!left.includes("condition") && !/^condition\b/.test(left)) {
+      const fieldKey = matchHeaderOrSubFieldKey(m[1])
+      const value = resolveFillLiteral(m[2], ctx)
+      if (fieldKey && value) {
+        return {
+          handled: true,
+          summary: `Updated ${fieldKey.startsWith("sub:") ? "findings" : "header"} field.`,
+          clearInput: true,
+          patch: { fieldKey, value },
+        }
+      }
+    }
+  }
+
+  const condM = text.match(/\b(?:set|change)\s+condition\s+(?:for|on)?\s*(.+?)\s+to\s+(.+)$/i)
+  if (condM?.[1] && condM[2]) {
+    const subId = matchSubsectionIdFromPhrase(condM[1].trim())
+    const rating = parseConditionRating(condM[2].trim())
+    if (subId && rating) {
+      return {
+        handled: true,
+        summary: `Set findings condition (${subId}) to ${CONDITION_RATING_LABELS[rating]}.`,
+        clearInput: true,
+        patch: { setCondition: { subId, condition: rating } },
+      }
+    }
+  }
+
+  const openMajor =
+    text.match(/\b(?:open|show|expand)\s+(?:the\s+)?(.+?)(?:\s+section|\s+tab)?$/i) ??
+    text.match(/\b(?:go\s+to|jump\s+to)\s+(?:the\s+)?(.+?)\s+(?:section|category)\s*$/i)
+  if (openMajor?.[1]) {
+    const mid = resolveMajorSectionIdFromPhrase(openMajor[1])
+    if (mid) {
+      return {
+        handled: true,
+        summary: `Opened ${HOME_INSPECTION_MAJOR_SECTIONS.find((s) => s.id === mid)?.title ?? "findings"} section.`,
+        clearInput: true,
+        patch: { openMajorSection: mid, phase: "home_findings" as const },
+      }
+    }
+  }
+
+  const goSub = text.match(/\b(?:go\s+to|open|show)\s+(?:subsection\s+)?(.+)$/i)
+  if (goSub?.[1]) {
+    const rest = goSub[1].trim()
+    const restTab = normAssistantPhrase(rest)
+    if (
+      ["header", "findings", "media", "review", "summary", "scope", "notes", "the header", "the findings"].some(
+        (w) => restTab === w || restTab.startsWith(`${w} `),
+      )
+    ) {
+      /* wizard tab navigation handled elsewhere */
+    } else if (!/\b(findings|header|media|review)\b/i.test(rest) || rest.length > 14) {
+      const subId = matchSubsectionIdFromPhrase(rest)
+      if (subId) {
+        const majorId = majorIdContainingSubsection(subId)
+        return {
+          handled: true,
+          summary: `Findings → ${HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId}`,
+          clearInput: true,
+          patch: { openMajorSection: majorId ?? undefined, phase: "home_findings" as const, focusSubId: subId },
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function specialtyReportFieldDomId(fieldKey: string): string {
+  const slug = fieldKey.replace(/\./g, "_").replace(/:/g, "_").replace(/[^\w-]/g, "_").replace(/_+/g, "_")
+  return `srw-field-${slug}`
+}
+
 export default function SpecialtyReportWizardModal({
   open,
   onClose,
@@ -162,6 +435,16 @@ export default function SpecialtyReportWizardModal({
   customerId = null,
   varianceAssigneeOptions = [],
 }: Props) {
+  const { user } = useAuth()
+  const accountDisplayName = useMemo(() => {
+    const meta = user?.user_metadata as Record<string, unknown> | undefined
+    const dn = typeof meta?.display_name === "string" ? meta.display_name.trim() : ""
+    if (dn) return dn
+    const fn = typeof meta?.full_name === "string" ? meta.full_name.trim() : ""
+    if (fn) return fn
+    return user?.email?.split("@")[0]?.trim() ?? ""
+  }, [user])
+
   const [phase, setPhase] = useState<WizardPhase>("pick_type")
   const [picked, setPicked] = useState<SpecialtyReportTypeKey | null>(null)
   const [home, setHome] = useState<HomeInspectionReportV1>(() => emptyHomeInspectionReport(propertyAddressHint))
@@ -178,6 +461,8 @@ export default function SpecialtyReportWizardModal({
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [assignedUserId, setAssignedUserId] = useState<string>("")
+  /** Ctrl / voice: expand `<details>` for major findings sections. */
+  const [findingSectionOpen, setFindingSectionOpen] = useState<Record<string, boolean>>({})
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   /** Snapshot + appended finals + interim (Web Speech fires overlapping interim finals). */
   const voiceSessionBaseRef = useRef("")
@@ -239,6 +524,7 @@ export default function SpecialtyReportWizardModal({
     setPreviewOpen(false)
     setSaveNote(null)
     setAssignedUserId("")
+    setFindingSectionOpen({})
   }, [propertyAddressHint])
 
   useEffect(() => {
@@ -563,6 +849,66 @@ export default function SpecialtyReportWizardModal({
   function runAssistantCommand(raw: string) {
     const text = raw.trim()
     if (!text) return
+    const structured = parseStructuredFillAndNavCommands(raw, {
+      accountDisplayName,
+      propertyAddressHint: propertyAddressHint ?? "",
+      customerLabel: customerLabel ?? "",
+    }, picked === "home_inspection")
+    if (structured?.handled && structured.patch) {
+      const p = structured.patch
+      if (p.phase) setPhase(p.phase)
+      if (p.openMajorSection)
+        setFindingSectionOpen((prev) => ({
+          ...prev,
+          [p.openMajorSection!]: true,
+        }))
+      if (p.fieldKey && p.value != null && String(p.value).length > 0) {
+        writeFieldValue(p.fieldKey, String(p.value))
+        if (p.fieldKey.startsWith("header.")) setPhase("home_header")
+        if (p.fieldKey.startsWith("sub:")) {
+          const sid = p.fieldKey.slice(4)
+          const maj = majorIdContainingSubsection(sid)
+          if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+          setPhase("home_findings")
+          setAiTarget(`sub:${sid}` as AiTargetField)
+        }
+        window.setTimeout(() => {
+          document.getElementById(specialtyReportFieldDomId(p.fieldKey!))?.focus?.()
+        }, 200)
+      }
+      if (p.setCondition) {
+        const { subId, condition } = p.setCondition
+        setPhase("home_findings")
+        const maj = majorIdContainingSubsection(subId)
+        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+        setHome((h) => ({
+          ...h,
+          subsections: {
+            ...h.subsections,
+            [subId]: {
+              ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
+              condition,
+            },
+          },
+        }))
+        setAiTarget(`sub:${subId}` as AiTargetField)
+        window.setTimeout(() => {
+          document.getElementById(specialtyReportFieldDomId(`cond:sub:${subId}`))?.focus?.()
+        }, 200)
+      }
+      if (p.focusSubId && !p.fieldKey && !p.setCondition) {
+        const maj = majorIdContainingSubsection(p.focusSubId)
+        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+        setPhase("home_findings")
+        setAiTarget(`sub:${p.focusSubId}` as AiTargetField)
+        window.setTimeout(() => {
+          document.getElementById(specialtyReportFieldDomId(`sub:${p.focusSubId}`))?.focus?.()
+        }, 220)
+      }
+      setAssistantNote(structured.summary)
+      if (structured.clearInput) setAssistantText("")
+      return
+    }
     const lower = text.toLowerCase()
     if (/\btradesman\s+record\b/i.test(lower)) {
       const wakeParsed = parseTradesmanRecordIntent(raw)
@@ -612,9 +958,14 @@ export default function SpecialtyReportWizardModal({
       setAssistantNote("Opened media / integrations.")
       return
     }
-    if (command.includes("go to review")) {
+    if (command.includes("go to review") || command.includes("go to summary")) {
       setPhase("home_review")
       setAssistantNote("Opened review & summary.")
+      return
+    }
+    if (command.includes("go to scope")) {
+      setPhase("home_header")
+      setAssistantNote("Opened header & scope.")
       return
     }
     appendToTarget(aiTarget, text)
@@ -673,7 +1024,7 @@ export default function SpecialtyReportWizardModal({
       setAssistantListening(true)
       setVoiceFieldKey(targetFieldKey ?? null)
       setAssistantNote(
-        "Listening… Say “Tradesman record” plus scope / summary / media / a findings label, then your note. Or use navigation: next step, go to findings.",
+        "Listening… Commands: fill inspector name with my name · copy estimate address to property address · set condition for gutters to satisfactory · open electrical section · go to roof covering. Or “Tradesman record” + scope / summary / a findings label.",
       )
     } catch {
       setAssistantListening(false)
@@ -861,7 +1212,12 @@ export default function SpecialtyReportWizardModal({
               </div>
             </div>
             <p style={{ margin: "8px 0 10px", fontSize: 12, color: "#7c2d12", lineHeight: 1.5 }}>
-              Voice keeps adding text (no more single-line overwrite). Say <strong>Tradesman record</strong> then a section (scope, summary, media, drone, generic, or a findings label like “roof covering”) and your note — or pick the field first and apply.
+              <strong>Field commands:</strong> e.g. <code style={{ fontSize: 11 }}>fill inspector name with my name</code>,{" "}
+              <code style={{ fontSize: 11 }}>copy estimate address to property address</code>,{" "}
+              <code style={{ fontSize: 11 }}>set weather to clear</code>,{" "}
+              <code style={{ fontSize: 11 }}>set condition for roof covering to marginal</code>.{" "}
+              <strong>Navigation:</strong> <code style={{ fontSize: 11 }}>open plumbing section</code>, <code style={{ fontSize: 11 }}>go to flashing</code>.{" "}
+              Or say <strong>Tradesman record</strong> + scope / summary / a findings label and your note.
             </p>
             <div style={{ display: "grid", gap: 8 }}>
               <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value as AiTargetField)} style={{ ...theme.formInput, maxWidth: 360 }}>
@@ -969,6 +1325,7 @@ export default function SpecialtyReportWizardModal({
                   <label style={lbl}>
                     Inspector name
                     <input
+                      id={specialtyReportFieldDomId("header.inspectorName")}
                       value={home.header.inspectorName}
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))}
                       style={theme.formInput}
@@ -978,6 +1335,7 @@ export default function SpecialtyReportWizardModal({
                   <label style={lbl}>
                     License / cert ID
                     <input
+                      id={specialtyReportFieldDomId("header.licenseId")}
                       value={home.header.licenseId}
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, licenseId: e.target.value } }))}
                       style={theme.formInput}
@@ -987,6 +1345,7 @@ export default function SpecialtyReportWizardModal({
                   <label style={lbl}>
                     Inspection date
                     <input
+                      id={specialtyReportFieldDomId("header.inspectionDate")}
                       type="date"
                       value={home.header.inspectionDate}
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectionDate: e.target.value } }))}
@@ -997,6 +1356,7 @@ export default function SpecialtyReportWizardModal({
                   <label style={lbl}>
                     Weather / site conditions
                     <input
+                      id={specialtyReportFieldDomId("header.weather")}
                       value={home.header.weather}
                       onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, weather: e.target.value } }))}
                       style={theme.formInput}
@@ -1007,6 +1367,7 @@ export default function SpecialtyReportWizardModal({
                 <label style={lbl}>
                   Property address
                   <input
+                    id={specialtyReportFieldDomId("header.propertyAddress")}
                     value={home.header.propertyAddress}
                     onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, propertyAddress: e.target.value } }))}
                     style={theme.formInput}
@@ -1016,6 +1377,7 @@ export default function SpecialtyReportWizardModal({
                 <label style={lbl}>
                   Parties present
                   <input
+                    id={specialtyReportFieldDomId("header.partiesPresent")}
                     value={home.header.partiesPresent}
                     onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, partiesPresent: e.target.value } }))}
                     style={theme.formInput}
@@ -1025,6 +1387,7 @@ export default function SpecialtyReportWizardModal({
                 <label style={lbl}>
                   Scope &amp; limitations (editable boilerplate)
                   <textarea
+                    id={specialtyReportFieldDomId("scopeLimitations")}
                     rows={5}
                     value={home.scopeLimitations}
                     onChange={(e) => setHome((h) => ({ ...h, scopeLimitations: e.target.value }))}
@@ -1043,6 +1406,13 @@ export default function SpecialtyReportWizardModal({
                 {HOME_INSPECTION_MAJOR_SECTIONS.map((sec) => (
                   <details
                     key={sec.id}
+                    open={findingSectionOpen[sec.id] === true}
+                    onToggle={(ev) =>
+                      setFindingSectionOpen((prev) => ({
+                        ...prev,
+                        [sec.id]: (ev.target as HTMLDetailsElement).open,
+                      }))
+                    }
                     style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 12px", background: "#fafafa" }}
                   >
                     <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 14, color: theme.text }}>{sec.title}</summary>
@@ -1055,6 +1425,7 @@ export default function SpecialtyReportWizardModal({
                             {sub.hint ? <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{sub.hint}</div> : null}
                             <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                               <select
+                                id={specialtyReportFieldDomId(`cond:sub:${sub.id}`)}
                                 value={row.condition}
                                 onChange={(e) => {
                                   const condition = e.target.value as ConditionRating
@@ -1076,6 +1447,7 @@ export default function SpecialtyReportWizardModal({
                               </select>
                             </div>
                             <textarea
+                              id={specialtyReportFieldDomId(`sub:${sub.id}`)}
                               placeholder="Observations, locations, photos referenced…"
                               rows={2}
                               value={row.notes}
