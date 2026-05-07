@@ -200,6 +200,11 @@ export type PortalConfig = {
    * Estimate Tools–only subscription ($49.99/mo): hides Customers & Scheduling, simplifies dashboard.
    */
   estimate_tools_only_package?: boolean
+  /**
+   * When true (admin / portal builder): **Estimates** hides “Customer payment” until the quote status looks “sent” (Sent, Viewed, Accepted, Declined).
+   * Default omitted: button follows normal line-item / customer rules on the Estimates page.
+   */
+  customer_pay_only_after_estimate_sent?: boolean
 }
 
 /** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
@@ -887,6 +892,7 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'estimate_template', label: 'Estimate template', type: 'button' },
     { id: 'estimate_line_items', label: 'Estimate line items', type: 'button' },
     { id: 'job_types', label: 'Job types (Calendar)', type: 'button' },
+    { id: 'customer_payment', label: 'Customer payment (hosted pay link)', type: 'button' },
     { id: 'status', label: 'Status', type: 'dropdown' },
   ],
   calendar: [
@@ -899,9 +905,13 @@ export const PAGE_CONTROLS: Record<string, PageControl[]> = {
     { id: 'completion_settings', label: 'Job completion', type: 'button' },
     { id: 'receipt_template', label: 'Receipt template', type: 'button' },
     { id: 'customize_user', label: 'Customize user (ribbon / auto-assign)', type: 'button' },
+    { id: 'customer_payment', label: 'Customer payment (from job drawer)', type: 'button' },
     { id: 'job_type', label: 'Job type', type: 'dropdown' },
   ],
-  customers: [],
+  customers: [
+    { id: 'page_title', label: 'Page title', type: 'page_title' },
+    { id: 'customer_payment', label: 'Customer payment (request link)', type: 'button' },
+  ],
   'web-support': [],
   'tech-support': [],
   settings: [
@@ -967,6 +977,7 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
     'estimate_template',
     'estimate_line_items',
     'job_types',
+    'customer_payment',
     'status',
   ],
   calendar: [
@@ -977,11 +988,12 @@ export const CONTROL_IDS_WITH_ITEMS: Record<string, string[]> = {
     'completion_settings',
     'receipt_template',
     'customize_user',
+    'customer_payment',
     'job_type',
   ],
   settings: ['custom_fields'],
   dashboard: [],
-  customers: [],
+  customers: ['customer_payment'],
   'web-support': [],
   'tech-support': [],
 }

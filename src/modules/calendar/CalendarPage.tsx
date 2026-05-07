@@ -470,6 +470,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const showCalCompletionSettings = false
   const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
   const completionSettingsButtonLabel = portalConfig?.controlLabels?.completion_settings ?? "Job completion"
+  const showCalendarCustomerPayment =
+    getPageActionVisible(portalConfig, "calendar", "customer_payment") &&
+    getOmPageActionVisible(portalConfig, "calendar", "customer_payment")
 
   const [arReminderMins, setArReminderMins] = useState(() => {
     try {
@@ -3331,7 +3334,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     Open customer contact card
                   </button>
                 ) : null}
-                {selectedEvent.customer_id ? (
+                {selectedEvent.customer_id && showCalendarCustomerPayment ? (
                   <button
                     type="button"
                     onClick={() => setCustomerPaymentRequestOpen(true)}

@@ -3,7 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../styles/theme"
 import type { CustomerPaymentProfileMetadata } from "../lib/customerPaymentMetadata"
 import { loadCustomerPaymentPreflight } from "../lib/customerPaymentPreflight"
-import { copyCustomerPaymentShareAndLog } from "../lib/customerPaymentsWorkflow"
+import { copyCustomerPaymentShareAndLog, markQuoteCustomerPaymentCollected } from "../lib/customerPaymentsWorkflow"
+import {
+  customerPayWorkflowAgingBadge,
+  customerPayWorkflowLabel,
+  parseQuoteCustomerPayWorkflow,
+} from "../lib/quoteCustomerPayWorkflow"
 
 export type CustomerPaymentRequestModalProps = {
   open: boolean
@@ -17,6 +22,10 @@ export type CustomerPaymentRequestModalProps = {
   amountLabel: string | null
   quoteId?: string | null
   calendarEventId?: string | null
+  /** Latest `quotes.metadata` for this estimate — drives status chips when `quoteId` is set */
+  quoteMetadata?: Record<string, unknown> | null
+  /** After copy or manual mark updates metadata on server */
+  onQuoteMetadataPatched?: (meta: Record<string, unknown>) => void
 }
 
 export default function CustomerPaymentRequestModal({
@@ -31,12 +40,15 @@ export default function CustomerPaymentRequestModal({
   amountLabel,
   quoteId,
   calendarEventId,
+  quoteMetadata,
+  onQuoteMetadataPatched,
 }: CustomerPaymentRequestModalProps) {
   const [includeBarcode, setIncludeBarcode] = useState(false)
   const [preflightBusy, setPreflightBusy] = useState(false)
   const [showReminder, setShowReminder] = useState(false)
   const [acknowledgeRisk, setAcknowledgeRisk] = useState(false)
   const [copyBusy, setCopyBusy] = useState(false)
+  const [markBusy, setMarkBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -58,6 +70,9 @@ export default function CustomerPaymentRequestModal({
 
   const payReady = Boolean(profile.customer_pay_link_url?.trim() || profile.customer_pay_barcode_url?.trim())
   const barcodeAvailable = Boolean(profile.customer_pay_barcode_url?.trim())
+  const workflow = parseQuoteCustomerPayWorkflow(quoteMetadata ?? null)
+  const aging = customerPayWorkflowAgingBadge(workflow)
+  const quoteIdTrim = quoteId?.trim() ?? ""
   const canCopy =
     payReady &&
     Boolean(customerId) &&
@@ -86,9 +101,38 @@ export default function CustomerPaymentRequestModal({
         setNotice(res.error ?? "Could not copy.")
         return
       }
+      if (res.patchedQuoteMetadata && onQuoteMetadataPatched) {
+        onQuoteMetadataPatched(res.patchedQuoteMetadata)
+      }
       setNotice("Copied to clipboard. Paste into text or email to your customer.")
     } finally {
       setCopyBusy(false)
+    }
+  }
+
+  async function handleMark(kind: "paid" | "waived") {
+    if (!userId || !quoteIdTrim || !customerId) return
+    setMarkBusy(true)
+    setNotice(null)
+    try {
+      const res = await markQuoteCustomerPaymentCollected({
+        supabase,
+        quoteId: quoteIdTrim,
+        userId,
+        customerId,
+        calendarEventId: calendarEventId ?? null,
+        kind,
+        amountLabel,
+        note: null,
+      })
+      if (!res.ok || !res.metadata) {
+        setNotice(res.error ?? "Could not update payment status.")
+        return
+      }
+      onQuoteMetadataPatched?.(res.metadata)
+      setNotice(kind === "paid" ? "Marked as paid (manual)." : "Marked as waived / paid offline.")
+    } finally {
+      setMarkBusy(false)
     }
   }
 
@@ -158,8 +202,33 @@ export default function CustomerPaymentRequestModal({
             Set your hosted pay link (and optional barcode link) under{" "}
             <strong style={{ color: theme.text }}>Payments → Send Payment Information to Customer</strong>.
           </p>
-        ) : (
+            ) : (
           <>
+            {quoteIdTrim ? (
+              <div
+                style={{
+                  marginBottom: 10,
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                  fontSize: 12,
+                  color: "#475569",
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ color: theme.text }}>Tracking:</strong> {customerPayWorkflowLabel(workflow)}
+                {workflow.status === "sent" && workflow.last_sent_at ? (
+                  <>
+                    {" "}
+                    · Sent {new Date(workflow.last_sent_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                  </>
+                ) : null}
+                {aging ? (
+                  <span style={{ display: "block", marginTop: 4, color: "#b45309", fontWeight: 700 }}>{aging}</span>
+                ) : null}
+              </div>
+            ) : null}
             {estimateLabel ? (
               <p style={{ margin: "0 0 8px", fontSize: 13, color: theme.text }}>
                 <strong>Context:</strong> {estimateLabel}
@@ -247,6 +316,53 @@ export default function CustomerPaymentRequestModal({
                 Close
               </button>
             </div>
+            {quoteIdTrim && customerId ? (
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${theme.border}` }}>
+                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: theme.text }}>
+                  Received payment elsewhere?
+                </p>
+                <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  Cash, check, or another processor doesn&apos;t change your hosted link — record it here so your team sees Paid / waived on
+                  this estimate.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  <button
+                    type="button"
+                    disabled={markBusy || workflow.status === "paid"}
+                    onClick={() => void handleMark("paid")}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: workflow.status === "paid" ? "#cbd5e1" : "#047857",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: workflow.status === "paid" || markBusy ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {markBusy ? "Saving…" : "Mark paid (manual)"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={markBusy || workflow.status === "waived"}
+                    onClick={() => void handleMark("waived")}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: workflow.status === "waived" || markBusy ? "not-allowed" : "pointer",
+                      color: theme.text,
+                    }}
+                  >
+                    Mark waived / offline
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {notice ? (
               <p style={{ margin: "10px 0 0", fontSize: 13, color: notice.includes("Copied") ? "#047857" : "#b91c1c" }}>{notice}</p>
             ) : null}

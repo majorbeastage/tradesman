@@ -26,7 +26,7 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
 import { queueQuotesCustomerPrefill, queueSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
-import { getControlItemsForUser } from "../../types/portal-builder"
+import { getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
 import {
   clampSmsUserPortion,
@@ -127,6 +127,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
+  const showCustomersCustomerPayment = getPageActionVisible(portalConfig, "customers", "customer_payment")
   const isMobile = useIsMobile()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [inProcessCustomers, setInProcessCustomers] = useState<CustomerRow[]>([])
@@ -1690,22 +1691,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 >
                                   Notes
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setCustomerPaymentRequestOpen(true)}
-                                  style={{
-                                    padding: "6px 12px",
-                                    borderRadius: 6,
-                                    border: `2px solid ${theme.primary}`,
-                                    background: "#fff7ed",
-                                    color: theme.text,
-                                    cursor: "pointer",
-                                    fontWeight: 800,
-                                    fontSize: 13,
-                                  }}
-                                >
-                                  Customer payment
-                                </button>
+                                {showCustomersCustomerPayment ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomerPaymentRequestOpen(true)}
+                                    style={{
+                                      padding: "6px 12px",
+                                      borderRadius: 6,
+                                      border: `2px solid ${theme.primary}`,
+                                      background: "#fff7ed",
+                                      color: theme.text,
+                                      cursor: "pointer",
+                                      fontWeight: 800,
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    Customer payment
+                                  </button>
+                                ) : null}
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                 {(() => {

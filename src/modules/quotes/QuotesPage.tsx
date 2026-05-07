@@ -83,6 +83,11 @@ import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
+import {
+  customerPayWorkflowAgingBadge,
+  customerPayWorkflowLabel,
+  parseQuoteCustomerPayWorkflow,
+} from "../../lib/quoteCustomerPayWorkflow"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -842,6 +847,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
     getOmPageActionVisible(portalConfig, "quotes", "estimate_line_items")
   const showQuotesJobTypesPanel =
     getPageActionVisible(portalConfig, "quotes", "job_types") && getOmPageActionVisible(portalConfig, "quotes", "job_types")
+  const showQuotesCustomerPayment =
+    getPageActionVisible(portalConfig, "quotes", "customer_payment") &&
+    getOmPageActionVisible(portalConfig, "quotes", "customer_payment")
+  const portalCustomerPayOnlyAfterEstimateSent = portalConfig?.customer_pay_only_after_estimate_sent === true
+  const estimateEligibleForCustomerPayShare = useMemo(() => {
+    if (!portalCustomerPayOnlyAfterEstimateSent) return true
+    const st = String(selectedQuote?.status ?? "")
+      .trim()
+      .toLowerCase()
+    return ["sent", "viewed", "accepted", "declined"].includes(st)
+  }, [portalCustomerPayOnlyAfterEstimateSent, selectedQuote?.status])
+  const quotePayWorkflowUi = parseQuoteCustomerPayWorkflow(selectedQuote?.metadata ?? null)
+  const quotePayWorkflowAging = customerPayWorkflowAgingBadge(quotePayWorkflowUi)
   const estimateLineItemsButtonLabel = portalConfig?.controlLabels?.estimate_line_items ?? "Estimate line items"
   const quoteJobTypesButtonLabel = portalConfig?.controlLabels?.job_types ?? "Job types"
   const quoteAutomaticRepliesItems = useMemo(
@@ -4284,6 +4302,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
           estimateLabel={selectedQuote ? `Estimate ${selectedQuote.id.slice(0, 8)}` : null}
           amountLabel={customerPaymentAmountLabel}
           quoteId={selectedQuote?.id ?? null}
+          quoteMetadata={selectedQuote?.metadata ?? null}
+          onQuoteMetadataPatched={(meta) =>
+            setSelectedQuote((q: QuoteRow | null) =>
+              q && selectedQuoteId && q.id === selectedQuoteId ? { ...q, metadata: meta } : q,
+            )
+          }
         />
 
         {openCustomButtonId && (() => {
@@ -6484,34 +6508,55 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   >
                     Save to Device
                   </button>
-                  <button
-                    type="button"
-                    disabled={!selectedQuote?.customer_id}
-                    title={!selectedQuote?.customer_id ? "Link a customer first" : undefined}
-                    onClick={() => {
-                      if (!selectedQuote?.customer_id) {
-                        alert("Link a customer first.")
-                        return
-                      }
-                      const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
-                      if (requireReview && selectedQuoteItems.length === 0) {
-                        alert("Review the estimate first: add at least one line item before sending payment requests.")
-                        return
-                      }
-                      setCustomerPaymentRequestOpen(true)
-                    }}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: `2px solid ${theme.primary}`,
-                      background: "#fff7ed",
-                      color: theme.text,
-                      fontWeight: 800,
-                      cursor: !selectedQuote?.customer_id ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    Customer payment
-                  </button>
+                  {showQuotesCustomerPayment ? (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={!selectedQuote?.customer_id || !estimateEligibleForCustomerPayShare}
+                        title={
+                          !selectedQuote?.customer_id
+                            ? "Link a customer first"
+                            : !estimateEligibleForCustomerPayShare
+                              ? "Portal setting: send or share this estimate before offering payment links."
+                              : undefined
+                        }
+                        onClick={() => {
+                          if (!selectedQuote?.customer_id) {
+                            alert("Link a customer first.")
+                            return
+                          }
+                          if (!estimateEligibleForCustomerPayShare) {
+                            alert("This portal is configured to offer customer payment only after the estimate is sent or shared.")
+                            return
+                          }
+                          const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
+                          if (requireReview && selectedQuoteItems.length === 0) {
+                            alert("Review the estimate first: add at least one line item before sending payment requests.")
+                            return
+                          }
+                          setCustomerPaymentRequestOpen(true)
+                        }}
+                        style={{
+                          padding: "10px 14px",
+                          borderRadius: 8,
+                          border: `2px solid ${theme.primary}`,
+                          background: "#fff7ed",
+                          color: theme.text,
+                          fontWeight: 800,
+                          cursor:
+                            !selectedQuote?.customer_id || !estimateEligibleForCustomerPayShare ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        Customer payment
+                      </button>
+                      {selectedQuote?.customer_id ? (
+                        <span style={{ fontSize: 11, color: quotePayWorkflowAging ? "#b45309" : "#64748b", fontWeight: 600 }}>
+                          {customerPayWorkflowLabel(quotePayWorkflowUi)}
+                          {quotePayWorkflowAging ? ` · ${quotePayWorkflowAging}` : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     disabled={!selectedQuote?.customer_id || selectedQuoteItems.length === 0}

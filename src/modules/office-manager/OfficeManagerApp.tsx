@@ -40,6 +40,7 @@ const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "completion_settings", label: "Job completion" },
   { id: "receipt_template", label: "Receipt template" },
   { id: "customize_user", label: "Customize user" },
+  { id: "customer_payment", label: "Customer payment" },
 ]
 
 function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
@@ -57,6 +58,7 @@ const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "estimate_template", label: "Estimate template" },
   { id: "estimate_line_items", label: "Estimate line items" },
   { id: "job_types", label: "Job types" },
+  { id: "customer_payment", label: "Customer payment" },
 ]
 
 const OM_CONVERSATIONS_TOOLBAR_ACTIONS: { id: string; label: string }[] = [

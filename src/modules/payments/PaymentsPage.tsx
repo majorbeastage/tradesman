@@ -17,6 +17,12 @@ import {
   applyCustomerPaymentSettingsToProfileMetadata,
   parseCustomerPaymentMetadata,
 } from "../../lib/customerPaymentMetadata"
+import {
+  customerPaymentEventTypeLabel,
+  fetchCustomerPaymentCollectionsHistory,
+  formatUsdAmount,
+  type CustomerPaymentCollectionsRow,
+} from "../../lib/customerPaymentCollections"
 
 declare global {
   interface Window {
@@ -29,6 +35,9 @@ const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").
 const ENV_JS_TOKEN = String(import.meta.env.VITE_HELCIM_JS_TOKEN ?? "").trim()
 const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
+
+const HELCIM_HOME = "https://www.helcim.com/"
+const HELCIM_HELP_CENTER = "https://help.helcim.com/"
 
 const inputStyle: CSSProperties = {
   width: "100%",
@@ -105,6 +114,9 @@ export default function PaymentsPage() {
   const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [customerPayCopied, setCustomerPayCopied] = useState(false)
   const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("tradesman")
+  const [collectionsBusy, setCollectionsBusy] = useState(false)
+  const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
+  const [collectionsError, setCollectionsError] = useState<string | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -262,6 +274,27 @@ export default function PaymentsPage() {
       cancelled = true
     }
   }, [profileUserId])
+
+  useEffect(() => {
+    if (paymentsHubTab !== "history" || !profileUserId || !supabase) return
+    let cancelled = false
+    setCollectionsBusy(true)
+    setCollectionsError(null)
+    void (async () => {
+      const res = await fetchCustomerPaymentCollectionsHistory({
+        supabase,
+        userId: profileUserId,
+        limit: 100,
+      })
+      if (cancelled) return
+      setCollectionsBusy(false)
+      if (res.error) setCollectionsError(res.error)
+      setCollectionsRows(res.rows)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [paymentsHubTab, profileUserId])
 
   useEffect(() => {
     const scrollToCustomerPay = () => {
@@ -424,8 +457,8 @@ export default function PaymentsPage() {
             </>
           ) : (
             <>
-              <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — last successful charge we know about (from your
-              profile) plus this browser session &apos;s latest Helcim result when you pay here.
+              <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — your Tradesman subscription metadata, homeowner
+              payment activity you logged in-app, plus this browser &apos;s latest embedded checkout attempt.
             </>
           )}
         </p>
@@ -442,6 +475,72 @@ export default function PaymentsPage() {
           background: "#f8fafc",
         }}
       >
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 14,
+            borderRadius: 10,
+            border: "1px solid #bae6fd",
+            background: "linear-gradient(160deg, #ecfeff 0%, #ffffff 70%)",
+            color: theme.text,
+          }}
+        >
+          <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 800 }}>Helcim hosted pay (quick setup)</h3>
+          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+            Tradesman never stores your merchant API keys in the browser — you paste only the <strong>hosted pay / customer link</strong> you
+            configure in your processor. Subscription billing to Tradesman is separate from homeowner payments.
+          </p>
+          <ol style={{ margin: "0 0 12px", paddingLeft: 22, fontSize: 13, color: theme.text, lineHeight: 1.6 }}>
+            <li>Open or create a merchant account with Helcim ({HELCIM_HOME}).</li>
+            <li>
+              Configure a <strong>hosted payment page</strong> or shareable pay link in Helcim (exact menu names vary — use their{" "}
+              <a href={HELCIM_HELP_CENTER} target="_blank" rel="noreferrer" style={{ color: "#0369a1", fontWeight: 700 }}>
+                Help Center
+              </a>
+              ).
+            </li>
+            <li>Copy the HTTPS link Helcim gives you and paste it into <strong>Customer pay link</strong> below.</li>
+            <li>
+              Optionally add a barcode/QR landing URL if Helcim exposes one separately, then toggle share options and save settings.
+            </li>
+          </ol>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <a
+              href={HELCIM_HOME}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                padding: "9px 16px",
+                borderRadius: 8,
+                background: "#0ea5e9",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                textDecoration: "none",
+              }}
+            >
+              Helcim — open signup
+            </a>
+            <a
+              href={HELCIM_HELP_CENTER}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                padding: "9px 16px",
+                borderRadius: 8,
+                border: "1px solid #cbd5e1",
+                background: "#fff",
+                color: "#0f172a",
+                fontWeight: 600,
+                fontSize: 13,
+                textDecoration: "none",
+              }}
+            >
+              Helcim Help Center
+            </a>
+          </div>
+        </div>
+
         <div
           style={{
             marginBottom: 14,
@@ -956,70 +1055,166 @@ export default function PaymentsPage() {
       ) : null}
 
       {paymentsHubTab === "history" ? (
-        <section
-          style={{
-            padding: 22,
-            borderRadius: 12,
-            border: `1px solid ${theme.border}`,
-            background: "#f8fafc",
-          }}
-        >
-          <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
-            Previous payments (subscription)
-          </h2>
-          <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
-            This page reflects metadata we store on your profile. Use Admin → Billing &amp; Helcim and your processor &apos;s dashboard for a
-            full statement.
-          </p>
-          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
-            <li>
-              <strong>Last successful sync</strong> (Tradesman billing): {formatProfilePaymentIso(billingForPayments.billing_last_success_at)}
-            </li>
-            <li>
-              <strong>Next due date on file</strong>: {billingForPayments.billing_payment_due_date?.trim() || "—"}
-            </li>
-            <li>
-              <strong>Catalog monthly total</strong> (before tax):{" "}
-              {monthlyPlanTotal > 0 ? formatUsdMonthly(monthlyPlanTotal) : "—"}
-            </li>
-            <li>
-              <strong>Helcim customer code</strong>: {customerCode?.trim() || "—"}
-            </li>
-          </ul>
-          {lastResult ? (
-            <div
-              style={{
-                marginTop: 18,
-                padding: 14,
-                borderRadius: 10,
-                border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
-                background: lastResult.response === 1 ? "#ecfdf5" : "#fef2f2",
-                fontSize: 14,
-                lineHeight: 1.5,
-              }}
-            >
-              <strong style={{ display: "block", marginBottom: 6 }}>Latest attempt this session (embedded checkout)</strong>
-              <span>{lastResult.response === 1 ? "Approved" : "Not approved"}</span>
-              {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
-              {lastResult.transactionId ? (
-                <div style={{ marginTop: 6, fontSize: 13 }}>
-                  Reference: {lastResult.transactionId}
-                  {lastResult.amount ? (
-                    <>
-                      {" "}
-                      · Amount: {lastResult.amount} {lastResult.currency || ""}
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <p style={{ margin: "16px 0 0", fontSize: 13, color: "#64748b" }}>
-              Pay from the <strong>Manage Payments to Tradesman</strong> tab to see a live result here after you submit a card in this
-              browser.
+        <>
+          <section
+            style={{
+              padding: 22,
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+            }}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+              Previous payments (subscription)
+            </h2>
+            <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
+              This page reflects metadata we store on your profile. Use Admin → Billing &amp; Helcim and your processor &apos;s dashboard for a
+              full statement.
             </p>
-          )}
-        </section>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
+              <li>
+                <strong>Last successful sync</strong> (Tradesman billing): {formatProfilePaymentIso(billingForPayments.billing_last_success_at)}
+              </li>
+              <li>
+                <strong>Next due date on file</strong>: {billingForPayments.billing_payment_due_date?.trim() || "—"}
+              </li>
+              <li>
+                <strong>Catalog monthly total</strong> (before tax):{" "}
+                {monthlyPlanTotal > 0 ? formatUsdMonthly(monthlyPlanTotal) : "—"}
+              </li>
+              <li>
+                <strong>Helcim customer code</strong>: {customerCode?.trim() || "—"}
+              </li>
+            </ul>
+            {lastResult ? (
+              <div
+                style={{
+                  marginTop: 18,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
+                  background: lastResult.response === 1 ? "#ecfdf5" : "#fef2f2",
+                  fontSize: 14,
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ display: "block", marginBottom: 6 }}>Latest attempt this session (embedded checkout)</strong>
+                <span>{lastResult.response === 1 ? "Approved" : "Not approved"}</span>
+                {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
+                {lastResult.transactionId ? (
+                  <div style={{ marginTop: 6, fontSize: 13 }}>
+                    Reference: {lastResult.transactionId}
+                    {lastResult.amount ? (
+                      <>
+                        {" "}
+                        · Amount: {lastResult.amount} {lastResult.currency || ""}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p style={{ margin: "16px 0 0", fontSize: 13, color: "#64748b" }}>
+                Pay from the <strong>Manage Payments to Tradesman</strong> tab to see a live result here after you submit a card in this
+                browser.
+              </p>
+            )}
+          </section>
+
+          <section
+            style={{
+              marginTop: 22,
+              padding: 22,
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+            }}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+              Customer collections activity
+            </h2>
+            <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
+              Logged when you <strong>Copy payment request</strong> from an estimate, job, or customer card — and when you mark an estimate Paid
+              or waived. Use your processor dashboard for authoritative settlement reporting.
+            </p>
+            {collectionsBusy ? (
+              <p style={{ fontSize: 14, color: "#64748b" }}>Loading activity…</p>
+            ) : collectionsError ? (
+              <p style={{ fontSize: 14, color: "#b91c1c" }}>{collectionsError}</p>
+            ) : collectionsRows.length === 0 ? (
+              <p style={{ fontSize: 14, color: "#64748b" }}>
+                No customer payment activity yet — or the activity table hasn&apos;t been created in Supabase (<code style={{ fontSize: 13 }}>customer_payment_events</code>
+                ).
+              </p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%", minWidth: 640 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>When</th>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Activity</th>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Amount</th>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Customer</th>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Links</th>
+                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {collectionsRows.map((r) => {
+                      let ageNote: string | null = null
+                      if (r.event_type === "payment_link_sent" || r.event_type === "payment_barcode_sent") {
+                        const sent = Date.parse(r.created_at)
+                        if (Number.isFinite(sent)) {
+                          const days = Math.floor((Date.now() - sent) / 86_400_000)
+                          if (days >= 30) ageNote = `${days} days since outreach`
+                        }
+                      }
+                      return (
+                        <tr key={r.id} style={{ borderBottom: `1px solid #e2e8f0` }}>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
+                            {formatProfilePaymentIso(r.created_at)}
+                          </td>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>
+                            {customerPaymentEventTypeLabel(r.event_type)}
+                            {ageNote ? (
+                              <span style={{ display: "block", fontSize: 11, color: "#b45309", fontWeight: 600 }}>
+                                {ageNote} — follow up if still unpaid
+                              </span>
+                            ) : null}
+                          </td>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
+                            {formatUsdAmount(r.amount)}
+                          </td>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>{r.customer_name?.trim() || "—"}</td>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top", fontSize: 12, color: "#475569", lineHeight: 1.4 }}>
+                            {r.quote_id || r.calendar_event_id ? (
+                              <>
+                                {r.quote_id ? (
+                                  <>
+                                    Est. <strong style={{ color: theme.text }}>{r.quote_id.slice(0, 8)}</strong>
+                                  </>
+                                ) : null}
+                                {r.quote_id && r.calendar_event_id ? <br /> : null}
+                                {r.calendar_event_id ? (
+                                  <span>
+                                    Calendar <strong style={{ color: theme.text }}>{r.calendar_event_id.slice(0, 8)}</strong>
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>{r.status?.trim() || "logged"}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
       ) : null}
     </div>
   )
