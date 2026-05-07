@@ -74,7 +74,7 @@ import {
 } from "../../lib/quoteItemMath"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "../../lib/quoteLogoImage"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
-import { buildCustomerPaymentShareBody, logCustomerPaymentEvent } from "../../lib/customerPaymentsWorkflow"
+import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 
 type JobType = {
   id: string
@@ -367,12 +367,23 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [receiptNewUnit, setReceiptNewUnit] = useState("0")
   const [receiptNewKind, setReceiptNewKind] = useState("misc")
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
+  const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
 
   const linkedQuoteLiveTotal = useMemo(() => {
     if (!selectedEvent?.quote_id) return null
     const t = totalFromQuoteItemRows(quoteItemsForReceipt)
     return t > 0 ? t : null
   }, [selectedEvent?.quote_id, quoteItemsForReceipt])
+
+  const calendarPaymentAmountLabel = useMemo(() => {
+    const fromLines = linkedQuoteLiveTotal
+    const qTot =
+      selectedEvent?.quote_total != null && Number.isFinite(Number(selectedEvent.quote_total))
+        ? Number(selectedEvent.quote_total)
+        : null
+    const v = fromLines ?? qTot
+    return v != null && Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : null
+  }, [linkedQuoteLiveTotal, selectedEvent?.quote_total])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -1284,49 +1295,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       alert(e instanceof Error ? e.message : String(e))
     } finally {
       setReceiptPdfBusy(false)
-    }
-  }
-
-  async function sendCustomerPaymentRequestFromCalendar(mode: "link" | "barcode") {
-    if (!selectedEvent) return
-    const link = customerPaymentProfile.customer_pay_link_url?.trim() ?? ""
-    const barcode = customerPaymentProfile.customer_pay_barcode_url?.trim() ?? ""
-    if (mode === "link" && !link) {
-      alert("Set a customer pay link first in Payments.")
-      return
-    }
-    if (mode === "barcode" && !barcode) {
-      alert("Set a barcode / QR payment link first in Payments.")
-      return
-    }
-    const total = linkedQuoteLiveTotal ?? (selectedEvent.quote_total != null ? Number(selectedEvent.quote_total) : null)
-    const body = buildCustomerPaymentShareBody({
-      customerName: selectedEvent.customers?.display_name ?? null,
-      estimateLabel: selectedEvent.quote_id ? `Estimate ${selectedEvent.quote_id.slice(0, 8)}` : selectedEvent.title,
-      amountLabel: total != null && Number.isFinite(total) ? `$${total.toFixed(2)}` : null,
-      payLink: mode === "link" ? link : link || barcode,
-      barcodeLink: barcode,
-      includeBarcode: mode === "barcode",
-      instructions: customerPaymentProfile.customer_pay_instructions ?? null,
-    })
-    if (typeof navigator.clipboard?.writeText === "function") {
-      try {
-        await navigator.clipboard.writeText(body)
-      } catch {
-        /* ignore */
-      }
-    }
-    alert("Payment request copied. Open customer contact card to send by text/email.")
-    if (userId) {
-      await logCustomerPaymentEvent(supabase, {
-        userId,
-        customerId: selectedEvent.customer_id,
-        quoteId: selectedEvent.quote_id,
-        calendarEventId: selectedEvent.id,
-        eventType: mode === "barcode" ? "payment_barcode_sent" : "payment_link_sent",
-        amount: total != null && Number.isFinite(total) ? total : null,
-        metadata: { source: "calendar", provider: customerPaymentProfile.customer_pay_provider ?? "helcim" },
-      })
     }
   }
 
@@ -3327,42 +3295,61 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   <strong>Customer:</strong> {selectedEvent.customers.display_name}
                 </p>
               )}
-              {(selectedEvent.customer_id || selectedEvent.quote_id) && setPage ? (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    let customerId = selectedEvent.customer_id ?? null
-                    if (!customerId && selectedEvent.quote_id && supabase) {
-                      const { data } = await supabase
-                        .from("quotes")
-                        .select("customer_id")
-                        .eq("id", selectedEvent.quote_id)
-                        .maybeSingle()
-                      customerId = (data?.customer_id as string | null) ?? null
-                    }
-                    if (!customerId) {
-                      alert("No customer is linked to this calendar event yet.")
-                      return
-                    }
-                    queueCustomerFocus(customerId)
-                    setSelectedEvent(null)
-                    setPage("customers")
-                  }}
-                  style={{
-                    alignSelf: "flex-start",
-                    padding: "6px 10px",
-                    borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    color: theme.text,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Open customer contact card
-                </button>
-              ) : null}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", alignSelf: "flex-start" }}>
+                {(selectedEvent.customer_id || selectedEvent.quote_id) && setPage ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      let customerId = selectedEvent.customer_id ?? null
+                      if (!customerId && selectedEvent.quote_id && supabase) {
+                        const { data } = await supabase
+                          .from("quotes")
+                          .select("customer_id")
+                          .eq("id", selectedEvent.quote_id)
+                          .maybeSingle()
+                        customerId = (data?.customer_id as string | null) ?? null
+                      }
+                      if (!customerId) {
+                        alert("No customer is linked to this calendar event yet.")
+                        return
+                      }
+                      queueCustomerFocus(customerId)
+                      setSelectedEvent(null)
+                      setPage("customers")
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      color: theme.text,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Open customer contact card
+                  </button>
+                ) : null}
+                {selectedEvent.customer_id ? (
+                  <button
+                    type="button"
+                    onClick={() => setCustomerPaymentRequestOpen(true)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: `2px solid ${theme.primary}`,
+                      background: "#fff7ed",
+                      color: theme.text,
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Customer payment
+                  </button>
+                ) : null}
+              </div>
               {(selectedEvent.customers?.service_address?.trim() ||
                 selectedEvent.customers?.service_lat != null ||
                 selectedEvent.customers?.service_lng != null) && (
@@ -3386,42 +3373,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   ) : quoteItemsForReceipt.length === 0 ? (
                     <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>Loading quote lines…</p>
                   ) : null}
-                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <button
-                      type="button"
-                      disabled={!customerPaymentProfile.customer_pay_link_url?.trim()}
-                      onClick={() => void sendCustomerPaymentRequestFromCalendar("link")}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        border: `1px solid ${theme.border}`,
-                        background: "#fff",
-                        color: theme.text,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: customerPaymentProfile.customer_pay_link_url?.trim() ? "pointer" : "not-allowed",
-                      }}
-                    >
-                      Send payment link
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!customerPaymentProfile.customer_pay_barcode_url?.trim()}
-                      onClick={() => void sendCustomerPaymentRequestFromCalendar("barcode")}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        border: `1px solid ${theme.border}`,
-                        background: "#fff",
-                        color: theme.text,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: customerPaymentProfile.customer_pay_barcode_url?.trim() ? "pointer" : "not-allowed",
-                      }}
-                    >
-                      Send payment barcode
-                    </button>
-                  </div>
                 </div>
               )}
               {selectedEvent.user_id && selectedEvent.user_id !== userId && (
@@ -4150,6 +4101,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             {calendarShareBusy ? "Preparing…" : isNativeApp() ? "Phone calendar (.ics)" : "Export .ics"}
           </button>
         </div>
+      ) : null}
+
+      {selectedEvent ? (
+        <CustomerPaymentRequestModal
+          open={customerPaymentRequestOpen}
+          onClose={() => setCustomerPaymentRequestOpen(false)}
+          supabase={supabase}
+          userId={userId}
+          customerId={selectedEvent.customer_id}
+          customerName={selectedEvent.customers?.display_name ?? null}
+          profile={customerPaymentProfile}
+          estimateLabel={
+            selectedEvent.quote_id ? `Estimate ${selectedEvent.quote_id.slice(0, 8)}` : selectedEvent.title ?? null
+          }
+          amountLabel={calendarPaymentAmountLabel}
+          quoteId={selectedEvent.quote_id}
+          calendarEventId={selectedEvent.id}
+        />
       ) : null}
     </div>
   )
