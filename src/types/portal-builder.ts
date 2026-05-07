@@ -201,8 +201,8 @@ export type PortalConfig = {
    */
   estimate_tools_only_package?: boolean
   /**
-   * When true (admin / portal builder): **Estimates** hides “Customer payment” until the quote status looks “sent” (Sent, Viewed, Accepted, Declined).
-   * Default omitted: button follows normal line-item / customer rules on the Estimates page.
+   * When true (admin Portal builder — Estimates → Customer payment): **Estimates** hides “Customer payment” until the quote
+   * status looks “sent” (Sent, Viewed, Accepted, Declined). Default omitted: button follows normal line-item / customer rules.
    */
   customer_pay_only_after_estimate_sent?: boolean
 }

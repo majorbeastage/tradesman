@@ -19,7 +19,10 @@ import {
 } from "../../lib/customerPaymentMetadata"
 import {
   customerPaymentEventTypeLabel,
+  customerPaymentMarkedDetail,
   fetchCustomerPaymentCollectionsHistory,
+  formatCollectionsCalendarContext,
+  formatCollectionsQuoteContext,
   formatUsdAmount,
   type CustomerPaymentCollectionsRow,
 } from "../../lib/customerPaymentCollections"
@@ -1148,15 +1151,14 @@ export default function PaymentsPage() {
               </p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%", minWidth: 640 }}>
+                <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%", minWidth: 520 }}>
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>When</th>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Activity</th>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Amount</th>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Customer</th>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Links</th>
-                      <th style={{ padding: "8px 10px", fontWeight: 700 }}>Status</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 700 }}>When</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 700 }}>Activity</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 700 }}>Amount</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 700 }}>Customer</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 700 }}>Context</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1166,46 +1168,44 @@ export default function PaymentsPage() {
                         const sent = Date.parse(r.created_at)
                         if (Number.isFinite(sent)) {
                           const days = Math.floor((Date.now() - sent) / 86_400_000)
-                          if (days >= 30) ageNote = `${days} days since outreach`
+                          if (days >= 30) ageNote = `Open ${days} days — follow up`
+                          else if (days >= 7) ageNote = `Open ${days} days`
                         }
                       }
+                      const marked = customerPaymentMarkedDetail(r.metadata)
+                      const qCtx = formatCollectionsQuoteContext(r)
+                      const cCtx = formatCollectionsCalendarContext(r)
                       return (
                         <tr key={r.id} style={{ borderBottom: `1px solid #e2e8f0` }}>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "6px 8px", verticalAlign: "top", whiteSpace: "nowrap", color: "#475569" }}>
                             {formatProfilePaymentIso(r.created_at)}
                           </td>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>
-                            {customerPaymentEventTypeLabel(r.event_type)}
+                          <td style={{ padding: "6px 8px", verticalAlign: "top", color: theme.text }}>
+                            <span style={{ fontWeight: 600 }}>{customerPaymentEventTypeLabel(r.event_type)}</span>
+                            {marked ? (
+                              <span style={{ display: "block", fontSize: 11, color: "#64748b", marginTop: 2 }}>{marked}</span>
+                            ) : null}
                             {ageNote ? (
-                              <span style={{ display: "block", fontSize: 11, color: "#b45309", fontWeight: 600 }}>
-                                {ageNote} — follow up if still unpaid
+                              <span style={{ display: "block", fontSize: 11, color: "#b45309", fontWeight: 600, marginTop: marked ? 4 : 2 }}>
+                                {ageNote}
                               </span>
                             ) : null}
                           </td>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "6px 8px", verticalAlign: "top", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                             {formatUsdAmount(r.amount)}
                           </td>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>{r.customer_name?.trim() || "—"}</td>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top", fontSize: 12, color: "#475569", lineHeight: 1.4 }}>
-                            {r.quote_id || r.calendar_event_id ? (
+                          <td style={{ padding: "6px 8px", verticalAlign: "top", maxWidth: 140 }}>{r.customer_name?.trim() || "—"}</td>
+                          <td style={{ padding: "6px 8px", verticalAlign: "top", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                            {qCtx || cCtx ? (
                               <>
-                                {r.quote_id ? (
-                                  <>
-                                    Est. <strong style={{ color: theme.text }}>{r.quote_id.slice(0, 8)}</strong>
-                                  </>
-                                ) : null}
-                                {r.quote_id && r.calendar_event_id ? <br /> : null}
-                                {r.calendar_event_id ? (
-                                  <span>
-                                    Calendar <strong style={{ color: theme.text }}>{r.calendar_event_id.slice(0, 8)}</strong>
-                                  </span>
-                                ) : null}
+                                {qCtx ? <span style={{ color: theme.text }}>{qCtx}</span> : null}
+                                {qCtx && cCtx ? <span style={{ display: "block", marginTop: 4 }}>{cCtx}</span> : null}
+                                {!qCtx && cCtx ? <span style={{ color: theme.text }}>{cCtx}</span> : null}
                               </>
                             ) : (
                               "—"
                             )}
                           </td>
-                          <td style={{ padding: "8px 10px", verticalAlign: "top" }}>{r.status?.trim() || "logged"}</td>
                         </tr>
                       )
                     })}

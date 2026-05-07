@@ -853,6 +853,15 @@ function AdminAppInner() {
     }))
   }
 
+  function setCustomerPayOnlyAfterEstimateSent(enabled: boolean) {
+    setConfig((prev) => {
+      const next: PortalConfig = { ...prev }
+      if (enabled) next.customer_pay_only_after_estimate_sent = true
+      else delete next.customer_pay_only_after_estimate_sent
+      return next
+    })
+  }
+
   function addCustomActionButton(label: string) {
     const trimmed = label.trim()
     if (!trimmed) return
@@ -1856,6 +1865,34 @@ function AdminAppInner() {
                               />
                               <span>Visible to user</span>
                             </label>
+                            {previewPage === "quotes" && selectedControlForPage === "customer_payment" && (
+                              <div
+                                style={{
+                                  marginTop: 4,
+                                  marginBottom: 10,
+                                  paddingTop: 10,
+                                  borderTop: `1px solid ${theme.border}`,
+                                }}
+                              >
+                                <label
+                                  style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 12, color: theme.text, cursor: "pointer" }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    style={{ marginTop: 3 }}
+                                    checked={config.customer_pay_only_after_estimate_sent === true}
+                                    onChange={(e) => setCustomerPayOnlyAfterEstimateSent(e.target.checked)}
+                                  />
+                                  <span>
+                                    <strong>Gate on estimate sent</strong> — only enable Customer payment after the estimate status is Sent,
+                                    Viewed, Accepted, or Declined (not Draft).
+                                  </span>
+                                </label>
+                                <p style={{ margin: "8px 0 0", fontSize: 11, color: theme.text, opacity: 0.82, lineHeight: 1.45, paddingLeft: 28 }}>
+                                  Applies to the Estimates tool only. Calendar and Customers tabs are unchanged.
+                                </p>
+                              </div>
+                            )}
                           </>
                         )}
                         {previewPage === "calendar" && selectedControlForPage === "customize_user" && (

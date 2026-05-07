@@ -14,6 +14,9 @@ export type CustomerPaymentCollectionsRow = {
   metadata: Record<string, unknown>
   /** Enriched */
   customer_name?: string | null
+  quote_status?: string | null
+  calendar_title?: string | null
+  calendar_start_at?: string | null
 }
 
 function uniqStrings(ids: (string | null | undefined)[]): string[] {
@@ -67,20 +70,52 @@ export async function fetchCustomerPaymentCollectionsHistory(input: {
     })) as CustomerPaymentCollectionsRow[]
 
     const custIds = uniqStrings(rows.map((r) => r.customer_id))
-    if (custIds.length === 0) return { rows }
+    const quoteIds = uniqStrings(rows.map((r) => r.quote_id))
+    const calIds = uniqStrings(rows.map((r) => r.calendar_event_id))
 
-    const { data: customers, error: cErr } = await supabase
-      .from("customers")
-      .select("id, display_name")
-      .in("id", custIds)
-    if (cErr || !customers) return { rows }
+    const [custRes, quoteRes, calRes] = await Promise.all([
+      custIds.length > 0
+        ? supabase.from("customers").select("id, display_name").in("id", custIds)
+        : Promise.resolve({ data: [] as { id: string; display_name: string | null }[], error: null }),
+      quoteIds.length > 0
+        ? supabase.from("quotes").select("id, status").in("id", quoteIds)
+        : Promise.resolve({ data: [] as { id: string; status: string | null }[], error: null }),
+      calIds.length > 0
+        ? supabase.from("calendar_events").select("id, title, start_at").in("id", calIds)
+        : Promise.resolve({ data: [] as { id: string; title: string | null; start_at: string | null }[], error: null }),
+    ])
 
     const labelById = new Map<string, string | null>()
-    for (const c of customers as { id: string; display_name: string | null }[]) {
-      labelById.set(c.id, c.display_name ?? null)
+    if (!custRes.error && Array.isArray(custRes.data)) {
+      for (const c of custRes.data) {
+        labelById.set(c.id, c.display_name ?? null)
+      }
     }
+
+    const quoteStatusById = new Map<string, string | null>()
+    if (!quoteRes.error && Array.isArray(quoteRes.data)) {
+      for (const q of quoteRes.data) {
+        quoteStatusById.set(q.id, q.status ?? null)
+      }
+    }
+
+    const calById = new Map<string, { title: string | null; start_at: string | null }>()
+    if (!calRes.error && Array.isArray(calRes.data)) {
+      for (const ev of calRes.data) {
+        calById.set(ev.id, { title: ev.title ?? null, start_at: ev.start_at ?? null })
+      }
+    }
+
     for (const r of rows) {
       if (r.customer_id) r.customer_name = labelById.get(r.customer_id) ?? null
+      if (r.quote_id) r.quote_status = quoteStatusById.get(r.quote_id) ?? null
+      if (r.calendar_event_id) {
+        const ce = calById.get(r.calendar_event_id)
+        if (ce) {
+          r.calendar_title = ce.title
+          r.calendar_start_at = ce.start_at
+        }
+      }
     }
     return { rows }
   } catch (e) {
@@ -100,7 +135,7 @@ export function customerPaymentEventTypeLabel(eventType: string): string {
     case "payment_barcode_sent":
       return "Barcode link copied"
     case "payment_marked_collected":
-      return "Marked collected"
+      return "Manual status"
     case "payment_recorded":
       return "Payment recorded"
     case "payment_receipt_reviewed":
@@ -108,4 +143,37 @@ export function customerPaymentEventTypeLabel(eventType: string): string {
     default:
       return eventType.replace(/_/g, " ")
   }
+}
+
+/** Subline for `payment_marked_collected` from row metadata. */
+export function customerPaymentMarkedDetail(meta: Record<string, unknown> | undefined): string | null {
+  if (!meta || typeof meta !== "object") return null
+  const k = meta.manual_kind
+  if (k === "paid") return "Marked paid (manual)"
+  if (k === "waived") return "Marked waived / offline"
+  return null
+}
+
+export function formatCollectionsQuoteContext(row: CustomerPaymentCollectionsRow): string | null {
+  if (!row.quote_id?.trim()) return null
+  const short = row.quote_id.slice(0, 8)
+  const st = row.quote_status?.trim()
+  return st ? `Estimate ${short} · ${st}` : `Estimate ${short}`
+}
+
+export function formatCollectionsCalendarContext(row: CustomerPaymentCollectionsRow): string | null {
+  if (!row.calendar_event_id?.trim()) return null
+  const title = row.calendar_title?.trim()
+  const start = row.calendar_start_at
+  let datePart = ""
+  if (start) {
+    const t = Date.parse(start)
+    if (Number.isFinite(t)) {
+      datePart = new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    }
+  }
+  if (title && datePart) return `${title} · ${datePart}`
+  if (title) return title
+  if (datePart) return `Scheduled job · ${datePart}`
+  return `Calendar ${row.calendar_event_id.slice(0, 8)}`
 }
