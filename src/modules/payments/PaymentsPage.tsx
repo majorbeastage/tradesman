@@ -80,15 +80,6 @@ function formatProfilePaymentIso(iso: string | null | undefined): string {
 
 type PaymentsHubTab = "tradesman" | "customer" | "history"
 
-type CustomerPayStepId = "processor" | "links" | "sharing" | "save"
-
-const CUSTOMER_PAY_STEP_CARDS: { id: CustomerPayStepId; title: string; subtitle: string }[] = [
-  { id: "processor", title: "1 · Processor", subtitle: "Provider and setup status" },
-  { id: "links", title: "2 · Pay links", subtitle: "Hosted URL and optional QR" },
-  { id: "sharing", title: "3 · Sharing rules", subtitle: "What your team can send" },
-  { id: "save", title: "4 · Notes & save", subtitle: "Instructions and copy link" },
-]
-
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
   const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
@@ -114,16 +105,8 @@ export default function PaymentsPage() {
   const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [customerPayCopied, setCustomerPayCopied] = useState(false)
   const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("tradesman")
-  const [customerPayStepFocus, setCustomerPayStepFocus] = useState<CustomerPayStepId | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
-
-  function scrollToCustomerPayStep(step: CustomerPayStepId) {
-    setCustomerPayStepFocus(step)
-    window.requestAnimationFrame(() => {
-      document.getElementById(`customer-pay-step-${step}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
-    })
-  }
 
   const suggestedPaymentAmount = useMemo(() => {
     const s = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
@@ -432,24 +415,21 @@ export default function PaymentsPage() {
         </button>
       </div>
 
-      <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
-        {paymentsHubTab === "customer" ? (
-          <>
-            <strong style={{ color: theme.text }}>Customer collections</strong> — hosted pay links and instructions you send to homeowners or
-            GCs (not your Tradesman subscription).
-          </>
-        ) : paymentsHubTab === "tradesman" ? (
-          <>
-            <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> — your office pays Tradesman through the processor
-            below; separate from homeowner payments.
-          </>
-        ) : (
-          <>
-            <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — last successful charge we know about (from your
-            profile) plus this browser session &apos;s latest Helcim result when you pay here.
-          </>
-        )}
-      </p>
+      {paymentsHubTab !== "customer" ? (
+        <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
+          {paymentsHubTab === "tradesman" ? (
+            <>
+              <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> — your office pays Tradesman through the processor
+              below; separate from homeowner payments.
+            </>
+          ) : (
+            <>
+              <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — last successful charge we know about (from your
+              profile) plus this browser session &apos;s latest Helcim result when you pay here.
+            </>
+          )}
+        </p>
+      ) : null}
 
       {paymentsHubTab === "customer" ? (
       <section
@@ -462,50 +442,8 @@ export default function PaymentsPage() {
           background: "#f8fafc",
         }}
       >
-        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
-          Collect from your customers
-        </h2>
-        <p style={{ color: "#475569", margin: "0 0 14px", lineHeight: 1.6, fontSize: 14 }}>
-          Save your payment link once, choose how your team is allowed to share it, and reuse it in estimates, invoices, and messages.
-        </p>
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-            gap: 10,
-            marginBottom: 16,
-          }}
-        >
-          {CUSTOMER_PAY_STEP_CARDS.map((c) => {
-            const active = customerPayStepFocus === c.id
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => scrollToCustomerPayStep(c.id)}
-                style={{
-                  textAlign: "left",
-                  padding: "12px 12px",
-                  borderRadius: 12,
-                  border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                  background: active ? "rgba(14, 165, 233, 0.08)" : "#ffffff",
-                  cursor: "pointer",
-                  display: "grid",
-                  gap: 4,
-                  minHeight: 72,
-                  boxShadow: active ? "0 2px 12px rgba(14, 165, 233, 0.12)" : "0 1px 6px rgba(15, 23, 42, 0.06)",
-                }}
-              >
-                <span style={{ fontWeight: 800, fontSize: 13, color: theme.text }}>{c.title}</span>
-                <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>{c.subtitle}</span>
-              </button>
-            )
-          })}
-        </div>
-        <div
-          id="customer-pay-step-processor"
-          style={{
-            scrollMarginTop: 12,
             marginBottom: 14,
             padding: 12,
             borderRadius: 10,
@@ -516,11 +454,6 @@ export default function PaymentsPage() {
             gap: 12,
           }}
         >
-          <strong style={{ fontSize: 13 }}>Processor onboarding (customer collections)</strong>
-          <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-            Track which processor account your team should use and whether setup is ready. These settings control future send-from-quote and
-            send-from-calendar actions.
-          </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
               Processor
@@ -575,7 +508,7 @@ export default function PaymentsPage() {
           </div>
         ) : null}
         <div style={{ display: "grid", gap: 14, maxWidth: 620 }}>
-          <div id="customer-pay-step-links" style={{ scrollMarginTop: 12, display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
               Customer pay link
               <input
@@ -600,9 +533,7 @@ export default function PaymentsPage() {
             </label>
           </div>
           <div
-            id="customer-pay-step-sharing"
             style={{
-              scrollMarginTop: 12,
               padding: "12px 0 0",
               borderTop: "1px solid #e2e8f0",
               display: "flex",
@@ -635,7 +566,7 @@ export default function PaymentsPage() {
               Require estimate/receipt review before share
             </label>
           </div>
-          <div id="customer-pay-step-save" style={{ scrollMarginTop: 12, display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
               Short instructions (deposit terms, ACH reminder, surcharge policy…)
               <textarea
