@@ -44,6 +44,13 @@ type AiTargetField =
   | "droneIntegrationNotes"
   | "summaryFindings"
   | "genericNotes"
+  | "header.inspectorName"
+  | "header.licenseId"
+  | "header.inspectionReference"
+  | "header.inspectionDate"
+  | "header.weather"
+  | "header.propertyAddress"
+  | "header.partiesPresent"
   | `sub:${string}`
 
 declare global {
@@ -78,6 +85,13 @@ function labelForAiTarget(t: AiTargetField): string {
   if (t === "droneIntegrationNotes") return "Drone / integration notes"
   if (t === "summaryFindings") return "Executive summary"
   if (t === "genericNotes") return "Generic report notes"
+  if (t === "header.inspectorName") return "Header: Inspector name"
+  if (t === "header.licenseId") return "Header: License / cert ID"
+  if (t === "header.inspectionReference") return "Header: Inspection / file ID"
+  if (t === "header.inspectionDate") return "Header: Inspection date"
+  if (t === "header.weather") return "Header: Weather / site conditions"
+  if (t === "header.propertyAddress") return "Header: Property address"
+  if (t === "header.partiesPresent") return "Header: Parties present"
   if (t.startsWith("sub:")) {
     const id = t.slice(4)
     for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
@@ -132,6 +146,13 @@ function parseTradesmanRecordIntent(raw: string): {
 
   const routesFixed: Array<{ re: RegExp; target: AiTargetField }> = [
     { re: /^(executive\s+summary|summary)\b/i, target: "summaryFindings" },
+    { re: /^(inspector(\s+name)?|inspector\s+info)\b/i, target: "header.inspectorName" },
+    { re: /^(weather|site\s+conditions?)\b/i, target: "header.weather" },
+    { re: /^(inspection\s+date|report\s+date)\b/i, target: "header.inspectionDate" },
+    { re: /^(property\s+address|job\s+address|site\s+address)\b/i, target: "header.propertyAddress" },
+    { re: /^(parties\s+present|attendees)\b/i, target: "header.partiesPresent" },
+    { re: /^(license|cert(\s+id)?)\b/i, target: "header.licenseId" },
+    { re: /^(inspection\s+id|file\s+id|report\s+id|reference\s+number)\b/i, target: "header.inspectionReference" },
     { re: /^(scope|limitations|header\s+scope)\b/i, target: "scopeLimitations" },
     { re: /^(media|workflow)\b/i, target: "mediaWorkflowNotes" },
     { re: /^drone\b/i, target: "droneIntegrationNotes" },
@@ -220,11 +241,46 @@ function matchSubsectionIdFromPhrase(rest: string): string | null {
   return null
 }
 
+/** Lines like `Inspector name: Jane` or `Weather — clear` map to header.* keys (home inspection header step). */
+function parseColonHeaderFills(raw: string, ctx: FillContext): { fieldKey: string; value: string }[] {
+  const out: { fieldKey: string; value: string }[] = []
+  const lines = raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const toScan = lines.length ? lines : [raw.trim()].filter(Boolean)
+  for (const line of toScan) {
+    const colon = line.indexOf(":")
+    let left = ""
+    let valueRaw = ""
+    if (colon > 0) {
+      left = line.slice(0, colon).trim()
+      valueRaw = line.slice(colon + 1).trim()
+    } else {
+      const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
+      if (!md?.[1] || !md[2]) continue
+      left = md[1].trim()
+      valueRaw = md[2].trim()
+    }
+    const fieldKey = matchHeaderOrSubFieldKey(left)
+    if (!fieldKey || !fieldKey.startsWith("header.")) continue
+    const literal = valueRaw.trim()
+    const value = (resolveFillLiteral(valueRaw, ctx) || literal).trim()
+    if (!value) continue
+    out.push({ fieldKey, value })
+  }
+  return out
+}
+
 function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
   const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
   const headerPairs: Array<[string[], string]> = [
     [["inspector name", "inspector"], "header.inspectorName"],
-    [["license id", "license", "cert id", "certification"], "header.licenseId"],
+    [
+      ["inspection id", "inspection number", "file id", "report id", "file number", "reference number", "trec id"],
+      "header.inspectionReference",
+    ],
+    [["license id", "license number", "license", "cert id", "certification"], "header.licenseId"],
     [["inspection date", "report date"], "header.inspectionDate"],
     [["weather", "site conditions"], "header.weather"],
     [["property address", "job address", "site address"], "header.propertyAddress"],
@@ -703,8 +759,11 @@ export default function SpecialtyReportWizardModal({
   }, [phase, enabledReportTypes.length])
 
   const setDefaultTargetForPhase = useCallback((nextPhase: WizardPhase) => {
-    if (nextPhase === "home_header") setAiTarget("scopeLimitations")
-    else if (nextPhase === "home_media") setAiTarget("mediaWorkflowNotes")
+    if (nextPhase === "home_header") setAiTarget("header.inspectorName")
+    else if (nextPhase === "home_findings") {
+      const firstSub = HOME_INSPECTION_MAJOR_SECTIONS[0]?.subsections[0]?.id
+      if (firstSub) setAiTarget(`sub:${firstSub}` as AiTargetField)
+    } else if (nextPhase === "home_media") setAiTarget("mediaWorkflowNotes")
     else if (nextPhase === "home_review") setAiTarget("summaryFindings")
     else if (nextPhase === "generic_notes") setAiTarget("genericNotes")
   }, [])
@@ -738,6 +797,22 @@ export default function SpecialtyReportWizardModal({
       setHome((h) => ({ ...h, summaryFindings: h.summaryFindings.trim() ? `${h.summaryFindings.trim()}\n${chunk}` : chunk }))
       return
     }
+    if (
+      target === "header.inspectorName" ||
+      target === "header.licenseId" ||
+      target === "header.inspectionReference" ||
+      target === "header.inspectionDate" ||
+      target === "header.weather" ||
+      target === "header.propertyAddress" ||
+      target === "header.partiesPresent"
+    ) {
+      const tail = target.slice("header.".length) as keyof HomeInspectionReportV1["header"]
+      setHome((h) => {
+        const prev = String(h.header[tail] ?? "").trim()
+        return { ...h, header: { ...h.header, [tail]: prev ? `${prev}\n${chunk}` : chunk } }
+      })
+      return
+    }
     if (target.startsWith("sub:")) {
       const subId = target.slice(4)
       setHome((h) => {
@@ -761,6 +836,7 @@ export default function SpecialtyReportWizardModal({
     if (fieldKey === "summaryFindings") return home.summaryFindings
     if (fieldKey === "header.inspectorName") return home.header.inspectorName
     if (fieldKey === "header.licenseId") return home.header.licenseId
+    if (fieldKey === "header.inspectionReference") return home.header.inspectionReference
     if (fieldKey === "header.inspectionDate") return home.header.inspectionDate
     if (fieldKey === "header.weather") return home.header.weather
     if (fieldKey === "header.propertyAddress") return home.header.propertyAddress
@@ -796,6 +872,10 @@ export default function SpecialtyReportWizardModal({
     }
     if (fieldKey === "header.licenseId") {
       setHome((h) => ({ ...h, header: { ...h.header, licenseId: value } }))
+      return
+    }
+    if (fieldKey === "header.inspectionReference") {
+      setHome((h) => ({ ...h, header: { ...h.header, inspectionReference: value } }))
       return
     }
     if (fieldKey === "header.inspectionDate") {
@@ -900,14 +980,17 @@ export default function SpecialtyReportWizardModal({
       if (error) throw error
       const prev = data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? { ...(data.metadata as Record<string, unknown>) } : {}
       const rows = parseSpecialtyReportRegistry(prev[SPECIALTY_REPORT_REGISTRY_KEY])
+      const existingRow = rows.find((r) => r.id === reportId)
       prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, {
         id: reportId,
         report_type: picked,
         quote_id: quoteId,
         customer_id: customerId,
         assigned_user_id: assignedUserId || null,
-        title: picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked],
-        status: "draft",
+        title:
+          existingRow?.title ??
+          (picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked]),
+        status: existingRow?.status === "ready" ? "ready" : "draft",
         updated_at: nowIso,
       })
       const { error: upErr } = await supabase!.from("quotes").update({ metadata: prev, updated_at: nowIso }).eq("id", quoteId).eq("user_id", userId)
@@ -921,11 +1004,40 @@ export default function SpecialtyReportWizardModal({
   function runAssistantCommand(raw: string) {
     const text = raw.trim()
     if (!text) return
-    const structured = parseStructuredFillAndNavCommands(raw, {
+    const fillCtx: FillContext = {
       accountDisplayName,
       propertyAddressHint: propertyAddressHint ?? "",
       customerLabel: customerLabel ?? "",
-    }, picked === "home_inspection")
+    }
+    if (picked === "home_inspection" && phase === "home_header" && !/\btradesman\s+record\b/i.test(raw)) {
+      const fills = parseColonHeaderFills(raw, fillCtx)
+      if (fills.length > 0) {
+        let applied = 0
+        let skipped = 0
+        for (const { fieldKey, value } of fills) {
+          const cur = readFieldValue(fieldKey).trim()
+          if (cur && cur !== value) {
+            skipped += 1
+            continue
+          }
+          writeFieldValue(fieldKey, value)
+          applied += 1
+          window.setTimeout(() => {
+            document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.()
+          }, 120)
+        }
+        if (applied > 0) {
+          setAssistantNote(
+            skipped > 0
+              ? `Filled ${applied} empty header field(s). Skipped ${skipped} that already had text (clear a field first to replace).`
+              : `Filled ${applied} header field(s) from your lines (Name: value format).`,
+          )
+          setAssistantText("")
+          return
+        }
+      }
+    }
+    const structured = parseStructuredFillAndNavCommands(raw, fillCtx, picked === "home_inspection")
     if (structured?.handled && structured.patch) {
       const p = structured.patch
       if (p.phase) setPhase(p.phase)
@@ -989,9 +1101,26 @@ export default function SpecialtyReportWizardModal({
           setAssistantNote(wakeParsed.hint)
           return
         }
+        const chunk = (wakeParsed.body ?? "").trim()
+        if (!wakeParsed.target && picked === "home_inspection" && phase === "home_header" && chunk) {
+          const wakeFills = parseColonHeaderFills(chunk, fillCtx)
+          if (wakeFills.length > 0) {
+            let applied = 0
+            for (const { fieldKey, value } of wakeFills) {
+              const cur = readFieldValue(fieldKey).trim()
+              if (cur && cur !== value) continue
+              writeFieldValue(fieldKey, value)
+              applied += 1
+            }
+            if (applied > 0) {
+              setAssistantNote(`Recorded ${applied} header field(s) from your note.`)
+              setAssistantText("")
+              return
+            }
+          }
+        }
         const tgt = wakeParsed.target ?? aiTarget
         if (wakeParsed.target) setAiTarget(wakeParsed.target)
-        const chunk = (wakeParsed.body ?? "").trim()
         if (chunk) {
           appendToTarget(tgt, chunk)
           setAssistantNote(`Recorded into ${labelForAiTarget(tgt)}.`)
@@ -1227,6 +1356,8 @@ export default function SpecialtyReportWizardModal({
               cursor: "pointer",
               fontSize: 18,
               lineHeight: 1,
+              color: "#0f172a",
+              fontWeight: 800,
             }}
             aria-label="Close"
           >
@@ -1293,6 +1424,17 @@ export default function SpecialtyReportWizardModal({
             </p>
             <div style={{ display: "grid", gap: 8 }}>
               <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value as AiTargetField)} style={{ ...theme.formInput, maxWidth: 360 }}>
+                {picked === "home_inspection" ? (
+                  <>
+                    <option value="header.inspectorName">Header: Inspector name</option>
+                    <option value="header.licenseId">Header: License / cert ID</option>
+                    <option value="header.inspectionReference">Header: Inspection / file ID</option>
+                    <option value="header.inspectionDate">Header: Inspection date</option>
+                    <option value="header.weather">Header: Weather / site</option>
+                    <option value="header.propertyAddress">Header: Property address</option>
+                    <option value="header.partiesPresent">Header: Parties present</option>
+                  </>
+                ) : null}
                 <option value="scopeLimitations">Header: Scope & limitations</option>
                 <option value="mediaWorkflowNotes">Media: Workflow notes</option>
                 <option value="droneIntegrationNotes">Media: Drone / integration notes</option>
@@ -1415,6 +1557,17 @@ export default function SpecialtyReportWizardModal({
                     <FieldTools fieldKey="header.licenseId" />
                   </label>
                   <label style={lbl}>
+                    Inspection / file ID
+                    <input
+                      id={specialtyReportFieldDomId("header.inspectionReference")}
+                      value={home.header.inspectionReference}
+                      onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectionReference: e.target.value } }))}
+                      style={theme.formInput}
+                      placeholder="Report or file reference"
+                    />
+                    <FieldTools fieldKey="header.inspectionReference" />
+                  </label>
+                  <label style={lbl}>
                     Inspection date
                     <input
                       id={specialtyReportFieldDomId("header.inspectionDate")}
@@ -1425,7 +1578,7 @@ export default function SpecialtyReportWizardModal({
                     />
                     <FieldTools fieldKey="header.inspectionDate" />
                   </label>
-                  <label style={lbl}>
+                  <label style={{ ...lbl, gridColumn: "1 / -1" }}>
                     Weather / site conditions
                     <input
                       id={specialtyReportFieldDomId("header.weather")}

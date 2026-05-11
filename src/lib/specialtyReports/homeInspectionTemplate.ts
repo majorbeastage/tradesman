@@ -161,6 +161,8 @@ export type HomeInspectionReportV1 = {
   header: {
     inspectorName: string
     licenseId: string
+    /** Report / file / TREC-style reference separate from license ID */
+    inspectionReference: string
     inspectionDate: string
     weather: string
     propertyAddress: string
@@ -197,6 +199,7 @@ export function emptyHomeInspectionReport(addressFallback: string): HomeInspecti
     header: {
       inspectorName: "",
       licenseId: "",
+      inspectionReference: "",
       inspectionDate: new Date().toISOString().slice(0, 10),
       weather: "",
       propertyAddress: addressFallback,
@@ -219,5 +222,7 @@ export function parseHomeInspectionReport(raw: unknown): HomeInspectionReportV1 
   if (o.version !== 1 || o.specialtyKey !== "home_inspection") return null
   if (!o.header || typeof o.header !== "object") return null
   if (!o.subsections || typeof o.subsections !== "object") return null
+  const hdr = o.header as Record<string, unknown>
+  if (hdr.inspectionReference === undefined) hdr.inspectionReference = ""
   return o as HomeInspectionReportV1
 }
