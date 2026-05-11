@@ -241,37 +241,6 @@ function matchSubsectionIdFromPhrase(rest: string): string | null {
   return null
 }
 
-/** Lines like `Inspector name: Jane` or `Weather — clear` map to header.* keys (home inspection header step). */
-function parseColonHeaderFills(raw: string, ctx: FillContext): { fieldKey: string; value: string }[] {
-  const out: { fieldKey: string; value: string }[] = []
-  const lines = raw
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const toScan = lines.length ? lines : [raw.trim()].filter(Boolean)
-  for (const line of toScan) {
-    const colon = line.indexOf(":")
-    let left = ""
-    let valueRaw = ""
-    if (colon > 0) {
-      left = line.slice(0, colon).trim()
-      valueRaw = line.slice(colon + 1).trim()
-    } else {
-      const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
-      if (!md?.[1] || !md[2]) continue
-      left = md[1].trim()
-      valueRaw = md[2].trim()
-    }
-    const fieldKey = matchHeaderOrSubFieldKey(left)
-    if (!fieldKey || !fieldKey.startsWith("header.")) continue
-    const literal = valueRaw.trim()
-    const value = (resolveFillLiteral(valueRaw, ctx) || literal).trim()
-    if (!value) continue
-    out.push({ fieldKey, value })
-  }
-  return out
-}
-
 function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
   const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
   const headerPairs: Array<[string[], string]> = [
@@ -903,6 +872,74 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
+  /** Apply `Label: value` lines to header or findings fields; return leftover text for other assistant commands. */
+  function consumeColonLinesFromAssistantInput(raw: string, fillCtx: FillContext): { applied: number; skipped: number; remainder: string } {
+    if (picked !== "home_inspection") {
+      return { applied: 0, skipped: 0, remainder: raw }
+    }
+    const unmatched: string[] = []
+    let applied = 0
+    let skipped = 0
+    const lines = raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const toScan = lines.length ? lines : [raw.trim()].filter(Boolean)
+    for (const line of toScan) {
+      const colon = line.indexOf(":")
+      let left = ""
+      let valueRaw = ""
+      if (colon > 0) {
+        left = line.slice(0, colon).trim()
+        valueRaw = line.slice(colon + 1).trim()
+      } else {
+        const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
+        if (!md?.[1] || !md[2]) {
+          unmatched.push(line)
+          continue
+        }
+        left = md[1].trim()
+        valueRaw = md[2].trim()
+      }
+      const fieldKey = matchHeaderOrSubFieldKey(left)
+      if (!fieldKey) {
+        unmatched.push(line)
+        continue
+      }
+      if (fieldKey.startsWith("sub:")) {
+        if (phase !== "home_findings" && phase !== "home_review") {
+          unmatched.push(line)
+          continue
+        }
+      }
+      const value = (resolveFillLiteral(valueRaw, fillCtx) || valueRaw).trim()
+      if (!value) {
+        unmatched.push(line)
+        continue
+      }
+      const cur = readFieldValue(fieldKey).trim()
+      if (cur && cur !== value) {
+        skipped += 1
+        continue
+      }
+      writeFieldValue(fieldKey, value)
+      applied += 1
+      if (fieldKey.startsWith("header.")) {
+        setPhase("home_header")
+        window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
+      }
+      if (fieldKey.startsWith("sub:")) {
+        const sid = fieldKey.slice(4)
+        const maj = majorIdContainingSubsection(sid)
+        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+        setPhase("home_findings")
+        setAiTarget(`sub:${sid}` as AiTargetField)
+        window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
+      }
+    }
+    return { applied, skipped, remainder: unmatched.join("\n") }
+  }
+
   async function attachFieldImage(fieldKey: string, file: File | null) {
     if (!file) return
     if (!file.type.startsWith("image/")) {
@@ -1002,42 +1039,35 @@ export default function SpecialtyReportWizardModal({
   }
 
   function runAssistantCommand(raw: string) {
-    const text = raw.trim()
+    let text = raw.trim()
     if (!text) return
     const fillCtx: FillContext = {
       accountDisplayName,
       propertyAddressHint: propertyAddressHint ?? "",
       customerLabel: customerLabel ?? "",
     }
-    if (picked === "home_inspection" && phase === "home_header" && !/\btradesman\s+record\b/i.test(raw)) {
-      const fills = parseColonHeaderFills(raw, fillCtx)
-      if (fills.length > 0) {
-        let applied = 0
-        let skipped = 0
-        for (const { fieldKey, value } of fills) {
-          const cur = readFieldValue(fieldKey).trim()
-          if (cur && cur !== value) {
-            skipped += 1
-            continue
-          }
-          writeFieldValue(fieldKey, value)
-          applied += 1
-          window.setTimeout(() => {
-            document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.()
-          }, 120)
+    if (picked === "home_inspection" && !/\btradesman\s+record\b/i.test(raw)) {
+      const { applied, skipped, remainder } = consumeColonLinesFromAssistantInput(raw, fillCtx)
+      if (applied > 0 || skipped > 0) {
+        let colonNote = ""
+        if (applied > 0 && skipped > 0) {
+          colonNote = `Filled ${applied} empty field(s) from Label: value lines. Skipped ${skipped} that already had text.`
+        } else if (applied > 0) {
+          colonNote = `Filled ${applied} field(s) from Label: value lines.`
+        } else {
+          colonNote = `${skipped} line(s) matched known fields but those fields already had text — clear a field to replace, or use a different label.`
         }
-        if (applied > 0) {
-          setAssistantNote(
-            skipped > 0
-              ? `Filled ${applied} empty header field(s). Skipped ${skipped} that already had text (clear a field first to replace).`
-              : `Filled ${applied} header field(s) from your lines (Name: value format).`,
-          )
-          setAssistantText("")
-          return
-        }
+        setAssistantNote(colonNote)
       }
+      const tail = remainder.trim()
+      if (applied > 0 && !tail) {
+        setAssistantText("")
+        return
+      }
+      text = tail || text
     }
-    const structured = parseStructuredFillAndNavCommands(raw, fillCtx, picked === "home_inspection")
+    if (!text.trim()) return
+    const structured = parseStructuredFillAndNavCommands(text, fillCtx, picked === "home_inspection")
     if (structured?.handled && structured.patch) {
       const p = structured.patch
       if (p.phase) setPhase(p.phase)
@@ -1101,23 +1131,21 @@ export default function SpecialtyReportWizardModal({
           setAssistantNote(wakeParsed.hint)
           return
         }
-        const chunk = (wakeParsed.body ?? "").trim()
-        if (!wakeParsed.target && picked === "home_inspection" && phase === "home_header" && chunk) {
-          const wakeFills = parseColonHeaderFills(chunk, fillCtx)
-          if (wakeFills.length > 0) {
-            let applied = 0
-            for (const { fieldKey, value } of wakeFills) {
-              const cur = readFieldValue(fieldKey).trim()
-              if (cur && cur !== value) continue
-              writeFieldValue(fieldKey, value)
-              applied += 1
-            }
-            if (applied > 0) {
-              setAssistantNote(`Recorded ${applied} header field(s) from your note.`)
+        let chunk = (wakeParsed.body ?? "").trim()
+        if (!wakeParsed.target && picked === "home_inspection" && chunk) {
+          const { applied: wApplied, skipped: wSkip, remainder: wRem } = consumeColonLinesFromAssistantInput(chunk, fillCtx)
+          if (wApplied > 0 || wSkip > 0) {
+            setAssistantNote(
+              wApplied > 0
+                ? `Recorded ${wApplied} field(s) from your note${wSkip ? ` (${wSkip} skipped — fields already had text).` : "."}`
+                : `${wSkip} line(s) skipped — fields already had text.`,
+            )
+            if (wApplied > 0 && !wRem.trim()) {
               setAssistantText("")
               return
             }
           }
+          chunk = wRem.trim()
         }
         const tgt = wakeParsed.target ?? aiTarget
         if (wakeParsed.target) setAiTarget(wakeParsed.target)

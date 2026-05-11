@@ -33,6 +33,13 @@ type Props = {
   onJobDetailsSkip: () => void
   onJobDetailsOpen: () => void
   jobDetailsBusy: boolean
+  /** Job details / scope notes (same field as the estimate page; saved with the quote). */
+  jobDetailsNotes?: string
+  onJobDetailsNotesChange?: (value: string) => void
+  jobDetailsVoiceSupported?: boolean
+  jobDetailsVoiceListening?: boolean
+  onJobDetailsVoiceStart?: () => void
+  onJobDetailsVoiceStop?: () => void
   onQuoteItemsContinue: () => void
   onQuoteItemsSkip: () => void
   onQuoteItemsOpen: () => void
@@ -85,6 +92,12 @@ export default function EstimateStartGuideModal({
   onJobDetailsSkip,
   onJobDetailsOpen,
   jobDetailsBusy,
+  jobDetailsNotes = "",
+  onJobDetailsNotesChange,
+  jobDetailsVoiceSupported = false,
+  jobDetailsVoiceListening = false,
+  onJobDetailsVoiceStart,
+  onJobDetailsVoiceStop,
   onQuoteItemsContinue,
   onQuoteItemsSkip,
   onQuoteItemsOpen,
@@ -494,6 +507,48 @@ export default function EstimateStartGuideModal({
               <button type="button" onClick={onJobDetailsOpen} style={{ ...secondaryBtnStyle, fontWeight: 600 }}>
                 Open job details section
               </button>
+            </div>
+            <div
+              style={{
+                border: `1px solid ${theme.border}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                background: "#f8fafc",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Job details and scope (AI + voice)</div>
+              <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                This is the same job-details field as on the estimate. Speak or type scope, access, materials, and constraints — it is included when you generate AI scope bullets and line items.
+              </p>
+              <textarea
+                rows={5}
+                value={jobDetailsNotes}
+                onChange={(e) => onJobDetailsNotesChange?.(e.target.value)}
+                placeholder="e.g. Replace water heater in garage. Client wants 50-gallon. Ceiling drywall patch after HVAC chase."
+                style={{ ...theme.formInput, resize: "vertical", width: "100%", background: "#fff" }}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {!jobDetailsVoiceListening ? (
+                  <button
+                    type="button"
+                    disabled={!jobDetailsVoiceSupported}
+                    onClick={() => onJobDetailsVoiceStart?.()}
+                    style={{
+                      ...secondaryBtnStyle,
+                      cursor: !jobDetailsVoiceSupported ? "not-allowed" : "pointer",
+                      opacity: jobDetailsVoiceSupported ? 1 : 0.6,
+                    }}
+                  >
+                    {jobDetailsVoiceSupported ? "Voice to text" : "Voice not available in this browser"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => onJobDetailsVoiceStop?.()} style={{ ...secondaryBtnStyle, fontWeight: 700 }}>
+                    Stop voice
+                  </button>
+                )}
+              </div>
             </div>
             {jobPackBulletLines.length > 0 ? (
               <div

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
@@ -117,6 +117,66 @@ function lastUpdateDisplay(c: CustomerRow): string {
   return formatWhen(c.last_activity_at ?? null)
 }
 
+/** Workflow row chrome (matches Estimates “Start quote” section summaries). */
+const CUSTOMER_COMM_CARD_SUMMARY: CSSProperties = {
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 15,
+  color: theme.text,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "10px 12px",
+  margin: 0,
+  border: `1px solid ${theme.border}`,
+  borderRadius: 10,
+  background: "#fff",
+  textAlign: "left",
+}
+
+function classifyCustomerCommChannel(item: { kind: "msg" | "ev"; payload: Record<string, unknown> }): "sms" | "email" | "phone" | "other" {
+  if (item.kind === "msg") return "sms"
+  const ev = item.payload as { event_type?: string }
+  const t = String(ev?.event_type ?? "").toLowerCase()
+  if (t === "email") return "email"
+  if (t === "sms") return "sms"
+  if (t === "voicemail" || t.includes("call") || t === "phone" || t === "missed_call") return "phone"
+  return "other"
+}
+
+function activityRowLabel(item: { kind: "msg" | "ev"; payload: any }): string {
+  if (item.kind === "msg") {
+    return item.payload?.sender === "customer" ? "Inbound text" : "Message"
+  }
+  const ev = item.payload
+  return `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
+}
+
+function activityPreviewSnippet(item: { kind: "msg" | "ev"; payload: any }): string {
+  if (item.kind === "msg") return String(item.payload?.content ?? "").trim().slice(0, 200)
+  const ev = item.payload
+  const subj = ev?.subject?.trim() ? `${ev.subject.trim()} — ` : ""
+  return (subj + String(ev?.body ?? "")).trim().slice(0, 220)
+}
+
+function commChannelOneLineSummary(
+  channel: "phone" | "sms" | "email",
+  items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[],
+): string {
+  if (items.length === 0) {
+    if (channel === "phone") return "Phone · No calls or voicemail logged yet"
+    if (channel === "sms") return "SMS · No texts in this thread yet"
+    return "Email · No email logged yet"
+  }
+  const last = items[items.length - 1]
+  const when = last.sortMs ? new Date(last.sortMs).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"
+  const n = items.length
+  const label = channel === "phone" ? "Phone" : channel === "sms" ? "SMS" : "Email"
+  return `${label} · ${n} item${n === 1 ? "" : "s"} · Last ${when}`
+}
+
 function isCompletedJobStatus(status: string | null | undefined): boolean {
   return String(status ?? "").trim().toLowerCase() === "completed"
 }
@@ -199,6 +259,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   /** profiles.display_name — used in SMS compliance footer preview and character budget. */
   const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
   const [timelineExpanded, setTimelineExpanded] = useState<Record<string, boolean>>({})
+  const [commCardOpen, setCommCardOpen] = useState({ phone: false, sms: false, email: false })
+  const [commHistoryChannel, setCommHistoryChannel] = useState<null | "phone" | "sms" | "email">(null)
   const [aiSummaryByKey, setAiSummaryByKey] = useState<Record<string, string>>({})
   const [aiSummaryBusy, setAiSummaryBusy] = useState<Record<string, boolean>>({})
   const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
@@ -230,6 +292,56 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     items.sort((a, b) => a.sortMs - b.sortMs)
     return items
   }, [customerMessages, customerCommEvents])
+
+  const commItemsByChannel = useMemo(() => {
+    const phone: typeof customerActivityItems = []
+    const sms: typeof customerActivityItems = []
+    const email: typeof customerActivityItems = []
+    for (const it of customerActivityItems) {
+      const ch = classifyCustomerCommChannel(it)
+      if (ch === "phone") phone.push(it)
+      else if (ch === "sms") sms.push(it)
+      else if (ch === "email") email.push(it)
+    }
+    return { phone, sms, email }
+  }, [customerActivityItems])
+
+  const activityMaxSortMs = useMemo(() => {
+    let m = 0
+    for (const it of customerActivityItems) {
+      if (it.sortMs > m) m = it.sortMs
+    }
+    return m
+  }, [customerActivityItems])
+
+  const customerWaitingForReply = useMemo(() => {
+    if (customerActivityItems.length === 0) return false
+    const last = customerActivityItems[customerActivityItems.length - 1]
+    if (last.kind === "msg") {
+      const sender = String(last.payload?.sender ?? "").toLowerCase()
+      const dir = String(last.payload?.direction ?? "").toLowerCase()
+      return sender === "customer" || dir === "inbound" || dir === "in"
+    }
+    const dir = String(last.payload?.direction ?? "").toLowerCase()
+    return dir === "inbound" || dir === "in"
+  }, [customerActivityItems])
+
+  const bumpCustomerLastActivity = useCallback(
+    async (customerId: string) => {
+      if (!supabase) return
+      const nowIso = new Date().toISOString()
+      const { error } = await supabase.from("customers").update({ last_activity_at: nowIso }).eq("id", customerId)
+      if (error && !String(error.message || "").toLowerCase().includes("last_activity")) {
+        console.warn("[customers] last_activity_at bump", error.message)
+      }
+    },
+    [supabase],
+  )
+
+  useEffect(() => {
+    setCommCardOpen({ phone: false, sms: false, email: false })
+    setCommHistoryChannel(null)
+  }, [selectedCustomer?.id])
 
   const smsFirstComplianceVariant = useMemo(
     () => resolveSmsFirstComplianceVariant(customerCommEvents),
@@ -913,6 +1025,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       setCustomerReplySms("")
+      await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
@@ -956,6 +1069,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       setCustomerEmailBody("")
+      await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
@@ -1710,12 +1824,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </button>
                                 ) : null}
                               </div>
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                {(() => {
-                                  const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
-                                  return ph.trim() ? <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact /> : null
-                                })()}
-                              </div>
                             </div>
 
                             <div
@@ -1861,7 +1969,22 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               <div style={{ display: "grid", gap: 8 }}>
                                 <div>
                                   <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Last update</span>
-                                  <div style={{ marginTop: 2 }}>{lastUpdateDisplay(c)}</div>
+                                  <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    <span>
+                                      {(() => {
+                                        const dbMs = Date.parse(c.last_activity_at || "") || 0
+                                        const bestMs = Math.max(dbMs, selectedCustomer?.id === c.id ? activityMaxSortMs : 0)
+                                        const iso =
+                                          bestMs > 0 && bestMs >= dbMs ? new Date(bestMs).toISOString() : c.last_activity_at ?? null
+                                        return formatWhen(iso)
+                                      })()}
+                                    </span>
+                                    {selectedCustomer?.id === c.id && customerWaitingForReply ? (
+                                      <span title="Latest activity looks inbound — customer may be waiting for a reply." style={{ fontSize: 16, lineHeight: 1 }}>
+                                        ⏳
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </div>
                                 <div>
                                   <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Name</span>
@@ -1945,7 +2068,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                       {(() => {
                                         const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
-                                        return ph.trim() ? <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact /> : "—"
+                                        return ph.trim() ? <span style={{ fontWeight: 600, color: "#0f172a" }}>{ph}</span> : "—"
                                       })()}
                                     </div>
                                   )}
@@ -2032,6 +2155,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     </button>
                                   </div>
                                 ) : null}
+                              </div>
 
                                 <div
                                   style={{
@@ -2043,107 +2167,160 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     gap: 14,
                                   }}
                                 >
-                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Received</div>
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
                                   {customerActivityLoading ? (
                                     <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading messages…</p>
                                   ) : customerActivityItems.length === 0 ? (
                                     <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No communication activity logged yet.</p>
                                   ) : (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 440, overflow: "auto" }}>
-                                      {customerActivityItems.map((item) => {
-                                        const open = !!timelineExpanded[item.key]
-                                        const ev = item.kind === "ev" ? item.payload : null
-                                        const isVm = item.kind === "ev" && ev?.event_type === "voicemail"
-                                        const label =
-                                          item.kind === "msg"
-                                            ? item.payload?.sender === "customer"
-                                              ? "Inbound text"
-                                              : "Message"
-                                            : `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                      {(["phone", "sms", "email"] as const).map((chan) => {
+                                        const list = commItemsByChannel[chan]
+                                        const open = commCardOpen[chan]
                                         return (
-                                          <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, background: "#fff" }}>
+                                          <div
+                                            key={chan}
+                                            style={{
+                                              border: `1px solid ${theme.border}`,
+                                              borderRadius: 10,
+                                              background: "#fff",
+                                              overflow: "hidden",
+                                            }}
+                                          >
                                             <button
                                               type="button"
-                                              onClick={() => setTimelineExpanded((m) => ({ ...m, [item.key]: !open }))}
-                                              style={{
-                                                width: "100%",
-                                                textAlign: "left",
-                                                border: "none",
-                                                background: "transparent",
-                                                cursor: "pointer",
-                                                padding: 0,
-                                                fontWeight: 700,
-                                                fontSize: 13,
-                                                color: "#0f172a",
-                                              }}
+                                              onClick={() => setCommCardOpen((m) => ({ ...m, [chan]: !m[chan] }))}
+                                              style={CUSTOMER_COMM_CARD_SUMMARY}
                                             >
-                                              {label} ·{" "}
-                                              {item.payload?.created_at
-                                                ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
-                                                : ""}{" "}
-                                              <span style={{ color: "#64748b", fontWeight: 500 }}>{open ? "−" : "+"}</span>
+                                              <span style={{ color: "#64748b", fontSize: 13 }}>{open ? "▾" : "▸"}</span>
+                                              <span style={{ flex: 1, minWidth: 0 }}>{commChannelOneLineSummary(chan, list)}</span>
                                             </button>
                                             {open ? (
-                                              <div style={{ marginTop: 10 }}>
-                                                {item.kind === "msg" ? (
-                                                  <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>
-                                                    {item.payload?.content ?? "—"}
-                                                  </p>
-                                                ) : isVm && ev ? (
-                                                  <>
-                                                    <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
-                                                    <VoicemailTranscriptBlock
-                                                      ev={ev}
-                                                      profileVoicemailDisplay={voicemailProfileDisplay}
-                                                      conversationPortalValues={conversationPortalDefaults}
-                                                    />
-                                                    {ev?.body ? (
-                                                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
-                                                    ) : null}
-                                                  </>
-                                                ) : (
-                                                  <>
-                                                    {ev?.subject?.trim() ? (
-                                                      <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
-                                                    ) : null}
-                                                    <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
-                                                  </>
-                                                )}
-                                                <div style={{ marginTop: 12 }}>
+                                              <div style={{ padding: "0 12px 12px", display: "grid", gap: 10 }}>
+                                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                                                  {chan === "phone" ? (
+                                                    (() => {
+                                                      const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
+                                                      return ph.trim() ? <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact /> : (
+                                                        <span style={{ fontSize: 12, color: "#94a3b8" }}>No phone on file</span>
+                                                      )
+                                                    })()
+                                                  ) : (
+                                                    <span style={{ fontSize: 12, color: "#64748b" }}>
+                                                      {chan === "sms" ? "Thread texts below." : "Outbound / inbound email log below."}
+                                                    </span>
+                                                  )}
                                                   <button
                                                     type="button"
-                                                    disabled={!!aiSummaryBusy[item.key]}
-                                                    onClick={() => void fetchAiSummaryForTimelineItem(item)}
+                                                    onClick={() => setCommHistoryChannel(chan)}
                                                     style={{
-                                                      padding: "6px 12px",
+                                                      padding: "6px 10px",
                                                       borderRadius: 6,
                                                       border: `1px solid ${theme.border}`,
                                                       background: "#f8fafc",
                                                       fontSize: 12,
-                                                      fontWeight: 600,
-                                                      cursor: aiSummaryBusy[item.key] ? "wait" : "pointer",
+                                                      fontWeight: 700,
+                                                      cursor: "pointer",
                                                       color: "#0f172a",
                                                     }}
                                                   >
-                                                    {aiSummaryBusy[item.key] ? "Working…" : "Provide AI summary of job"}
+                                                    Full history
                                                   </button>
-                                                  {aiSummaryByKey[item.key] ? (
-                                                    <div
+                                                </div>
+                                                {list.length === 0 ? (
+                                                  <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Nothing in this channel yet.</p>
+                                                ) : (
+                                                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                                    {[...list].slice(-3).reverse().map((item) => (
+                                                      <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 8, background: "#f8fafc" }}>
+                                                        <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>{activityRowLabel(item)}</div>
+                                                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                                                          {item.payload?.created_at
+                                                            ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                            : ""}
+                                                        </div>
+                                                        <div style={{ fontSize: 12, color: "#334155", marginTop: 4, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+                                                          {activityPreviewSnippet(item) || "—"}
+                                                        </div>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                                {chan === "sms" ? (
+                                                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                                                    <textarea
+                                                      placeholder="SMS reply…"
+                                                      value={customerReplySms}
+                                                      maxLength={smsComposeMaxChars}
+                                                      onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
+                                                      rows={2}
+                                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: "100%", color: "#0f172a" }}
+                                                    />
+                                                    <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+                                                      {customerReplySms.length}/{smsComposeMaxChars}
+                                                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
+                                                        ? " — First SMS appends compliance footer when required."
+                                                        : ""}
+                                                    </span>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => void sendCustomerSms()}
+                                                      disabled={customerSmsSending}
                                                       style={{
-                                                        marginTop: 8,
-                                                        padding: 10,
-                                                        borderRadius: 8,
-                                                        background: "#f1f5f9",
-                                                        fontSize: 13,
-                                                        color: "#0f172a",
-                                                        lineHeight: 1.5,
-                                                        whiteSpace: "pre-wrap",
+                                                        alignSelf: "flex-start",
+                                                        padding: "8px 14px",
+                                                        background: theme.primary,
+                                                        color: "white",
+                                                        border: "none",
+                                                        borderRadius: "6px",
+                                                        cursor: customerSmsSending ? "wait" : "pointer",
+                                                        fontWeight: 600,
                                                       }}
                                                     >
-                                                      {aiSummaryByKey[item.key]}
-                                                    </div>
-                                                  ) : null}
-                                                </div>
+                                                      {customerSmsSending ? "Sending…" : "Send text"}
+                                                    </button>
+                                                  </div>
+                                                ) : null}
+                                                {chan === "email" ? (
+                                                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                                                    <input
+                                                      placeholder="To"
+                                                      value={customerEmailTo}
+                                                      onChange={(e) => setCustomerEmailTo(e.target.value)}
+                                                      style={{ ...theme.formInput, maxWidth: "100%", color: "#0f172a" }}
+                                                    />
+                                                    <input
+                                                      placeholder="Subject"
+                                                      value={customerEmailSubject}
+                                                      onChange={(e) => setCustomerEmailSubject(e.target.value)}
+                                                      style={{ ...theme.formInput, maxWidth: "100%", color: "#0f172a" }}
+                                                    />
+                                                    <textarea
+                                                      placeholder="Email body…"
+                                                      value={customerEmailBody}
+                                                      onChange={(e) => setCustomerEmailBody(e.target.value)}
+                                                      rows={4}
+                                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: "100%", color: "#0f172a" }}
+                                                    />
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => void sendCustomerEmail()}
+                                                      disabled={customerEmailSending}
+                                                      style={{
+                                                        alignSelf: "flex-start",
+                                                        padding: "8px 14px",
+                                                        background: theme.primary,
+                                                        color: "white",
+                                                        border: "none",
+                                                        borderRadius: "6px",
+                                                        cursor: customerEmailSending ? "wait" : "pointer",
+                                                        fontWeight: 600,
+                                                      }}
+                                                    >
+                                                      {customerEmailSending ? "Sending…" : "Send email"}
+                                                    </button>
+                                                  </div>
+                                                ) : null}
                                               </div>
                                             ) : null}
                                           </div>
@@ -2152,79 +2329,158 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     </div>
                                   )}
 
-                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Reply</div>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Text message</span>
-                                    <textarea
-                                      placeholder="SMS reply…"
-                                      value={customerReplySms}
-                                      maxLength={smsComposeMaxChars}
-                                      onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
-                                      rows={2}
-                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: 560, color: "#0f172a" }}
-                                    />
-                                    <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
-                                      {customerReplySms.length}/{smsComposeMaxChars}
-                                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
-                                        ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
-                                        : " — No compliance footer on this text (not your first SMS to them, or send without a saved customer)."}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => void sendCustomerSms()}
-                                      disabled={customerSmsSending}
+                                  {commHistoryChannel ? (
+                                    <div
+                                      role="presentation"
                                       style={{
-                                        alignSelf: "flex-start",
-                                        padding: "8px 14px",
-                                        background: theme.primary,
-                                        color: "white",
-                                        border: "none",
-                                        borderRadius: "6px",
-                                        cursor: customerSmsSending ? "wait" : "pointer",
-                                        fontWeight: 600,
+                                        position: "fixed",
+                                        inset: 0,
+                                        background: "rgba(15,23,42,0.45)",
+                                        zIndex: 12000,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        padding: 16,
                                       }}
+                                      onClick={() => setCommHistoryChannel(null)}
                                     >
-                                      {customerSmsSending ? "Sending…" : "Send text"}
-                                    </button>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginTop: 6 }}>Email</span>
-                                    <input
-                                      placeholder="To"
-                                      value={customerEmailTo}
-                                      onChange={(e) => setCustomerEmailTo(e.target.value)}
-                                      style={{ ...theme.formInput, maxWidth: 560, color: "#0f172a" }}
-                                    />
-                                    <input
-                                      placeholder="Subject"
-                                      value={customerEmailSubject}
-                                      onChange={(e) => setCustomerEmailSubject(e.target.value)}
-                                      style={{ ...theme.formInput, maxWidth: 560, color: "#0f172a" }}
-                                    />
-                                    <textarea
-                                      placeholder="Email body…"
-                                      value={customerEmailBody}
-                                      onChange={(e) => setCustomerEmailBody(e.target.value)}
-                                      rows={4}
-                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: 560, color: "#0f172a" }}
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => void sendCustomerEmail()}
-                                      disabled={customerEmailSending}
-                                      style={{
-                                        alignSelf: "flex-start",
-                                        padding: "8px 14px",
-                                        background: theme.primary,
-                                        color: "white",
-                                        border: "none",
-                                        borderRadius: "6px",
-                                        cursor: customerEmailSending ? "wait" : "pointer",
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      {customerEmailSending ? "Sending…" : "Send email"}
-                                    </button>
-                                  </div>
-
+                                      <div
+                                        role="dialog"
+                                        aria-modal
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{
+                                          width: "min(560px, 100vw - 24px)",
+                                          maxHeight: "min(80vh, 720px)",
+                                          overflow: "auto",
+                                          background: "#fff",
+                                          borderRadius: 12,
+                                          border: `1px solid ${theme.border}`,
+                                          boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
+                                          padding: 14,
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                                          <strong style={{ fontSize: 15, color: "#0f172a" }}>
+                                            {commHistoryChannel === "phone" ? "Phone" : commHistoryChannel === "sms" ? "SMS" : "Email"} history
+                                          </strong>
+                                          <button
+                                            type="button"
+                                            onClick={() => setCommHistoryChannel(null)}
+                                            style={{
+                                              border: `1px solid ${theme.border}`,
+                                              background: "#f8fafc",
+                                              borderRadius: 8,
+                                              width: 34,
+                                              height: 34,
+                                              cursor: "pointer",
+                                              fontWeight: 800,
+                                              color: "#0f172a",
+                                              fontSize: 16,
+                                            }}
+                                            aria-label="Close"
+                                          >
+                                            ✕
+                                          </button>
+                                        </div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                          {commItemsByChannel[commHistoryChannel].map((item) => {
+                                            const open = !!timelineExpanded[item.key]
+                                            const ev = item.kind === "ev" ? item.payload : null
+                                            const isVm = item.kind === "ev" && ev?.event_type === "voicemail"
+                                            const label = activityRowLabel(item)
+                                            return (
+                                              <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, background: "#fff" }}>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setTimelineExpanded((m) => ({ ...m, [item.key]: !open }))}
+                                                  style={{
+                                                    width: "100%",
+                                                    textAlign: "left",
+                                                    border: "none",
+                                                    background: "transparent",
+                                                    cursor: "pointer",
+                                                    padding: 0,
+                                                    fontWeight: 700,
+                                                    fontSize: 13,
+                                                    color: "#0f172a",
+                                                  }}
+                                                >
+                                                  {label} ·{" "}
+                                                  {item.payload?.created_at
+                                                    ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                                                    : ""}{" "}
+                                                  <span style={{ color: "#64748b", fontWeight: 500 }}>{open ? "−" : "+"}</span>
+                                                </button>
+                                                {open ? (
+                                                  <div style={{ marginTop: 10 }}>
+                                                    {item.kind === "msg" ? (
+                                                      <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>
+                                                        {item.payload?.content ?? "—"}
+                                                      </p>
+                                                    ) : isVm && ev ? (
+                                                      <>
+                                                        <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
+                                                        <VoicemailTranscriptBlock
+                                                          ev={ev}
+                                                          profileVoicemailDisplay={voicemailProfileDisplay}
+                                                          conversationPortalValues={conversationPortalDefaults}
+                                                        />
+                                                        {ev?.body ? (
+                                                          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                                        ) : null}
+                                                      </>
+                                                    ) : (
+                                                      <>
+                                                        {ev?.subject?.trim() ? (
+                                                          <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
+                                                        ) : null}
+                                                        <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
+                                                      </>
+                                                    )}
+                                                    <div style={{ marginTop: 12 }}>
+                                                      <button
+                                                        type="button"
+                                                        disabled={!!aiSummaryBusy[item.key]}
+                                                        onClick={() => void fetchAiSummaryForTimelineItem(item)}
+                                                        style={{
+                                                          padding: "6px 12px",
+                                                          borderRadius: 6,
+                                                          border: `1px solid ${theme.border}`,
+                                                          background: "#f8fafc",
+                                                          fontSize: 12,
+                                                          fontWeight: 600,
+                                                          cursor: aiSummaryBusy[item.key] ? "wait" : "pointer",
+                                                          color: "#0f172a",
+                                                        }}
+                                                      >
+                                                        {aiSummaryBusy[item.key] ? "Working…" : "Provide AI summary of job"}
+                                                      </button>
+                                                      {aiSummaryByKey[item.key] ? (
+                                                        <div
+                                                          style={{
+                                                            marginTop: 8,
+                                                            padding: 10,
+                                                            borderRadius: 8,
+                                                            background: "#f1f5f9",
+                                                            fontSize: 13,
+                                                            color: "#0f172a",
+                                                            lineHeight: 1.5,
+                                                            whiteSpace: "pre-wrap",
+                                                          }}
+                                                        >
+                                                          {aiSummaryByKey[item.key]}
+                                                        </div>
+                                                      ) : null}
+                                                    </div>
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : null}
                                   {setPage ? (
                                     <div
                                       style={{
@@ -2236,7 +2492,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         gap: 10,
                                       }}
                                     >
-                                      <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling &amp; estimates</div>
+                                      <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling and estimates</div>
                                       <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                                         Open Scheduling with this customer prefilled, or start an estimate draft linked to this customer.
                                       </p>
@@ -2287,7 +2543,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 </div>
                               </div>
                             </div>
-                          </div>
                         </td>
                       </tr>
                     ) : null}

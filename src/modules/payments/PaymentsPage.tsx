@@ -192,8 +192,15 @@ export default function PaymentsPage() {
                 body: "{}",
               })
               if (r.ok) {
-                const j = (await r.json()) as { portalUrl?: string | null }
-                if (typeof j.portalUrl === "string" && j.portalUrl.trim()) return j.portalUrl.trim()
+                const raw = await r.text()
+                if (raw.trim()) {
+                  try {
+                    const j = JSON.parse(raw) as { portalUrl?: string | null }
+                    if (typeof j.portalUrl === "string" && j.portalUrl.trim()) return j.portalUrl.trim()
+                  } catch {
+                    /* empty or non-JSON body — avoid crashing the whole Payments hub */
+                  }
+                }
               }
             } catch {
               /* ignore — Edge may still succeed */
@@ -210,7 +217,11 @@ export default function PaymentsPage() {
                 cfg && typeof cfg === "object" ? (cfg as { error?: string; portalUrl?: string | null }) : null
               if (cfgErr instanceof FunctionsHttpError) {
                 try {
-                  edgeBody = { ...edgeBody, ...(await cfgErr.context.json()) }
+                  const errRaw = await cfgErr.context.text()
+                  if (errRaw.trim()) {
+                    const parsed = JSON.parse(errRaw) as Record<string, unknown>
+                    edgeBody = { ...edgeBody, ...parsed }
+                  }
                 } catch {
                   /* ignore */
                 }

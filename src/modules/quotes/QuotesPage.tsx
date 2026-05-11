@@ -3779,12 +3779,26 @@ export default function QuotesPage(_props: QuotesPageProps) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
       body: platformToolsJsonBody({ mode, pack: pack.slice(0, 12000) }),
     })
-    const j = (await res.json()) as {
+    const raw = await res.text()
+    let j: {
       ok?: boolean
       bullets?: string[]
       error?: string
       note?: string
       fallback?: boolean
+    } = {}
+    if (raw.trim()) {
+      try {
+        j = JSON.parse(raw) as typeof j
+      } catch {
+        throw new Error(
+          res.ok
+            ? "AI scope bullets returned invalid data. Try again, or check that /api/platform-tools is deployed."
+            : `Request failed (HTTP ${res.status}). The server did not return JSON.`,
+        )
+      }
+    } else if (!res.ok) {
+      throw new Error(`Request failed (HTTP ${res.status}) with an empty response.`)
     }
     if (!res.ok) throw new Error(j.error || "Request failed")
     if (j.fallback && j.note) console.warn(j.note)
@@ -4899,6 +4913,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onJobDetailsSkip={handleGuideJobDetailsSkip}
                               onJobDetailsOpen={() => openGuideSection(jobDetailsSectionRef)}
                               jobDetailsBusy={estimateGuideBusy}
+                              jobDetailsNotes={jobDetailsText}
+                              onJobDetailsNotesChange={setJobDetailsText}
+                              jobDetailsVoiceSupported={jobDetailsSpeechSupported}
+                              jobDetailsVoiceListening={jobDetailsVoiceListening}
+                              onJobDetailsVoiceStart={() => startJobDetailsVoice()}
+                              onJobDetailsVoiceStop={stopJobDetailsVoice}
                               onQuoteItemsContinue={handleGuideQuoteItemsContinue}
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
                               onQuoteItemsOpen={() => openGuideSection(quoteItemsSectionRef)}

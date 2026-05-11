@@ -562,6 +562,9 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
   const [clockActionBusy, setClockActionBusy] = useState(false)
   const [clockPanelTab, setClockPanelTab] = useState<"time_clock" | "my_hours">("time_clock")
   const [weekSessionsByUser, setWeekSessionsByUser] = useState<Record<string, TimeClockSessionRow[]>>({})
+  const [punchHistoryOpen, setPunchHistoryOpen] = useState(false)
+  const [punchHistoryRows, setPunchHistoryRows] = useState<TimeClockSessionRow[]>([])
+  const [punchHistoryBusy, setPunchHistoryBusy] = useState(false)
   const weekStart = useMemo(() => startOfWeekLocal(new Date()), [])
   const weekEnd = useMemo(() => {
     const d = new Date(weekStart)
@@ -641,6 +644,35 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
       cancelled = true
     }
   }, [roster, weekStart, weekEnd])
+
+  const loadPunchHistory = useCallback(async () => {
+    if (!supabase || roster.length === 0) {
+      setPunchHistoryRows([])
+      return
+    }
+    setPunchHistoryBusy(true)
+    const ids = roster.map((r) => r.userId).filter(Boolean)
+    const since = new Date()
+    since.setDate(since.getDate() - 56)
+    const { data, error } = await supabase
+      .from("user_time_clock_sessions")
+      .select("user_id, clocked_in_at, clocked_out_at")
+      .in("user_id", ids)
+      .gte("clocked_in_at", since.toISOString())
+      .order("clocked_in_at", { ascending: false })
+      .limit(500)
+    setPunchHistoryBusy(false)
+    if (error || !data) {
+      setPunchHistoryRows([])
+      return
+    }
+    setPunchHistoryRows(data as TimeClockSessionRow[])
+  }, [roster])
+
+  useEffect(() => {
+    if (!punchHistoryOpen) return
+    void loadPunchHistory()
+  }, [punchHistoryOpen, loadPunchHistory])
 
   async function handleClockIn() {
     if (!supabase) return
@@ -949,6 +981,22 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
           >
             My hrs (week)
           </button>
+          <button
+            type="button"
+            onClick={() => setPunchHistoryOpen((o) => !o)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: punchHistoryOpen ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+              background: punchHistoryOpen ? "#eff6ff" : "#fff",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: punchHistoryOpen ? 800 : 600,
+              color: theme.text,
+            }}
+          >
+            Punch history (8 wk)
+          </button>
         </div>
         {clockError ? (
           <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", lineHeight: 1.45 }}>{clockError}</p>
@@ -1003,7 +1051,7 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
                     <span style={{ fontSize: 11, color: "#94a3b8" }}>No clock entries this week.</span>
                   ) : (
                     <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
-                      {rows.slice(0, 10).map((row, idx) => (
+                      {rows.slice(0, 25).map((row, idx) => (
                         <li key={`${m.userId}-${idx}`}>
                           {new Date(row.clocked_in_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })} -{" "}
                           {row.clocked_out_at
@@ -1018,6 +1066,42 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
             })}
           </div>
         )}
+        {punchHistoryOpen ? (
+          <div
+            style={{
+              marginTop: 4,
+              border: `1px solid ${theme.border}`,
+              borderRadius: 10,
+              background: "#fff",
+              maxHeight: 280,
+              overflow: "auto",
+              padding: "10px 12px",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Recent punches (newest first)</div>
+            {punchHistoryBusy ? (
+              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Loading…</p>
+            ) : punchHistoryRows.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No rows in the last ~8 weeks.</p>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
+                {punchHistoryRows.map((row, idx) => (
+                  <li key={`${row.user_id}-${row.clocked_in_at}-${idx}`}>
+                    <strong>{rosterLabel(row.user_id)}</strong> · In{" "}
+                    {new Date(row.clocked_in_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                    {" — "}
+                    {row.clocked_out_at
+                      ? `Out ${new Date(row.clocked_out_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`
+                      : "Still clocked in"}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.45 }}>
+              Verifications and GPS check-ins can tie to scheduled jobs in a later release; this list is the raw punch log from the database.
+            </p>
+          </div>
+        ) : null}
         {viewerOnRoster && clockPanelTab === "time_clock" ? (
           <div
             style={{
