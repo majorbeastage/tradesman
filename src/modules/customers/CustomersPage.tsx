@@ -207,6 +207,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
+  const [customerInsightOpen, setCustomerInsightOpen] = useState(false)
+  const [contactJobDetailsOpen, setContactJobDetailsOpen] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
   const [serviceGeocodeBusy, setServiceGeocodeBusy] = useState(false)
   const [detailForm, setDetailForm] = useState<{
@@ -341,6 +343,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   useEffect(() => {
     setCommCardOpen({ phone: false, sms: false, email: false })
     setCommHistoryChannel(null)
+    setCustomerInsightOpen(false)
+    setContactJobDetailsOpen(false)
   }, [selectedCustomer?.id])
 
   const smsFirstComplianceVariant = useMemo(
@@ -561,7 +565,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         error = r1.error
         customers = (r1.data as CustomerRow[] | null) ?? null
         if (!error) {
-          setLoadError((prev) => prev || "Run supabase/customers-lead-fit.sql to enable Lead fit on customers.")
+          setLoadError((prev) => prev || "Run supabase/customers-lead-fit.sql to enable Lead score on customers.")
         }
       }
       if (error && String(error.message || "").includes("communication_urgency")) {
@@ -1772,22 +1776,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setDetailEditMode((e) => !e)}
-                                  style={{
-                                    padding: "6px 12px",
-                                    borderRadius: 6,
-                                    border: "1px solid #334155",
-                                    background: "#e2e8f0",
-                                    color: "#0f172a",
-                                    cursor: "pointer",
-                                    fontWeight: 700,
-                                    fontSize: 13,
-                                  }}
-                                >
-                                  {detailEditMode ? "Stop editing" : "Edit details"}
-                                </button>
-                                <button
-                                  type="button"
                                   onClick={() => {
                                     setNotesCustomerId(c.id)
                                     setNotesCustomerName(c.display_name ?? "")
@@ -1829,14 +1817,40 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             <div
                               onClick={(e) => e.stopPropagation()}
                               style={{
-                                padding: "12px 14px",
-                                borderRadius: 8,
+                                marginBottom: 12,
+                                borderRadius: 10,
                                 border: `1px solid ${theme.border}`,
                                 background: "#fff",
-                                marginBottom: 12,
+                                overflow: "hidden",
                               }}
                             >
-                              <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead fit</div>
+                              <button
+                                type="button"
+                                onClick={() => setCustomerInsightOpen((v) => !v)}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  padding: "10px 14px",
+                                  border: "none",
+                                  background: customerInsightOpen ? "#f8fafc" : "#fff",
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                }}
+                              >
+                                <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Customer insight</span>
+                                <span style={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+                                  {customerInsightOpen
+                                    ? "Hide"
+                                    : `${String(c.fit_classification ?? "—")} · ${customerReports.length} report(s) · Show`}
+                                </span>
+                              </button>
+                              {customerInsightOpen ? (
+                                <div style={{ padding: "12px 14px 14px", borderTop: `1px solid ${theme.border}` }}>
+                                  <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead score</div>
+
                               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
                                 {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
                                 {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
@@ -1910,18 +1924,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   Enable AI automations under Account to use auto scoring.
                                 </p>
                               ) : null}
-                            </div>
 
-                            <div
-                              style={{
-                                padding: "12px 14px",
-                                borderRadius: 8,
-                                border: `1px solid ${theme.border}`,
-                                background: "#fff",
-                                marginBottom: 12,
-                              }}
-                            >
-                              <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Reports</div>
+                                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${theme.border}` }}>
+                                    <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 8 }}>Reports</div>
+
                               {customerReports.length === 0 ? (
                                 <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No saved reports on this client yet.</p>
                               ) : (
@@ -1963,9 +1969,75 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   ))}
                                 </div>
                               )}
+                                    
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
 
-                            <div style={{ display: "grid", gap: 10, fontSize: 14, color: theme.text }}>
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                marginBottom: 12,
+                                borderRadius: 10,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
+                                overflow: "hidden",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setContactJobDetailsOpen((v) => !v)}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  padding: "10px 14px",
+                                  border: "none",
+                                  background: contactJobDetailsOpen ? "#f8fafc" : "#fff",
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                }}
+                              >
+                                <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Contact & job details</span>
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    color: "#64748b",
+                                    flexShrink: 0,
+                                    maxWidth: "min(420px, 52vw)",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {contactJobDetailsOpen
+                                    ? "Hide"
+                                    : `${(c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]).slice(0, 28)} · ${displayBestContact(c).slice(0, 36)}${displayBestContact(c).length > 36 ? "…" : ""} · Show`}
+                                </span>
+                              </button>
+                              {contactJobDetailsOpen ? (
+                                <div style={{ padding: "0 14px 14px", borderTop: `1px solid ${theme.border}` }}>
+                                  <div style={{ display: "flex", justifyContent: "flex-end", padding: "8px 0 4px" }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDetailEditMode((e) => !e)}
+                                      style={{
+                                        padding: "4px 10px",
+                                        borderRadius: 6,
+                                        border: "1px solid #334155",
+                                        background: "#e2e8f0",
+                                        color: "#0f172a",
+                                        cursor: "pointer",
+                                        fontWeight: 700,
+                                        fontSize: 12,
+                                      }}
+                                    >
+                                      {detailEditMode ? "Done editing" : "Edit"}
+                                    </button>
+                                  </div>
                               <div style={{ display: "grid", gap: 8 }}>
                                 <div>
                                   <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Last update</span>
@@ -2156,6 +2228,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </div>
                                 ) : null}
                               </div>
+                                </div>
+                              ) : null}
+                            </div>
 
                                 <div
                                   style={{
@@ -2541,8 +2616,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     </div>
                                   ) : null}
                                 </div>
-                              </div>
-                            </div>
+                          </div>
                         </td>
                       </tr>
                     ) : null}

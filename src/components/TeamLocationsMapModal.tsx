@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { teamMarkerColors, teamMemberDisplayIndex } from "../lib/teamMapStyle"
-import { resolveJobMapCoords } from "../lib/jobSiteLocation"
+import { addressLooksCyrillic, resolveJobMapCoords, reverseGeocodeLatLngToAddressEn } from "../lib/jobSiteLocation"
 
 export type TeamMapMember = {
   userId: string
@@ -209,12 +209,17 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
             weight: 2,
             dashArray: "4 3",
           })
-          const addr =
+          let addr =
             (cust?.service_address && String(cust.service_address).trim()) ||
             (() => {
               const meta = ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata) ? (ev.metadata as Record<string, unknown>) : {}
               return typeof meta.job_site_address === "string" ? meta.job_site_address.trim() : ""
             })()
+          if (addr && addressLooksCyrillic(addr)) {
+            const enAddr = await reverseGeocodeLatLngToAddressEn(coords.lat, coords.lng)
+            if (enAddr?.trim()) addr = enAddr.trim()
+            await new Promise((r) => setTimeout(r, 650))
+          }
           const when = ev.start_at ? new Date(ev.start_at).toLocaleString() : "—"
           const assignee = labelById.get(ev.user_id ?? "") ?? "Technician"
           jm.bindPopup(

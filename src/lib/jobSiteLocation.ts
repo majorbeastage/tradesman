@@ -71,6 +71,17 @@ export function mergeJobSiteIntoMetadata(
   return prev
 }
 
+const NOMINATIM_HEADERS: Record<string, string> = {
+  Accept: "application/json",
+  /** Prefer English labels when the browser locale would otherwise return local script (e.g. Cyrillic street names). */
+  "Accept-Language": "en-US,en",
+  "User-Agent": "TradesmanApp/1.0 (team map; contact: support@tradesman-us.com)",
+}
+
+export function addressLooksCyrillic(s: string): boolean {
+  return /[\u0400-\u04FF]/.test(s)
+}
+
 /** Nominatim forward geocode (browser). Respect usage policy: debounce + single user agent string. */
 export async function geocodeAddressToLatLng(address: string): Promise<{ lat: number; lng: number } | null> {
   const q = address.trim()
@@ -80,10 +91,7 @@ export async function geocodeAddressToLatLng(address: string): Promise<{ lat: nu
   url.searchParams.set("limit", "1")
   url.searchParams.set("q", q)
   const res = await fetch(url.toString(), {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "TradesmanApp/1.0 (team map; contact: support@tradesman-us.com)",
-    },
+    headers: NOMINATIM_HEADERS,
   })
   if (!res.ok) return null
   const data = (await res.json()) as Array<{ lat?: string; lon?: string }>
@@ -93,4 +101,18 @@ export async function geocodeAddressToLatLng(address: string): Promise<{ lat: nu
   const lng = Number.parseFloat(row.lon)
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
   return { lat, lng }
+}
+
+/** English-preferring reverse geocode for map popups when stored addresses are in a local script. */
+export async function reverseGeocodeLatLngToAddressEn(lat: number, lng: number): Promise<string | null> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || typeof fetch !== "function") return null
+  const url = new URL("https://nominatim.openstreetmap.org/reverse")
+  url.searchParams.set("format", "json")
+  url.searchParams.set("lat", String(lat))
+  url.searchParams.set("lon", String(lng))
+  const res = await fetch(url.toString(), { headers: NOMINATIM_HEADERS })
+  if (!res.ok) return null
+  const j = (await res.json()) as { display_name?: string }
+  const d = typeof j?.display_name === "string" ? j.display_name.trim() : ""
+  return d || null
 }

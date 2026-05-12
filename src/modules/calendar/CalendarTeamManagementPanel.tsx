@@ -935,20 +935,24 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
     color: "#334155",
   }
 
+  function openTimeClockPopoutWindow() {
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.set("standalone", "timeclock")
+      window.open(u.toString(), "TradesmanTimeClock", "width=1120,height=840,scrollbars=yes,resizable=yes")
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.55, maxWidth: 900 }}>
-        Configure roster members linked to your office. Use <strong>Schedule</strong> for a quick read on jobs and job types; use{" "}
-        <strong>Edit permissions</strong> for colors, calendar defaults, and managed-user access. Open shifts appear in <strong>Time clock</strong>{" "}
-        below.
-      </p>
-
       <div style={clockPanelStyle}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Time clock</span>
           {clockLoading ? <span style={{ fontSize: 11, color: "#64748b" }}>Refreshing…</span> : null}
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
             onClick={() => setClockPanelTab("time_clock")}
@@ -964,6 +968,23 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
             }}
           >
             Time clock
+          </button>
+          <button
+            type="button"
+            onClick={openTimeClockPopoutWindow}
+            title="Opens team roster and clock in a separate window (same account)"
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#334155",
+            }}
+          >
+            Pop-out window
           </button>
           <button
             type="button"
@@ -1097,9 +1118,6 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
                 ))}
               </ul>
             )}
-            <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.45 }}>
-              Verifications and GPS check-ins can tie to scheduled jobs in a later release; this list is the raw punch log from the database.
-            </p>
           </div>
         ) : null}
         {viewerOnRoster && clockPanelTab === "time_clock" ? (
@@ -1156,9 +1174,6 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
                 {clockActionBusy ? "Working…" : "Clock in"}
               </button>
             )}
-            <span style={{ fontSize: 11, color: "#94a3b8", flex: "1 1 200px", minWidth: 0 }}>
-              Linked contractors sign in with their own account to clock in later; this records the signed-in profile only.
-            </span>
           </div>
         ) : null}
       </div>

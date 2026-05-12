@@ -13,4 +13,14 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  server: {
+    proxy: {
+      // Local `npm run dev` has no `/api` server unless you run `vercel dev` (default http://127.0.0.1:3000).
+      // Override with VITE_DEV_API_PROXY_TARGET if your API listens elsewhere.
+      "/api": {
+        target: process.env.VITE_DEV_API_PROXY_TARGET || "http://127.0.0.1:3000",
+        changeOrigin: true,
+      },
+    },
+  },
 })

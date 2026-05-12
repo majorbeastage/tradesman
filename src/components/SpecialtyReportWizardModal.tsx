@@ -265,6 +265,23 @@ function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
   return subId ? `sub:${subId}` : null
 }
 
+/** "Weather is clear", "set inspector to Jane", "inspector = Jane" → same routing as Label: value lines. */
+function tryImplicitFieldKeyValue(line: string): { left: string; valueRaw: string } | null {
+  const t = line.trim()
+  if (!t) return null
+  const setTo = t.match(/^set\s+(.+?)\s+to\s+(.+)$/i)
+  if (setTo?.[1]?.trim() && setTo[2]?.trim()) return { left: setTo[1].trim(), valueRaw: setTo[2].trim() }
+  const isForm = t.match(/^(.+?)\s+is\s+(.+)$/is)
+  if (isForm?.[1]?.trim() && isForm[2]?.trim()) return { left: isForm[1].trim(), valueRaw: isForm[2].trim() }
+  const eq = t.match(/^(.+?)\s*=\s*(.+)$/)
+  if (eq?.[1]?.trim() && eq[2]?.trim()) {
+    const L = eq[1].trim()
+    const R = eq[2].trim()
+    if (L.length >= 2 && L.length <= 72 && !/^https?:\/\//i.test(R)) return { left: L, valueRaw: R }
+  }
+  return null
+}
+
 function parseConditionRating(word: string): ConditionRating | null {
   const w = normAssistantPhrase(word).replace(/[^a-z0-9/\s_-]/g, "")
   const map: Record<string, ConditionRating> = {
@@ -881,7 +898,7 @@ export default function SpecialtyReportWizardModal({
     let applied = 0
     let skipped = 0
     const lines = raw
-      .split(/\r?\n/)
+      .split(/\r?\n|;\s+/)
       .map((s) => s.trim())
       .filter(Boolean)
     const toScan = lines.length ? lines : [raw.trim()].filter(Boolean)
@@ -893,13 +910,19 @@ export default function SpecialtyReportWizardModal({
         left = line.slice(0, colon).trim()
         valueRaw = line.slice(colon + 1).trim()
       } else {
-        const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
-        if (!md?.[1] || !md[2]) {
-          unmatched.push(line)
-          continue
+        const implicit = tryImplicitFieldKeyValue(line)
+        if (implicit) {
+          left = implicit.left
+          valueRaw = implicit.valueRaw
+        } else {
+          const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
+          if (!md?.[1] || !md[2]) {
+            unmatched.push(line)
+            continue
+          }
+          left = md[1].trim()
+          valueRaw = md[2].trim()
         }
-        left = md[1].trim()
-        valueRaw = md[2].trim()
       }
       const fieldKey = matchHeaderOrSubFieldKey(left)
       if (!fieldKey) {

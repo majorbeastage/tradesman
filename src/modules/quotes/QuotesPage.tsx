@@ -3774,35 +3774,62 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Sign in again to generate summaries.")
       return []
     }
-    const res = await fetch("/api/platform-tools?__route=estimate-wizard-bullets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
-      body: platformToolsJsonBody({ mode, pack: pack.slice(0, 12000) }),
-    })
-    const raw = await res.text()
-    let j: {
-      ok?: boolean
-      bullets?: string[]
-      error?: string
-      note?: string
-      fallback?: boolean
-    } = {}
-    if (raw.trim()) {
+    const bases: string[] = []
+    if (typeof window !== "undefined" && window.location?.origin) bases.push(window.location.origin)
+    const pub = import.meta.env.VITE_PUBLIC_APP_ORIGIN?.trim()
+    if (pub) {
       try {
-        j = JSON.parse(raw) as typeof j
+        const u = new URL(pub.startsWith("http") ? pub : `https://${pub}`)
+        if (u.origin && !bases.includes(u.origin)) bases.push(u.origin)
       } catch {
-        throw new Error(
-          res.ok
-            ? "AI scope bullets returned invalid data. Try again, or check that /api/platform-tools is deployed."
-            : `Request failed (HTTP ${res.status}). The server did not return JSON.`,
-        )
+        /* ignore */
       }
-    } else if (!res.ok) {
-      throw new Error(`Request failed (HTTP ${res.status}) with an empty response.`)
     }
-    if (!res.ok) throw new Error(j.error || "Request failed")
-    if (j.fallback && j.note) console.warn(j.note)
-    return Array.isArray(j.bullets) ? j.bullets : []
+    const body = platformToolsJsonBody({ mode, pack: pack.slice(0, 12000) })
+    let lastErr = ""
+    for (let i = 0; i < bases.length; i++) {
+      const base = bases[i]
+      const res = await fetch(`${base}/api/platform-tools?__route=estimate-wizard-bullets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        body,
+      })
+      const raw = await res.text()
+      let j: {
+        ok?: boolean
+        bullets?: string[]
+        error?: string
+        note?: string
+        fallback?: boolean
+      } = {}
+      if (raw.trim()) {
+        try {
+          j = JSON.parse(raw) as typeof j
+        } catch {
+          lastErr =
+            res.ok
+              ? "AI scope bullets returned invalid data. Try again, or check that /api/platform-tools is deployed."
+              : `Request failed (HTTP ${res.status}). The server did not return JSON.`
+          if (res.status === 404 && i < bases.length - 1) continue
+          throw new Error(lastErr)
+        }
+      } else if (!res.ok) {
+        lastErr =
+          res.status === 404
+            ? `Request failed (HTTP 404) with an empty response. For local dev run \`vercel dev\` (or set VITE_DEV_API_PROXY_TARGET) so /api routes exist, or set VITE_PUBLIC_APP_ORIGIN to your deployed app URL.`
+            : `Request failed (HTTP ${res.status}) with an empty response.`
+        if (res.status === 404 && i < bases.length - 1) continue
+        throw new Error(lastErr)
+      }
+      if (!res.ok) {
+        lastErr = j.error || `Request failed (HTTP ${res.status})`
+        if (res.status === 404 && i < bases.length - 1) continue
+        throw new Error(lastErr)
+      }
+      if (j.fallback && j.note) console.warn(j.note)
+      return Array.isArray(j.bullets) ? j.bullets : []
+    }
+    throw new Error(lastErr || "Could not reach the AI scope bullets API.")
   }
 
   function buildConversationPackFromActivity(): string {
