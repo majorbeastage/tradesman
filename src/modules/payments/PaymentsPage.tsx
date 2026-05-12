@@ -17,6 +17,7 @@ import {
   applyCustomerPaymentSettingsToProfileMetadata,
   parseCustomerPaymentMetadata,
 } from "../../lib/customerPaymentMetadata"
+import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   customerPaymentEventTypeLabel,
   customerPaymentMarkedDetail,
@@ -179,31 +180,39 @@ export default function PaymentsPage() {
           const r = await sb.auth.refreshSession()
           accessTok = r.data.session?.access_token ?? undefined
         }
-        const originBase = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
 
         /** Same-origin Vercel route and Supabase Edge often both work; race them and take the first valid URL. */
         if (accessTok) {
+          const portalBody = platformToolsJsonBody({})
           const fetchFromHost = async (): Promise<string> => {
-            if (!originBase) return ""
-            try {
-              const r = await fetch(`${originBase}/api/billing-portal-config`, {
-                method: "POST",
-                headers: { Authorization: `Bearer ${accessTok}`, "Content-Type": "application/json" },
-                body: "{}",
-              })
-              if (r.ok) {
+            const bases = platformToolsFetchOrigins()
+            let lastDetail = ""
+            for (const originBase of bases) {
+              if (!originBase) continue
+              try {
+                const r = await fetch(`${originBase.replace(/\/+$/, "")}/api/billing-portal-config`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${accessTok}`, "Content-Type": "application/json" },
+                  body: portalBody,
+                })
                 const raw = await r.text()
-                if (raw.trim()) {
+                if (r.ok && raw.trim()) {
                   try {
-                    const j = JSON.parse(raw) as { portalUrl?: string | null }
+                    const j = JSON.parse(raw) as { portalUrl?: string | null; error?: string }
                     if (typeof j.portalUrl === "string" && j.portalUrl.trim()) return j.portalUrl.trim()
+                    if (typeof j.error === "string" && j.error.trim()) lastDetail = j.error.trim()
                   } catch {
-                    /* empty or non-JSON body — avoid crashing the whole Payments hub */
+                    lastDetail = "Non-JSON response from billing-portal-config"
                   }
+                } else {
+                  lastDetail = raw.trim() ? raw.trim().slice(0, 200) : `HTTP ${r.status} (empty body)`
                 }
+              } catch (e) {
+                lastDetail = e instanceof Error ? e.message : String(e)
               }
-            } catch {
-              /* ignore — Edge may still succeed */
+            }
+            if (lastDetail && typeof window !== "undefined" && !import.meta.env.PROD) {
+              console.warn("[billing-portal-config]", lastDetail)
             }
             return ""
           }
@@ -240,7 +249,7 @@ export default function PaymentsPage() {
             setBillingPortalConfigError(null)
           } else if (!cancelled && !portalFromEdge) {
             setBillingPortalConfigError(
-              "Could not load the payment portal link. Try refreshing this page. If it keeps happening, ask your administrator to confirm online payments are enabled.",
+              "Could not load the payment portal link. Try refreshing. If it only fails on the live site: in Vercel set HELCIM_PAYMENT_PORTAL_URL (or VITE_HELCIM_PAYMENT_PORTAL_URL) and redeploy; Supabase URL/anon can come from server env or the app request body.",
             )
           }
         } else if (!cancelled) {

@@ -6,6 +6,30 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
 import { firstEnv, firstEnvCaseInsensitive, pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
 
+/** Same shape as `bodyAsRecord` in platform-tools — SPA sends `supabaseUrl` + `supabaseAnonKey` when Vercel omits server env. */
+function bodyAsRecord(req: VercelRequest): Record<string, unknown> {
+  const raw = req.body as unknown
+  if (raw == null || raw === "") return {}
+  if (Buffer.isBuffer(raw)) {
+    try {
+      const v = JSON.parse(raw.toString("utf8")) as unknown
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+  if (typeof raw === "string") {
+    try {
+      const v = JSON.parse(raw || "{}") as unknown
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
+  return {}
+}
+
 function pickHelcimPaymentPortalUrlForServer(): string | null {
   const direct = firstEnv(
     "HELCIM_PAYMENT_PORTAL_URL",
@@ -49,10 +73,16 @@ export async function handleBillingPortalConfigVercel(req: VercelRequest, res: V
     return
   }
 
-  const supabaseUrl = pickSupabaseUrlForServer().replace(/\/+$/, "")
-  const anonKey = pickSupabaseAnonKeyForServer()
+  const rec = bodyAsRecord(req)
+  const fromBodyUrl = typeof rec.supabaseUrl === "string" ? rec.supabaseUrl.trim() : ""
+  const fromBodyAnon = typeof rec.supabaseAnonKey === "string" ? rec.supabaseAnonKey.trim() : ""
+  const supabaseUrl = (pickSupabaseUrlForServer() || fromBodyUrl).replace(/\/+$/, "")
+  const anonKey = pickSupabaseAnonKeyForServer() || fromBodyAnon || ""
   if (!supabaseUrl || !anonKey) {
-    res.status(500).json({ error: "Supabase URL/anon key not configured on server" })
+    res.status(500).json({
+      error:
+        "Supabase URL/anon key not configured. On Vercel set SUPABASE_URL + SUPABASE_ANON_KEY (or VITE_*), or ensure the app POSTs them in the JSON body (same as other /api/platform-tools routes).",
+    })
     return
   }
 
