@@ -2188,26 +2188,59 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           </>
         ) : (
           <>
-            <button
-              type="button"
-              onClick={() => setCalendarSuite({ id: "calendar" })}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: `2px solid ${theme.primary}`,
-                background: "#eff6ff",
-                cursor: "pointer",
-                color: theme.text,
-                fontWeight: 700,
-              }}
-            >
-              Return to scheduling view
-            </button>
             {calendarSuite.id === "time_clock" ? (
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                Clock in/out, weekly hours, and who is on the clock — use Team management for permissions and maps.
-              </span>
-            ) : null}
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    border: `2px solid ${theme.primary}`,
+                    background: "#eff6ff",
+                    cursor: "pointer",
+                    color: theme.text,
+                    fontWeight: 700,
+                  }}
+                >
+                  Back to team management
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "calendar" })}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    border: `1px solid ${theme.border}`,
+                    background: "white",
+                    cursor: "pointer",
+                    color: theme.text,
+                    fontWeight: 600,
+                  }}
+                >
+                  Scheduling view
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                  Clock in/out and hours — team permissions and maps stay under Team management.
+                </span>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "calendar" })}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: `2px solid ${theme.primary}`,
+                  background: "#eff6ff",
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontWeight: 700,
+                }}
+              >
+                Return to scheduling view
+              </button>
+            )}
             {calendarSuite.id === "team_management" ? (
               <>
                 {(["team_members", "job_types", "team_map"] as const).map((panel) => {
