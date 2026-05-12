@@ -57,7 +57,7 @@ import {
 } from "../../lib/quoteItemMath"
 import { carryQuoteToConversationValues } from "../../lib/automaticRepliesCarryOver"
 import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
-import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
+import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   type EstimateLinePresetRow,
   formatEstimatePresetCostSummary,
@@ -1213,8 +1213,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
         },
         body: platformToolsJsonBody({ businessName: profileDisplayNameForPdf }),
       })
-      const j = (await res.json()) as { ok?: boolean; legalText?: string; cancellationText?: string; error?: string }
-      if (!res.ok) throw new Error(j.error || "Request failed")
+      const parsed = await readPlatformToolsJsonBody<{
+        ok?: boolean
+        legalText?: string
+        cancellationText?: string
+        error?: string
+      }>(res)
+      const j = parsed.data
+      if (!parsed.ok) {
+        throw new Error(
+          j?.error ||
+            (parsed.rawEmpty
+              ? `Request failed (HTTP ${parsed.status}) with an empty response.`
+              : parsed.jsonInvalid
+                ? `Request failed (HTTP ${parsed.status}) with a non-JSON response.`
+                : "Request failed"),
+        )
+      }
+      if (!j) throw new Error("Request returned no JSON body.")
       setEstimateTemplateFormValues((prev) => ({
         ...prev,
         ...(typeof j.legalText === "string" && j.legalText.trim()
@@ -2908,15 +2924,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
               ...(supabaseAnonKey.trim() ? { supabaseAnonKey: supabaseAnonKey.trim() } : {}),
             }),
           })
-          const j = (await res.json()) as {
+          const parsed = await readPlatformToolsJsonBody<{
             ok?: boolean
             computedSubtotal?: number
             issues?: string[]
             agreesWithSubtotal?: boolean
             error?: string
-          }
+          }>(res)
+          const j = parsed.data
           if (cancelled) return
-          if (!res.ok) {
+          if (!parsed.ok || !j) {
             setEstimateReview({ subtotal: null, issues: [], agreesWithSubtotal: null })
             return
           }
@@ -3800,21 +3817,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return true
     })
   }, [quoteActivityItems, activityChannelFocus])
-
-  function platformToolsFetchOrigins(): string[] {
-    const bases: string[] = []
-    if (typeof window !== "undefined" && window.location?.origin) bases.push(window.location.origin)
-    const pub = import.meta.env.VITE_PUBLIC_APP_ORIGIN?.trim()
-    if (pub) {
-      try {
-        const u = new URL(pub.startsWith("http") ? pub : `https://${pub}`)
-        if (u.origin && !bases.includes(u.origin)) bases.push(u.origin)
-      } catch {
-        /* ignore */
-      }
-    }
-    return bases
-  }
 
   async function fetchEstimateWizardBullets(mode: "conversation" | "job_pack", pack: string): Promise<string[]> {
     let tok = session?.access_token?.trim() ?? ""

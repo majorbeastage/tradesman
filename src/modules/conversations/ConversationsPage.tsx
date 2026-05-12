@@ -1624,7 +1624,13 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       })
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
-      const j = JSON.parse(raw) as { body?: string }
+      if (!raw.trim()) throw new Error("Empty response from server.")
+      let j: { body?: string }
+      try {
+        j = JSON.parse(raw) as { body?: string }
+      } catch {
+        throw new Error(raw.slice(0, 240).trim() || "Invalid JSON from server.")
+      }
       const newBody = typeof j.body === "string" ? j.body.trim() : ""
       if (!newBody) throw new Error("No draft text returned.")
       await mergeConversationMetadata(selectedConversation.id, (prev) => {
@@ -1688,7 +1694,16 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
         }
         throw new Error(msg)
       }
-      const j = JSON.parse(raw) as { summary?: string }
+      if (!raw.trim()) {
+        setThreadSummaryText("")
+        throw new Error("Empty summary response from server.")
+      }
+      let j: { summary?: string }
+      try {
+        j = JSON.parse(raw) as { summary?: string }
+      } catch {
+        throw new Error("Summary response was not valid JSON.")
+      }
       setThreadSummaryText((j.summary ?? "").trim())
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))

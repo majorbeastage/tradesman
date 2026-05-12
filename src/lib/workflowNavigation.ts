@@ -68,6 +68,7 @@ const CALENDAR_SUITE_NAV = "tradesman_calendar_suite_nav"
 
 export type QueuedCalendarSuite =
   | { id: "calendar" }
+  | { id: "time_clock" }
   | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" }
   | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
   | { id: "managed_job_types" }
@@ -92,6 +93,7 @@ export function consumeCalendarSuiteNavigation(): QueuedCalendarSuite | null {
     const o = parsed as Record<string, unknown>
     const id = o.id
     if (id === "calendar") return { id: "calendar" }
+    if (id === "time_clock") return { id: "time_clock" }
     if (id === "managed_job_types") return { id: "managed_job_types" }
     if (id === "team_management") {
       const panel = o.panel

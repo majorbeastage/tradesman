@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { theme } from "../styles/theme"
-import { platformToolsJsonBody } from "../lib/platformToolsJsonBody"
+import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../lib/platformToolsJsonBody"
 import { supabase } from "../lib/supabase"
 
 type Suggestion = {
@@ -161,30 +161,73 @@ export default function EstimateScopeAssistantPanel({
     setAnalyzeBusy(true)
     setAnalyzeNote(null)
     try {
-      const res = await fetch("/api/platform-tools?__route=estimate-scope-lines", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${tok}`,
-        },
-        body: platformToolsJsonBody({
-          scopeText,
-          tradeHint: tradeHint ?? "",
-          existingLines,
-        }),
+      const bases = platformToolsFetchOrigins()
+      const body = platformToolsJsonBody({
+        scopeText,
+        tradeHint: tradeHint ?? "",
+        existingLines,
       })
-      const j = (await res.json()) as {
-        ok?: boolean
-        suggestions?: Suggestion[]
-        clarifications?: string[]
-        note?: string
-        fallback?: boolean
-        error?: string
+      const clientDeadlineMs = 58_000
+      let lastErr = ""
+      let res: Response | null = null
+      for (let i = 0; i < bases.length; i++) {
+        const base = bases[i]
+        const ac = new AbortController()
+        const kill = window.setTimeout(() => ac.abort(), clientDeadlineMs)
+        try {
+          res = await fetch(`${base}/api/platform-tools?__route=estimate-scope-lines`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${tok}`,
+            },
+            body,
+            signal: ac.signal,
+          })
+        } catch (err) {
+          clearTimeout(kill)
+          lastErr =
+            err instanceof Error && err.name === "AbortError" ? "Request timed out — try again." : err instanceof Error ? err.message : String(err)
+          if (i < bases.length - 1) continue
+          throw new Error(lastErr)
+        }
+        clearTimeout(kill)
+        const parsed = await readPlatformToolsJsonBody<{
+          ok?: boolean
+          suggestions?: Suggestion[]
+          clarifications?: string[]
+          note?: string
+          fallback?: boolean
+          error?: string
+        }>(res)
+        const j = parsed.data
+        if (!res.ok && res.status === 404 && i < bases.length - 1) continue
+        if (!res.ok) {
+          const errMsg =
+            j?.error ||
+            (parsed.rawEmpty
+              ? res.status === 404
+                ? `Request failed (HTTP 404) with an empty response. For local dev run \`vercel dev\` or set VITE_PUBLIC_APP_ORIGIN to your deployed app URL.`
+                : `Request failed (HTTP ${res.status}) with an empty response.`
+              : parsed.jsonInvalid
+                ? `Request failed (HTTP ${res.status}) with a non-JSON response.`
+                : `Request failed (HTTP ${res.status}).`)
+          lastErr = errMsg
+          if (res.status === 404 && i < bases.length - 1) continue
+          throw new Error(errMsg)
+        }
+        if (!j) {
+          setSuggestions([])
+          setClarifications([])
+          setAnalyzeNote("The server returned an empty response. Try again.")
+          return
+        }
+        setSuggestions(Array.isArray(j.suggestions) ? j.suggestions : [])
+        setClarifications(Array.isArray(j.clarifications) ? j.clarifications : [])
+        setAnalyzeNote(typeof j.note === "string" ? j.note : null)
+        return
       }
-      if (!res.ok) throw new Error(j.error || "Request failed")
-      setSuggestions(Array.isArray(j.suggestions) ? j.suggestions : [])
-      setClarifications(Array.isArray(j.clarifications) ? j.clarifications : [])
-      setAnalyzeNote(typeof j.note === "string" ? j.note : null)
+      throw new Error(lastErr || "Could not reach the AI scope API.")
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
       setSuggestions([])

@@ -46,10 +46,12 @@ type Props = {
   viewerUserId: string
   roster: ManagedClientRow[]
   managedOnly: ManagedClientRow[]
-  /** Opens a full-screen time clock view inside the calendar app (no new browser tab). */
-  onOpenTimeClockOverlay?: () => void
-  /** When true, the "Time clock (full view)" control is hidden (e.g. already inside that overlay). */
-  hideTimeClockOverlayTrigger?: boolean
+  /** Navigates to the dedicated Time clock workspace (full calendar page, not a modal). */
+  onOpenTimeClockWorkspace?: () => void
+  /** When true, hides the workspace entry control (already on that page). */
+  timeClockWorkspacePage?: boolean
+  /** `time_clock_only` shows punch clock + hours without team permission cards. */
+  variant?: "default" | "time_clock_only"
 }
 
 function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null {
@@ -556,8 +558,9 @@ export default function CalendarTeamManagementPanel({
   viewerUserId,
   roster,
   managedOnly,
-  onOpenTimeClockOverlay,
-  hideTimeClockOverlayTrigger,
+  onOpenTimeClockWorkspace,
+  timeClockWorkspacePage,
+  variant = "default",
 }: Props) {
   const [omMeta, setOmMeta] = useState<Record<string, unknown>>({})
   const [profilesById, setProfilesById] = useState<Record<string, ProfileLite>>({})
@@ -940,7 +943,7 @@ export default function CalendarTeamManagementPanel({
     background: "#fff",
     padding: "10px 12px",
     minHeight: 100,
-    maxHeight: 220,
+    maxHeight: variant === "time_clock_only" ? 420 : 220,
     overflow: "auto",
     fontSize: 12,
     color: "#334155",
@@ -970,11 +973,11 @@ export default function CalendarTeamManagementPanel({
           >
             Time clock
           </button>
-          {!hideTimeClockOverlayTrigger && onOpenTimeClockOverlay ? (
+          {!timeClockWorkspacePage && onOpenTimeClockWorkspace ? (
             <button
               type="button"
-              onClick={() => onOpenTimeClockOverlay()}
-              title="Opens time clock and roster in a full view over this page"
+              onClick={() => onOpenTimeClockWorkspace()}
+              title="Opens the Time clock workspace as its own page in Scheduling"
               style={{
                 padding: "6px 10px",
                 borderRadius: 8,
@@ -986,7 +989,7 @@ export default function CalendarTeamManagementPanel({
                 color: "#334155",
               }}
             >
-              Time clock (full view)
+              Time clock workspace
             </button>
           ) : null}
           <button
@@ -1185,6 +1188,7 @@ export default function CalendarTeamManagementPanel({
         <p style={{ margin: 0, fontSize: 13, color: message.includes("saved") ? "#059669" : "#b91c1c" }}>{message}</p>
       ) : null}
 
+      {variant === "time_clock_only" ? null : (
       <div
         style={{
           display: "grid",
@@ -1230,8 +1234,9 @@ export default function CalendarTeamManagementPanel({
           )
         })}
       </div>
+      )}
 
-      {managedOnly.length === 0 ? (
+      {variant === "time_clock_only" ? null : managedOnly.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No linked contractors yet. Add clients under your office manager account.</p>
       ) : null}
     </div>

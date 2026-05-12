@@ -1070,7 +1070,17 @@ export default function SpecialtyReportWizardModal({
       customerLabel: customerLabel ?? "",
     }
     if (picked === "home_inspection" && !/\btradesman\s+record\b/i.test(raw)) {
-      const { applied, skipped, remainder } = consumeColonLinesFromAssistantInput(raw, fillCtx)
+      let { applied, skipped, remainder } = consumeColonLinesFromAssistantInput(raw, fillCtx)
+      const tail0 = remainder.trim()
+      if (tail0 && !tail0.includes("\n") && tail0.includes(":")) {
+        const expanded = tail0.replace(/\.\s+(?=\S[\s\S]{0,120}:)/g, ".\n")
+        if (expanded !== tail0) {
+          const sec = consumeColonLinesFromAssistantInput(expanded, fillCtx)
+          applied += sec.applied
+          skipped += sec.skipped
+          remainder = sec.remainder
+        }
+      }
       if (applied > 0 || skipped > 0) {
         let colonNote = ""
         if (applied > 0 && skipped > 0) {
