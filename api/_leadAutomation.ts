@@ -26,12 +26,24 @@ function publicAppBaseUrl(): string {
   return ""
 }
 
-export async function openAiText(system: string, user: string): Promise<string | null> {
+export type OpenAiTextOptions = {
+  /** Default 500; use ~2000+ when the model must return a larger JSON object (estimate wizard, scope lines). */
+  maxTokens?: number
+  /** Abort the OpenAI HTTP request after this many ms (default 48s; stay under typical serverless limits). */
+  timeoutMs?: number
+}
+
+export async function openAiText(system: string, user: string, opts?: OpenAiTextOptions): Promise<string | null> {
   const key = firstEnv("OPENAI_API_KEY")
   if (!key) return null
+  const max_tokens = typeof opts?.maxTokens === "number" && opts.maxTokens > 0 ? Math.min(opts.maxTokens, 8000) : 500
+  const timeoutMs = typeof opts?.timeoutMs === "number" && opts.timeoutMs > 0 ? Math.min(opts.timeoutMs, 120_000) : 48_000
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), timeoutMs)
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: ac.signal,
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "gpt-4o-mini",
@@ -39,7 +51,7 @@ export async function openAiText(system: string, user: string): Promise<string |
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        max_tokens: 500,
+        max_tokens,
         temperature: 0.4,
       }),
     })
@@ -50,6 +62,8 @@ export async function openAiText(system: string, user: string): Promise<string |
     return t || null
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 

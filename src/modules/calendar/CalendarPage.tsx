@@ -295,12 +295,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
   const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
+  const [timeClockOverlayOpen, setTimeClockOverlayOpen] = useState(false)
   const managedByOfficeManager = useManagedByOfficeManager()
 
   useEffect(() => {
     const next = consumeCalendarSuiteNavigation()
     if (next) setCalendarSuite(next)
   }, [])
+
+  useEffect(() => {
+    if (!timeClockOverlayOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTimeClockOverlayOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [timeClockOverlayOpen])
   const [managedSelfPolicy, setManagedSelfPolicy] = useState(() => parseOmCalendarPolicy({}))
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
@@ -2605,6 +2615,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   : [{ userId: authUserId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
               }
               managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+              onOpenTimeClockOverlay={() => setTimeClockOverlayOpen(true)}
             />
           ) : null}
           {calendarSuite.id === "team_management" && calendarSuite.panel === "team_map" && teamMapUserIds.length > 0 ? (
@@ -4122,6 +4133,86 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           quoteId={selectedEvent.quote_id}
           calendarEventId={selectedEvent.id}
         />
+      ) : null}
+
+      {timeClockOverlayOpen && authUserId ? (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 20000,
+            background: "rgba(15,23,42,0.55)",
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "center",
+            padding: isMobile ? 8 : 16,
+          }}
+          onClick={() => setTimeClockOverlayOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal
+            aria-label="Time clock and team"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 1100,
+              maxHeight: "100%",
+              marginTop: "auto",
+              marginBottom: "auto",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              background: "#fff",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "14px 16px",
+                borderBottom: `1px solid ${theme.border}`,
+                flexShrink: 0,
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 18, color: theme.text }}>Time clock & team</h2>
+              <button
+                type="button"
+                onClick={() => setTimeClockOverlayOpen(false)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ padding: 16, overflow: "auto", flex: 1, minHeight: 0 }}>
+              <CalendarTeamManagementPanel
+                officeManagerUserId={authUserId}
+                viewerUserId={authUserId}
+                roster={
+                  scopeCtx?.clients?.length
+                    ? scopeCtx.clients
+                    : [{ userId: authUserId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
+                }
+                managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+                hideTimeClockOverlayTrigger
+              />
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   )

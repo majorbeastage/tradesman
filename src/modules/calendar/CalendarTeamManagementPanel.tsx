@@ -46,6 +46,10 @@ type Props = {
   viewerUserId: string
   roster: ManagedClientRow[]
   managedOnly: ManagedClientRow[]
+  /** Opens a full-screen time clock view inside the calendar app (no new browser tab). */
+  onOpenTimeClockOverlay?: () => void
+  /** When true, the "Time clock (full view)" control is hidden (e.g. already inside that overlay). */
+  hideTimeClockOverlayTrigger?: boolean
 }
 
 function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null {
@@ -547,7 +551,14 @@ function TeamUserCard({
   )
 }
 
-export default function CalendarTeamManagementPanel({ officeManagerUserId, viewerUserId, roster, managedOnly }: Props) {
+export default function CalendarTeamManagementPanel({
+  officeManagerUserId,
+  viewerUserId,
+  roster,
+  managedOnly,
+  onOpenTimeClockOverlay,
+  hideTimeClockOverlayTrigger,
+}: Props) {
   const [omMeta, setOmMeta] = useState<Record<string, unknown>>({})
   const [profilesById, setProfilesById] = useState<Record<string, ProfileLite>>({})
   const [prefsByUser, setPrefsByUser] = useState<Record<string, PrefLite>>({})
@@ -935,16 +946,6 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
     color: "#334155",
   }
 
-  function openTimeClockPopoutWindow() {
-    try {
-      const u = new URL(window.location.href)
-      u.searchParams.set("standalone", "timeclock")
-      window.open(u.toString(), "TradesmanTimeClock", "width=1120,height=840,scrollbars=yes,resizable=yes")
-    } catch {
-      /* ignore */
-    }
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={clockPanelStyle}>
@@ -969,23 +970,25 @@ export default function CalendarTeamManagementPanel({ officeManagerUserId, viewe
           >
             Time clock
           </button>
-          <button
-            type="button"
-            onClick={openTimeClockPopoutWindow}
-            title="Opens team roster and clock in a separate window (same account)"
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#334155",
-            }}
-          >
-            Pop-out window
-          </button>
+          {!hideTimeClockOverlayTrigger && onOpenTimeClockOverlay ? (
+            <button
+              type="button"
+              onClick={() => onOpenTimeClockOverlay()}
+              title="Opens time clock and roster in a full view over this page"
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#334155",
+              }}
+            >
+              Time clock (full view)
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setClockPanelTab("my_hours")}

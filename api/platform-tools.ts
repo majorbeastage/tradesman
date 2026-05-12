@@ -365,92 +365,105 @@ async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse)
   const auth = await getUserIdFromBearer(req, res)
   if (!auth) return
 
-  const body = jsonBody(req)
-  const scopeText = pickFirstString(body.scopeText).slice(0, 8000)
-  const tradeHint = pickFirstString(body.tradeHint).slice(0, 200)
-  const linesRaw = body.existingLines
-  const existingLines = Array.isArray(linesRaw)
-    ? linesRaw
-        .map((row) => {
-          const o = row as Record<string, unknown>
-          const q = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
-          const p = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
-          const d = String(o.description ?? "").slice(0, 400)
-          return { description: d, quantity: q, unit_price: p }
-        })
-        .filter((x) => x.description.trim())
-        .slice(0, 40)
-    : []
+  try {
+    const body = jsonBody(req)
+    const scopeText = pickFirstString(body.scopeText).slice(0, 8000)
+    const tradeHint = pickFirstString(body.tradeHint).slice(0, 200)
+    const linesRaw = body.existingLines
+    const existingLines = Array.isArray(linesRaw)
+      ? linesRaw
+          .map((row) => {
+            const o = row as Record<string, unknown>
+            const q = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+            const p = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+            const d = String(o.description ?? "").slice(0, 400)
+            return { description: d, quantity: q, unit_price: p }
+          })
+          .filter((x) => x.description.trim())
+          .slice(0, 40)
+      : []
 
-  if (!scopeText.trim()) {
-    res.status(400).json({ error: "scopeText required" })
-    return
-  }
+    if (!scopeText.trim()) {
+      res.status(400).json({ error: "scopeText required" })
+      return
+    }
 
-  const openaiKey = firstEnv("OPENAI_API_KEY")
-  if (!openaiKey) {
-    res.status(200).json({
-      ok: true,
-      suggestions: [] as ScopeLineSuggestion[],
-      clarifications: ["Connect OpenAI on the server (OPENAI_API_KEY) to generate line suggestions from your scope."],
-      fallback: true,
-    })
-    return
-  }
+    const openaiKey = firstEnv("OPENAI_API_KEY")
+    if (!openaiKey) {
+      res.status(200).json({
+        ok: true,
+        suggestions: [] as ScopeLineSuggestion[],
+        clarifications: ["Connect OpenAI on the server (OPENAI_API_KEY) to generate line suggestions from your scope."],
+        fallback: true,
+      })
+      return
+    }
 
-  const pack = JSON.stringify({
-    scope: scopeText,
-    trade: tradeHint || "residential / commercial contractor",
-    existingLines,
-  }).slice(0, 12000)
+    const pack = JSON.stringify({
+      scope: scopeText,
+      trade: tradeHint || "residential / commercial contractor",
+      existingLines,
+    }).slice(0, 12000)
 
-  const raw =
-    (await openAiText(
-      `You help contractors build estimate line items from a spoken or written job scope.
+    const raw =
+      (await openAiText(
+        `You help contractors build estimate line items from a spoken or written job scope.
 Reply with JSON only, no markdown:
 {"suggestions":[{"description":"string","quantity":number,"unit_price":number,"rationale":"optional short note"}],"clarifications":["optional questions — max 4 short strings when critical info is missing"]}
 Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed/labor guess for US trades; use 0 if unknown and explain in rationale). Descriptions are concise trade language.`,
-      pack,
-    ))?.trim() ?? "{}"
+        pack,
+        { maxTokens: 2800, timeoutMs: 52_000 },
+      ))?.trim() ?? "{}"
 
-  let suggestions: ScopeLineSuggestion[] = []
-  let clarifications: string[] = []
-  try {
-    const j = JSON.parse(raw) as {
-      suggestions?: unknown
-      clarifications?: unknown
-    }
-    if (Array.isArray(j.suggestions)) {
-      for (const row of j.suggestions.slice(0, 14)) {
-        if (!row || typeof row !== "object") continue
-        const o = row as Record<string, unknown>
-        const description = String(o.description ?? "").trim().slice(0, 500)
-        if (!description) continue
-        const quantity =
-          typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
-        const unit_price =
-          typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
-        const rationale = typeof o.rationale === "string" ? o.rationale.slice(0, 400) : ""
-        suggestions.push({
-          description,
-          quantity: Math.max(0, quantity),
-          unit_price: Math.max(0, unit_price),
-          ...(rationale.trim() ? { rationale: rationale.trim() } : {}),
-        })
+    let suggestions: ScopeLineSuggestion[] = []
+    let clarifications: string[] = []
+    try {
+      const j = JSON.parse(raw) as {
+        suggestions?: unknown
+        clarifications?: unknown
       }
+      if (Array.isArray(j.suggestions)) {
+        for (const row of j.suggestions.slice(0, 14)) {
+          if (!row || typeof row !== "object") continue
+          const o = row as Record<string, unknown>
+          const description = String(o.description ?? "").trim().slice(0, 500)
+          if (!description) continue
+          const quantity =
+            typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
+          const unit_price =
+            typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+          const rationale = typeof o.rationale === "string" ? o.rationale.slice(0, 400) : ""
+          suggestions.push({
+            description,
+            quantity: Math.max(0, quantity),
+            unit_price: Math.max(0, unit_price),
+            ...(rationale.trim() ? { rationale: rationale.trim() } : {}),
+          })
+        }
+      }
+      if (Array.isArray(j.clarifications)) {
+        clarifications = j.clarifications
+          .filter((x): x is string => typeof x === "string")
+          .map((x) => x.slice(0, 400))
+          .slice(0, 4)
+      }
+    } catch {
+      suggestions = []
+      clarifications = []
     }
-    if (Array.isArray(j.clarifications)) {
-      clarifications = j.clarifications
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.slice(0, 400))
-        .slice(0, 4)
-    }
-  } catch {
-    suggestions = []
-    clarifications = []
-  }
 
-  res.status(200).json({ ok: true, suggestions, clarifications })
+    res.status(200).json({ ok: true, suggestions, clarifications })
+  } catch (e) {
+    console.error("[estimate-scope-lines]", e instanceof Error ? e.message : e)
+    res.status(200).json({
+      ok: true,
+      suggestions: [] as ScopeLineSuggestion[],
+      clarifications: [
+        e instanceof Error ? e.message : "AI line generation failed; try again in a moment.",
+      ],
+      fallback: true,
+    })
+  }
 }
 
 /**
@@ -465,61 +478,71 @@ async function handleEstimateWizardBullets(req: VercelRequest, res: VercelRespon
   const auth = await getUserIdFromBearer(req, res)
   if (!auth) return
 
-  const body = jsonBody(req)
-  const modeRaw = pickFirstString(body.mode).toLowerCase()
-  const mode = modeRaw === "job_pack" ? "job_pack" : modeRaw === "conversation" ? "conversation" : ""
-  const pack = pickFirstString(body.pack).slice(0, 12000)
+  try {
+    const body = jsonBody(req)
+    const modeRaw = pickFirstString(body.mode).toLowerCase()
+    const mode = modeRaw === "job_pack" ? "job_pack" : modeRaw === "conversation" ? "conversation" : ""
+    const pack = pickFirstString(body.pack).slice(0, 12000)
 
-  if (!mode) {
-    res.status(400).json({ error: "mode must be conversation or job_pack" })
-    return
-  }
-  if (!pack.trim()) {
-    res.status(400).json({ error: "pack required" })
-    return
-  }
+    if (!mode) {
+      res.status(400).json({ error: "mode must be conversation or job_pack" })
+      return
+    }
+    if (!pack.trim()) {
+      res.status(400).json({ error: "pack required" })
+      return
+    }
 
-  const openaiKey = firstEnv("OPENAI_API_KEY")
-  if (!openaiKey) {
-    res.status(200).json({
-      ok: true,
-      bullets: [] as string[],
-      fallback: true,
-      note: "Connect OpenAI (OPENAI_API_KEY) to generate AI summaries for this step.",
-    })
-    return
-  }
+    const openaiKey = firstEnv("OPENAI_API_KEY")
+    if (!openaiKey) {
+      res.status(200).json({
+        ok: true,
+        bullets: [] as string[],
+        fallback: true,
+        note: "Connect OpenAI (OPENAI_API_KEY) to generate AI summaries for this step.",
+      })
+      return
+    }
 
-  const instructions =
-    mode === "conversation"
-      ? `You extract contracting-relevant facts from messages between a contractor and customer.
+    const instructions =
+      mode === "conversation"
+        ? `You extract contracting-relevant facts from messages between a contractor and customer.
 Reply with JSON only, no markdown: {"bullets": string[]}
 Rules: Max 14 bullets. Each bullet is one short line (no leading "•").
 Cover anything evident: scope of work requested, labor or time hints, equipment, materials, pricing mentions, scheduling/dates, access constraints, unknowns.
 If the thread is empty or useless, return {"bullets": []}.`
-      : `You summarize job execution needs for an estimate from the provided context (may include conversation summary, template/job notes, file names, contractor notes).
+        : `You summarize job execution needs for an estimate from the provided context (may include conversation summary, template/job notes, file names, contractor notes).
 Reply with JSON only, no markdown: {"bullets": string[]}
 Rules: Max 16 bullets. Short lines. Prefer categories when relevant: labor hours estimate (rough), crew size, materials list hints, equipment, scope breakdown, pricing hints, scheduling windows, special circumstances/safety/access.
 If critical info is missing, include bullets that say what is still unknown.`
 
-  const raw =
-    (await openAiText(instructions, pack.slice(0, 14000)))?.trim() ?? "{}"
+    const raw =
+      (await openAiText(instructions, pack.slice(0, 14000), { maxTokens: 2400, timeoutMs: 52_000 }))?.trim() ?? "{}"
 
-  let bullets: string[] = []
-  try {
-    const j = JSON.parse(raw) as { bullets?: unknown }
-    if (Array.isArray(j.bullets)) {
-      bullets = j.bullets
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.replace(/^\s*[•\-*]\s*/, "").trim().slice(0, 400))
-        .filter(Boolean)
-        .slice(0, 18)
+    let bullets: string[] = []
+    try {
+      const j = JSON.parse(raw) as { bullets?: unknown }
+      if (Array.isArray(j.bullets)) {
+        bullets = j.bullets
+          .filter((x): x is string => typeof x === "string")
+          .map((x) => x.replace(/^\s*[•\-*]\s*/, "").trim().slice(0, 400))
+          .filter(Boolean)
+          .slice(0, 18)
+      }
+    } catch {
+      bullets = []
     }
-  } catch {
-    bullets = []
-  }
 
-  res.status(200).json({ ok: true, bullets })
+    res.status(200).json({ ok: true, bullets })
+  } catch (e) {
+    console.error("[estimate-wizard-bullets]", e instanceof Error ? e.message : e)
+    res.status(200).json({
+      ok: true,
+      bullets: [] as string[],
+      fallback: true,
+      note: e instanceof Error ? e.message : "AI request failed; try again in a moment.",
+    })
+  }
 }
 
 function jsonBody(req: VercelRequest): Record<string, unknown> {

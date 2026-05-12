@@ -6,7 +6,6 @@ import LeadsPage from "./modules/leads/LeadsPage"
 import ConversationsPage from "./modules/conversations/ConversationsPage"
 import QuotesPage from "./modules/quotes/QuotesPage"
 import CalendarPage from "./modules/calendar/CalendarPage"
-import StandaloneTimeClockPopout from "./modules/calendar/StandaloneTimeClockPopout"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
 import SettingsPage from "./modules/settings/SettingsPage"
@@ -163,30 +162,6 @@ function MainApp() {
 
   const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
   const currentPageTitle = formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
-
-  const standaloneTimeClock =
-    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("standalone") === "timeclock"
-
-  if (standaloneTimeClock && user?.id) {
-    return (
-      <StandaloneTimeClockPopout
-        onClose={() => {
-          try {
-            window.close()
-          } catch {
-            /* ignore */
-          }
-          try {
-            const u = new URL(window.location.href)
-            u.searchParams.delete("standalone")
-            window.history.replaceState(null, "", `${u.pathname}${u.search}${u.hash}`)
-          } catch {
-            /* ignore */
-          }
-        }}
-      />
-    )
-  }
 
   return (
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>

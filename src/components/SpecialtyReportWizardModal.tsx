@@ -1465,14 +1465,6 @@ export default function SpecialtyReportWizardModal({
                 </button>
               </div>
             </div>
-            <p style={{ margin: "8px 0 10px", fontSize: 12, color: "#7c2d12", lineHeight: 1.5 }}>
-              <strong>Field commands:</strong> e.g. <code style={{ fontSize: 11 }}>fill inspector name with my name</code>,{" "}
-              <code style={{ fontSize: 11 }}>copy estimate address to property address</code>,{" "}
-              <code style={{ fontSize: 11 }}>set weather to clear</code>,{" "}
-              <code style={{ fontSize: 11 }}>set condition for roof covering to marginal</code>.{" "}
-              <strong>Navigation:</strong> <code style={{ fontSize: 11 }}>open plumbing section</code>, <code style={{ fontSize: 11 }}>go to flashing</code>.{" "}
-              Or say <strong>Tradesman record</strong> + scope / summary / a findings label and your note.
-            </p>
             <div style={{ display: "grid", gap: 8 }}>
               <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value as AiTargetField)} style={{ ...theme.formInput, maxWidth: 360 }}>
                 {picked === "home_inspection" ? (

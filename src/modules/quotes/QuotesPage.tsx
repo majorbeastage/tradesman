@@ -2252,24 +2252,65 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!tok) return "Sign in again to use AI line items."
     setGuideQuoteItemsAiBusy(true)
     try {
-      const res = await fetch("/api/platform-tools?__route=estimate-scope-lines", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${tok}`,
-        },
-        body: platformToolsJsonBody({
-          scopeText,
-          tradeHint: quoteTradeHintForAi,
-          existingLines: estimateScopeExistingLines,
-        }),
+      const bases = platformToolsFetchOrigins()
+      const bodyStr = platformToolsJsonBody({
+        scopeText,
+        tradeHint: quoteTradeHintForAi,
+        existingLines: estimateScopeExistingLines,
       })
-      const j = (await res.json()) as {
+      const clientDeadlineMs = 58_000
+      let res: Response | null = null
+      let raw = ""
+      let lastErr = ""
+      for (let b = 0; b < bases.length; b++) {
+        const origin = bases[b]
+        const ac = new AbortController()
+        const kill = window.setTimeout(() => ac.abort(), clientDeadlineMs)
+        try {
+          res = await fetch(`${origin}/api/platform-tools?__route=estimate-scope-lines`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${tok}`,
+            },
+            body: bodyStr,
+            signal: ac.signal,
+          })
+          raw = await res.text()
+          if (!res.ok && res.status === 404 && b < bases.length - 1) {
+            clearTimeout(kill)
+            continue
+          }
+          clearTimeout(kill)
+          break
+        } catch (err) {
+          clearTimeout(kill)
+          lastErr =
+            err instanceof Error && err.name === "AbortError" ? "Request timed out — try again." : err instanceof Error ? err.message : String(err)
+          if (b < bases.length - 1) continue
+          throw new Error(lastErr)
+        }
+      }
+      if (!res) throw new Error(lastErr || "Could not reach the AI line-items API.")
+      let j: {
         ok?: boolean
         suggestions?: Array<{ description?: string; quantity?: number; unit_price?: number }>
         clarifications?: string[]
         fallback?: boolean
         error?: string
+      } = {}
+      if (raw.trim()) {
+        try {
+          j = JSON.parse(raw) as typeof j
+        } catch {
+          throw new Error(
+            res.ok
+              ? "AI line items returned invalid data. Try again, or check that /api/platform-tools is deployed."
+              : `Request failed (HTTP ${res.status}). The server did not return JSON.`,
+          )
+        }
+      } else if (!res.ok) {
+        throw new Error(`Request failed (HTTP ${res.status}) with an empty response.`)
       }
       if (!res.ok) throw new Error(j.error || "Request failed")
       const suggestions = Array.isArray(j.suggestions) ? j.suggestions : []
@@ -3760,6 +3801,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
     })
   }, [quoteActivityItems, activityChannelFocus])
 
+  function platformToolsFetchOrigins(): string[] {
+    const bases: string[] = []
+    if (typeof window !== "undefined" && window.location?.origin) bases.push(window.location.origin)
+    const pub = import.meta.env.VITE_PUBLIC_APP_ORIGIN?.trim()
+    if (pub) {
+      try {
+        const u = new URL(pub.startsWith("http") ? pub : `https://${pub}`)
+        if (u.origin && !bases.includes(u.origin)) bases.push(u.origin)
+      } catch {
+        /* ignore */
+      }
+    }
+    return bases
+  }
+
   async function fetchEstimateWizardBullets(mode: "conversation" | "job_pack", pack: string): Promise<string[]> {
     let tok = session?.access_token?.trim() ?? ""
     if (supabase) {
@@ -3774,26 +3830,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Sign in again to generate summaries.")
       return []
     }
-    const bases: string[] = []
-    if (typeof window !== "undefined" && window.location?.origin) bases.push(window.location.origin)
-    const pub = import.meta.env.VITE_PUBLIC_APP_ORIGIN?.trim()
-    if (pub) {
-      try {
-        const u = new URL(pub.startsWith("http") ? pub : `https://${pub}`)
-        if (u.origin && !bases.includes(u.origin)) bases.push(u.origin)
-      } catch {
-        /* ignore */
-      }
-    }
+    const bases = platformToolsFetchOrigins()
     const body = platformToolsJsonBody({ mode, pack: pack.slice(0, 12000) })
     let lastErr = ""
+    const clientDeadlineMs = 58_000
     for (let i = 0; i < bases.length; i++) {
       const base = bases[i]
-      const res = await fetch(`${base}/api/platform-tools?__route=estimate-wizard-bullets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
-        body,
-      })
+      const ac = new AbortController()
+      const kill = window.setTimeout(() => ac.abort(), clientDeadlineMs)
+      let res: Response
+      try {
+        res = await fetch(`${base}/api/platform-tools?__route=estimate-wizard-bullets`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+          body,
+          signal: ac.signal,
+        })
+      } catch (err) {
+        clearTimeout(kill)
+        const msg = err instanceof Error && err.name === "AbortError" ? "Request timed out — try again." : (err instanceof Error ? err.message : String(err))
+        lastErr = msg
+        if (i < bases.length - 1) continue
+        throw new Error(lastErr)
+      }
+      clearTimeout(kill)
       const raw = await res.text()
       let j: {
         ok?: boolean
@@ -3827,7 +3887,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
         throw new Error(lastErr)
       }
       if (j.fallback && j.note) console.warn(j.note)
-      return Array.isArray(j.bullets) ? j.bullets : []
+      const bullets = Array.isArray(j.bullets) ? j.bullets : []
+      if (bullets.length === 0 && j.fallback && j.note?.trim()) {
+        throw new Error(j.note.trim())
+      }
+      return bullets
     }
     throw new Error(lastErr || "Could not reach the AI scope bullets API.")
   }
