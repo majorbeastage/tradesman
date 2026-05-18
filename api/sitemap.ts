@@ -4,7 +4,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 
-const PATHS = ["/privacy", "/terms", "/sms", "/sms-consent"] as const
+const PATHS = ["/privacy", "/terms", "/sms", "/sms-consent", "/sms-cta"] as const
 
 function escXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")

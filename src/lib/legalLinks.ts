@@ -14,4 +14,6 @@ export const LEGAL_LINKS = {
   smsConsent: trimOrEmpty(import.meta.env.VITE_PUBLIC_SMS_CONSENT_URL) || "/sms-consent",
   /** Account deletion (Google Play / data safety); default same-origin public page. */
   accountDeletion: trimOrEmpty(import.meta.env.VITE_PUBLIC_ACCOUNT_DELETION_URL) || "/account-deletion",
+  /** Sample SMS disclosure language for contractors (static HTML; not an opt-in form). */
+  smsCtaGuidance: trimOrEmpty(import.meta.env.VITE_PUBLIC_SMS_CTA_GUIDANCE_URL) || "/sms-cta",
 } as const
