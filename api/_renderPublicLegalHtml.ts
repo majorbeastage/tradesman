@@ -12,9 +12,8 @@ import {
   parseSimpleLegalPage,
   parseSmsConsentLegalPage,
   resolvedLegalHeroKicker,
-  resolvedSmsConsentSectionTitle,
-  resolvedSmsDetailsSectionTitle,
-  resolvedSmsSampleSectionTitle,
+  resolvedSmsConsentSections,
+  smsConsentBulletItems,
   smsNoticeCardVisible,
   type SimpleLegalPage,
   type SmsConsentLegalPage,
@@ -135,6 +134,26 @@ ${footerInner}
 </html>`
 }
 
+function renderSmsSectionHtml(section: ReturnType<typeof resolvedSmsConsentSections>[number]): string {
+  const h = esc(section.title)
+  const lead = section.lead?.trim()
+    ? `<p style="margin:0 0 10px;color:#4b5563;line-height:1.65">${esc(section.lead)}</p>`
+    : ""
+  if (section.kind === "list") {
+    const items = smsConsentBulletItems(section.content)
+      .map((item) => `<li style="margin-bottom:6px">${esc(item)}</li>`)
+      .join("")
+    return `<section class="card"><h2>${h}</h2>${lead}<ul style="margin:0;padding-left:1.25rem;color:#4b5563;line-height:1.65">${items}</ul></section>`
+  }
+  if (section.kind === "disclosure") {
+    const sub = section.subheading?.trim()
+      ? `<p style="margin:0 0 10px;font-weight:600;color:#374151">${esc(section.subheading)}</p>`
+      : ""
+    return `<section class="card"><h2>${h}</h2>${sub}<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;color:#374151;white-space:pre-wrap;line-height:1.65">${esc(section.content)}</div></section>`
+  }
+  return `<section class="card"><h2>${h}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${esc(section.content)}</p></section>`
+}
+
 function renderSmsHtml(page: SmsConsentLegalPage, requestOrigin?: string): string {
   const o = requestOrigin
   const u = (path: string) => (o ? `${o}${path}` : path)
@@ -151,17 +170,7 @@ function renderSmsHtml(page: SmsConsentLegalPage, requestOrigin?: string): strin
         nb ? `<p style="margin:0;color:#4b5563;white-space:pre-wrap">${nb}</p>` : ""
       }</section>`
     : ""
-  const body = esc(page.body?.trim() ? page.body : "")
-  const detailsTitle = esc(resolvedSmsDetailsSectionTitle(page))
-  const consentTitle = esc(resolvedSmsConsentSectionTitle(page))
-  const sampleTitle = esc(resolvedSmsSampleSectionTitle(page))
-  const consent = esc(page.consent_statement?.trim() ? page.consent_statement : DEFAULT_SMS_CONSENT_PAGE.consent_statement)
-  const sampleIntroRaw = (page.sample_section_intro ?? "").trim()
-  const sampleIntro = sampleIntroRaw ? esc(sampleIntroRaw) : ""
-  const sampleIntroBlock = sampleIntro
-    ? `<p style="margin:0 0 12px;font-size:14px;color:#4b5563;line-height:1.55">${sampleIntro}</p>`
-    : ""
-  const sample = esc(page.sample_message?.trim() ? page.sample_message : DEFAULT_SMS_CONSENT_PAGE.sample_message)
+  const sectionsHtml = resolvedSmsConsentSections(page).map((s) => renderSmsSectionHtml(s)).join("\n")
   const footerInner = page.footer_note?.trim()
     ? absolutizePublicLinks(
         `<p style="margin:12px 0 0;font-size:13px;color:#6b7280;white-space:pre-wrap">${esc(page.footer_note.trim())}</p>`,
@@ -201,6 +210,7 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:
 .hero .sub{margin:0;opacity:0.92;max-width:760px;}
 .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:22px;margin-bottom:18px;}
 .card h2{margin:0 0 10px;font-size:1.15rem;color:#111827;}
+.card p,.card li{color:#4b5563;}
 .navcard{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px;}
 .navcard a{color:#ea580c;font-weight:600;text-decoration:none;}
 </style>
@@ -214,9 +224,7 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:
 ${lastBlock}
 </header>
 ${noticeSection}
-<section class="card"><h2>${detailsTitle}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${body}</p></section>
-<section class="card"><h2>${consentTitle}</h2><p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${consent}</p></section>
-<section class="card"><h2>${sampleTitle}</h2>${sampleIntroBlock}<p style="margin:0;color:#4b5563;line-height:1.65;white-space:pre-wrap">${sample}</p></section>
+${sectionsHtml}
 <div class="navcard">
 <p style="margin:0 0 8px"><a href="${u("/privacy")}">Privacy Policy</a> &middot; <a href="${u("/terms")}">Terms &amp; Conditions</a> &middot; <a href="${u("/")}">Home</a></p>
 ${footerInner}

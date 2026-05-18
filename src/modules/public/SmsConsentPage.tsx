@@ -7,15 +7,14 @@ import {
   SMS_CONSENT_SETTINGS_KEY,
   parseSmsConsentLegalPage,
   resolvedLegalHeroKicker,
-  resolvedSmsConsentSectionTitle,
-  resolvedSmsDetailsSectionTitle,
-  resolvedSmsSampleSectionTitle,
+  resolvedSmsConsentSections,
+  smsConsentBulletItems,
   smsNoticeCardVisible,
   type SmsConsentLegalPage,
+  type SmsConsentResolvedSection,
 } from "../../types/legal-pages"
 import { PublicLegalLayout } from "./PublicLegalLayout"
 
-/** Same document-style card as Privacy / Terms (plain text, no “disclosure” chrome). */
 const card: CSSProperties = {
   background: "#fff",
   border: `1px solid ${theme.border}`,
@@ -30,9 +29,53 @@ const bodyText: CSSProperties = {
   whiteSpace: "pre-wrap",
 }
 
+const listStyle: CSSProperties = {
+  margin: 0,
+  paddingLeft: "1.25rem",
+  color: "#4b5563",
+  lineHeight: 1.65,
+}
+
+const disclosureBox: CSSProperties = {
+  background: "#f9fafb",
+  border: "1px solid #e5e7eb",
+  borderRadius: 10,
+  padding: 16,
+  color: "#374151",
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.65,
+  margin: 0,
+}
+
+function SmsSectionBlock({ section }: { section: SmsConsentResolvedSection }) {
+  return (
+    <div style={card}>
+      <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{section.title}</h2>
+      {section.lead ? <p style={{ ...bodyText, marginBottom: 10 }}>{section.lead}</p> : null}
+      {section.kind === "list" ? (
+        <ul style={listStyle}>
+          {smsConsentBulletItems(section.content).map((item) => (
+            <li key={item} style={{ marginBottom: 6 }}>
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : section.kind === "disclosure" ? (
+        <>
+          {section.subheading ? (
+            <p style={{ margin: "0 0 10px", fontWeight: 600, color: "#374151" }}>{section.subheading}</p>
+          ) : null}
+          <p style={disclosureBox}>{section.content}</p>
+        </>
+      ) : (
+        <p style={bodyText}>{section.content}</p>
+      )}
+    </div>
+  )
+}
+
 /**
- * SMS consent — same shell and “legal document” look as Privacy and Terms (`PublicLegalLayout` + white cards).
- * Crawlable HTML: `/sms` via API rewrite (same `platform_settings` data).
+ * SMS consent — crawlable HTML at `/sms` via API rewrite; this React view matches the same sections.
  */
 export default function SmsConsentPage() {
   const [content, setContent] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })
@@ -57,20 +100,11 @@ export default function SmsConsentPage() {
     })()
   }, [])
 
-  const consent =
-    content.consent_statement?.trim() ? content.consent_statement : DEFAULT_SMS_CONSENT_PAGE.consent_statement
-  const sample = content.sample_message?.trim() ? content.sample_message : DEFAULT_SMS_CONSENT_PAGE.sample_message
-  const bodyExtra = content.body?.trim() ? content.body : DEFAULT_SMS_CONSENT_PAGE.body
   const kicker = resolvedLegalHeroKicker(content)
-  const detailsTitle = resolvedSmsDetailsSectionTitle(content)
-  const consentTitle = resolvedSmsConsentSectionTitle(content)
-  const sampleTitle = resolvedSmsSampleSectionTitle(content)
-  const sampleIntro =
-    (content.sample_section_intro ?? "").trim() ||
-    (DEFAULT_SMS_CONSENT_PAGE.sample_section_intro ?? "").trim()
   const showNotice = smsNoticeCardVisible(content)
   const lastUpdated = (content.hero_last_updated ?? "").trim()
   const customFooter = content.footer_note?.trim()
+  const sections = resolvedSmsConsentSections(content)
 
   return (
     <PublicLegalLayout
@@ -84,23 +118,13 @@ export default function SmsConsentPage() {
       showSmsComplianceStrapline={false}
       footerPrivacyTermsStrapline={!customFooter}
     >
-      {bodyExtra ? (
+      {loading ? (
         <div style={card}>
-          <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{detailsTitle}</h2>
-          <p style={bodyText}>{loading ? "Loading…" : bodyExtra}</p>
+          <p style={bodyText}>Loading…</p>
         </div>
-      ) : null}
-
-      <div style={card}>
-        <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{consentTitle}</h2>
-        <p style={bodyText}>{consent}</p>
-      </div>
-
-      <div style={card}>
-        <h2 style={{ margin: "0 0 10px", color: theme.text, fontSize: "1.15rem" }}>{sampleTitle}</h2>
-        {sampleIntro ? <p style={{ ...bodyText, marginBottom: 12, fontSize: 14 }}>{sampleIntro}</p> : null}
-        <p style={bodyText}>{sample}</p>
-      </div>
+      ) : (
+        sections.map((section) => <SmsSectionBlock key={section.title} section={section} />)
+      )}
     </PublicLegalLayout>
   )
 }

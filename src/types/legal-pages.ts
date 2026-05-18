@@ -26,11 +26,128 @@ export type SmsConsentLegalPage = SimpleLegalPage & {
   sample_message: string
   /** Shown under the hero subtitle (e.g. “Last updated: …”). */
   hero_last_updated?: string
+  /** @deprecated Legacy layout; public page uses structured sections below. */
   details_section_title?: string
+  /** @deprecated Legacy layout. */
   consent_section_title?: string
+  /** @deprecated Legacy layout. */
   sample_section_title?: string
-  /** Line of copy above the sample message block. */
+  /** @deprecated Legacy layout. */
   sample_section_intro?: string
+  /** Section 1 — Intro */
+  intro?: string
+  /** Section 2 — Consent Methods (bullet lines, one per line). */
+  consent_methods?: string
+  /** Section 4 — Manual Contacts */
+  manual_contacts?: string
+  /** Section 5 — Messaging Use Cases (bullet lines). */
+  messaging_use_cases?: string
+  /** Section 6 — STOP / HELP */
+  stop_help?: string
+  /** Section 7 — Platform Rules */
+  platform_rules?: string
+  /** Subheading inside CTA Disclosure Example card. */
+  cta_disclosure_heading?: string
+}
+
+export type SmsConsentSectionKind = "paragraph" | "list" | "disclosure"
+
+export type SmsConsentResolvedSection = {
+  title: string
+  kind: SmsConsentSectionKind
+  /** Optional line before a list or disclosure. */
+  lead?: string
+  content: string
+  subheading?: string
+}
+
+const SMS_INTRO_DEFAULT =
+  "Tradesman Systems facilitates one-to-one messaging between businesses and their customers for customer support, scheduling, estimates, appointment coordination, job updates, and related service communication."
+
+const SMS_CONSENT_METHODS_LEAD = "Customers may consent to receive SMS messages by:"
+
+const SMS_CONSENT_METHODS_DEFAULT = `• Contacting a business directly through a publicly advertised phone number
+• Submitting a website contact form or service request
+• Sending an SMS inquiry
+• Requesting service in person
+• Providing their phone number directly to a business and agreeing to receive communication
+• Through direct referral`
+
+const SMS_CTA_DISCLOSURE_DEFAULT = `“By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”`
+
+const SMS_MANUAL_CONTACTS_DEFAULT =
+  "For manually entered contacts, businesses using the Tradesman Systems platform are required to obtain express customer consent before sending any SMS message."
+
+const SMS_USE_CASES_LEAD = "Messages may include:"
+
+const SMS_USE_CASES_DEFAULT = `• Customer support follow-up
+• Appointment reminders and confirmations
+• Scheduling coordination
+• Job updates and service notifications
+• Estimates and account-related communication`
+
+const SMS_STOP_HELP_DEFAULT = `Customers may reply STOP at any time to opt out of SMS messages or HELP for assistance.
+
+Message frequency varies. Message and data rates may apply.`
+
+const SMS_PLATFORM_RULES_DEFAULT =
+  "Tradesman Systems does not support bulk messaging or unsolicited outreach. All messaging is intended to be one-to-one and directly related to a customer inquiry or ongoing service."
+
+function pickSmsField(page: SmsConsentLegalPage, key: keyof SmsConsentLegalPage, fallback: string): string {
+  const v = page[key]
+  return typeof v === "string" && v.trim() ? v.trim() : fallback
+}
+
+/** Public /sms page sections in display order. */
+export function resolvedSmsConsentSections(page: SmsConsentLegalPage): SmsConsentResolvedSection[] {
+  return [
+    {
+      title: "Intro",
+      kind: "paragraph",
+      content: pickSmsField(page, "intro", SMS_INTRO_DEFAULT),
+    },
+    {
+      title: "Consent Methods",
+      kind: "list",
+      lead: SMS_CONSENT_METHODS_LEAD,
+      content: pickSmsField(page, "consent_methods", SMS_CONSENT_METHODS_DEFAULT),
+    },
+    {
+      title: "CTA Disclosure Example",
+      kind: "disclosure",
+      subheading: pickSmsField(page, "cta_disclosure_heading", "Example SMS Consent Disclosure"),
+      content: pickSmsField(page, "consent_statement", SMS_CTA_DISCLOSURE_DEFAULT),
+    },
+    {
+      title: "Manual Contacts",
+      kind: "paragraph",
+      content: pickSmsField(page, "manual_contacts", SMS_MANUAL_CONTACTS_DEFAULT),
+    },
+    {
+      title: "Messaging Use Cases",
+      kind: "list",
+      lead: SMS_USE_CASES_LEAD,
+      content: pickSmsField(page, "messaging_use_cases", SMS_USE_CASES_DEFAULT),
+    },
+    {
+      title: "STOP / HELP",
+      kind: "paragraph",
+      content: pickSmsField(page, "stop_help", SMS_STOP_HELP_DEFAULT),
+    },
+    {
+      title: "Platform Rules",
+      kind: "paragraph",
+      content: pickSmsField(page, "platform_rules", SMS_PLATFORM_RULES_DEFAULT),
+    },
+  ]
+}
+
+/** Split multiline bullet text into list items (strips leading • or -). */
+export function smsConsentBulletItems(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*[•\-]\s*/, "").trim())
+    .filter(Boolean)
 }
 
 /** Subtitles saved from early seeds pointed editors at Admin; strip so public pages never show that line. */
@@ -171,82 +288,20 @@ If a provision is unenforceable, the remainder stays in effect. These Terms are 
 
 export const DEFAULT_SMS_CONSENT_PAGE: SmsConsentLegalPage = {
   title: "SMS Consent and Messaging Terms",
-  subtitle:
-    "This page explains how SMS works when businesses use Tradesman Systems. Message frequency varies. Message and data rates may apply. Keep your live intake, Privacy Policy, and Terms aligned with what you actually do.",
+  subtitle: "Message frequency varies. Message and data rates may apply.",
   hero_last_updated: "",
-  notice_title: "Notice",
-  notice_body:
-    "Tradesman Systems LLC is a South Carolina limited liability company doing business as Tradesman Systems. This page is a practical summary for SMS opt-in and carrier (A2P) transparency. It is not legal advice; align it with your live intake, Privacy Policy, and Terms, and have counsel review when you engage a firm.",
-  details_section_title: "Details",
-  consent_section_title: "Consent language (opt-in disclosure)",
-  sample_section_title: "Sample messages (examples)",
-  sample_section_intro:
-    "Patterns for contractor-led operational messaging; the sending number is the business line on Tradesman Systems.",
-  consent_statement:
-    "By providing your mobile number and agreeing to receive texts, you consent to receive automated and manual text messages from the business you interacted with (and its authorized users)—for example scheduling, job updates, estimates, and account notifications—sent using the Tradesman Systems platform and connected carrier numbers. Message and data rates may apply. Msg & data rates may apply. Your phone number and consent will not be shared with third parties for marketing purposes. Message frequency varies. Reply STOP to opt out where supported. Reply HELP for help when offered.",
-  sample_message: `1. Hi [Name], this is Dave from Dave\u2019s Gutters. Following up on your recent service request. Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems.
-
-2. Hi [Name], your appointment with [Contractor] is confirmed for [Date] at [Time]. Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems.
-
-3. [Contractor] is on the way and will arrive in approximately 30 minutes. Reply STOP to opt out or HELP for help. Msg sent via Tradesman Systems.`,
-  body: `Opt-in method
-
-Customers may receive SMS messages from a business after:
-
-• Contacting that business directly, or
-• Providing their phone number to the business and agreeing to receive communication
-
-Use case
-
-Tradesman Systems facilitates one-to-one messaging between businesses and their customers. Messages are sent by the business, not by Tradesman Systems.
-
-Messages may include:
-• Customer support follow-up
-• Appointment reminders and coordination
-• Job updates and service status messages
-• Estimates, scheduling, and account-related notifications
-
-All messaging is conducted on a one-to-one basis between a business and its customer. Tradesman Systems does not support bulk messaging or unsolicited outreach.
-
-Consent; what customers agree to
-
-Customers may receive SMS messages from businesses they interact with using the Tradesman Systems platform.
-
-Customers provide consent by:
-• Contacting a business directly, or
-• Providing their phone number to a business and agreeing to receive communication
-
-Tradesman Systems facilitates messaging but does not independently send unsolicited messages. Message frequency varies. Message and data rates may apply. Customers may reply STOP at any time to opt out where the carrier supports it.
-
-Users of the platform (businesses)
-
-Users must obtain proper consent before contacting any individual. Tradesman Systems does not verify consent on behalf of users.
-
-Users may not send unsolicited messages, use purchased contact lists, or engage in bulk messaging.
-
-Accounts may be suspended or terminated for violations of messaging policies.
-
-Tradesman Systems is built for conversational messaging when customers contact your business first, or when you have documented consent through your own intake. The product does not offer list-based or simultaneous bulk SMS to many numbers at once. You may not use Tradesman Systems—or any third-party tool, script, or device together with Tradesman Systems—to message people who have not agreed to hear from you, or to get around these limits.
-
-First SMS disclosures (product behavior)
-
-The first outbound SMS (and automated operational texts such as appointment or “on the way” updates) appends a standard tail: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems. Appointment-style messages may use: Reply STOP to opt out or HELP for assistance. Msg sent via Tradesman Systems. Character limits in the app adjust accordingly. See your Terms & Conditions for enforcement, fees, and misuse.
-
-Enforcement
-
-Misuse of messaging—including attempts to hack, reverse engineer, or use unapproved third-party software to bypass limits—may result in suspension, termination, and financial remedies described in the Terms & Conditions (https://www.tradesman-us.com/terms).
-
-Help and opt-out
-
-• Customers can reply STOP at any time to opt out of SMS messages.
-• Customers can reply HELP for assistance.
-• Message frequency varies based on the customer’s support, scheduling, and service activity.
-• Message and data rates may apply.
-
-Contact for messaging notifications
-
-Notification and compliance contact email: Admin@tradesman-us.com
-For support related to messaging, customers can also reply HELP or contact Tradesman Systems through the business support channels listed on the main site.`,
+  notice_title: "",
+  notice_body: "",
+  consent_statement: SMS_CTA_DISCLOSURE_DEFAULT,
+  sample_message: "",
+  body: "",
+  intro: SMS_INTRO_DEFAULT,
+  consent_methods: SMS_CONSENT_METHODS_DEFAULT,
+  manual_contacts: SMS_MANUAL_CONTACTS_DEFAULT,
+  messaging_use_cases: SMS_USE_CASES_DEFAULT,
+  stop_help: SMS_STOP_HELP_DEFAULT,
+  platform_rules: SMS_PLATFORM_RULES_DEFAULT,
+  cta_disclosure_heading: "Example SMS Consent Disclosure",
 }
 
 function pickOptionalString(o: Record<string, unknown>, key: string): string | undefined {
@@ -290,6 +345,13 @@ export function parseSmsConsentLegalPage(raw: unknown, fallback: SmsConsentLegal
     consent_section_title: pickOptionalString(o, "consent_section_title") ?? fallback.consent_section_title,
     sample_section_title: pickOptionalString(o, "sample_section_title") ?? fallback.sample_section_title,
     sample_section_intro: pickOptionalString(o, "sample_section_intro") ?? fallback.sample_section_intro,
+    intro: pickOptionalString(o, "intro") ?? fallback.intro,
+    consent_methods: pickOptionalString(o, "consent_methods") ?? fallback.consent_methods,
+    manual_contacts: pickOptionalString(o, "manual_contacts") ?? fallback.manual_contacts,
+    messaging_use_cases: pickOptionalString(o, "messaging_use_cases") ?? fallback.messaging_use_cases,
+    stop_help: pickOptionalString(o, "stop_help") ?? fallback.stop_help,
+    platform_rules: pickOptionalString(o, "platform_rules") ?? fallback.platform_rules,
+    cta_disclosure_heading: pickOptionalString(o, "cta_disclosure_heading") ?? fallback.cta_disclosure_heading,
   }
 }
 

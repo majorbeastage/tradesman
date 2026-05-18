@@ -477,7 +477,7 @@ export default function AdminSignupRequirementsSection() {
         onToggle={() => setSmsOpen((v) => !v)}
       >
         <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
-          Order matches the public page: hero → notice (optional) → details body → consent box → samples → footer. Clear both notice fields to hide that card. Section titles fall back to sensible defaults when left blank.
+          Public /sms page order: Intro → Consent Methods → CTA disclosure → Manual Contacts → Messaging Use Cases → STOP/HELP → Platform Rules. Clear both notice fields to hide the notice card. Legacy “details body” and sample fields are no longer shown on the public page.
         </p>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Hero line (blank = “Tradesman Systems”)
