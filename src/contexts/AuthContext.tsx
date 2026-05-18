@@ -60,10 +60,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const prev = verifiedNotifyDedupeRef.current
     if (prev && prev.userId === uid && now - prev.at < 4000) return
     verifiedNotifyDedupeRef.current = { userId: uid, at: now }
-    void fetch("/api/notify-admin-verified-signup", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    }).catch(() => {
+    const authHeaders = { Authorization: `Bearer ${session.access_token}` }
+    void fetch("/api/notify-admin-verified-signup", { method: "POST", headers: authHeaders }).catch(() => {
+      /* best-effort; server is idempotent */
+    })
+    void fetch("/api/notify-client-sms-disclosure", { method: "POST", headers: authHeaders }).catch(() => {
       /* best-effort; server is idempotent */
     })
   }, [])

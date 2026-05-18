@@ -38,6 +38,10 @@
       "destination": "/api/platform-tools?__route=notify-admin-verified-signup"
     },
     {
+      "source": "/api/notify-client-sms-disclosure",
+      "destination": "/api/platform-tools?__route=notify-client-sms-disclosure"
+    },
+    {
       "source": "/api/billing-portal-config",
       "destination": "/api/platform-tools?__route=billing-portal-config"
     },

@@ -4,6 +4,7 @@
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
+ * POST /api/platform-tools?__route=notify-client-sms-disclosure  (Bearer jwt; one-time SMS disclosure email after email verify)
  * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
  * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
@@ -32,6 +33,7 @@ import {
   runLeadCaptureSideEffects,
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
+import { handleNotifyClientSmsDisclosure } from "./_clientPostVerifySmsDisclosureEmail.js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
@@ -1663,6 +1665,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "ai-regenerate-lead-consumer-reply",
         "ai-regenerate-conversation-consumer-reply",
         "notify-admin-verified-signup",
+        "notify-client-sms-disclosure",
         "estimate-legal-draft",
         "quote-estimate-review",
         "estimate-scope-lines",
@@ -1708,6 +1711,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "notify-admin-verified-signup") {
       await handleNotifyAdminVerifiedSignup(req, res)
+      return
+    }
+    if (route === "notify-client-sms-disclosure") {
+      await handleNotifyClientSmsDisclosure(req, res)
       return
     }
     if (route === "estimate-legal-draft") {
