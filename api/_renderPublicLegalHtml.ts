@@ -112,7 +112,7 @@ footer{font-size:13px;color:#6b7280;margin-top:8px;}
 <header class="hero">
 <p class="kicker">${kicker}</p>
 <h1>${title}</h1>
-<p class="sub">${subtitle}</p>
+${subtitle ? `<p class="sub">${subtitle}</p>` : ""}
 </header>
 ${noticeBlock}
 <main><pre class="legal">${body}</pre></main>
@@ -220,7 +220,7 @@ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:
 <header class="hero">
 <p class="kicker">${kicker}</p>
 <h1>${title}</h1>
-<p class="sub">${subtitle}</p>
+${subtitle ? `<p class="sub">${subtitle}</p>` : ""}
 ${lastBlock}
 </header>
 ${noticeSection}

@@ -288,7 +288,7 @@ If a provision is unenforceable, the remainder stays in effect. These Terms are 
 
 export const DEFAULT_SMS_CONSENT_PAGE: SmsConsentLegalPage = {
   title: "SMS Consent and Messaging Terms",
-  subtitle: "Message frequency varies. Message and data rates may apply.",
+  subtitle: "",
   hero_last_updated: "",
   notice_title: "",
   notice_body: "",
@@ -312,9 +312,11 @@ function pickOptionalString(o: Record<string, unknown>, key: string): string | u
 export function parseSimpleLegalPage(raw: unknown, fallback: SimpleLegalPage): SimpleLegalPage {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...fallback }
   const o = raw as Record<string, unknown>
-  const rawSubtitle = typeof o.subtitle === "string" ? o.subtitle.trim() : ""
-  const subtitle =
-    rawSubtitle && !isAdminSignupRequirementsSubtitlePlaceholder(rawSubtitle) ? rawSubtitle : fallback.subtitle
+  let subtitle = fallback.subtitle
+  if ("subtitle" in o) {
+    const rawSubtitle = typeof o.subtitle === "string" ? o.subtitle.trim() : ""
+    subtitle = isAdminSignupRequirementsSubtitlePlaceholder(rawSubtitle) ? fallback.subtitle : rawSubtitle
+  }
   const rawBody = typeof o.body === "string" && o.body.trim() ? o.body : fallback.body
   const body = stripLegacyImportantLegalNoticePrefix(stripLegacyPortalLegalAcknowledgmentParagraph(rawBody))
   return {

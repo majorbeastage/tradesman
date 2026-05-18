@@ -68,7 +68,9 @@ export function PublicLegalLayout({
         >
           <div style={{ fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.8 }}>{heroKicker}</div>
           <h1 style={{ margin: "8px 0 10px", fontSize: 34, lineHeight: 1.1 }}>{title}</h1>
-          <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{subtitle}</p>
+          {subtitle.trim() ? (
+            <p style={{ margin: 0, opacity: 0.9, maxWidth: 760 }}>{subtitle}</p>
+          ) : null}
           {heroSubline?.trim() ? (
             <p style={{ margin: "14px 0 0", fontSize: 13, opacity: 0.75 }}>{heroSubline.trim()}</p>
           ) : null}
