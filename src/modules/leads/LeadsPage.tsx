@@ -1910,14 +1910,25 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                   .replace(/[^a-z0-9-]/g, "")
                   .slice(0, 64)
                 if (!slug || settingsFormValues.embed_lead_enabled !== "checked") return null
-                const url = `${origin}/embed/lead/${encodeURIComponent(slug)}`
+                const ctaUrl = `${origin}/cta/${encodeURIComponent(slug)}`
+                const legacyUrl = `${origin}/embed/lead/${encodeURIComponent(slug)}`
                 return (
-                  <p style={{ margin: 0, fontSize: 12, color: "#4b5563", wordBreak: "break-all" }}>
-                    <strong>Your public form link (this app):</strong>{" "}
-                    <a href={url} style={{ color: theme.primary }} target="_blank" rel="noreferrer">
-                      {url}
-                    </a>
-                  </p>
+                  <div style={{ margin: 0, fontSize: 12, color: "#4b5563", lineHeight: 1.55 }}>
+                    <p style={{ margin: "0 0 8px" }}>
+                      <strong>Website &amp; Google CTA link (use for A2P / “opt-in” URL):</strong>{" "}
+                      <a href={ctaUrl} style={{ color: theme.primary, wordBreak: "break-all" }} target="_blank" rel="noreferrer">
+                        {ctaUrl}
+                      </a>
+                    </p>
+                    <p style={{ margin: 0, color: "#64748b" }}>
+                      Paste this on your website contact button, Google Business “Appointment” or “Website” field, or in your
+                      Twilio campaign. Customers see your business name, can request service, and must consent to texts if they
+                      enter a mobile number.
+                    </p>
+                    <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8", wordBreak: "break-all" }}>
+                      Legacy embed URL (same page): {legacyUrl}
+                    </p>
+                  </div>
                 )
               })()}
             </div>

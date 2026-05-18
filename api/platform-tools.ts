@@ -1,5 +1,6 @@
 /**
  * Merged serverless routes (Hobby-friendly): public lead capture, AI thread summary, Helcim.js return, etc.
+ * GET  /api/platform-tools?__route=public-lead-config&slug=…  — public CTA page branding (no auth)
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
@@ -681,6 +682,80 @@ async function handleCustomerEvaluateFit(req: VercelRequest, res: VercelResponse
   res.status(200).json({ ok: true, ...result })
 }
 
+async function handlePublicLeadConfig(req: VercelRequest, res: VercelResponse): Promise<void> {
+  res.setHeader("Access-Control-Allow-Origin", "*")
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "content-type")
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end()
+    return
+  }
+  if (req.method !== "GET") {
+    res.setHeader("Allow", "GET, OPTIONS")
+    res.status(405).json({ error: "GET only" })
+    return
+  }
+
+  const slugParam = req.query?.slug
+  const slugRaw = typeof slugParam === "string" ? slugParam : Array.isArray(slugParam) ? String(slugParam[0] ?? "") : ""
+  const slug = slugRaw.toLowerCase().replace(/[^a-z0-9-]/g, "")
+  if (!slug || slug.length < 3) {
+    res.status(400).json({ ok: false, error: "Invalid slug" })
+    return
+  }
+
+  let supabase: ReturnType<typeof createServiceSupabase>
+  try {
+    supabase = createServiceSupabase()
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Server misconfiguration" })
+    return
+  }
+
+  const { data: profile, error: profErr } = await supabase
+    .from("profiles")
+    .select("id, display_name, embed_lead_enabled, embed_lead_slug, metadata")
+    .eq("embed_lead_slug", slug)
+    .maybeSingle()
+
+  if (profErr || !profile?.id) {
+    res.status(404).json({ ok: false, error: "Contact page not found" })
+    return
+  }
+  const row = profile as {
+    id: string
+    display_name?: string | null
+    embed_lead_enabled?: boolean
+    metadata?: unknown
+  }
+  if (!row.embed_lead_enabled) {
+    res.status(404).json({ ok: false, error: "Contact page is not enabled" })
+    return
+  }
+
+  const settings = parseLeadsSettingsFromMetadata(row.metadata)
+  if (settings.pause_lead_capture_campaigns === "checked" || settings.pause_lead_captures === "checked") {
+    res.status(403).json({
+      ok: false,
+      error: "Lead capture is paused for this business.",
+    })
+    return
+  }
+
+  const businessName = (row.display_name ?? "").trim() || "Your contractor"
+  const headline = (settings.public_cta_headline ?? "").trim()
+  const subtitle = (settings.public_cta_subtitle ?? "").trim()
+
+  res.status(200).json({
+    ok: true,
+    slug,
+    businessName,
+    headline: headline || undefined,
+    subtitle: subtitle || undefined,
+  })
+}
+
 async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" })
@@ -704,6 +779,17 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
   }
   if (!phone && !email) {
     res.status(400).json({ error: "Phone or email required" })
+    return
+  }
+  const smsConsent =
+    body.smsConsent === true ||
+    body.sms_consent === true ||
+    pickFirstString(body.smsConsent).toLowerCase() === "true"
+  if (phone && !smsConsent) {
+    res.status(400).json({
+      error: "SMS consent is required when providing a phone number.",
+      message: "Check the box agreeing to receive text messages before submitting.",
+    })
     return
   }
 
@@ -786,6 +872,20 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Could not create lead" })
     return
+  }
+
+  if (phone && smsConsent) {
+    const { data: leadRow } = await supabase.from("leads").select("metadata").eq("id", leadId).maybeSingle()
+    const prev =
+      leadRow?.metadata && typeof leadRow.metadata === "object" && !Array.isArray(leadRow.metadata)
+        ? { ...(leadRow.metadata as Record<string, unknown>) }
+        : {}
+    prev.public_cta_sms_consent = {
+      at: new Date().toISOString(),
+      slug,
+      source: "public_cta",
+    }
+    await supabase.from("leads").update({ metadata: prev }).eq("id", leadId)
   }
 
   void runLeadCaptureSideEffects(supabase, userId, leadId, customerId, {
@@ -1545,11 +1645,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return
   }
 
+  if (req.method === "GET" && route === "public-lead-config") {
+    await handlePublicLeadConfig(req, res)
+    return
+  }
+
   if (req.method === "GET") {
     res.status(200).json({
       ok: true,
       route: "platform-tools",
       getHtml: ["legal-html", "sms-consent", "privacy-policy", "terms-conditions"],
+      getJson: ["public-lead-config"],
       post: [
         "public-lead",
         "ai-summarize",

@@ -312,9 +312,9 @@ function App() {
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
-  const embedLeadMatch = /^\/embed\/lead\/([^/]+)\/?$/i.exec(pathname)
-  if (embedLeadMatch) {
-    return <EmbedLeadPage slug={decodeURIComponent(embedLeadMatch[1] || "")} />
+  const ctaMatch = /^\/(?:cta|embed\/lead)\/([^/]+)\/?$/i.exec(pathname)
+  if (ctaMatch) {
+    return <EmbedLeadPage slug={decodeURIComponent(ctaMatch[1] || "")} />
   }
 
   if (pathname === "/reset-password") {
