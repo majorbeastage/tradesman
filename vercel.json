@@ -108,6 +108,14 @@
       "destination": "/sms-cta.html"
     },
     {
+      "source": "/sms-cts",
+      "destination": "/sms-cta.html"
+    },
+    {
+      "source": "/sms-cts/",
+      "destination": "/sms-cta.html"
+    },
+    {
       "source": "/account-deletion",
       "destination": "/account-deletion.html"
     },
