@@ -708,9 +708,11 @@ export async function logCommunicationEvent(
     ...payload,
     metadata: payload.metadata ?? {},
   })
-  if (error && !String(error.message || "").includes("communication_events")) {
-    throw error
+  if (error) {
+    if (!String(error.message || "").includes("communication_events")) throw error
+    return
   }
+  await touchCustomerLastActivityAt(supabase, payload.customer_id)
 }
 
 /** Same as logCommunicationEvent but returns the new row id for attachment linking. */
@@ -747,6 +749,7 @@ export async function insertCommunicationEventReturningId(
     if (!String(error.message || "").includes("communication_events")) throw error
     return null
   }
+  await touchCustomerLastActivityAt(supabase, payload.customer_id)
   return data?.id ? String(data.id) : null
 }
 

@@ -35,6 +35,7 @@ import {
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry, type SpecialtyReportRegistryItem } from "../../lib/specialtyReports/reportRecords"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
@@ -106,6 +107,10 @@ function displayBestContact(c: CustomerRow): string {
   return c.best_contact_method?.trim() || inferDefaultBestContact(c)
 }
 
+function customerContactLine(c: CustomerRow): string {
+  return formatCustomerContactLine(c.customer_identifiers ?? null)
+}
+
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "—"
   const t = Date.parse(iso)
@@ -115,6 +120,32 @@ function formatWhen(iso: string | null | undefined): string {
 
 function lastUpdateDisplay(c: CustomerRow): string {
   return formatWhen(c.last_activity_at ?? null)
+}
+
+/** Prefer latest communication_events timestamp when newer than customers.last_activity_at. */
+function mergeLastActivityFromRecentEvents(
+  rows: CustomerRow[],
+  latestMsByCustomer: Map<string, number>,
+): CustomerRow[] {
+  return rows.map((c) => {
+    const evMs = latestMsByCustomer.get(c.id) ?? 0
+    const dbMs = Date.parse(c.last_activity_at || "") || 0
+    if (evMs > dbMs) return { ...c, last_activity_at: new Date(evMs).toISOString() }
+    return c
+  })
+}
+
+function buildLatestEventMsByCustomer(
+  events: Array<{ customer_id?: string | null; created_at?: string | null }> | null | undefined,
+): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const row of events ?? []) {
+    const cid = String(row.customer_id ?? "").trim()
+    if (!cid || map.has(cid)) continue
+    const ms = Date.parse(String(row.created_at ?? ""))
+    if (Number.isFinite(ms)) map.set(cid, ms)
+  }
+  return map
 }
 
 /** Workflow row chrome (matches Estimates “Start quote” section summaries). */
@@ -593,7 +624,18 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       return
     }
 
-    const list = (customers || []) as CustomerRow[]
+    let list = (customers || []) as CustomerRow[]
+
+    const { data: recentComm } = await supabase
+      .from("communication_events")
+      .select("customer_id, created_at")
+      .eq("user_id", userId)
+      .in("customer_id", idList)
+      .order("created_at", { ascending: false })
+      .limit(5000)
+
+    const latestMsByCustomer = buildLatestEventMsByCustomer(recentComm)
+    list = mergeLastActivityFromRecentEvents(list, latestMsByCustomer)
 
     async function escalateList(rows: CustomerRow[], prefs: CustomersUrgencyAutomationPrefs | null): Promise<CustomerRow[]> {
       if (!prefs?.enabled || prefs.amount <= 0 || !supabase) return rows
@@ -752,6 +794,26 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   }, [loadCustomers])
 
   useEffect(() => {
+    const onFocus = () => {
+      void loadCustomers()
+    }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [loadCustomers])
+
+  useEffect(() => {
+    if (!selectedCustomer?.id || activityMaxSortMs <= 0) return
+    const dbMs = Date.parse(selectedCustomer.last_activity_at || "") || 0
+    if (activityMaxSortMs <= dbMs) return
+    const iso = new Date(activityMaxSortMs).toISOString()
+    const patch = (rows: CustomerRow[]) => rows.map((c) => (c.id === selectedCustomer.id ? { ...c, last_activity_at: iso } : c))
+    setActiveCustomers(patch)
+    setInProcessCustomers(patch)
+    setArchivedCustomers(patch)
+    setSelectedCustomer((prev) => (prev?.id === selectedCustomer.id ? { ...prev, last_activity_at: iso } : prev))
+  }, [activityMaxSortMs, selectedCustomer?.id])
+
+  useEffect(() => {
     if (!pendingFocusCustomerId) return
     const activeMatch = activeCustomers.find((c) => c.id === pendingFocusCustomerId)
     if (activeMatch) {
@@ -833,11 +895,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const filtered = currentList.filter((c) => {
     const name = (c.display_name || "").toLowerCase()
     const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || ""
+    const email = customerEmailFromIdentifiers(c.customer_identifiers).toLowerCase()
     const searchLower = search.toLowerCase().trim()
     const phoneFilter = filterPhone.trim()
     const urg = normalizeCommunicationUrgency(c.communication_urgency)
     const urgOk = !filterUrgency.trim() || urg === filterUrgency
-    return (!searchLower || name.includes(searchLower)) && (!phoneFilter || phone.includes(phoneFilter)) && urgOk
+    const searchOk =
+      !searchLower || name.includes(searchLower) || phone.includes(searchLower) || email.includes(searchLower)
+    return searchOk && (!phoneFilter || phone.includes(phoneFilter) || email.includes(phoneFilter)) && urgOk
   })
   const sorted = [...filtered].sort((a, b) => {
     let aVal = ""
@@ -846,8 +911,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       aVal = (a.display_name || "").toLowerCase()
       bVal = (b.display_name || "").toLowerCase()
     } else if (sortField === "best_contact") {
-      aVal = displayBestContact(a).toLowerCase()
-      bVal = displayBestContact(b).toLowerCase()
+      aVal = customerContactLine(a).toLowerCase()
+      bVal = customerContactLine(b).toLowerCase()
     } else if (sortField === "job_status") {
       aVal = (a.job_pipeline_status || inferDefaultBestContact(a)).toLowerCase()
       bVal = (b.job_pipeline_status || inferDefaultBestContact(b)).toLowerCase()
@@ -1505,14 +1570,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <input
               type="text"
-              placeholder="By name..."
+              placeholder="By name, phone, or email..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
             />
             <input
               type="text"
-              placeholder="By phone..."
+              placeholder="By phone or email..."
               value={filterPhone}
               onChange={(e) => setFilterPhone(e.target.value)}
               style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
@@ -1548,7 +1613,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
               style={{ padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text, cursor: "pointer" }}
             >
               <option value="name">Name</option>
-              <option value="best_contact">Best contact</option>
+              <option value="best_contact">Phone / email</option>
               <option value="job_status">Job status</option>
               <option value="last_update">Last update</option>
               <option value="urgency">Urgency</option>
@@ -1597,7 +1662,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                 Name
               </th>
               <th onClick={() => { setSortField("best_contact"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>
-                Best contact
+                Phone / email
               </th>
               <th onClick={() => { setSortField("job_status"); setSortAsc(!sortAsc) }} style={{ padding: "8px", cursor: "pointer" }}>
                 Job status
@@ -1636,8 +1701,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                       }}
                     >
                       <td style={cellBase}>{c.display_name || "—"}</td>
-                      <td style={{ ...cellBase, maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis" }} title={displayBestContact(c)}>
-                        {displayBestContact(c)}
+                      <td
+                        style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }}
+                        title={`${customerContactLine(c)}${displayBestContact(c) ? ` · Prefers: ${displayBestContact(c)}` : ""}`}
+                      >
+                        {customerContactLine(c)}
                       </td>
                       <td style={{ ...cellBase, maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis" }} title={c.job_pipeline_status || JOB_PIPELINE_OPTIONS[0]}>
                         {c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]}
