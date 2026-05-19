@@ -216,17 +216,17 @@ export default function EstimateStartGuideModal({
             </h2>
             <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
               {step === 1
-                ? "Link a customer now, or skip and add one whenever you’re ready."
+                ? "Link a customer now, or skip and add one later."
                 : step === 2
-                  ? "Apply a quick-access template to preload lines and options, or skip and build from scratch."
+                  ? "Optional: load a saved template for starter lines. You can skip and build from scratch."
                   : step === 3
-                    ? "Review thread activity, or note if you still need information from the customer."
+                    ? "Optional: pull facts from the message thread. Skip if there is no conversation yet."
                     : step === 4
-                      ? "Add photos/files now, or skip and come back later."
+                      ? "Optional: attach photos or files. Skip if you will add them later."
                       : step === 5
-                        ? "Capture concise scope details to improve AI suggestions and estimate quality."
+                        ? "Write a short scope (what, where, materials). This drives AI line suggestions in the next step."
                         : step === 6
-                          ? "Add line items — at least one is required before you email this estimate."
+                          ? "Add labor, materials, travel, or misc lines. Use AI suggestions or type your own — at least one line before sending."
                           : "Preview, save to the customer profile, or send by email."}
             </p>
           </div>
@@ -412,7 +412,7 @@ export default function EstimateStartGuideModal({
                   cursor: templateBusy || !templatePick.trim() || templates.length === 0 ? "not-allowed" : "pointer",
                 }}
               >
-                {templateBusy ? "Applying…" : "Apply & finish"}
+                {templateBusy ? "Applying…" : "Apply & continue"}
               </button>
             </div>
           </div>
@@ -429,7 +429,7 @@ export default function EstimateStartGuideModal({
                   opacity: conversationBulletsBusy ? 0.75 : 1,
                 }}
               >
-                {conversationBulletsBusy ? "Generating…" : "Generate AI summary"}
+                {conversationBulletsBusy ? "Generating…" : "Summarize conversation"}
               </button>
               <button type="button" onClick={onConversationsOpen} style={{ ...secondaryBtnStyle, fontWeight: 600 }}>
                 Open conversations section
@@ -457,7 +457,7 @@ export default function EstimateStartGuideModal({
               </div>
             ) : (
               <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                Generate a bullet summary from the conversation thread, or continue when you’re ready.
+                Pulls only what was actually discussed — scope, materials, dates, access. Skip if there is no thread yet.
               </p>
             )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
@@ -502,7 +502,7 @@ export default function EstimateStartGuideModal({
                   opacity: jobPackBulletsBusy ? 0.75 : 1,
                 }}
               >
-                {jobPackBulletsBusy ? "Generating…" : "Generate AI scope bullets"}
+                {jobPackBulletsBusy ? "Generating…" : "Suggest scope bullets"}
               </button>
               <button type="button" onClick={onJobDetailsOpen} style={{ ...secondaryBtnStyle, fontWeight: 600 }}>
                 Open job details section
@@ -518,15 +518,15 @@ export default function EstimateStartGuideModal({
                 gap: 8,
               }}
             >
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Job details and scope (AI + voice)</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Scope notes (same field as the estimate page)</div>
               <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-                This is the same job-details field as on the estimate. Speak or type scope, access, materials, and constraints — it is included when you generate AI scope bullets and line items.
+                Keep it short: what work, where, key materials, access or timing. Avoid long narratives — bullets work best for AI.
               </p>
               <textarea
-                rows={5}
+                rows={4}
                 value={jobDetailsNotes}
                 onChange={(e) => onJobDetailsNotesChange?.(e.target.value)}
-                placeholder="e.g. Replace water heater in garage. Client wants 50-gallon. Ceiling drywall patch after HVAC chase."
+                placeholder="e.g. Replace 50-gal water heater in garage. Haul away old unit. Patch ceiling drywall at HVAC chase."
                 style={{ ...theme.formInput, resize: "vertical", width: "100%", background: "#fff" }}
               />
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -562,7 +562,7 @@ export default function EstimateStartGuideModal({
                 }}
               >
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em", marginBottom: 8 }}>
-                  AI SCOPE (LABOR · MATERIALS · CREW · SPECIALS)
+                  SCOPE BULLETS (LABOR · MATERIALS · TRAVEL · MISC)
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#0f172a", lineHeight: 1.45 }}>
                   {jobPackBulletLines.map((line, i) => (
@@ -572,7 +572,7 @@ export default function EstimateStartGuideModal({
               </div>
             ) : (
               <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                Generate bullets from your template, conversation summary, uploads, and notes — or continue and edit job details on the page.
+                Optional helper from your notes and earlier steps. Edit or skip — you can always refine on the estimate page.
               </p>
             )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
@@ -642,7 +642,7 @@ export default function EstimateStartGuideModal({
                     }}
                     style={{ ...secondaryBtnStyle, fontWeight: 700, border: `2px solid ${theme.primary}` }}
                   >
-                    {quoteItemsAiBusy ? "Generating lines…" : "AI: fill lines from job details"}
+                    {quoteItemsAiBusy ? "Suggesting lines…" : "Suggest lines (labor · materials · travel · misc)"}
                   </button>
                 ) : null}
               </div>
@@ -655,7 +655,11 @@ export default function EstimateStartGuideModal({
               )}
               {aiLinesNote ? (
                 <p style={{ margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>{aiLinesNote}</p>
-              ) : null}
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
+                  AI suggests only labor, materials, travel, and misc tied to your scope. Pricing may be $0 when unknown — edit on the estimate page.
+                </p>
+              )}
             </div>
             <button type="button" onClick={onQuoteItemsOpen} style={secondaryBtnStyle}>
               Open quote items section

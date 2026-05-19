@@ -28,6 +28,7 @@ import CustomerCallButton from "../../components/CustomerCallButton"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import { ensureCustomerIdentifiers, normalizeCustomerEmail } from "../../lib/customerIdentifiers"
 import {
   clampSmsUserPortion,
   DEFAULT_SMS_POLICIES_URL,
@@ -1367,7 +1368,15 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
           if (byPhone?.customer_id) customerId = byPhone.customer_id as string
         }
         if (!customerId && email.trim()) {
-          const { data: byEmail } = await supabase.from("customer_identifiers").select("customer_id").eq("user_id", userId).eq("type", "email").eq("value", email.trim()).limit(1).maybeSingle()
+          const emailNorm = normalizeCustomerEmail(email)
+          const { data: byEmail } = await supabase
+            .from("customer_identifiers")
+            .select("customer_id")
+            .eq("user_id", userId)
+            .eq("type", "email")
+            .eq("value", emailNorm)
+            .limit(1)
+            .maybeSingle()
           if (byEmail?.customer_id) customerId = byEmail.customer_id as string
         }
       }
@@ -1395,7 +1404,12 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         const identifiers: Array<{ type: string; value: string; is_primary: boolean }> = []
 
         if (phone.trim()) identifiers.push({ type: "phone", value: phone.trim(), is_primary: true })
-        if (email.trim()) identifiers.push({ type: "email", value: email.trim(), is_primary: identifiers.length === 0 })
+        if (email.trim())
+          identifiers.push({
+            type: "email",
+            value: normalizeCustomerEmail(email),
+            is_primary: identifiers.length === 0,
+          })
         if (customerName.trim()) identifiers.push({ type: "name", value: customerName.trim(), is_primary: false })
 
         if (identifiers.length > 0) {
@@ -1414,6 +1428,12 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
 
           if (identErr) throw identErr
         }
+      } else {
+        await ensureCustomerIdentifiers(supabase, userId, customerId, {
+          phone: phone.trim(),
+          email: email.trim(),
+          name: customerName.trim(),
+        })
       }
 
       if (!customerId) throw new Error("Could not resolve or create customer.")
@@ -1481,7 +1501,13 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         customer_id: customerId,
         converted_at: null,
         removed_at: null,
-        customers: { display_name: displayName, customer_identifiers: [{ type: "phone", value: phone.trim(), is_primary: true }].filter((x) => x.value) },
+        customers: {
+          display_name: displayName,
+          customer_identifiers: [
+            phone.trim() ? { type: "phone", value: phone.trim(), is_primary: true } : null,
+            email.trim() ? { type: "email", value: normalizeCustomerEmail(email), is_primary: !phone.trim() } : null,
+          ].filter(Boolean) as CustomerIdentifier[],
+        },
       }
 
       setLeads((prev) => [newLeadRow as any, ...prev])

@@ -330,7 +330,7 @@ async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse
 
   const raw =
     (await openAiText(
-      "You review residential/commercial service estimates. Reply with JSON only: {\"issues\": string[] (max 6 short plain-English tips: missing labor, travel, materials, unclear qty, etc. Empty if nothing to flag), \"agreesWithSubtotal\": boolean}. No markdown.",
+      "You review residential/commercial service estimates. Reply with JSON only: {\"issues\": string[] (max 4 short tips only for clear problems: math mismatch, duplicate lines, obviously missing qty, or a major scope gap. Do NOT suggest permits, hazardous materials, job approvals, or extra lines unless in scope. Empty if fine), \"agreesWithSubtotal\": boolean}. No markdown.",
       pack,
     ))?.trim() ?? "{}"
 
@@ -339,7 +339,7 @@ async function handleQuoteEstimateReview(req: VercelRequest, res: VercelResponse
   try {
     const j = JSON.parse(raw) as { issues?: unknown; agreesWithSubtotal?: boolean }
     if (Array.isArray(j.issues)) {
-      issues = j.issues.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, 300)).slice(0, 6)
+      issues = j.issues.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, 300)).slice(0, 4)
     }
     agreesWithSubtotal = j.agreesWithSubtotal !== false
   } catch {
@@ -353,6 +353,7 @@ type ScopeLineSuggestion = {
   description: string
   quantity: number
   unit_price: number
+  line_kind?: string
   rationale?: string
 }
 
@@ -410,12 +411,18 @@ async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse)
 
     const raw =
       (await openAiText(
-        `You help contractors build estimate line items from a spoken or written job scope.
+        `You help contractors build estimate line items from job scope text.
 Reply with JSON only, no markdown:
-{"suggestions":[{"description":"string","quantity":number,"unit_price":number,"rationale":"optional short note"}],"clarifications":["optional questions — max 4 short strings when critical info is missing"]}
-Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed/labor guess for US trades; use 0 if unknown and explain in rationale). Descriptions are concise trade language.`,
+{"suggestions":[{"description":"string","quantity":number,"unit_price":number,"line_kind":"labor"|"material"|"travel"|"misc","rationale":"optional short note"}],"clarifications":["max 3 short questions only when pricing or scope is impossible without an answer"]}
+Rules:
+- Max 8 suggestions. Only include work clearly stated or strongly implied in the scope — do not pad the list.
+- line_kind must be one of: labor, material, travel, misc. Focus on these four categories.
+- Do NOT add permits, hazardous-material handling, job-approval fees, disposal, or admin lines unless the scope explicitly mentions them.
+- Skip lines that duplicate existingLines descriptions.
+- quantity >= 0. unit_price >= 0 USD; use 0 when price is unknown (note why in rationale). Do not invent high prices.
+- Descriptions: concise trade language (what is being done or supplied).`,
         pack,
-        { maxTokens: 2800, timeoutMs: 52_000 },
+        { maxTokens: 2200, timeoutMs: 52_000 },
       ))?.trim() ?? "{}"
 
     let suggestions: ScopeLineSuggestion[] = []
@@ -426,7 +433,7 @@ Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed
         clarifications?: unknown
       }
       if (Array.isArray(j.suggestions)) {
-        for (const row of j.suggestions.slice(0, 14)) {
+        for (const row of j.suggestions.slice(0, 10)) {
           if (!row || typeof row !== "object") continue
           const o = row as Record<string, unknown>
           const description = String(o.description ?? "").trim().slice(0, 500)
@@ -436,10 +443,14 @@ Rules: Max 12 suggestions. quantity >= 0, unit_price >= 0 (USD typical installed
           const unit_price =
             typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
           const rationale = typeof o.rationale === "string" ? o.rationale.slice(0, 400) : ""
+          const lkRaw = String(o.line_kind ?? "").trim().toLowerCase()
+          const line_kind =
+            lkRaw === "labor" || lkRaw === "material" || lkRaw === "travel" || lkRaw === "misc" ? lkRaw : undefined
           suggestions.push({
             description,
             quantity: Math.max(0, quantity),
             unit_price: Math.max(0, unit_price),
+            ...(line_kind ? { line_kind } : {}),
             ...(rationale.trim() ? { rationale: rationale.trim() } : {}),
           })
         }
@@ -509,15 +520,14 @@ async function handleEstimateWizardBullets(req: VercelRequest, res: VercelRespon
 
     const instructions =
       mode === "conversation"
-        ? `You extract contracting-relevant facts from messages between a contractor and customer.
+        ? `Extract only facts stated in the customer/contractor messages.
 Reply with JSON only, no markdown: {"bullets": string[]}
-Rules: Max 14 bullets. Each bullet is one short line (no leading "•").
-Cover anything evident: scope of work requested, labor or time hints, equipment, materials, pricing mentions, scheduling/dates, access constraints, unknowns.
-If the thread is empty or useless, return {"bullets": []}.`
-        : `You summarize job execution needs for an estimate from the provided context (may include conversation summary, template/job notes, file names, contractor notes).
+Rules: Max 8 bullets. One short line each (no "•"). Include only what was actually said: scope requested, materials named, labor/time hints, dates, access constraints, pricing if mentioned.
+Do not speculate about permits, hazardous materials, or approvals. If the thread is empty, return {"bullets": []}.`
+        : `Summarize job scope for an estimate from the provided context (conversation summary, notes, file names).
 Reply with JSON only, no markdown: {"bullets": string[]}
-Rules: Max 16 bullets. Short lines. Prefer categories when relevant: labor hours estimate (rough), crew size, materials list hints, equipment, scope breakdown, pricing hints, scheduling windows, special circumstances/safety/access.
-If critical info is missing, include bullets that say what is still unknown.`
+Rules: Max 10 bullets. Short lines. Prioritize: scope of work, labor/crew needs, materials/supplies, travel or trip context, misc site notes.
+Only mention permits, hazmat, or approvals if the context explicitly includes them. At most 1 bullet for unknowns if critical info is missing.`
 
     const raw =
       (await openAiText(instructions, pack.slice(0, 14000), { maxTokens: 2400, timeoutMs: 52_000 }))?.trim() ?? "{}"
@@ -530,7 +540,7 @@ If critical info is missing, include bullets that say what is still unknown.`
           .filter((x): x is string => typeof x === "string")
           .map((x) => x.replace(/^\s*[•\-*]\s*/, "").trim().slice(0, 400))
           .filter(Boolean)
-          .slice(0, 18)
+          .slice(0, 10)
       }
     } catch {
       bullets = []
@@ -544,6 +554,106 @@ If critical info is missing, include bullets that say what is still unknown.`
       bullets: [] as string[],
       fallback: true,
       note: e instanceof Error ? e.message : "AI request failed; try again in a moment.",
+    })
+  }
+}
+
+/**
+ * Map free-form voice/text into specialty report field keys.
+ * POST body: { utterance: string, fields: { fieldKey, label, group }[] }
+ */
+async function handleSpecialtyReportFieldFill(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+
+  try {
+    const body = jsonBody(req)
+    const utterance = pickFirstString(body.utterance).slice(0, 8000)
+    const fieldsRaw = body.fields
+    const fields: Array<{ fieldKey: string; label: string; group: string }> = []
+    if (Array.isArray(fieldsRaw)) {
+      for (const row of fieldsRaw) {
+        if (!row || typeof row !== "object") continue
+        const r = row as Record<string, unknown>
+        const fieldKey = pickFirstString(r.fieldKey)
+        const label = pickFirstString(r.label)
+        const group = pickFirstString(r.group)
+        if (fieldKey && label) fields.push({ fieldKey, label, group: group || "report" })
+      }
+    }
+
+    if (!utterance.trim()) {
+      res.status(400).json({ error: "utterance required" })
+      return
+    }
+    if (!fields.length) {
+      res.status(400).json({ error: "fields catalog required" })
+      return
+    }
+
+    const openaiKey = firstEnv("OPENAI_API_KEY")
+    if (!openaiKey) {
+      res.status(200).json({
+        ok: true,
+        fills: [] as Array<{ fieldKey: string; value: string }>,
+        fallback: true,
+        note: "Connect OpenAI (OPENAI_API_KEY) for smarter voice field mapping.",
+      })
+      return
+    }
+
+    const catalog = fields
+      .slice(0, 120)
+      .map((f) => `- ${f.fieldKey} — ${f.label} (${f.group})`)
+      .join("\n")
+
+    const instructions = `You map inspector voice dictation into structured home inspection report fields.
+Reply with JSON only, no markdown: {"fills":[{"fieldKey":string,"value":string}]}
+
+Available fields (use fieldKey exactly):
+${catalog}
+
+Rules:
+- Only include fields clearly stated in the utterance. Do not invent values.
+- Split compound commands ("set inspector name to Jane and weather to clear") into multiple fills.
+- Match informal labels ("inspectors name", "site conditions") to the closest fieldKey.
+- For findings subsections (fieldKey starts with "sub:"), value is inspector notes text only.
+- For header.inspectionDate use ISO YYYY-MM-DD when a date is given.
+- If nothing maps confidently, return {"fills":[]}.
+- Max 12 fills. Values max 500 chars each.`
+
+    const raw =
+      (await openAiText(instructions, utterance.slice(0, 6000), { maxTokens: 1800, timeoutMs: 45_000 }))?.trim() ?? "{}"
+
+    let fills: Array<{ fieldKey: string; value: string }> = []
+    try {
+      const j = JSON.parse(raw) as { fills?: unknown }
+      const allowed = new Set(fields.map((f) => f.fieldKey))
+      if (Array.isArray(j.fills)) {
+        for (const row of j.fills) {
+          if (!row || typeof row !== "object") continue
+          const r = row as Record<string, unknown>
+          const fieldKey = pickFirstString(r.fieldKey)
+          const value = pickFirstString(r.value).slice(0, 500)
+          if (fieldKey && value && allowed.has(fieldKey)) fills.push({ fieldKey, value })
+        }
+      }
+    } catch {
+      fills = []
+    }
+
+    res.status(200).json({ ok: true, fills: fills.slice(0, 12) })
+  } catch (e) {
+    console.error("[specialty-report-field-fill]", e instanceof Error ? e.message : e)
+    res.status(200).json({
+      ok: true,
+      fills: [] as Array<{ fieldKey: string; value: string }>,
+      fallback: true,
+      note: e instanceof Error ? e.message : "AI field mapping failed; try again.",
     })
   }
 }
@@ -1731,6 +1841,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "estimate-wizard-bullets") {
       await handleEstimateWizardBullets(req, res)
+      return
+    }
+    if (route === "specialty-report-field-fill") {
+      await handleSpecialtyReportFieldFill(req, res)
       return
     }
     if (route === "lead-evaluate-fit") {

@@ -74,6 +74,11 @@ import {
 } from "../../lib/estimateGuidePrefs"
 import { estimateWizardScopeAnalysisReady, getResumeEstimateWizardStep } from "../../lib/estimateWizardStepUtils"
 import {
+  filterEstimateScopeSuggestions,
+  normalizeScopeLineKind,
+  type EstimateScopeLineSuggestion,
+} from "../../lib/estimateScopeAssistant"
+import {
   ESTIMATE_TEMPLATE_REPORT_CHECKBOX_TO_KEY,
   specialtyReportTypesFromMetadata,
   type SpecialtyReportTypeKey,
@@ -81,6 +86,8 @@ import {
 import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../../lib/specialtyReports/reportRecords"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
+import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContext"
+import { consumeQuotesCustomerPrefill } from "../../lib/workflowNavigation"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
@@ -1801,6 +1808,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     if (!userId || !supabase || estimateSuite !== "home") return
+
+    const queuedCustomerId = consumeQuotesCustomerPrefill()
+    if (queuedCustomerId) {
+      void (async () => {
+        const ok = await createEstimateLinkedToCustomer(queuedCustomerId)
+        if (ok) estimatesBootstrapRef.current = true
+      })()
+      return
+    }
+
     if (selectedQuoteId) return
     if (estimatesBootstrapRef.current) return
     void (async () => {
@@ -1886,6 +1903,61 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }
 
   const estimatesBootstrapRef = useRef(false)
+  const customerPrefillBusyRef = useRef(false)
+
+  async function createEstimateLinkedToCustomer(customerId: string): Promise<boolean> {
+    if (!supabase || !userId || customerPrefillBusyRef.current) return false
+    customerPrefillBusyRef.current = true
+    try {
+      closeEstimateWorkspace()
+      const cid = customerId.trim()
+      const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
+      const { data, error } = await supabase
+        .from("quotes")
+        .insert({
+          user_id: userId,
+          customer_id: cid,
+          status: defaultQuoteStatus,
+          conversation_id: ctx?.primaryConversationId ?? null,
+        })
+        .select("id")
+        .single()
+      if (error) {
+        alert(error.message || "Could not create estimate for this customer.")
+        return false
+      }
+      setEstimateSuite("home")
+      await loadQuotes()
+      if (!data?.id) return false
+      const quoteId = data.id as string
+      const opened = await openQuote(quoteId)
+      if (!opened) return false
+
+      setEstimateGuideCustomerPick(cid)
+      setCustomerPickerCustomerId(cid)
+      if (ctx?.jobDetailsText.trim()) setJobDetailsText(ctx.jobDetailsText)
+
+      if (ctx?.conversationPack.trim()) {
+        try {
+          const bullets = await fetchEstimateWizardBullets("conversation", ctx.conversationPack)
+          if (bullets.length > 0) {
+            const text = bullets.map((b) => `• ${b}`).join("\n")
+            saveEstimateGuideFlags(quoteId, { conversationScopeBullets: text })
+            setEstimateGuideFlags((f) => ({ ...f, conversationScopeBullets: text }))
+          }
+        } catch (e) {
+          console.warn("[quotes] customer prefill scope bullets", e instanceof Error ? e.message : e)
+        }
+      }
+      return true
+    } catch (err: unknown) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to open estimate for customer.")
+      return false
+    } finally {
+      customerPrefillBusyRef.current = false
+    }
+  }
 
   function closeEstimateWorkspace() {
     setSelectedQuoteId(null)
@@ -2329,29 +2401,48 @@ export default function QuotesPage(_props: QuotesPageProps) {
         throw new Error(`Request failed (HTTP ${res.status}) with an empty response.`)
       }
       if (!res.ok) throw new Error(j.error || "Request failed")
-      const suggestions = Array.isArray(j.suggestions) ? j.suggestions : []
+      const rawSuggestions: EstimateScopeLineSuggestion[] = []
+      if (Array.isArray(j.suggestions)) {
+        for (const row of j.suggestions) {
+          if (!row || typeof row !== "object") continue
+          const o = row as Record<string, unknown>
+          const description = String(o.description ?? "").trim()
+          if (!description) continue
+          const qty = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 1)) || 1
+          const price = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+          rawSuggestions.push({
+            description,
+            quantity: Math.max(0, qty),
+            unit_price: Math.max(0, price),
+            line_kind: normalizeScopeLineKind(o.line_kind),
+            ...(typeof o.rationale === "string" && o.rationale.trim() ? { rationale: o.rationale.trim() } : {}),
+          })
+        }
+      }
+      const suggestions = filterEstimateScopeSuggestions(rawSuggestions, scopeText, estimateScopeExistingLines)
       let added = 0
       for (const row of suggestions) {
-        const description = String(row?.description ?? "").trim()
-        if (!description) continue
-        const qty = typeof row.quantity === "number" ? row.quantity : Number.parseFloat(String(row.quantity ?? 1)) || 1
-        const price = typeof row.unit_price === "number" ? row.unit_price : Number.parseFloat(String(row.unit_price ?? 0)) || 0
         const result = await insertQuoteItemRowSafe(supabase, {
           quote_id: selectedQuoteId,
-          description,
-          quantity: Number.isFinite(qty) ? qty : 1,
-          unit_price: Number.isFinite(price) ? price : 0,
+          description: row.description,
+          quantity: row.quantity,
+          unit_price: row.unit_price,
+          metadata: row.line_kind ? ({ line_kind: row.line_kind } as Record<string, unknown>) : undefined,
         })
         if (result.ok) added += 1
       }
       if (added > 0) void refreshQuoteItemsOnly()
-      const clar = Array.isArray(j.clarifications) && j.clarifications.length ? ` ${j.clarifications.join(" ")}` : ""
+      const clar = Array.isArray(j.clarifications) && j.clarifications.length ? ` ${j.clarifications.slice(0, 2).join(" ")}` : ""
+      const filteredNote =
+        rawSuggestions.length > suggestions.length
+          ? ` (${rawSuggestions.length - suggestions.length} speculative or duplicate suggestion${rawSuggestions.length - suggestions.length === 1 ? "" : "s"} skipped.)`
+          : ""
       if (j.fallback && added === 0) {
         return `No lines added yet.${clar || " Add OPENAI_API_KEY on the server for AI line generation."}`
       }
       return added > 0
-        ? `Added ${added} line item${added === 1 ? "" : "s"} from your job context.${clar}`
-        : `No new lines were added (they may already match the list).${clar}`
+        ? `Added ${added} focused line item${added === 1 ? "" : "s"} (labor, materials, travel, misc).${filteredNote}${clar}`
+        : `No new lines matched your scope — try adding more detail in job details, or add lines manually.${clar}`
     } catch (e) {
       return e instanceof Error ? e.message : String(e)
     } finally {
@@ -2755,7 +2846,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
     void refreshQuoteItemsOnly()
   }
 
-  async function addQuoteLineFromSuggestion(description: string, quantity: number, unitPrice: number) {
+  async function addQuoteLineFromSuggestion(
+    description: string,
+    quantity: number,
+    unitPrice: number,
+    lineKind?: EstimateScopeLineSuggestion["line_kind"],
+  ) {
     if (!supabase || !selectedQuoteId || !description.trim()) return
     const meta: QuoteItemMetadata = {}
     const qJt =
@@ -2763,7 +2859,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
         ? (selectedQuote as QuoteRow).job_type_id!.trim()
         : ""
     if (qJt) meta.job_type_id = qJt
-    if (estimateLineTemplateOffered("eli_show_manpower")) meta.manpower = 1
+    if (lineKind) meta.line_kind = lineKind
+    if (estimateLineTemplateOffered("eli_show_manpower") && (lineKind === "labor" || !lineKind)) meta.manpower = 1
     setAddItemLoading(true)
     const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
@@ -6034,7 +6131,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         scopeAnalysisEnabled={estimateScopeAnalysisPreflight}
                                         mergedScopeForAnalysis={mergedScopeForAi}
                                         onApproveLine={async (s) => {
-                                          await addQuoteLineFromSuggestion(s.description, s.quantity, s.unit_price)
+                                          await addQuoteLineFromSuggestion(s.description, s.quantity, s.unit_price, s.line_kind)
                                         }}
                                       />
                                     ) : null}

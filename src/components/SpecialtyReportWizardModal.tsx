@@ -17,6 +17,14 @@ import {
   parseSpecialtyReportRegistry,
   upsertSpecialtyReportRegistryItem,
 } from "../lib/specialtyReports/reportRecords"
+import {
+  majorIdContainingSubsection,
+  parseSpecialtyReportFieldAssignments,
+  parseStructuredFillAndNavCommands,
+  utteranceLooksLikeFieldCommands,
+  type SpecialtyReportFillContext,
+} from "../lib/specialtyReportAssistantParse"
+import { fetchSpecialtyReportFieldFills, getPlatformToolsAccessToken } from "../lib/specialtyReportAssistantApi"
 
 type WizardPhase =
   | "pick_type"
@@ -173,294 +181,6 @@ function parseTradesmanRecordIntent(raw: string): {
   return { consumed: true, body: rest }
 }
 
-function normAssistantPhrase(s: string): string {
-  return s
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/^(please|ok|okay)\s+/, "")
-}
-
-/** Major section id hints for voice / typed commands (Structure & property report). */
-const MAJOR_SECTION_ALIASES: Record<string, string> = {
-  admin: "admin_scope",
-  administrative: "admin_scope",
-  scope: "admin_scope",
-  site: "site_exterior",
-  exterior: "site_exterior",
-  shell: "site_exterior",
-  roof: "roof",
-  structure: "structure",
-  structural: "structure",
-  electrical: "electrical",
-  electric: "electrical",
-  plumbing: "plumbing",
-  hvac: "hvac",
-  heating: "hvac",
-  cooling: "hvac",
-  interior: "interior",
-  insulation: "insulation_energy",
-  energy: "insulation_energy",
-  attic: "insulation_energy",
-}
-
-function resolveMajorSectionIdFromPhrase(raw: string): string | null {
-  const p = normAssistantPhrase(raw).replace(/\b(the|section|tab)\b/g, "").trim()
-  if (!p) return null
-  if (MAJOR_SECTION_ALIASES[p]) return MAJOR_SECTION_ALIASES[p]
-  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
-    if (sec.id === p || p === normAssistantPhrase(sec.title)) return sec.id
-    const t = normAssistantPhrase(sec.title)
-    if (t.includes(p) || p.includes(t.slice(0, 10))) return sec.id
-  }
-  return null
-}
-
-function majorIdContainingSubsection(subId: string): string | null {
-  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
-    if (sec.subsections.some((s) => s.id === subId)) return sec.id
-  }
-  return null
-}
-
-function matchSubsectionIdFromPhrase(rest: string): string | null {
-  const cleaned = normAssistantPhrase(rest)
-  const words = cleaned.split(/\s+/).filter(Boolean)
-  for (let take = Math.min(8, words.length); take >= 1; take -= 1) {
-    const phrase = words.slice(0, take).join(" ")
-    if (phrase.length < 3) continue
-    for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
-      for (const sub of sec.subsections) {
-        const L = normAssistantPhrase(sub.label)
-        if (phrase === L || (phrase.length >= 4 && (L.includes(phrase) || phrase.includes(L)))) {
-          return sub.id
-        }
-      }
-    }
-  }
-  return null
-}
-
-function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
-  const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
-  const headerPairs: Array<[string[], string]> = [
-    [["inspector name", "inspector"], "header.inspectorName"],
-    [
-      ["inspection id", "inspection number", "file id", "report id", "file number", "reference number", "trec id"],
-      "header.inspectionReference",
-    ],
-    [["license id", "license number", "license", "cert id", "certification"], "header.licenseId"],
-    [["inspection date", "report date"], "header.inspectionDate"],
-    [["weather", "site conditions"], "header.weather"],
-    [["property address", "job address", "site address"], "header.propertyAddress"],
-    [["address"], "header.propertyAddress"],
-    [["parties present", "parties"], "header.partiesPresent"],
-  ]
-  for (const [hints, key] of headerPairs) {
-    for (const h of hints) {
-      if (f === h || f.includes(h) || (h.length >= 6 && h.includes(f))) return key
-    }
-  }
-  const subId = matchSubsectionIdFromPhrase(f)
-  return subId ? `sub:${subId}` : null
-}
-
-/** "Weather is clear", "set inspector to Jane", "inspector = Jane" → same routing as Label: value lines. */
-function tryImplicitFieldKeyValue(line: string): { left: string; valueRaw: string } | null {
-  const t = line.trim()
-  if (!t) return null
-  const setTo = t.match(/^set\s+(.+?)\s+to\s+(.+)$/i)
-  if (setTo?.[1]?.trim() && setTo[2]?.trim()) return { left: setTo[1].trim(), valueRaw: setTo[2].trim() }
-  const isForm = t.match(/^(.+?)\s+is\s+(.+)$/is)
-  if (isForm?.[1]?.trim() && isForm[2]?.trim()) return { left: isForm[1].trim(), valueRaw: isForm[2].trim() }
-  const eq = t.match(/^(.+?)\s*=\s*(.+)$/)
-  if (eq?.[1]?.trim() && eq[2]?.trim()) {
-    const L = eq[1].trim()
-    const R = eq[2].trim()
-    if (L.length >= 2 && L.length <= 72 && !/^https?:\/\//i.test(R)) return { left: L, valueRaw: R }
-  }
-  return null
-}
-
-function parseConditionRating(word: string): ConditionRating | null {
-  const w = normAssistantPhrase(word).replace(/[^a-z0-9/\s_-]/g, "")
-  const map: Record<string, ConditionRating> = {
-    satisfactory: "satisfactory",
-    marginal: "marginal",
-    monitor: "marginal",
-    deficient: "deficient",
-    repair: "deficient",
-    na: "na",
-    "n/a": "na",
-    none: "na",
-    "not inspected": "not_inspected",
-    unchecked: "not_inspected",
-  }
-  return map[w] ?? null
-}
-
-type FillContext = { accountDisplayName: string; propertyAddressHint: string; customerLabel: string }
-
-function resolveFillLiteral(valueRaw: string, ctx: FillContext): string {
-  const v = valueRaw.trim().replace(/^["']|["']$/g, "").trim()
-  const n = normAssistantPhrase(v)
-  if (
-    n === "my name" ||
-    n === "me" ||
-    n === "myself" ||
-    n === "account name" ||
-    n === "the account name" ||
-    (n.includes("my name") && n.length < 24)
-  ) {
-    return ctx.accountDisplayName
-  }
-  if (n === "today's date" || n === "todays date" || n === "today" || n === "today date") {
-    return new Date().toISOString().slice(0, 10)
-  }
-  if (
-    n === "estimate address" ||
-    n === "job address" ||
-    n === "service address" ||
-    n === "from estimate" ||
-    n === "the estimate address"
-  ) {
-    return ctx.propertyAddressHint.trim()
-  }
-  if (n === "customer name" || n === "client name" || n === "the customer name" || n === "linked customer") {
-    return ctx.customerLabel.trim()
-  }
-  return v
-}
-
-type StructuredAssistantPatch = {
-  fieldKey?: string
-  value?: string
-  setCondition?: { subId: string; condition: ConditionRating }
-  openMajorSection?: string
-  phase?: WizardPhase
-  focusSubId?: string
-}
-
-/** Typed / voice commands: fill header & findings fields, navigate, open sections, set condition dropdowns. */
-function parseStructuredFillAndNavCommands(
-  raw: string,
-  ctx: FillContext,
-  allowStructure: boolean,
-): { handled: boolean; summary: string; clearInput: boolean; patch: StructuredAssistantPatch } | null {
-  const text = raw.trim()
-  if (!text || !allowStructure) return null
-
-  const copyEstimateAddress = /\b(copy|pull|fill|use)\s+(?:the\s+)?(?:estimate|job)\s+address\s+(?:into|to|for)\s+(?:the\s+)?(?:property\s+)?address\b/i.test(raw)
-  if (copyEstimateAddress && ctx.propertyAddressHint.trim()) {
-    return {
-      handled: true,
-      summary: "Property address filled from estimate service address.",
-      clearInput: true,
-      patch: { fieldKey: "header.propertyAddress", value: ctx.propertyAddressHint.trim() },
-    }
-  }
-
-  const copyCustomerToParties =
-    /\b(copy|pull|fill|use)\s+(?:the\s+)?(?:customer|client)\s+name\s+(?:into|to|for)\s+(?:parties\s+present|parties)\b/i.test(raw)
-  if (copyCustomerToParties && ctx.customerLabel.trim()) {
-    return {
-      handled: true,
-      summary: 'Parties present filled with customer name from estimate.',
-      clearInput: true,
-      patch: { fieldKey: "header.partiesPresent", value: ctx.customerLabel.trim() },
-    }
-  }
-
-  const useMyNameFor = text.match(/\b(?:use|put|apply)\s+my\s+name\s+(?:for|on|in|as)\s+(.+)$/i)
-  if (useMyNameFor?.[1] && ctx.accountDisplayName.trim()) {
-    const fieldKey = matchHeaderOrSubFieldKey(useMyNameFor[1].trim())
-    if (fieldKey?.startsWith("header.")) {
-      return {
-        handled: true,
-        summary: `Set ${fieldKey.replace("header.", "").replaceAll(".", " ")} to your account name.`,
-        clearInput: true,
-        patch: { fieldKey, value: ctx.accountDisplayName.trim() },
-      }
-    }
-  }
-
-  let fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|set\s+|put\s+)(?:the\s+)?(.+?)\s+(?:with)\s+(.+)$/is)
-  if (!fillM) {
-    fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|put\s+)(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
-  }
-  const m = fillM ?? text.match(/^(?:please\s+)?set\s+(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
-  if (m?.[1] && m[2]) {
-    const left = normAssistantPhrase(m[1])
-    if (!left.includes("condition") && !/^condition\b/.test(left)) {
-      const fieldKey = matchHeaderOrSubFieldKey(m[1])
-      const value = resolveFillLiteral(m[2], ctx)
-      if (fieldKey && value) {
-        return {
-          handled: true,
-          summary: `Updated ${fieldKey.startsWith("sub:") ? "findings" : "header"} field.`,
-          clearInput: true,
-          patch: { fieldKey, value },
-        }
-      }
-    }
-  }
-
-  const condM = text.match(/\b(?:set|change)\s+condition\s+(?:for|on)?\s*(.+?)\s+to\s+(.+)$/i)
-  if (condM?.[1] && condM[2]) {
-    const subId = matchSubsectionIdFromPhrase(condM[1].trim())
-    const rating = parseConditionRating(condM[2].trim())
-    if (subId && rating) {
-      return {
-        handled: true,
-        summary: `Set findings condition (${subId}) to ${CONDITION_RATING_LABELS[rating]}.`,
-        clearInput: true,
-        patch: { setCondition: { subId, condition: rating } },
-      }
-    }
-  }
-
-  const openMajor =
-    text.match(/\b(?:open|show|expand)\s+(?:the\s+)?(.+?)(?:\s+section|\s+tab)?$/i) ??
-    text.match(/\b(?:go\s+to|jump\s+to)\s+(?:the\s+)?(.+?)\s+(?:section|category)\s*$/i)
-  if (openMajor?.[1]) {
-    const mid = resolveMajorSectionIdFromPhrase(openMajor[1])
-    if (mid) {
-      return {
-        handled: true,
-        summary: `Opened ${HOME_INSPECTION_MAJOR_SECTIONS.find((s) => s.id === mid)?.title ?? "findings"} section.`,
-        clearInput: true,
-        patch: { openMajorSection: mid, phase: "home_findings" as const },
-      }
-    }
-  }
-
-  const goSub = text.match(/\b(?:go\s+to|open|show)\s+(?:subsection\s+)?(.+)$/i)
-  if (goSub?.[1]) {
-    const rest = goSub[1].trim()
-    const restTab = normAssistantPhrase(rest)
-    if (
-      ["header", "findings", "media", "review", "summary", "scope", "notes", "the header", "the findings"].some(
-        (w) => restTab === w || restTab.startsWith(`${w} `),
-      )
-    ) {
-      /* wizard tab navigation handled elsewhere */
-    } else if (!/\b(findings|header|media|review)\b/i.test(rest) || rest.length > 14) {
-      const subId = matchSubsectionIdFromPhrase(rest)
-      if (subId) {
-        const majorId = majorIdContainingSubsection(subId)
-        return {
-          handled: true,
-          summary: `Findings → ${HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId}`,
-          clearInput: true,
-          patch: { openMajorSection: majorId ?? undefined, phase: "home_findings" as const, focusSubId: subId },
-        }
-      }
-    }
-  }
-
-  return null
-}
-
 function specialtyReportFieldDomId(fieldKey: string): string {
   const slug = fieldKey.replace(/\./g, "_").replace(/:/g, "_").replace(/[^\w-]/g, "_").replace(/_+/g, "_")
   return `srw-field-${slug}`
@@ -495,6 +215,7 @@ export default function SpecialtyReportWizardModal({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [assistantText, setAssistantText] = useState("")
   const [assistantNote, setAssistantNote] = useState<string | null>(null)
+  const [assistantProcessing, setAssistantProcessing] = useState(false)
   const [assistantListening, setAssistantListening] = useState(false)
   const [speechSupported, setSpeechSupported] = useState(false)
   const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
@@ -511,6 +232,8 @@ export default function SpecialtyReportWizardModal({
   /** Snapshot + appended finals + interim (Web Speech fires overlapping interim finals). */
   const voiceSessionBaseRef = useRef("")
   const voiceFinalSuffixRef = useRef("")
+  const voiceOverallAssistRef = useRef(false)
+  const activeVoiceFieldRef = useRef<string | null>(null)
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -889,55 +612,12 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
-  /** Apply `Label: value` lines to header or findings fields; return leftover text for other assistant commands. */
-  function consumeColonLinesFromAssistantInput(raw: string, fillCtx: FillContext): { applied: number; skipped: number; remainder: string } {
-    if (picked !== "home_inspection") {
-      return { applied: 0, skipped: 0, remainder: raw }
-    }
-    const unmatched: string[] = []
+  function applyParsedFieldAssignments(assignments: Array<{ fieldKey: string; value: string }>): { applied: number; skipped: number } {
     let applied = 0
     let skipped = 0
-    const lines = raw
-      .split(/\r?\n|;\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-    const toScan = lines.length ? lines : [raw.trim()].filter(Boolean)
-    for (const line of toScan) {
-      const colon = line.indexOf(":")
-      let left = ""
-      let valueRaw = ""
-      if (colon > 0) {
-        left = line.slice(0, colon).trim()
-        valueRaw = line.slice(colon + 1).trim()
-      } else {
-        const implicit = tryImplicitFieldKeyValue(line)
-        if (implicit) {
-          left = implicit.left
-          valueRaw = implicit.valueRaw
-        } else {
-          const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
-          if (!md?.[1] || !md[2]) {
-            unmatched.push(line)
-            continue
-          }
-          left = md[1].trim()
-          valueRaw = md[2].trim()
-        }
-      }
-      const fieldKey = matchHeaderOrSubFieldKey(left)
-      if (!fieldKey) {
-        unmatched.push(line)
-        continue
-      }
-      if (fieldKey.startsWith("sub:")) {
-        if (phase !== "home_findings" && phase !== "home_review") {
-          unmatched.push(line)
-          continue
-        }
-      }
-      const value = (resolveFillLiteral(valueRaw, fillCtx) || valueRaw).trim()
-      if (!value) {
-        unmatched.push(line)
+    for (const { fieldKey, value } of assignments) {
+      if (fieldKey.startsWith("sub:") && phase !== "home_findings" && phase !== "home_review") {
+        skipped += 1
         continue
       }
       const cur = readFieldValue(fieldKey).trim()
@@ -949,6 +629,7 @@ export default function SpecialtyReportWizardModal({
       applied += 1
       if (fieldKey.startsWith("header.")) {
         setPhase("home_header")
+        setAiTarget(fieldKey as AiTargetField)
         window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
       }
       if (fieldKey.startsWith("sub:")) {
@@ -959,8 +640,56 @@ export default function SpecialtyReportWizardModal({
         setAiTarget(`sub:${sid}` as AiTargetField)
         window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
       }
+      if (fieldKey === "scopeLimitations" || fieldKey === "summaryFindings" || fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") {
+        setAiTarget(fieldKey as AiTargetField)
+      }
     }
-    return { applied, skipped, remainder: unmatched.join("\n") }
+    return { applied, skipped }
+  }
+
+  function applyStructuredAssistantPatch(p: {
+    fieldKey?: string
+    value?: string
+    setCondition?: { subId: string; condition: ConditionRating }
+    openMajorSection?: string
+    focusSubId?: string
+  }) {
+    if (p.openMajorSection) setFindingSectionOpen((prev) => ({ ...prev, [p.openMajorSection!]: true }))
+    if (p.fieldKey && p.value != null && String(p.value).length > 0) {
+      writeFieldValue(p.fieldKey, String(p.value))
+      if (p.fieldKey.startsWith("header.")) setPhase("home_header")
+      if (p.fieldKey.startsWith("sub:")) {
+        const sid = p.fieldKey.slice(4)
+        const maj = majorIdContainingSubsection(sid)
+        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+        setPhase("home_findings")
+        setAiTarget(`sub:${sid}` as AiTargetField)
+      }
+      window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(p.fieldKey!))?.focus?.(), 200)
+    }
+    if (p.setCondition) {
+      const { subId, condition } = p.setCondition
+      setPhase("home_findings")
+      const maj = majorIdContainingSubsection(subId)
+      if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+      setHome((h) => ({
+        ...h,
+        subsections: {
+          ...h.subsections,
+          [subId]: {
+            ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
+            condition,
+          },
+        },
+      }))
+      setAiTarget(`sub:${subId}` as AiTargetField)
+    }
+    if (p.focusSubId && !p.fieldKey && !p.setCondition) {
+      const maj = majorIdContainingSubsection(p.focusSubId)
+      if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
+      setPhase("home_findings")
+      setAiTarget(`sub:${p.focusSubId}` as AiTargetField)
+    }
   }
 
   async function attachFieldImage(fieldKey: string, file: File | null) {
@@ -1061,101 +790,15 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
-  function runAssistantCommand(raw: string) {
-    let text = raw.trim()
-    if (!text) return
-    const fillCtx: FillContext = {
+  async function runAssistantCommand(raw: string) {
+    const text = raw.trim()
+    if (!text || assistantProcessing) return
+    const fillCtx: SpecialtyReportFillContext = {
       accountDisplayName,
       propertyAddressHint: propertyAddressHint ?? "",
       customerLabel: customerLabel ?? "",
     }
-    if (picked === "home_inspection" && !/\btradesman\s+record\b/i.test(raw)) {
-      let { applied, skipped, remainder } = consumeColonLinesFromAssistantInput(raw, fillCtx)
-      const tail0 = remainder.trim()
-      if (tail0 && !tail0.includes("\n") && tail0.includes(":")) {
-        const expanded = tail0.replace(/\.\s+(?=\S[\s\S]{0,120}:)/g, ".\n")
-        if (expanded !== tail0) {
-          const sec = consumeColonLinesFromAssistantInput(expanded, fillCtx)
-          applied += sec.applied
-          skipped += sec.skipped
-          remainder = sec.remainder
-        }
-      }
-      if (applied > 0 || skipped > 0) {
-        let colonNote = ""
-        if (applied > 0 && skipped > 0) {
-          colonNote = `Filled ${applied} empty field(s) from Label: value lines. Skipped ${skipped} that already had text.`
-        } else if (applied > 0) {
-          colonNote = `Filled ${applied} field(s) from Label: value lines.`
-        } else {
-          colonNote = `${skipped} line(s) matched known fields but those fields already had text — clear a field to replace, or use a different label.`
-        }
-        setAssistantNote(colonNote)
-      }
-      const tail = remainder.trim()
-      if (applied > 0 && !tail) {
-        setAssistantText("")
-        return
-      }
-      text = tail || text
-    }
-    if (!text.trim()) return
-    const structured = parseStructuredFillAndNavCommands(text, fillCtx, picked === "home_inspection")
-    if (structured?.handled && structured.patch) {
-      const p = structured.patch
-      if (p.phase) setPhase(p.phase)
-      if (p.openMajorSection)
-        setFindingSectionOpen((prev) => ({
-          ...prev,
-          [p.openMajorSection!]: true,
-        }))
-      if (p.fieldKey && p.value != null && String(p.value).length > 0) {
-        writeFieldValue(p.fieldKey, String(p.value))
-        if (p.fieldKey.startsWith("header.")) setPhase("home_header")
-        if (p.fieldKey.startsWith("sub:")) {
-          const sid = p.fieldKey.slice(4)
-          const maj = majorIdContainingSubsection(sid)
-          if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-          setPhase("home_findings")
-          setAiTarget(`sub:${sid}` as AiTargetField)
-        }
-        window.setTimeout(() => {
-          document.getElementById(specialtyReportFieldDomId(p.fieldKey!))?.focus?.()
-        }, 200)
-      }
-      if (p.setCondition) {
-        const { subId, condition } = p.setCondition
-        setPhase("home_findings")
-        const maj = majorIdContainingSubsection(subId)
-        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-        setHome((h) => ({
-          ...h,
-          subsections: {
-            ...h.subsections,
-            [subId]: {
-              ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
-              condition,
-            },
-          },
-        }))
-        setAiTarget(`sub:${subId}` as AiTargetField)
-        window.setTimeout(() => {
-          document.getElementById(specialtyReportFieldDomId(`cond:sub:${subId}`))?.focus?.()
-        }, 200)
-      }
-      if (p.focusSubId && !p.fieldKey && !p.setCondition) {
-        const maj = majorIdContainingSubsection(p.focusSubId)
-        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-        setPhase("home_findings")
-        setAiTarget(`sub:${p.focusSubId}` as AiTargetField)
-        window.setTimeout(() => {
-          document.getElementById(specialtyReportFieldDomId(`sub:${p.focusSubId}`))?.focus?.()
-        }, 220)
-      }
-      setAssistantNote(structured.summary)
-      if (structured.clearInput) setAssistantText("")
-      return
-    }
+
     const lower = text.toLowerCase()
     if (/\btradesman\s+record\b/i.test(lower)) {
       const wakeParsed = parseTradesmanRecordIntent(raw)
@@ -1166,19 +809,32 @@ export default function SpecialtyReportWizardModal({
         }
         let chunk = (wakeParsed.body ?? "").trim()
         if (!wakeParsed.target && picked === "home_inspection" && chunk) {
-          const { applied: wApplied, skipped: wSkip, remainder: wRem } = consumeColonLinesFromAssistantInput(chunk, fillCtx)
+          const parsed = parseSpecialtyReportFieldAssignments(chunk, fillCtx, {
+            allowStructure: true,
+            readFieldValue,
+          })
+          if (parsed.structured) {
+            applyStructuredAssistantPatch(parsed.structured)
+            if (parsed.structured.openMajorSection) setPhase("home_findings")
+            setAssistantNote(parsed.structuredSummary ?? "Updated report.")
+            setAssistantText("")
+            return
+          }
+          const { applied: wApplied, skipped: wSkip } = applyParsedFieldAssignments(parsed.assignments)
           if (wApplied > 0 || wSkip > 0) {
             setAssistantNote(
               wApplied > 0
                 ? `Recorded ${wApplied} field(s) from your note${wSkip ? ` (${wSkip} skipped — fields already had text).` : "."}`
                 : `${wSkip} line(s) skipped — fields already had text.`,
             )
-            if (wApplied > 0 && !wRem.trim()) {
+            chunk = parsed.unmatched.join(" ").trim()
+            if (wApplied > 0 && !chunk) {
               setAssistantText("")
               return
             }
+          } else {
+            chunk = parsed.unmatched.join(" ").trim() || chunk
           }
-          chunk = wRem.trim()
         }
         const tgt = wakeParsed.target ?? aiTarget
         if (wakeParsed.target) setAiTarget(wakeParsed.target)
@@ -1194,6 +850,51 @@ export default function SpecialtyReportWizardModal({
         return
       }
     }
+
+    if (picked === "home_inspection") {
+      const parsed = parseSpecialtyReportFieldAssignments(text, fillCtx, {
+        allowStructure: true,
+        readFieldValue,
+      })
+      if (parsed.structured) {
+        applyStructuredAssistantPatch(parsed.structured)
+        if (parsed.structured.openMajorSection) setPhase("home_findings")
+        setAssistantNote(parsed.structuredSummary ?? "Updated report.")
+        setAssistantText("")
+        return
+      }
+      const { applied, skipped } = applyParsedFieldAssignments(parsed.assignments)
+      if (applied > 0 || skipped > 0) {
+        let note = ""
+        if (applied > 0 && skipped > 0) {
+          note = `Filled ${applied} field(s). Skipped ${skipped} that already had text.`
+        } else if (applied > 0) {
+          note = `Filled ${applied} report field(s) from your voice/text.`
+        } else {
+          note = `${skipped} field(s) matched but already had text — clear a field to replace.`
+        }
+        setAssistantNote(note)
+        const tail = parsed.unmatched.join(" ").trim()
+        if (applied > 0 && !tail) {
+          setAssistantText("")
+          return
+        }
+        if (tail) {
+          await runAssistantCommand(tail)
+          return
+        }
+        return
+      }
+    } else {
+      const structured = parseStructuredFillAndNavCommands(text, fillCtx, false)
+      if (structured?.patch.fieldKey && structured.patch.value) {
+        writeFieldValue(structured.patch.fieldKey, structured.patch.value)
+        setAssistantNote(structured.summary)
+        setAssistantText("")
+        return
+      }
+    }
+
     const command = lower
     if (command === "next" || command === "next step") {
       goNextPhase()
@@ -1230,8 +931,52 @@ export default function SpecialtyReportWizardModal({
       setAssistantNote("Opened header & scope.")
       return
     }
-    appendToTarget(aiTarget, text)
-    setAssistantNote("Added text into the selected report field.")
+
+    const shouldTryAi =
+      picked === "home_inspection" && (text.length > 36 || utteranceLooksLikeFieldCommands(text))
+    if (shouldTryAi) {
+      setAssistantProcessing(true)
+      setAssistantNote("Mapping your speech to report fields…")
+      try {
+        const tok = await getPlatformToolsAccessToken()
+        if (tok) {
+          const { fills, note } = await fetchSpecialtyReportFieldFills(text, tok)
+          if (fills.length > 0) {
+            const { applied, skipped } = applyParsedFieldAssignments(fills)
+            setAssistantNote(
+              applied > 0
+                ? `AI filled ${applied} field(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
+                : note ?? "Could not apply AI field mapping.",
+            )
+            setAssistantText("")
+            return
+          }
+          if (note) {
+            setAssistantNote(note)
+            return
+          }
+        }
+      } finally {
+        setAssistantProcessing(false)
+      }
+    }
+
+    if (utteranceLooksLikeFieldCommands(text)) {
+      setAssistantNote(
+        'Could not match fields. Try: "set inspector name to Joseph Snyder" · "weather: clear, 72°F" · or Label: value per line.',
+      )
+      return
+    }
+
+    if (text.length <= 72) {
+      appendToTarget(aiTarget, text)
+      setAssistantNote(`Added text into ${labelForAiTarget(aiTarget)}.`)
+      return
+    }
+
+    setAssistantNote(
+      'Long note not auto-placed. Pick a target field above, use "Tradesman record summary …", or say "set [field] to [value]".',
+    )
   }
 
   function startDictation(targetFieldKey?: string) {
@@ -1245,6 +990,8 @@ export default function SpecialtyReportWizardModal({
       return
     }
     try {
+      voiceOverallAssistRef.current = !targetFieldKey
+      activeVoiceFieldRef.current = targetFieldKey ?? null
       voiceSessionBaseRef.current = targetFieldKey ? readFieldValue(targetFieldKey) : assistantText
       voiceFinalSuffixRef.current = ""
       const rec = new Ctor()
@@ -1280,7 +1027,17 @@ export default function SpecialtyReportWizardModal({
       rec.onerror = () => setAssistantNote("Voice input failed. Check mic permissions and retry.")
       rec.onend = () => {
         setAssistantListening(false)
+        const fieldKey = activeVoiceFieldRef.current
+        activeVoiceFieldRef.current = null
         setVoiceFieldKey(null)
+        if (!fieldKey && voiceOverallAssistRef.current) {
+          const finalText = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`.trim()
+          if (finalText) {
+            setAssistantText(finalText)
+            void runAssistantCommand(finalText)
+          }
+        }
+        voiceOverallAssistRef.current = false
       }
       rec.start()
       setAssistantListening(true)
@@ -1505,12 +1262,17 @@ export default function SpecialtyReportWizardModal({
                 rows={2}
                 value={assistantText}
                 onChange={(e) => setAssistantText(e.target.value)}
-                placeholder='Example: Tradesman record summary Customer wants flashing replaced. Also: next step, go to findings.'
+                placeholder='Example: set inspector name to Joseph Snyder · weather: clear, 72°F · set condition for gutters to satisfactory'
                 style={{ ...theme.formInput, resize: "vertical" }}
               />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => runAssistantCommand(assistantText)} style={primaryBtn}>
-                  Apply assistant input
+                <button
+                  type="button"
+                  onClick={() => void runAssistantCommand(assistantText)}
+                  style={primaryBtn}
+                  disabled={assistantProcessing}
+                >
+                  {assistantProcessing ? "Mapping fields…" : "Apply assistant input"}
                 </button>
                 {!assistantListening ? (
                   <button type="button" onClick={() => startDictation()} style={secondaryBtn} disabled={!speechSupported}>

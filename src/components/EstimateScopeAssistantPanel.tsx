@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { theme } from "../styles/theme"
+import {
+  ESTIMATE_LINE_KIND_LABELS,
+  filterEstimateScopeSuggestions,
+  normalizeScopeLineKind,
+  type EstimateScopeLineSuggestion,
+} from "../lib/estimateScopeAssistant"
 import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../lib/platformToolsJsonBody"
 import { supabase } from "../lib/supabase"
 
-type Suggestion = {
-  description: string
-  quantity: number
-  unit_price: number
-  rationale?: string
-}
+type Suggestion = EstimateScopeLineSuggestion
 
 type Props = {
   quoteId: string
   accessToken: string | null | undefined
   tradeHint?: string
   existingLines: { description: string; quantity: number; unit_price: number }[]
-  onApproveLine: (s: Suggestion) => Promise<void>
+  onApproveLine: (s: EstimateScopeLineSuggestion) => Promise<void>
   /** When set with onLinkedScopeChange, uses the same text as the Job Details field (single source of truth). */
   linkedScopeText?: string
   onLinkedScopeChange?: (next: string) => void
@@ -222,8 +223,28 @@ export default function EstimateScopeAssistantPanel({
           setAnalyzeNote("The server returned an empty response. Try again.")
           return
         }
-        setSuggestions(Array.isArray(j.suggestions) ? j.suggestions : [])
-        setClarifications(Array.isArray(j.clarifications) ? j.clarifications : [])
+        const rawSuggestions: Suggestion[] = []
+        if (Array.isArray(j.suggestions)) {
+          for (const row of j.suggestions) {
+            if (!row || typeof row !== "object") continue
+            const o = row as Record<string, unknown>
+            const description = String(o.description ?? "").trim()
+            if (!description) continue
+            const quantity =
+              typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 1)) || 1
+            const unit_price =
+              typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
+            rawSuggestions.push({
+              description,
+              quantity: Math.max(0, quantity),
+              unit_price: Math.max(0, unit_price),
+              line_kind: normalizeScopeLineKind(o.line_kind),
+              ...(typeof o.rationale === "string" && o.rationale.trim() ? { rationale: o.rationale.trim() } : {}),
+            })
+          }
+        }
+        setSuggestions(filterEstimateScopeSuggestions(rawSuggestions, scopeText, existingLines))
+        setClarifications(Array.isArray(j.clarifications) ? j.clarifications.slice(0, 3) : [])
         setAnalyzeNote(typeof j.note === "string" ? j.note : null)
         return
       }
@@ -272,8 +293,8 @@ export default function EstimateScopeAssistantPanel({
           </div>
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
             {isLinkedScope
-              ? "Uses the Job Details field above. Analyze scope to preview suggested rows — approve to add them to your estimate."
-              : "Describe the job in plain language (or tap Voice). Analyze scope to preview suggested rows — approve to add them to your spreadsheet."}
+              ? "Suggests labor, materials, travel, and misc lines only when your scope supports them. Review each row — approve to add; leave pricing at $0 when unsure."
+              : "Describe the job in plain language (or tap Voice). Analyze scope for focused line suggestions — approve each row you want on the estimate."}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
@@ -371,6 +392,20 @@ export default function EstimateScopeAssistantPanel({
             >
               <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{s.description}</div>
               <div style={{ fontSize: 12, color: "#475569", marginBottom: 6 }}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    marginRight: 8,
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    background: "#eff6ff",
+                    color: "#1d4ed8",
+                    fontWeight: 700,
+                    fontSize: 11,
+                  }}
+                >
+                  {ESTIMATE_LINE_KIND_LABELS[s.line_kind ?? "misc"]}
+                </span>
                 Qty {s.quantity} · ${s.unit_price.toFixed(2)} ea
                 {s.rationale ? <span style={{ display: "block", marginTop: 4, fontStyle: "italic" }}>{s.rationale}</span> : null}
               </div>
