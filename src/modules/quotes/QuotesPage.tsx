@@ -74,6 +74,12 @@ import {
 } from "../../lib/estimateGuidePrefs"
 import { estimateWizardScopeAnalysisReady, getResumeEstimateWizardStep } from "../../lib/estimateWizardStepUtils"
 import {
+  estimateGuideFlagsFromQuoteMetadata,
+  mergeQuoteMetadataWithEstimateGuide,
+  quoteJobDetailsFromMetadata,
+} from "../../lib/estimateQuoteMetadata"
+import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
+import {
   filterEstimateScopeSuggestions,
   normalizeScopeLineKind,
   type EstimateScopeLineSuggestion,
@@ -228,12 +234,6 @@ function supabaseQuotesMissingJobTypeIdColumn(message: string | undefined): bool
 function supabaseQuotesMissingMetadataColumn(message: string | undefined): boolean {
   const m = (message ?? "").toLowerCase()
   return m.includes("metadata") && (m.includes("does not exist") || m.includes("schema cache"))
-}
-
-function quoteRowJobDetailsFromMetadata(meta: unknown): string {
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return ""
-  const raw = (meta as Record<string, unknown>).job_details
-  return typeof raw === "string" ? raw : ""
 }
 
 /** PostgREST `quotes` row for the estimate workspace (columns vary by migration). */
@@ -621,9 +621,50 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }, [scopeCtx?.clients, supabase, userId])
 
+  const estimateGuidePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const estimateGuideFlagsRef = useRef(estimateGuideFlags)
   useEffect(() => {
-    setEstimateGuideFlags(loadEstimateGuideFlags(selectedQuoteId))
+    estimateGuideFlagsRef.current = estimateGuideFlags
+  }, [estimateGuideFlags])
+
+  useEffect(() => {
+    if (!selectedQuoteId) setEstimateGuideFlags({})
   }, [selectedQuoteId])
+
+  useEffect(() => {
+    if (!supabase || !userId || !selectedQuoteId) return
+    const qRow = selectedQuotePersistRef.current
+    if (!qRow || qRow.id !== selectedQuoteId) return
+    if (estimateGuidePersistTimerRef.current) clearTimeout(estimateGuidePersistTimerRef.current)
+    estimateGuidePersistTimerRef.current = setTimeout(() => {
+      estimateGuidePersistTimerRef.current = null
+      void (async () => {
+        const latest = selectedQuotePersistRef.current
+        if (!latest || latest.id !== selectedQuoteId) return
+        const flags = estimateGuideFlagsRef.current
+        const prevMeta =
+          latest.metadata && typeof latest.metadata === "object" && !Array.isArray(latest.metadata)
+            ? (latest.metadata as Record<string, unknown>)
+            : {}
+        const nextMeta = mergeQuoteMetadataWithEstimateGuide(prevMeta, flags)
+        const { error } = await supabase!
+          .from("quotes")
+          .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+          .eq("id", selectedQuoteId)
+          .eq("user_id", userId)
+        if (error) {
+          if (!supabaseQuotesMissingMetadataColumn(error.message)) {
+            console.error("[quotes] estimate_guide save", error.message)
+          }
+          return
+        }
+        setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuoteId ? { ...q, metadata: nextMeta } : q))
+      })()
+    }, 850)
+    return () => {
+      if (estimateGuidePersistTimerRef.current) clearTimeout(estimateGuidePersistTimerRef.current)
+    }
+  }, [estimateGuideFlags, selectedQuoteId, supabase, userId])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -1812,7 +1853,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const queuedCustomerId = consumeQuotesCustomerPrefill()
     if (queuedCustomerId) {
       void (async () => {
-        const ok = await createEstimateLinkedToCustomer(queuedCustomerId)
+        const ok = await openOrCreateEstimateForCustomer(queuedCustomerId)
         if (ok) estimatesBootstrapRef.current = true
       })()
       return
@@ -1905,12 +1946,47 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const estimatesBootstrapRef = useRef(false)
   const customerPrefillBusyRef = useRef(false)
 
-  async function createEstimateLinkedToCustomer(customerId: string): Promise<boolean> {
+  async function prefillNewEstimateFromCustomerContext(quoteId: string, cid: string): Promise<void> {
+    if (!supabase || !userId) return
+    const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
+    setEstimateGuideCustomerPick(cid)
+    setCustomerPickerCustomerId(cid)
+    if (ctx?.jobDetailsText.trim()) setJobDetailsText(ctx.jobDetailsText)
+
+    if (ctx?.conversationPack.trim()) {
+      try {
+        const bullets = await fetchEstimateWizardBullets("conversation", ctx.conversationPack)
+        if (bullets.length > 0) {
+          const text = bullets.map((b) => `• ${b}`).join("\n")
+          const patch = { conversationScopeBullets: text, customerLinkedViaGuide: true, wizardOpened: true }
+          saveEstimateGuideFlags(quoteId, patch)
+          setEstimateGuideFlags((f) => ({ ...f, ...patch }))
+        }
+      } catch (e) {
+        console.warn("[quotes] customer prefill scope bullets", e instanceof Error ? e.message : e)
+      }
+    }
+  }
+
+  async function openOrCreateEstimateForCustomer(customerId: string): Promise<boolean> {
     if (!supabase || !userId || customerPrefillBusyRef.current) return false
     customerPrefillBusyRef.current = true
     try {
       closeEstimateWorkspace()
       const cid = customerId.trim()
+      if (!cid) return false
+
+      const existingQuoteId = await findLatestQuoteIdForCustomer(supabase, userId, cid)
+      setEstimateSuite("home")
+      await loadQuotes()
+
+      if (existingQuoteId) {
+        setEstimateGuideCustomerPick(cid)
+        setCustomerPickerCustomerId(cid)
+        const opened = await openQuote(existingQuoteId)
+        return opened
+      }
+
       const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
       const { data, error } = await supabase
         .from("quotes")
@@ -1926,29 +2002,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
         alert(error.message || "Could not create estimate for this customer.")
         return false
       }
-      setEstimateSuite("home")
-      await loadQuotes()
       if (!data?.id) return false
       const quoteId = data.id as string
       const opened = await openQuote(quoteId)
       if (!opened) return false
-
-      setEstimateGuideCustomerPick(cid)
-      setCustomerPickerCustomerId(cid)
-      if (ctx?.jobDetailsText.trim()) setJobDetailsText(ctx.jobDetailsText)
-
-      if (ctx?.conversationPack.trim()) {
-        try {
-          const bullets = await fetchEstimateWizardBullets("conversation", ctx.conversationPack)
-          if (bullets.length > 0) {
-            const text = bullets.map((b) => `• ${b}`).join("\n")
-            saveEstimateGuideFlags(quoteId, { conversationScopeBullets: text })
-            setEstimateGuideFlags((f) => ({ ...f, conversationScopeBullets: text }))
-          }
-        } catch (e) {
-          console.warn("[quotes] customer prefill scope bullets", e instanceof Error ? e.message : e)
-        }
-      }
+      await prefillNewEstimateFromCustomerContext(quoteId, cid)
       return true
     } catch (err: unknown) {
       console.error(err)
@@ -2701,7 +2759,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return false
     }
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
-    const jobDetailsFromDb = quoteRowJobDetailsFromMetadata(row.metadata)
+    const jobDetailsFromDb = quoteJobDetailsFromMetadata(row.metadata)
     if (jobDetailsFromDb.trim()) setJobDetailsText(jobDetailsFromDb)
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
     const { data: items } = await supabase
@@ -2710,6 +2768,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
       .eq("quote_id", quoteId)
       .order("created_at", { ascending: true })
     setSelectedQuoteItems(items || [])
+
+    const sessionGuide = loadEstimateGuideFlags(quoteId)
+    const dbGuide = estimateGuideFlagsFromQuoteMetadata(row.metadata)
+    const mergedGuide: EstimateGuideFlags = {
+      ...dbGuide,
+      ...sessionGuide,
+      ...(row.customer_id
+        ? { customerLinkedViaGuide: true, customerSkipped: false }
+        : {}),
+      ...(jobDetailsFromDb.trim() ? { jobDetailsProvided: true, jobDetailsSkipped: false } : {}),
+      ...((items?.length ?? 0) > 0 ? { quoteItemsReady: true } : {}),
+    }
+    setEstimateGuideFlags(mergedGuide)
+    saveEstimateGuideFlags(quoteId, mergedGuide)
 
     if (userId) {
       const { data: jtRows } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")

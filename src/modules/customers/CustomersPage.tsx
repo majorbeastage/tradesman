@@ -2637,7 +2637,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     >
                                       <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling and estimates</div>
                                       <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                        Open Scheduling with this customer prefilled, or start an estimate draft linked to this customer.
+                                        Open Scheduling with this customer prefilled, or open their latest estimate (saved job details, line items, and notes reload).
                                       </p>
                                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                         <button
@@ -2678,7 +2678,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                             fontSize: 13,
                                           }}
                                         >
-                                          Estimate
+                                          Open estimate
                                         </button>
                                       </div>
                                     </div>
