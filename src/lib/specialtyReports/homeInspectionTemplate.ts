@@ -10,23 +10,32 @@ export const CONDITION_RATING_LABELS: Record<ConditionRating, string> = {
   na: "N/A",
 }
 
-/** Subtle emphasis when a finding is still not inspected (default). */
+const CONDITION_SELECT_TINT: Record<
+  ConditionRating,
+  { backgroundColor: string; borderColor: string; color: string; fontWeight?: number }
+> = {
+  satisfactory: { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", color: "#14532d" },
+  marginal: { backgroundColor: "#eff6ff", borderColor: "#bfdbfe", color: "#1e3a8a" },
+  deficient: { backgroundColor: "#fefce8", borderColor: "#fef08a", color: "#713f12" },
+  not_inspected: { backgroundColor: "#fff7f7", borderColor: "#fecaca", color: "#991b1b", fontWeight: 600 },
+  na: { backgroundColor: "#ffffff", borderColor: "#E5E7EB", color: "#111827" },
+}
+
+/** Light tinted backgrounds per rating; keeps select light in dark OS color-scheme. */
 export function conditionRatingSelectStyle(
   condition: ConditionRating,
   base: Record<string, string | number>,
 ): Record<string, string | number> {
-  if (condition !== "not_inspected") return base
+  const tint = CONDITION_SELECT_TINT[condition]
   return {
     ...base,
-    borderColor: "#fecaca",
-    backgroundColor: "#fff7f7",
-    color: "#991b1b",
-    fontWeight: 600,
+    ...tint,
+    background: tint.backgroundColor,
+    colorScheme: "light",
   }
 }
 
 export function conditionRatingOptionLabel(condition: ConditionRating): string {
-  if (condition === "not_inspected") return "! Not inspected"
   return CONDITION_RATING_LABELS[condition]
 }
 

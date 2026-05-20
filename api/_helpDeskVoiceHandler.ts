@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { createServiceSupabase, firstEnv, logCommunicationEvent, normalizePhone, pickFirstString } from "./_communications.js"
+import { createServiceSupabase, firstEnv, logCommunicationEvent, normalizePhone, pickFirstString, toTwilioE164 } from "./_communications.js"
 
 type HelpDeskOnSelect =
   | "dial"
@@ -9,6 +9,7 @@ type HelpDeskOnSelect =
   | "thanks"
   | "submenu"
   | "trouble_ticket"
+  | "billing"
 
 type HelpDeskOption = {
   id?: string
@@ -74,10 +75,17 @@ function normalizeOnSelect(o: HelpDeskOption, forward: string): HelpDeskOnSelect
     s === "thanks" ||
     s === "dial" ||
     s === "submenu" ||
-    s === "trouble_ticket"
+    s === "trouble_ticket" ||
+    s === "billing"
   )
     return s
   return forward ? "dial" : "thanks"
+}
+
+function resolveBillingForwardPhone(optionForward: string): string {
+  const fromOption = toTwilioE164(optionForward || "")
+  if (fromOption) return fromOption
+  return toTwilioE164(firstEnv("HELP_DESK_BILLING_FORWARD_PHONE", "HELP_DESK_BILLING_FORWARD_E164")) || ""
 }
 
 function normalizeMenuOptions(raw: HelpDeskOption[] | undefined): NormalizedMenuOption[] {
@@ -153,8 +161,14 @@ function helpDeskVoicemailInnerVerbs(origin: string, notifyIds: string[]): strin
   )
 }
 
-function buildHelpDeskVoicemailTwiml(origin: string, notifyIds: string[], prefixPlay?: string): string {
-  const inner = `${playVerbs(prefixPlay ?? "")}${helpDeskVoicemailInnerVerbs(origin, notifyIds)}`
+function buildHelpDeskVoicemailTwiml(
+  origin: string,
+  notifyIds: string[],
+  prefixPlay?: string,
+  prefixSay?: string
+): string {
+  const prefixSayXml = prefixSay ? `<Say ${SAY}>${xmlEscape(prefixSay)}</Say>` : ""
+  const inner = `${playVerbs(prefixPlay ?? "")}${prefixSayXml}${helpDeskVoicemailInnerVerbs(origin, notifyIds)}`
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${inner}</Response>`
 }
 
@@ -476,6 +490,40 @@ export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelRespon
         `<Response>` +
         playVerbs(choice.play_recording_url) +
         `<Say ${SAY}>Team voicemail is not available right now. Goodbye.</Say>` +
+        `<Hangup/>` +
+        `</Response>`
+      sendTwiml(res, twiml)
+      return
+    }
+
+    if (choice.on_select === "billing") {
+      const billingForward = resolveBillingForwardPhone(choice.forward_to_phone)
+      const payOnline =
+        "You can also pay securely in the Tradesman app under Payments, or use the secure payment link on your account email."
+      if (billingForward) {
+        const twiml =
+          `<?xml version="1.0" encoding="UTF-8"?>` +
+          `<Response>` +
+          playVerbs(choice.play_recording_url) +
+          `<Say ${SAY}>${xmlEscape(`Connecting you to billing. ${payOnline} Please hold.`)}</Say>` +
+          `<Dial timeout="45">${xmlEscape(billingForward)}</Dial>` +
+          `<Say ${SAY}>We could not reach billing. ${xmlEscape(payOnline)} Goodbye.</Say>` +
+          `<Hangup/>` +
+          `</Response>`
+        sendTwiml(res, twiml)
+        return
+      }
+      if (notifyUserIds.length > 0) {
+        const prefixSay =
+          `${payOnline} Our billing team is not available to answer live right now. Please leave a message after the tone and include your account email.`
+        sendTwiml(res, buildHelpDeskVoicemailTwiml(origin, notifyUserIds, choice.play_recording_url, prefixSay))
+        return
+      }
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<Response>` +
+        playVerbs(choice.play_recording_url) +
+        `<Say ${SAY}>${xmlEscape(`${payOnline} Goodbye.`)}</Say>` +
         `<Hangup/>` +
         `</Response>`
       sendTwiml(res, twiml)

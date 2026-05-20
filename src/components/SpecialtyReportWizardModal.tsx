@@ -1590,27 +1590,6 @@ export default function SpecialtyReportWizardModal({
                             <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{sub.label}</div>
                             {sub.hint ? <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{sub.hint}</div> : null}
                             <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                              {row.condition === "not_inspected" ? (
-                                <span
-                                  title="Not inspected"
-                                  aria-hidden
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    width: 22,
-                                    height: 22,
-                                    borderRadius: "50%",
-                                    background: "#fee2e2",
-                                    color: "#b91c1c",
-                                    fontWeight: 800,
-                                    fontSize: 13,
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  !
-                                </span>
-                              ) : null}
                               <select
                                 id={specialtyReportFieldDomId(`cond:sub:${sub.id}`)}
                                 value={row.condition}
@@ -1809,6 +1788,11 @@ export default function SpecialtyReportWizardModal({
           </div>
         </div>
       </div>
+      <SpecialtyReportVoiceFab
+        visible={Boolean(quoteId && speechSupported && phase !== "pick_type")}
+        listening={assistantListening}
+        onToggle={() => (assistantListening ? stopDictation() : startDictation())}
+      />
     </>
   )
 }
@@ -1835,4 +1819,70 @@ const primaryBtn: CSSProperties = {
   fontWeight: 800,
   fontSize: 13,
   cursor: "pointer",
+}
+
+/** Stays fixed while the report modal scrolls — tap to start/stop overall voice assist. */
+function SpecialtyReportVoiceFab({
+  visible,
+  listening,
+  onToggle,
+}: {
+  visible: boolean
+  listening: boolean
+  onToggle: () => void
+}) {
+  if (!visible) return null
+  return (
+    <>
+      <style>{`
+        @keyframes specialty-report-voice-fab-pulse {
+          0%, 100% { box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.4), 0 8px 22px rgba(249, 115, 22, 0.45); }
+          50% { box-shadow: 0 0 0 12px rgba(249, 115, 22, 0.12), 0 10px 28px rgba(249, 115, 22, 0.55); }
+        }
+        .specialty-report-voice-fab--active {
+          animation: specialty-report-voice-fab-pulse 1.35s ease-in-out infinite;
+        }
+      `}</style>
+      <button
+        type="button"
+        className={listening ? "specialty-report-voice-fab--active" : undefined}
+        aria-label={listening ? "Stop voice dictation" : "Start voice dictation"}
+        title={listening ? "Stop listening" : "Voice-to-text — stays on screen while you scroll"}
+        onClick={onToggle}
+        style={{
+          position: "fixed",
+          zIndex: 10054,
+          right: "calc((100vw - min(720px, 100vw - 24px)) / 2 + 14px)",
+          bottom: 28,
+          width: 52,
+          height: 52,
+          borderRadius: "50%",
+          border: listening ? "2px solid #fff" : `2px solid ${theme.border}`,
+          background: listening ? theme.primary : "#fff",
+          color: listening ? "#fff" : theme.primary,
+          cursor: "pointer",
+          boxShadow: listening ? undefined : "0 4px 18px rgba(15, 23, 42, 0.18)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 0,
+          transition: "background 0.2s, color 0.2s, border-color 0.2s",
+        }}
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path
+            d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z"
+            fill="currentColor"
+          />
+          <path
+            d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+    </>
+  )
 }

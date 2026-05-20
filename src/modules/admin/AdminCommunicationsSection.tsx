@@ -60,6 +60,7 @@ type HelpDeskOnSelect =
   | "thanks"
   | "submenu"
   | "trouble_ticket"
+  | "billing"
 
 type HelpDeskOption = {
   id: string
@@ -136,10 +137,24 @@ function inferHelpDeskOnSelect(row: Record<string, unknown>, forward: string): H
     s === "thanks" ||
     s === "dial" ||
     s === "submenu" ||
-    s === "trouble_ticket"
+    s === "trouble_ticket" ||
+    s === "billing"
   )
     return s
   return forward.trim() ? "dial" : "thanks"
+}
+
+function createHelpDeskBillingOption(): HelpDeskOption {
+  return {
+    id: crypto.randomUUID(),
+    digit: "4",
+    label: "Billing and payments",
+    enabled: true,
+    forward_to_phone: "",
+    depends_on_digit: "",
+    play_recording_url: "",
+    on_select: "billing",
+  }
 }
 
 function createHelpDeskOption(): HelpDeskOption {
@@ -961,9 +976,25 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                     <code style={{ fontSize: 11 }}>POST …/api/help-desk-voice</code>.
                   </p>
                 </div>
-                <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskOption()] }))} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
-                  Add option
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskOption()] }))} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "white", color: theme.text, cursor: "pointer" }}>
+                    Add option
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (helpDeskSettings.options.some((o) => !o.depends_on_digit && o.digit === "4")) {
+                        setError("Main menu digit 4 is already in use. Edit that row or pick another digit.")
+                        return
+                      }
+                      setError("")
+                      setHelpDeskSettings((prev) => ({ ...prev, options: [...prev.options, createHelpDeskBillingOption()] }))
+                    }}
+                    style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff7ed", color: "#9a3412", cursor: "pointer" }}
+                  >
+                    Add billing (press 4)
+                  </button>
+                </div>
               </div>
               <div
                 style={{
@@ -1068,9 +1099,11 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                             <option value="team_voicemail">Team voicemail (same as pressing 0)</option>
                             <option value="thanks">Thank you and hang up</option>
                             <option value="trouble_ticket">Trouble ticket (voicemail + AI transcript → admin Trouble Tickets)</option>
+                            <option value="billing">Billing (connect to billing team + online pay reminder)</option>
                           </select>
                           <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45 }}>
-                            Routing uses this dropdown. <strong>Open submenu</strong> only on main-menu rows; then add dependent rows for the second menu tier.
+                            Routing uses this dropdown. <strong>Open submenu</strong> only on main-menu rows; then add dependent rows for the second menu tier.{" "}
+                            <strong>Billing</strong> dials the number above, or Vercel <code style={{ fontSize: 10 }}>HELP_DESK_BILLING_FORWARD_PHONE</code> if the field is empty; without either, callers hear pay-online instructions and can leave team voicemail when notify IDs are set.
                           </span>
                         </label>
                         <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontSize: 13, marginTop: 12 }}>
@@ -1095,7 +1128,7 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 If the voice URL is set to <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear this menu. Use <code style={{ fontSize: 11 }}>help-desk-voice</code> here. <strong>Press 9</strong> is only announced when no menu row uses “Personal mailbox greeting” — otherwise use that row so callers are not offered two paths. For the <strong>main</strong> opening greeting, use “Main help desk greeting” and set <code style={{ fontSize: 11 }}>HELP_DESK_GREETING_RECORD_PIN</code> on Vercel (4+ digits).
               </div>
               <div>
-                <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Personal mailbox greeting</strong> sends callers to the same flow as the old “press 9” shortcut: they enter the user’s <strong>voicemail greeting PIN</strong> from Account (My T); the recording is saved to that <strong>user’s profile</strong>, not the help desk opening clip. That save runs on Vercel and <strong>requires</strong> env <code style={{ fontSize: 11 }}>SUPABASE_URL</code> and <code style={{ fontSize: 11 }}>SUPABASE_SERVICE_ROLE_KEY</code> (same as other Twilio webhooks). <strong>Dial</strong> needs a number; <strong>Open submenu</strong> needs dependent rows; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).
+                <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Personal mailbox greeting</strong> sends callers to the same flow as the old “press 9” shortcut: they enter the user’s <strong>voicemail greeting PIN</strong> from Account (My T); the recording is saved to that <strong>user’s profile</strong>, not the help desk opening clip. That save runs on Vercel and <strong>requires</strong> env <code style={{ fontSize: 11 }}>SUPABASE_URL</code> and <code style={{ fontSize: 11 }}>SUPABASE_SERVICE_ROLE_KEY</code> (same as other Twilio webhooks). <strong>Dial</strong> needs a number; <strong>Billing</strong> uses the forward field or <code style={{ fontSize: 11 }}>HELP_DESK_BILLING_FORWARD_PHONE</code> on Vercel; <strong>Open submenu</strong> needs dependent rows; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).
               </div>
             </div>
           </div>
