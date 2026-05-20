@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useIsMobile } from "../hooks/useIsMobile"
 import { useAuth } from "../contexts/AuthContext"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
@@ -16,8 +17,10 @@ import {
 import { SPECIALTY_REPORT_TYPE_LABELS, type SpecialtyReportTypeKey } from "../lib/specialtyReports/reportTypeIds"
 import {
   SPECIALTY_REPORT_REGISTRY_KEY,
+  defaultSpecialtyReportTitle,
   parseSpecialtyReportRegistry,
   upsertSpecialtyReportRegistryItem,
+  type SpecialtyReportRegistryItem,
 } from "../lib/specialtyReports/reportRecords"
 import {
   majorIdContainingSubsection,
@@ -208,6 +211,7 @@ export default function SpecialtyReportWizardModal({
   customerId = null,
   varianceAssigneeOptions = [],
 }: Props) {
+  const isMobile = useIsMobile()
   const { user } = useAuth()
   const accountDisplayName = useMemo(() => {
     const meta = user?.user_metadata as Record<string, unknown> | undefined
@@ -235,6 +239,11 @@ export default function SpecialtyReportWizardModal({
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [assignedUserId, setAssignedUserId] = useState<string>("")
+  /** Searchable label stored in specialty_reports_registry_v1.title */
+  const [reportTitle, setReportTitle] = useState("")
+  /** Customer this report is filed under (registry + estimate link on save). */
+  const [reportCustomerId, setReportCustomerId] = useState("")
+  const [customerOptions, setCustomerOptions] = useState<Array<{ id: string; label: string }>>([])
   /** False until loadDraftForType finishes — blocks autosave from wiping metadata before hydration. */
   const [draftHydrated, setDraftHydrated] = useState(false)
   /** Ctrl / voice: expand `<details>` for major findings sections. */
@@ -300,8 +309,14 @@ export default function SpecialtyReportWizardModal({
             reg.find((r) => r.id === reportKeyId) ??
             reg.find((r) => r.quote_id === quoteId && r.report_type === reportType)
           setAssignedUserId(hit?.assigned_user_id?.trim() ? hit.assigned_user_id.trim() : "")
+          setReportTitle(hit?.title?.trim() ?? (reportType ? defaultSpecialtyReportTitle(reportType) : ""))
+          setReportCustomerId(
+            hit?.customer_id?.trim() || (typeof customerId === "string" ? customerId.trim() : "") || "",
+          )
         } else {
           setAssignedUserId("")
+          setReportTitle("")
+          setReportCustomerId(typeof customerId === "string" ? customerId.trim() : "")
         }
         setDraftHydrated(true)
       } catch (e) {
@@ -311,8 +326,29 @@ export default function SpecialtyReportWizardModal({
         setLoadBusy(false)
       }
     },
-    [quoteId, userId, propertyAddressHint],
+    [quoteId, userId, propertyAddressHint, customerId],
   )
+
+  useEffect(() => {
+    if (!open || !userId || !supabase) {
+      setCustomerOptions([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
+      if (cancelled || error) return
+      setCustomerOptions(
+        (data ?? []).map((c) => ({
+          id: c.id,
+          label: (typeof c.display_name === "string" && c.display_name.trim()) || "Unnamed customer",
+        })),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, userId])
 
   const reset = useCallback(() => {
     setPhase("pick_type")
@@ -324,6 +360,8 @@ export default function SpecialtyReportWizardModal({
     setPreviewOpen(false)
     setSaveNote(null)
     setAssignedUserId("")
+    setReportTitle("")
+    setReportCustomerId("")
     setDraftHydrated(false)
     setFindingSectionOpen({})
   }, [propertyAddressHint])
@@ -350,7 +388,37 @@ export default function SpecialtyReportWizardModal({
     setSpeechSupported(Boolean(ctor))
   }, [open])
 
-  const persistRegistryAssignmentOnly = useCallback(async () => {
+  const buildRegistryRow = useCallback(
+    (existing: SpecialtyReportRegistryItem | undefined, nowIso: string): SpecialtyReportRegistryItem => {
+      const titleTrim = reportTitle.trim()
+      return {
+        id: `${quoteId}:${picked}`,
+        report_type: picked!,
+        quote_id: quoteId!,
+        customer_id: reportCustomerId.trim() || null,
+        assigned_user_id: assignedUserId.trim() || null,
+        title: titleTrim || defaultSpecialtyReportTitle(picked!),
+        status: existing?.status === "ready" ? "ready" : "draft",
+        updated_at: nowIso,
+      }
+    },
+    [quoteId, picked, reportCustomerId, assignedUserId, reportTitle],
+  )
+
+  const syncQuoteCustomerLink = useCallback(
+    async (customerIdToLink: string) => {
+      if (!quoteId || !userId || !supabase || !customerIdToLink.trim()) return
+      const { error } = await supabase
+        .from("quotes")
+        .update({ customer_id: customerIdToLink.trim(), updated_at: new Date().toISOString() })
+        .eq("id", quoteId)
+        .eq("user_id", userId)
+      if (error) throw error
+    },
+    [quoteId, userId],
+  )
+
+  const persistRegistryMeta = useCallback(async () => {
     if (!quoteId || !userId || !supabase || !picked) return
     try {
       const nowIso = new Date().toISOString()
@@ -363,28 +431,18 @@ export default function SpecialtyReportWizardModal({
           : {}
       const rows = parseSpecialtyReportRegistry(prev[SPECIALTY_REPORT_REGISTRY_KEY])
       const existing = rows.find((r) => r.id === reportId)
-      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, {
-        id: reportId,
-        report_type: picked,
-        quote_id: quoteId,
-        customer_id: customerId,
-        assigned_user_id: assignedUserId.trim() || null,
-        title:
-          existing?.title ??
-          (picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked]),
-        status: existing?.status === "ready" ? "ready" : "draft",
-        updated_at: nowIso,
-      })
+      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, buildRegistryRow(existing, nowIso))
       const { error: upErr } = await supabase
         .from("quotes")
         .update({ metadata: prev, updated_at: nowIso })
         .eq("id", quoteId)
         .eq("user_id", userId)
       if (upErr) throw upErr
+      if (reportCustomerId.trim()) await syncQuoteCustomerLink(reportCustomerId)
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e))
     }
-  }, [quoteId, userId, picked, customerId, assignedUserId])
+  }, [quoteId, userId, picked, buildRegistryRow, reportCustomerId, syncQuoteCustomerLink])
 
   const persistMetadata = useCallback(
     async (patch: Record<string, unknown>) => {
@@ -432,10 +490,19 @@ export default function SpecialtyReportWizardModal({
   useEffect(() => {
     if (!draftHydrated || !open || !quoteId || !picked) return
     const t = window.setTimeout(() => {
-      void persistRegistryAssignmentOnly()
+      void persistRegistryMeta()
     }, 450)
     return () => window.clearTimeout(t)
-  }, [assignedUserId, draftHydrated, open, persistRegistryAssignmentOnly, picked, quoteId])
+  }, [assignedUserId, draftHydrated, open, persistRegistryMeta, picked, quoteId, reportTitle, reportCustomerId])
+
+  const customerSelectOptions = useMemo(() => {
+    const opts = [...customerOptions]
+    const cid = reportCustomerId.trim()
+    if (cid && customerLabel && !opts.some((o) => o.id === cid)) {
+      opts.unshift({ id: cid, label: customerLabel })
+    }
+    return opts
+  }, [customerOptions, reportCustomerId, customerLabel])
 
   const varianceAssigneeSelectOptions = useMemo(() => {
     const opts = [...varianceAssigneeOptions]
@@ -447,9 +514,11 @@ export default function SpecialtyReportWizardModal({
   }, [varianceAssigneeOptions, assignedUserId])
 
   const headerLine = useMemo(() => {
-    if (picked && picked !== "home_inspection") return SPECIALTY_REPORT_TYPE_LABELS[picked]
-    return "Structure & property inspection"
-  }, [picked])
+    const custom = reportTitle.trim()
+    if (custom) return custom
+    if (picked) return defaultSpecialtyReportTitle(picked)
+    return "Specialty report"
+  }, [reportTitle, picked])
 
   const deficientCount = useMemo(() => {
     return Object.values(home.subsections).filter((s) => s.condition === "deficient").length
@@ -854,20 +923,10 @@ export default function SpecialtyReportWizardModal({
       const prev = data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? { ...(data.metadata as Record<string, unknown>) } : {}
       const rows = parseSpecialtyReportRegistry(prev[SPECIALTY_REPORT_REGISTRY_KEY])
       const existingRow = rows.find((r) => r.id === reportId)
-      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, {
-        id: reportId,
-        report_type: picked,
-        quote_id: quoteId,
-        customer_id: customerId,
-        assigned_user_id: assignedUserId || null,
-        title:
-          existingRow?.title ??
-          (picked === "home_inspection" ? "Structure & property inspection" : SPECIALTY_REPORT_TYPE_LABELS[picked]),
-        status: existingRow?.status === "ready" ? "ready" : "draft",
-        updated_at: nowIso,
-      })
+      prev[SPECIALTY_REPORT_REGISTRY_KEY] = upsertSpecialtyReportRegistryItem(rows, buildRegistryRow(existingRow, nowIso))
       const { error: upErr } = await supabase!.from("quotes").update({ metadata: prev, updated_at: nowIso }).eq("id", quoteId).eq("user_id", userId)
       if (upErr) throw upErr
+      if (reportCustomerId.trim()) await syncQuoteCustomerLink(reportCustomerId)
       setSaveNote("Report saved.")
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e))
@@ -1308,6 +1367,61 @@ export default function SpecialtyReportWizardModal({
             ✕
           </button>
         </div>
+
+        {quoteId && phase !== "pick_type" && picked ? (
+          <section
+            style={{
+              marginBottom: 12,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#475569", letterSpacing: "0.04em" }}>REPORT FILING</div>
+            <label style={{ ...lbl, fontSize: 12 }}>
+              Report name
+              <input
+                type="text"
+                value={reportTitle}
+                onChange={(e) => setReportTitle(e.target.value)}
+                placeholder={
+                  picked ? `e.g. ${defaultSpecialtyReportTitle(picked)} — ${propertyAddressHint || "address or site"}` : "Name for search"
+                }
+                style={theme.formInput}
+              />
+              <span style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>
+                Shown at the top of this wizard and in Estimates → Reports / the customer profile so you can find it quickly.
+              </span>
+            </label>
+            <label style={{ ...lbl, fontSize: 12 }}>
+              Save to customer
+              <select
+                value={reportCustomerId}
+                onChange={(e) => setReportCustomerId(e.target.value)}
+                style={theme.formInput}
+              >
+                <option value="">— No customer —</option>
+                {customerSelectOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              {customerLabel && reportCustomerId && customerOptions.find((c) => c.id === reportCustomerId)?.label !== customerLabel ? (
+                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>
+                  Estimate context showed <strong>{customerLabel}</strong>; this report is filed under the customer you select here.
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>
+                  Links this report on the customer&apos;s profile. Saving also attaches this estimate to that customer when one is selected.
+                </span>
+              )}
+            </label>
+          </section>
+        ) : null}
 
         {quoteId && varianceAssigneeSelectOptions.length > 0 ? (
           <section
@@ -1791,6 +1905,7 @@ export default function SpecialtyReportWizardModal({
       <SpecialtyReportVoiceFab
         visible={Boolean(quoteId && speechSupported && phase !== "pick_type")}
         listening={assistantListening}
+        isMobile={isMobile}
         onToggle={() => (assistantListening ? stopDictation() : startDictation())}
       />
     </>
@@ -1825,10 +1940,12 @@ const primaryBtn: CSSProperties = {
 function SpecialtyReportVoiceFab({
   visible,
   listening,
+  isMobile,
   onToggle,
 }: {
   visible: boolean
   listening: boolean
+  isMobile: boolean
   onToggle: () => void
 }) {
   if (!visible) return null
@@ -1851,11 +1968,11 @@ function SpecialtyReportVoiceFab({
         onClick={onToggle}
         style={{
           position: "fixed",
-          zIndex: 10054,
-          right: "calc((100vw - min(720px, 100vw - 24px)) / 2 + 14px)",
-          bottom: 28,
-          width: 52,
-          height: 52,
+          zIndex: 10060,
+          right: isMobile ? 20 : "calc((100vw - min(720px, 100vw - 24px)) / 2 + 14px)",
+          bottom: isMobile ? "max(20px, calc(12px + env(safe-area-inset-bottom, 0px)))" : 28,
+          width: isMobile ? 56 : 52,
+          height: isMobile ? 56 : 52,
           borderRadius: "50%",
           border: listening ? "2px solid #fff" : `2px solid ${theme.border}`,
           background: listening ? theme.primary : "#fff",

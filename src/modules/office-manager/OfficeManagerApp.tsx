@@ -31,6 +31,10 @@ import {
 } from "../../types/portal-builder"
 import BillingDueDashboardBanner from "../../components/BillingDueDashboardBanner"
 import DashboardQuickActions from "../../components/DashboardQuickActions"
+import SetupGuideModal from "../../components/SetupGuideModal"
+import GlobalAssistantFab from "../../components/GlobalAssistantFab"
+import { GlobalAssistantProvider } from "../../contexts/GlobalAssistantContext"
+import RegisterSetupGuideOpener from "../../components/RegisterSetupGuideOpener"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -481,7 +485,47 @@ function OfficeManagerAppContent() {
     if (page === "leads" || page === "conversations") setPage("dashboard")
   }, [page, portalConfig?.show_legacy_contractor_leads_conversations])
 
+  const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false)
+
+  useEffect(() => {
+    if (!user?.id || !supabase) {
+      setProfileMetadata({})
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta = data?.metadata
+        setProfileMetadata(meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
+
   return (
+    <GlobalAssistantProvider
+      setPage={setPage}
+      profileUserId={user?.id ?? null}
+      profileMetadata={profileMetadata}
+      onMetadataPatch={setProfileMetadata}
+    >
+    <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
+    <SetupGuideModal
+      open={setupGuideOpen}
+      onClose={() => setSetupGuideOpen(false)}
+      userId={user?.id ?? null}
+      profileMetadata={profileMetadata}
+      onMetadataPatch={setProfileMetadata}
+      setPage={setPage}
+    />
+    <GlobalAssistantFab />
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
       <ManagedUserBar />
 
@@ -532,7 +576,10 @@ function OfficeManagerAppContent() {
               cardLookOcean: t("dashboard.cardLookOcean"),
               cardLookSlate: t("dashboard.cardLookSlate"),
               cardLookPaper: t("dashboard.cardLookPaper"),
+              setupGuide: t("dashboard.quickSetupGuide"),
+              assistantPlaceholder: t("dashboard.assistantPlaceholder"),
             }}
+            onOpenSetupGuide={() => setSetupGuideOpen(true)}
           />
         </>
       )}
@@ -552,6 +599,7 @@ function OfficeManagerAppContent() {
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>
       )}
     </AppLayout>
+    </GlobalAssistantProvider>
   )
 }
 

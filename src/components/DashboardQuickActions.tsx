@@ -9,8 +9,6 @@ import { supabase } from "../lib/supabase"
 import {
   ALL_DASHBOARD_OPTIONAL_IDS,
   DASHBOARD_PALETTE_ONLY_IDS,
-  DEFAULT_DASHBOARD_TILE_SCHEME,
-  DASHBOARD_TILE_SCHEMES,
   mergeDashboardQuickLinksMetadata,
   normalizeDashboardOptionalOrder,
   parseDashboardQuickLinks,
@@ -18,6 +16,8 @@ import {
   type DashboardTileScheme,
 } from "../lib/dashboardQuickLinksPrefs"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
+import PlatformAssistantField from "./PlatformAssistantField"
+import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 
 const LS_OPTIONAL_ORDER = "tradesman_dashboard_optional_link_order_v2"
 
@@ -63,7 +63,10 @@ type Props = {
     cardLookOcean: string
     cardLookSlate: string
     cardLookPaper: string
+    setupGuide: string
+    assistantPlaceholder: string
   }
+  onOpenSetupGuide?: () => void
 }
 
 function schemeHoverBorder(scheme: DashboardTileScheme): string {
@@ -426,8 +429,11 @@ export default function DashboardQuickActions(props: Props) {
     profileUserId,
     dashboardDataUserId,
     authRole,
+    onOpenSetupGuide,
   } = props
+  const ga = useGlobalAssistantOptional()
   const fourth = resolveFourthCalendarState(props, labels)
+  const tileScheme: DashboardTileScheme = "paper"
   const reportingAllowed = authRole === "office_manager" || authRole === "admin"
 
   const go = (page: string, calendarSuite?: QueuedCalendarSuite) => {
@@ -441,7 +447,6 @@ export default function DashboardQuickActions(props: Props) {
     if (legacy) return legacy
     return normalizeDashboardOptionalOrder(undefined)
   })
-  const [tileScheme, setTileScheme] = useState<DashboardTileScheme>(DEFAULT_DASHBOARD_TILE_SCHEME)
   const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
   const [dragId, setDragId] = useState<DashboardOptionalQuickLinkId | null>(null)
@@ -482,8 +487,6 @@ export default function DashboardQuickActions(props: Props) {
         }
         const parsed = parseDashboardQuickLinks(data?.metadata && typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>).dashboard_quick_links : null)
         const fromCloud = parsed?.optional_order?.length ? normalizeDashboardOptionalOrder(parsed.optional_order) : null
-        if (parsed?.tile_scheme) setTileScheme(parsed.tile_scheme)
-        else setTileScheme(DEFAULT_DASHBOARD_TILE_SCHEME)
         if (fromCloud) {
           setOptionalOrder(fromCloud)
           setPersistNote("cloud")
@@ -514,7 +517,7 @@ export default function DashboardQuickActions(props: Props) {
           data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
             ? { ...(data.metadata as Record<string, unknown>) }
             : {}
-        const nextMeta = mergeDashboardQuickLinksMetadata(prevMeta, { optional_order: optionalOrder, tile_scheme: tileScheme })
+        const nextMeta = mergeDashboardQuickLinksMetadata(prevMeta, { optional_order: optionalOrder, tile_scheme: "paper" })
         const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
         if (cancelled) return
         if (upErr) throw upErr
@@ -526,7 +529,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [optionalOrder, tileScheme, profileUserId, prefsHydrated])
+  }, [optionalOrder, profileUserId, prefsHydrated])
 
   const optionalTiles = useMemo(() => {
     const vis: { id: DashboardOptionalQuickLinkId; show: boolean }[] = [
@@ -586,19 +589,6 @@ export default function DashboardQuickActions(props: Props) {
 
   const shell = dashShellStyle(isMobile, tileScheme)
 
-  const schemeChoiceLabel = (id: DashboardTileScheme): string => {
-    switch (id) {
-      case "ocean":
-        return labels.cardLookOcean
-      case "slate":
-        return labels.cardLookSlate
-      case "paper":
-        return labels.cardLookPaper
-      default:
-        return labels.cardLookEmber
-    }
-  }
-
   const grid4: CSSProperties = {
     display: "grid",
     gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))",
@@ -627,6 +617,22 @@ export default function DashboardQuickActions(props: Props) {
     }
     const rm = customize ? () => removeFromBar(id) : undefined
 
+    if (id === "setup_guide" && onOpenSetupGuide) {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.setupGuide}
+          accent="#6366f1"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => !customize && onOpenSetupGuide()}
+        />
+      )
+    }
     if (id === "settings" && showSettingsShortcut) {
       return (
         <Tile
@@ -818,34 +824,19 @@ export default function DashboardQuickActions(props: Props) {
             {customize ? labels.customizeDone : labels.customizeHint}
           </button>
         </div>
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(15,23,42,0.75)", marginBottom: 6 }}>{labels.cardLookLabel}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {DASHBOARD_TILE_SCHEMES.map((id) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  userModifiedRef.current = true
-                  setTileScheme(id)
-                }}
-                style={{
-                  padding: "5px 10px",
-                  borderRadius: 8,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  border: tileScheme === id ? `2px solid ${hoverBorder}` : "1px solid rgba(51,65,85,0.35)",
-                  background: tileScheme === id ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)",
-                  color: "#0f172a",
-                }}
-              >
-                {schemeChoiceLabel(id)}
-              </button>
-            ))}
+        {ga && !customize ? (
+          <div style={{ marginTop: 10 }}>
+            <PlatformAssistantField
+              value={ga.assistantText}
+              onChange={ga.setAssistantText}
+              onApply={(t) => ga.runAssistantCommand(t)}
+              placeholder={labels.assistantPlaceholder}
+              busy={ga.assistantBusy}
+              note={ga.assistantNote}
+              compact={isMobile}
+            />
           </div>
-          <p style={{ margin: "6px 0 0", fontSize: 10, color: "rgba(15,23,42,0.62)", maxWidth: 560, lineHeight: 1.4 }}>{labels.cardLookHint}</p>
-        </div>
+        ) : null}
         {customize ? (
           <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 640, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>

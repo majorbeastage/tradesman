@@ -4,6 +4,7 @@ import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
 import { reorderByIndex } from "../../lib/reorderArray"
+import { buildHelpDeskMenuSay, helpDeskMenuPreviewWarnings } from "../../lib/helpDeskMenuScript"
 import { AccountProfilePanel } from "../account/AccountPage"
 
 type ChannelRow = {
@@ -267,6 +268,28 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
       ].sort(),
     [helpDeskSettings.options],
   )
+
+  const helpDeskCallerPreview = useMemo(() => {
+    const notifyIds = helpDeskSettings.voicemail_notify_user_ids
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const hideNine = helpDeskSettings.options.some(
+      (o) => !o.depends_on_digit && o.enabled && o.on_select === "pin_greeting",
+    )
+    const script = buildHelpDeskMenuSay(helpDeskSettings.options, notifyIds.length > 0, !hideNine)
+    const roots = helpDeskSettings.options.filter(
+      (o) => o.enabled && o.digit && o.label && !o.depends_on_digit,
+    )
+    const menuOn = helpDeskSettings.menu_enabled && roots.length > 0
+    const warnings = helpDeskMenuPreviewWarnings({
+      menu_enabled: helpDeskSettings.menu_enabled,
+      options: helpDeskSettings.options,
+      greeting_mode: helpDeskSettings.greeting_mode,
+      voicemail_notify_user_ids: helpDeskSettings.voicemail_notify_user_ids,
+    })
+    return { script, menuOn, roots: roots.length, warnings }
+  }, [helpDeskSettings])
 
   useEffect(() => {
     if (!supabase || mode !== "all_users_insights") return
@@ -932,6 +955,42 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
               <input type="checkbox" checked={helpDeskSettings.menu_enabled} onChange={(e) => setHelpDeskSettings((prev) => ({ ...prev, menu_enabled: e.target.checked }))} />
               Enable keypad menu options after the greeting
             </label>
+            <div
+              style={{
+                padding: "12px 14px",
+                borderRadius: 10,
+                border: "1px solid #93c5fd",
+                background: "#eff6ff",
+                fontSize: 13,
+                color: "#1e3a8a",
+                lineHeight: 1.55,
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>What callers hear (not inside your greeting recording)</div>
+              <p style={{ margin: "0 0 8px" }}>
+                Twilio plays your <strong>opening greeting</strong> first (text-to-speech or uploaded audio). Then the server speaks your{" "}
+                <strong>keypad menu</strong> in a second voice clip. You do <strong>not</strong> need to record “press 1 for…” into the greeting file — configure rows below and click{" "}
+                <strong>Save help desk</strong>.
+              </p>
+              {helpDeskCallerPreview.menuOn && helpDeskCallerPreview.script ? (
+                <p style={{ margin: "0 0 8px", fontStyle: "italic", color: "#334155" }}>
+                  After the greeting: “{helpDeskCallerPreview.script}”
+                </p>
+              ) : (
+                <p style={{ margin: "0 0 8px", color: "#b45309", fontWeight: 600 }}>
+                  Menu is off or no main-menu rows — callers will not hear keypad options until you fix the items below.
+                </p>
+              )}
+              {helpDeskCallerPreview.warnings.length > 0 ? (
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {helpDeskCallerPreview.warnings.map((w) => (
+                    <li key={w} style={{ marginBottom: 4 }}>
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
                 Voicemail notify user IDs (comma-separated profile UUIDs)
@@ -1125,7 +1184,10 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 <strong>Communication events</strong>.
               </div>
               <div style={{ padding: "8px 10px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", color: "#9a3412" }}>
-                If the voice URL is set to <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear this menu. Use <code style={{ fontSize: 11 }}>help-desk-voice</code> here. <strong>Press 9</strong> is only announced when no menu row uses “Personal mailbox greeting” — otherwise use that row so callers are not offered two paths. For the <strong>main</strong> opening greeting, use “Main help desk greeting” and set <code style={{ fontSize: 11 }}>HELP_DESK_GREETING_RECORD_PIN</code> on Vercel (4+ digits).
+                <strong>Twilio (required):</strong> Toll-free number → Voice → <strong>A call comes in</strong> → Webhook <strong>POST</strong>{" "}
+                <code style={{ fontSize: 11 }}>{typeof window !== "undefined" ? window.location.origin : ""}/api/help-desk-voice</code>. If this URL points to{" "}
+                <code style={{ fontSize: 11 }}>/api/voicemail-greeting</code> instead, callers never hear the admin menu. After saving here, call the line — options are spoken automatically, not from the greeting MP3. Optional check: open{" "}
+                <code style={{ fontSize: 11 }}>/api/help-desk-voice</code> in a browser (GET) to see <code style={{ fontSize: 11 }}>live_menu</code> from production. <strong>Press 9</strong> is only announced when no menu row uses “Personal mailbox greeting”. Main opening greeting recording uses menu action “Main help desk greeting” + Vercel <code style={{ fontSize: 11 }}>HELP_DESK_GREETING_RECORD_PIN</code>.
               </div>
               <div>
                 <strong>Save help desk</strong> writes to <code style={{ fontSize: 11 }}>platform_settings.tradesman_help_desk</code> — the next inbound call uses that JSON. <strong>Personal mailbox greeting</strong> sends callers to the same flow as the old “press 9” shortcut: they enter the user’s <strong>voicemail greeting PIN</strong> from Account (My T); the recording is saved to that <strong>user’s profile</strong>, not the help desk opening clip. That save runs on Vercel and <strong>requires</strong> env <code style={{ fontSize: 11 }}>SUPABASE_URL</code> and <code style={{ fontSize: 11 }}>SUPABASE_SERVICE_ROLE_KEY</code> (same as other Twilio webhooks). <strong>Dial</strong> needs a number; <strong>Billing</strong> uses the forward field or <code style={{ fontSize: 11 }}>HELP_DESK_BILLING_FORWARD_PHONE</code> on Vercel; <strong>Open submenu</strong> needs dependent rows; <strong>Team voicemail</strong> matches key 0 and needs notify IDs; <strong>Trouble ticket</strong> records voicemail with Twilio transcription and creates a <code style={{ fontSize: 11 }}>CALL-</code> ticket (see admin Trouble tickets + Vercel env <code style={{ fontSize: 11 }}>HELP_DESK_TICKET_*</code>).

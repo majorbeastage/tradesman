@@ -29,6 +29,7 @@
  * **1.4.22** — Native: request notification permission when MyT push is opted in (startup + toggling the checkbox); clearer `push-test` error text (FCM secret, device rows, non-2xx bodies).
  * **2.0.0** — Major portal release: estimates UX (AI guidance, customer-copy attachments in PDF/email preview), payments/billing portal hardening, dashboard quick actions + today’s to-do, insurance/reporting placeholders, lead fit & urgency UI, auth/password UX, calendar team management & OM policies, client-facing copy cleanup, attachment thumbnails, and assorted mobile/admin fixes.
  * **2.0.1** — Estimate workspace: Start Quote guide, scope assistant (OpenAI line suggestions), Conversations label, collapsible customer/templates, status cues.
+ * **2.1.0** — Setup Guide wizard (initial + adjustment modes), dashboard platform assistant with voice, global indigo assistant FAB, paper quick-link theme, help desk menu playback fix.
  *
  * @see CopyrightVersionFooter
  */

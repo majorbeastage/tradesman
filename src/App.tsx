@@ -44,6 +44,10 @@ import {
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
+import SetupGuideModal from "./components/SetupGuideModal"
+import GlobalAssistantFab from "./components/GlobalAssistantFab"
+import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
+import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
@@ -162,8 +166,47 @@ function MainApp() {
 
   const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
   const currentPageTitle = formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
+  const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false)
+
+  useEffect(() => {
+    if (!user?.id || !supabase) {
+      setProfileMetadata({})
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta = data?.metadata
+        setProfileMetadata(meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   return (
+    <GlobalAssistantProvider
+      setPage={setPage}
+      profileUserId={user?.id ?? null}
+      profileMetadata={profileMetadata}
+      onMetadataPatch={setProfileMetadata}
+    >
+    <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
+    <SetupGuideModal
+      open={setupGuideOpen}
+      onClose={() => setSetupGuideOpen(false)}
+      userId={user?.id ?? null}
+      profileMetadata={profileMetadata}
+      onMetadataPatch={setProfileMetadata}
+      setPage={setPage}
+    />
+    <GlobalAssistantFab />
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
       {authRole === "demo_user" && (
         <div
@@ -258,7 +301,10 @@ function MainApp() {
               cardLookOcean: t("dashboard.cardLookOcean"),
               cardLookSlate: t("dashboard.cardLookSlate"),
               cardLookPaper: t("dashboard.cardLookPaper"),
+              setupGuide: t("dashboard.quickSetupGuide"),
+              assistantPlaceholder: t("dashboard.assistantPlaceholder"),
             }}
+            onOpenSetupGuide={() => setSetupGuideOpen(true)}
           />
           ) : null}
         </>
@@ -284,6 +330,7 @@ function MainApp() {
         </div>
       )}
     </AppLayout>
+    </GlobalAssistantProvider>
   )
 }
 

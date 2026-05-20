@@ -1,4 +1,4 @@
-import type { SpecialtyReportTypeKey } from "./reportTypeIds"
+import { SPECIALTY_REPORT_TYPE_LABELS, type SpecialtyReportTypeKey } from "./reportTypeIds"
 
 export const SPECIALTY_REPORT_REGISTRY_KEY = "specialty_reports_registry_v1"
 
@@ -11,6 +11,22 @@ export type SpecialtyReportRegistryItem = {
   title: string
   status: "draft" | "ready"
   updated_at: string
+}
+
+export function defaultSpecialtyReportTitle(reportType: SpecialtyReportTypeKey): string {
+  if (reportType === "home_inspection") return "Structure & property inspection"
+  return SPECIALTY_REPORT_TYPE_LABELS[reportType] ?? "Report"
+}
+
+/** Registry customer wins; otherwise the estimate’s linked customer. */
+export function specialtyReportLinkedCustomerId(
+  row: SpecialtyReportRegistryItem,
+  quoteCustomerId?: string | null,
+): string | null {
+  const fromRow = row.customer_id?.trim()
+  if (fromRow) return fromRow
+  const fromQuote = typeof quoteCustomerId === "string" ? quoteCustomerId.trim() : ""
+  return fromQuote || null
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

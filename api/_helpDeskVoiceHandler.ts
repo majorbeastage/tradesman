@@ -213,11 +213,38 @@ function buildHelpDeskGreetingRecordTwiml(origin: string): string {
 
 export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method === "GET") {
+    let menuPreview: { menu_enabled: boolean; root_options: number; script: string } | null = null
+    try {
+      const supabase = createServiceSupabase()
+      const { data } = await supabase
+        .from("platform_settings")
+        .select("value")
+        .eq("key", "tradesman_help_desk")
+        .limit(1)
+        .maybeSingle()
+      const settings = data?.value && typeof data.value === "object" ? (data.value as HelpDeskPayload) : {}
+      const options = normalizeMenuOptions(settings.options)
+      const rootOptions = options.filter((o) => o.enabled && !o.depends_on_digit)
+      const menuExplicitOff = settings.menu_enabled === false
+      const menuEnabled = !menuExplicitOff && rootOptions.length > 0
+      const notifyUserIds = parseNotifyUserIds(settings.voicemail_notify_user_ids)
+      const hideNine = rootOptions.some((o) => o.on_select === "pin_greeting")
+      menuPreview = {
+        menu_enabled: menuEnabled,
+        root_options: rootOptions.length,
+        script: menuEnabled
+          ? buildMenuSay(rootOptions, notifyUserIds.length > 0, !hideNine)
+          : "",
+      }
+    } catch {
+      menuPreview = null
+    }
     res.status(200).json({
       ok: true,
       route: "help-desk-voice",
       hint:
-        "Set your Twilio toll-free Voice webhook (POST) to this URL for the Tradesman help desk menu. Use /api/voicemail-greeting only if you use a separate number for PIN greeting updates.",
+        "Set your Twilio toll-free Voice webhook (POST) to this URL for the Tradesman help desk menu. Keypad options are spoken by the server after the opening greeting — they are not part of the uploaded greeting recording. Use /api/voicemail-greeting only for the PIN mailbox-greeting flow (or press 9).",
+      live_menu: menuPreview,
     })
     return
   }
@@ -423,13 +450,13 @@ export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelRespon
       }
       const menuText = buildMenuSay(subRows, false, false)
       const action = gatherActionUrl(selfUrl, choice.digit)
+      const menuSay = menuText ? `<Say ${SAY}>${xmlEscape(menuText)}</Say>` : ""
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>` +
         `<Response>` +
         playVerbs(choice.play_recording_url) +
-        `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20">` +
-        `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
-        `</Gather>` +
+        menuSay +
+        `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20" />` +
         `</Response>`
       sendTwiml(res, twiml)
       return
@@ -565,15 +592,15 @@ export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelRespon
   if (menuEnabled) {
     const menuText = buildMenuSay(rootOptions, notifyUserIds.length > 0, !hidePersonalGreetingNineShortcut)
     const action = gatherActionUrl(selfUrl, "")
-    // Important: do NOT put <Record> or voicemail after </Gather> — on timeout Twilio runs those verbs immediately,
-    // which skipped the menu and dumped callers into voicemail.
+    // Speak the menu after the opening clip (outside <Gather>). Nested <Say> inside <Gather> after a long <Play>
+    // is easy to miss on some calls; verbs before <Gather> always run in order, then Twilio waits for a digit.
+    const menuSay = menuText ? `<Say ${SAY}>${xmlEscape(menuText)}</Say>` : ""
     const twiml =
       `<?xml version="1.0" encoding="UTF-8"?>` +
       `<Response>` +
       greetingNode +
-      `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20">` +
-      `<Say ${SAY}>${xmlEscape(menuText)}</Say>` +
-      `</Gather>` +
+      menuSay +
+      `<Gather numDigits="1" action="${xmlEscape(action)}" method="POST" timeout="20" />` +
       `</Response>`
     sendTwiml(res, twiml)
     return

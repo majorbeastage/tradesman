@@ -24,7 +24,7 @@ VALUES (
     'greeting_mode', 'ai_text',
     'greeting_text', 'Thank you for calling Tradesman. Please listen carefully to the following options.',
     'greeting_recording_url', '',
-    'menu_enabled', false,
+    'menu_enabled', true,
     'options', jsonb_build_array(
       jsonb_build_object('digit', '1', 'label', 'Customer care', 'enabled', true),
       jsonb_build_object('digit', '2', 'label', 'Technical support', 'enabled', true)

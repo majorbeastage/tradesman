@@ -1,6 +1,7 @@
 /** Persisted under `profiles.metadata.dashboard_quick_links`. */
 
 export type DashboardOptionalQuickLinkId =
+  | "setup_guide"
   | "settings"
   | "payments"
   | "insurance"
@@ -10,6 +11,7 @@ export type DashboardOptionalQuickLinkId =
   | "today_todo"
 
 export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>([
+  "setup_guide",
   "settings",
   "payments",
   "insurance",
@@ -23,6 +25,7 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
 export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = ["job_types", "today_todo"]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [
+  "setup_guide",
   "insurance",
   "customer_payments_soon",
   "reporting",
@@ -35,7 +38,7 @@ export type DashboardTileScheme = "ember" | "ocean" | "slate" | "paper"
 
 export const DASHBOARD_TILE_SCHEMES: DashboardTileScheme[] = ["ember", "ocean", "slate", "paper"]
 
-export const DEFAULT_DASHBOARD_TILE_SCHEME: DashboardTileScheme = "ember"
+export const DEFAULT_DASHBOARD_TILE_SCHEME: DashboardTileScheme = "paper"
 
 export type DashboardQuickLinksStored = {
   v: 1

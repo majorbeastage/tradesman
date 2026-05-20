@@ -44,7 +44,12 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
-import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry, type SpecialtyReportRegistryItem } from "../../lib/specialtyReports/reportRecords"
+import {
+  SPECIALTY_REPORT_REGISTRY_KEY,
+  parseSpecialtyReportRegistry,
+  specialtyReportLinkedCustomerId,
+  type SpecialtyReportRegistryItem,
+} from "../../lib/specialtyReports/reportRecords"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 
@@ -873,24 +878,26 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         setCustomerReports([])
         return
       }
-      const { data, error } = await supabase
-        .from("quotes")
-        .select("id, metadata")
-        .eq("user_id", userId)
-        .eq("customer_id", selectedCustomer.id)
+      const { data, error } = await supabase.from("quotes").select("id, customer_id, metadata").eq("user_id", userId)
       if (cancelled) return
       if (error || !data) {
         setCustomerReports([])
         return
       }
       const rows: SpecialtyReportRegistryItem[] = []
-      for (const q of data as Array<{ id: string; metadata?: unknown }>) {
+      const seen = new Set<string>()
+      for (const q of data as Array<{ id: string; customer_id?: string | null; metadata?: unknown }>) {
         const meta =
           q.metadata && typeof q.metadata === "object" && !Array.isArray(q.metadata)
             ? (q.metadata as Record<string, unknown>)
             : {}
         const parsed = parseSpecialtyReportRegistry(meta[SPECIALTY_REPORT_REGISTRY_KEY]).filter((r) => r.quote_id === q.id)
-        rows.push(...parsed)
+        for (const r of parsed) {
+          if (specialtyReportLinkedCustomerId(r, q.customer_id) !== selectedCustomer.id) continue
+          if (seen.has(r.id)) continue
+          seen.add(r.id)
+          rows.push(r)
+        }
       }
       rows.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
       setCustomerReports(rows)

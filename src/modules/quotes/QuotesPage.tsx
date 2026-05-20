@@ -25,6 +25,7 @@ import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomation
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { QuoteLineItemsMobileCards } from "./QuoteLineItemsMobileCards"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import {
   loadAttachmentsByCommunicationEventIds,
@@ -412,6 +413,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [librarySection, setLibrarySection] = useState<
     "quick_access" | "previous_estimates" | "estimate_line_items" | "job_types" | "reports"
   >("quick_access")
+  const [reportsLibrarySearch, setReportsLibrarySearch] = useState("")
   const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
   const [pastLibSearch, setPastLibSearch] = useState("")
   const [pastLibStatus, setPastLibStatus] = useState("")
@@ -5040,14 +5042,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
             {librarySection === "reports" ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
-                  Open saved draft reports from any estimate, or jump into report editing.
+                  Open saved draft reports from any estimate, or jump into report editing. Search by report name or customer.
                 </p>
+                <input
+                  type="search"
+                  value={reportsLibrarySearch}
+                  onChange={(e) => setReportsLibrarySearch(e.target.value)}
+                  placeholder="Search report name or customer…"
+                  style={{ ...theme.formInput, maxWidth: 360 }}
+                />
                 {quotes.length === 0 ? (
                   <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>No estimates found yet.</p>
                 ) : (
-                  quotes.map((q) => {
+                  quotes
+                    .map((q) => {
                     const meta = q.metadata && typeof q.metadata === "object" ? q.metadata : {}
                     const rows = parseSpecialtyReportRegistry((meta as Record<string, unknown>)[SPECIALTY_REPORT_REGISTRY_KEY]).filter((r) => r.quote_id === q.id)
+                    const customerName = q.customers?.display_name?.trim() || ""
+                    const qSearch = reportsLibrarySearch.trim().toLowerCase()
+                    const rowsFiltered = qSearch
+                      ? rows.filter(
+                          (r) =>
+                            r.title.toLowerCase().includes(qSearch) ||
+                            customerName.toLowerCase().includes(qSearch) ||
+                            q.id.toLowerCase().includes(qSearch),
+                        )
+                      : rows
+                    if (qSearch && rowsFiltered.length === 0) return null
                     return (
                       <div
                         key={q.id}
@@ -5071,14 +5092,34 @@ export default function QuotesPage(_props: QuotesPageProps) {
                           </button>
                         </div>
                         <div style={{ fontSize: 12, color: "#475569" }}>
-                          {rows.length > 0
-                            ? `Saved reports: ${rows.map((r) => `${r.title} (${new Date(r.updated_at).toLocaleDateString()})`).join(", ")}`
-                            : "No saved reports yet on this estimate."}
+                          {rowsFiltered.length > 0
+                            ? `Saved reports: ${rowsFiltered.map((r) => `${r.title} (${new Date(r.updated_at).toLocaleDateString()})`).join(", ")}`
+                            : qSearch
+                              ? null
+                              : "No saved reports yet on this estimate."}
                         </div>
                       </div>
                     )
                   })
+                    .filter(Boolean)
                 )}
+                {reportsLibrarySearch.trim() &&
+                quotes.every((q) => {
+                  const meta = q.metadata && typeof q.metadata === "object" ? q.metadata : {}
+                  const rows = parseSpecialtyReportRegistry((meta as Record<string, unknown>)[SPECIALTY_REPORT_REGISTRY_KEY]).filter(
+                    (r) => r.quote_id === q.id,
+                  )
+                  const customerName = q.customers?.display_name?.trim() || ""
+                  const qSearch = reportsLibrarySearch.trim().toLowerCase()
+                  return !rows.some(
+                    (r) =>
+                      r.title.toLowerCase().includes(qSearch) ||
+                      customerName.toLowerCase().includes(qSearch) ||
+                      q.id.toLowerCase().includes(qSearch),
+                  )
+                }) ? (
+                  <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>No reports match that search.</p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -6508,7 +6549,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     </ul>
                   ) : null}
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "8px",
+                    alignItems: "flex-end",
+                    ...(isMobile ? { flexDirection: "column", alignItems: "stretch" } : {}),
+                  }}
+                >
                   <input
                     type="number"
                     min="0"
@@ -6516,7 +6565,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     placeholder="Qty"
                     value={newItemQuantity}
                     onChange={(e) => setNewItemQuantity(e.target.value)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: "80px" }}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "80px", boxSizing: "border-box" }}
                   />
                   {estimateLineTemplateOffered("eli_show_manpower") ? (
                     <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -6527,11 +6576,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         step={1}
                         value={newItemManpower}
                         onChange={(e) => setNewItemManpower(e.target.value)}
-                        style={{ ...theme.formInput, padding: "6px 10px", width: "72px" }}
+                        style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "72px", boxSizing: "border-box" }}
                       />
                     </label>
                   ) : null}
-                  <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label
+                    style={{
+                      fontSize: 12,
+                      color: theme.text,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      ...(isMobile ? { width: "100%" } : {}),
+                    }}
+                  >
                     Min $
                     <input
                       type="number"
@@ -6540,7 +6598,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       placeholder="optional"
                       value={newItemMinimum}
                       onChange={(e) => setNewItemMinimum(e.target.value)}
-                      style={{ ...theme.formInput, padding: "6px 10px", width: "88px" }}
+                      style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "88px", boxSizing: "border-box" }}
                     />
                   </label>
                   <input
@@ -6549,7 +6607,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     placeholder="Unit price"
                     value={newItemUnitPrice}
                     onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: "100px" }}
+                    style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "100px", boxSizing: "border-box" }}
                   />
                   <button
                     type="button"
@@ -6563,6 +6621,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       borderRadius: "6px",
                       cursor: "pointer",
                       fontSize: "14px",
+                      width: isMobile ? "100%" : undefined,
                     }}
                   >
                     {addItemLoading ? "Adding..." : "Add line item"}
@@ -6572,10 +6631,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 </div>
               </details>
 
+              {isMobile ? (
+                <QuoteLineItemsMobileCards
+                  items={selectedQuoteItems}
+                  quoteLineDrafts={quoteLineDrafts}
+                  setQuoteLineDrafts={setQuoteLineDrafts}
+                  showManpower={estimateLineTemplateOffered("eli_show_manpower")}
+                  getItemDisplay={getItemDisplay}
+                  persistQuoteItemUpdate={persistQuoteItemUpdate}
+                  mergeQuoteItemMetadataRow={mergeQuoteItemMetadataRow}
+                  deleteQuoteItemRow={deleteQuoteItemRow}
+                  estimateSubtotal={spreadsheetEstimateSubtotal}
+                />
+              ) : (
               <table
                 style={{
                   width: "100%",
-                  minWidth: isMobile ? "640px" : "100%",
                   borderCollapse: "collapse",
                   marginTop: "8px",
                   border: "1px solid #cbd5e1",
@@ -6807,6 +6878,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </tfoot>
                 ) : null}
               </table>
+              )}
 
               <div ref={reviewSendSectionRef} style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}>
                 <div
