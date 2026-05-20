@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, useMemo, useRef, type ChangeEvent, type CSSProperties, type RefObject } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
-import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
   formatDurationFieldFromMinutes,
   parseDurationFieldToMinutes,
@@ -42,12 +41,6 @@ import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "../../lib/defaultEstimateLegal"
 import {
-  resolveRecurrenceFromPortal,
-  applyRecurrenceEndLimitsFromPortal,
-  computeOccurrenceStarts,
-  intervalsOverlap,
-} from "../../lib/calendarRecurrence"
-import {
   computeQuoteLineTotal,
   materialDescriptionsFromQuoteItemRows,
   mergeMaterialsListsForCalendar,
@@ -79,6 +72,14 @@ import {
   quoteJobDetailsFromMetadata,
 } from "../../lib/estimateQuoteMetadata"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
+import {
+  bumpCustomerLastActivityAt,
+  logEstimateScheduledCommunicationEvent,
+} from "../../lib/customerSchedulingActivity"
+import {
+  notifyCalendarStatusScheduled,
+  scheduleEstimateOnCalendar,
+} from "../../lib/scheduleEstimateOnCalendar"
 import {
   filterEstimateScopeSuggestions,
   normalizeScopeLineKind,
@@ -906,6 +907,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const showQuotesCustomerPayment =
     getPageActionVisible(portalConfig, "quotes", "customer_payment") &&
     getOmPageActionVisible(portalConfig, "quotes", "customer_payment")
+  const showQuotesAddToCalendar =
+    getPageActionVisible(portalConfig, "quotes", "add_quote_to_calendar") &&
+    getOmPageActionVisible(portalConfig, "quotes", "add_quote_to_calendar")
   const portalCustomerPayOnlyAfterEstimateSent = portalConfig?.customer_pay_only_after_estimate_sent === true
   const estimateEligibleForCustomerPayShare = useMemo(() => {
     if (!portalCustomerPayOnlyAfterEstimateSent) return true
@@ -2380,6 +2384,36 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     if (added > 0) void refreshQuoteItemsOnly()
     return `Added ${added} item${added === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped}.` : "."}`
+  }
+
+  function openAddToCalendarFromEstimate() {
+    if (!selectedQuote?.id) return
+    const cust =
+      quoteCustomerForm.name.trim() ||
+      (selectedQuote.customers as { display_name?: string | null } | undefined)?.display_name?.trim() ||
+      "Job"
+    const jtId = String((selectedQuote as QuoteRow).job_type_id ?? "").trim()
+    const jtName =
+      quoteDetailJobTypes.find((j) => j.id === jtId)?.name ?? jobTypes.find((j) => j.id === jtId)?.name ?? ""
+    setCalTitle(jtName ? `${cust} — ${jtName}` : cust)
+    setCalJobTypeId(jtId)
+    setCalNotes(jobDetailsText.trim().slice(0, 2000))
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    setCalDate(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+    )
+    setCalTime("09:00")
+    const jt = jobTypes.find((j) => j.id === jtId)
+    if (jt) {
+      const mins =
+        quoteCalTimeIncrement === 60
+          ? Math.max(60, Math.round(jt.duration_minutes / 60) * 60)
+          : Math.max(15, jt.duration_minutes)
+      setCalDurationInput(formatDurationFieldFromMinutes(mins, quoteCalTimeIncrement))
+    }
+    setCalendarTargetUserId(authUserId || userId || "")
+    setShowAddToCalendar(true)
   }
 
   async function handleGuideQuoteItemsAiFromJobDetails(): Promise<string> {
@@ -5116,6 +5150,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 >
                                   {quotePdfBusy ? "Working…" : "Preview Estimate"}
                                 </button>
+                                {showQuotesAddToCalendar ? (
+                                  <button
+                                    type="button"
+                                    disabled={!selectedQuote.customer_id || addToCalendarLoading}
+                                    title={
+                                      selectedQuote.customer_id
+                                        ? "Schedule this estimate on the calendar"
+                                        : "Link a customer on this estimate before scheduling"
+                                    }
+                                    onClick={() => openAddToCalendarFromEstimate()}
+                                    style={{
+                                      padding: "8px 14px",
+                                      borderRadius: 8,
+                                      border: `2px solid ${theme.primary}`,
+                                      background: "#fff7ed",
+                                      cursor: !selectedQuote.customer_id || addToCalendarLoading ? "not-allowed" : "pointer",
+                                      fontWeight: 800,
+                                      fontSize: 14,
+                                      color: theme.primary,
+                                      opacity: !selectedQuote.customer_id ? 0.55 : 1,
+                                    }}
+                                  >
+                                    {addToCalendarLoading ? "Scheduling…" : "Add to calendar"}
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   aria-label="Close quote detail"
@@ -7173,148 +7232,78 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <button
                   disabled={addToCalendarLoading}
                   onClick={async () => {
-                    if (!supabase || !calTitle.trim()) return
+                    if (!supabase || !userId || !calTitle.trim() || !selectedQuote?.id) return
                     setAddToCalendarLoading(true)
-                    const quoteTotal = selectedQuoteItems.reduce((sum, item) => {
-                      const { tot } = getItemDisplay(item)
-                      return sum + (typeof tot === "number" && !Number.isNaN(tot) ? tot : 0)
-                    }, 0)
-                    const start = parseLocalDateTime(calDate, calTime)
-                    if (Number.isNaN(start.getTime())) {
-                      setAddToCalendarLoading(false)
-                      alert("Invalid date or time.")
-                      return
-                    }
-                    const durMinutes = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
-                    if (durMinutes == null) {
-                      setAddToCalendarLoading(false)
-                      alert("Enter a valid duration (at least 15 minutes).")
-                      return
-                    }
-                    const durationMs = durMinutes * 60 * 1000
-                    /**
-                     * Quotes -> Add to Calendar should default to ONE event.
-                     * Recurrence only applies when explicitly enabled in the quote scheduling controls.
-                     */
-                    let series = null as ReturnType<typeof resolveRecurrenceFromPortal> | null
-                    if (quoteRecurrenceExplicitlyEnabled(quoteCalPortalValues)) {
-                      const recurrenceFromQuote = resolveRecurrenceFromPortal(quoteCalendarItems, quoteCalPortalValues)
-                      if (recurrenceFromQuote) {
-                        series = applyRecurrenceEndLimitsFromPortal(quoteCalendarItems, quoteCalPortalValues, recurrenceFromQuote)
-                      }
-                    }
-                    const starts = series ? computeOccurrenceStarts(start, series) : [start]
-                    const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
-
-                    let noDup = false
                     try {
-                      noDup = localStorage.getItem("calendar_noDuplicateTimes") === "true"
-                    } catch {
-                      noDup = false
-                    }
-                    const selectedTarget = calendarTargetUserId || userId
-                    if (noDup && newRanges.length > 0) {
-                      const windowStart = newRanges[0].s
-                      const windowEnd = newRanges[newRanges.length - 1].e
-                      const { data: existing } = await supabase
-                        .from("calendar_events")
-                        .select("start_at, end_at")
-                        .eq("user_id", selectedTarget)
-                        .is("removed_at", null)
-                        .lt("start_at", windowEnd.toISOString())
-                        .gt("end_at", windowStart.toISOString())
-                      const exRows = (existing ?? []) as { start_at: string; end_at: string }[]
-                      for (const nr of newRanges) {
-                        for (const ex of exRows) {
-                          if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
-                            setAddToCalendarLoading(false)
-                            alert("One or more recurring times overlap an existing calendar event.")
-                            return
-                          }
-                        }
+                      const quoteTotal = selectedQuoteItems.reduce((sum, item) => {
+                        const { tot } = getItemDisplay(item)
+                        return sum + (typeof tot === "number" && !Number.isNaN(tot) ? tot : 0)
+                      }, 0)
+                      const durMinutes = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
+                      if (durMinutes == null) {
+                        alert("Enter a valid duration (at least 15 minutes).")
+                        return
                       }
-                      for (let i = 0; i < newRanges.length; i++) {
-                        for (let j = i + 1; j < newRanges.length; j++) {
-                          if (intervalsOverlap(newRanges[i].s, newRanges[i].e, newRanges[j].s, newRanges[j].e)) {
-                            setAddToCalendarLoading(false)
-                            alert("Recurring instances overlap each other. Adjust duration or frequency.")
-                            return
-                          }
-                        }
-                      }
-                    }
-
-                    const targetUserId = assignToScopedUser ? selectedTarget : (authUserId || selectedTarget)
-                    const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
-                    const jtRow = calJobTypeId ? jobTypes.find((j) => j.id === calJobTypeId) : null
-                    const materialsFromJobType =
-                      jtRow && typeof jtRow.materials_list === "string" && jtRow.materials_list.trim()
-                        ? jtRow.materials_list.trim()
-                        : null
-                    const quoteMaterialsBlock = materialDescriptionsFromQuoteItemRows(selectedQuoteItems)
-                    const materialsCombined = mergeMaterialsListsForCalendar(
-                      quoteMaterialsBlock.trim() ? quoteMaterialsBlock : null,
-                      materialsFromJobType,
-                    )
-                    const milesRaw = calMileage.trim().replace(/[^0-9.]/g, "")
-                    const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
-                    const mileageMiles =
-                      jtRow?.track_mileage === true && Number.isFinite(milesParsed) && milesParsed >= 0
-                        ? milesParsed
-                        : null
-                    const rowBase = {
-                      user_id: targetUserId,
-                      title: calTitle.trim(),
-                      start_at: "" as string,
-                      end_at: "" as string,
-                      job_type_id: calJobTypeId || null,
-                      quote_id: selectedQuote.id,
-                      customer_id: selectedQuote.customer_id,
-                      notes: calNotes.trim() || null,
-                      quote_total: quoteTotal > 0 ? quoteTotal : null,
-                      ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
-                    }
-                    const buildCalRows = (includeMat: boolean, includeMile: boolean) =>
-                      newRanges.map(({ s, e }) => {
-                        const row: Record<string, unknown> = {
-                          ...rowBase,
-                          start_at: s.toISOString(),
-                          end_at: e.toISOString(),
-                          metadata: { contact_target: quoteContactTarget },
-                        }
-                        if (includeMat && materialsCombined) row.materials_list = materialsCombined
-                        if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
-                        return row
+                      const milesRaw = calMileage.trim().replace(/[^0-9.]/g, "")
+                      const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
+                      const jtRow = calJobTypeId ? jobTypes.find((j) => j.id === calJobTypeId) : null
+                      const mileageMiles =
+                        jtRow?.track_mileage === true && Number.isFinite(milesParsed) && milesParsed >= 0
+                          ? milesParsed
+                          : null
+                      const result = await scheduleEstimateOnCalendar({
+                        supabase,
+                        userId,
+                        authUserId: authUserId || userId,
+                        quoteId: selectedQuote.id,
+                        customerId: selectedQuote.customer_id,
+                        title: calTitle,
+                        dateStr: calDate,
+                        timeStr: calTime,
+                        durationMinutes: durMinutes,
+                        jobTypeId: calJobTypeId,
+                        notes: calNotes,
+                        mileageMiles,
+                        targetUserId: calendarTargetUserId || userId,
+                        assignToScopedUser,
+                        quoteItems: selectedQuoteItems,
+                        jobTypes,
+                        quoteTotal,
+                        contactTarget: quoteContactTarget,
+                        portalItems: quoteCalendarItems,
+                        portalValues: quoteCalPortalValues,
+                        recurrenceExplicitlyEnabled: quoteRecurrenceExplicitlyEnabled,
                       })
-                    const calAttempts: [boolean, boolean][] = [
-                      [true, true],
-                      [true, false],
-                      [false, true],
-                      [false, false],
-                    ]
-                    let insertError: { message: string } | null = null
-                    for (const [incMat, incMile] of calAttempts) {
-                      const r = await supabase.from("calendar_events").insert(buildCalRows(incMat, incMile))
-                      if (!r.error) {
-                        insertError = null
-                        break
+                      if (!result.ok) {
+                        alert(result.error)
+                        return
                       }
-                      insertError = r.error
-                      const em = (r.error.message ?? "").toLowerCase()
-                      if (!em.includes("materials_list") && !em.includes("mileage_miles")) break
-                    }
-                    if (insertError) {
+                      void notifyCalendarStatusScheduled(supabase, result.eventIds)
+                      const cid = selectedQuote.customer_id
+                      if (cid) {
+                        await bumpCustomerLastActivityAt(supabase, cid)
+                        await logEstimateScheduledCommunicationEvent(supabase, userId, cid, {
+                          title: calTitle.trim(),
+                          startAtIso: result.firstStartIso,
+                          quoteId: selectedQuote.id,
+                          calendarEventIds: result.eventIds,
+                          conversationId: selectedQuote.conversation_id ?? null,
+                        })
+                      }
+                      const nowIso = new Date().toISOString()
+                      setSelectedQuote((q: QuoteRow | null) => (q ? { ...q, scheduled_at: nowIso } : q))
+                      setShowAddToCalendar(false)
+                      void loadQuotes()
+                      const when = new Date(result.firstStartIso).toLocaleString([], {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                      alert(
+                        `Scheduled ${result.occurrenceCount} calendar event${result.occurrenceCount === 1 ? "" : "s"} for ${when}. The customer record was updated.`,
+                      )
+                    } finally {
                       setAddToCalendarLoading(false)
-                      alert(insertError.message)
-                      return
                     }
-                    const { error: updateErr } = await supabase.from("quotes").update({ scheduled_at: new Date().toISOString() }).eq("id", selectedQuote.id)
-                    setAddToCalendarLoading(false)
-                    if (updateErr) { alert(updateErr.message); return }
-                    setShowAddToCalendar(false)
-                    setSelectedQuote(null)
-                    setSelectedQuoteId(null)
-                    loadQuotes()
                   }}
                   style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}
                 >

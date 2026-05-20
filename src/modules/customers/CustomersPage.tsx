@@ -24,7 +24,15 @@ import ConversationAutoRepliesModal from "../../components/ConversationAutoRepli
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
-import { queueQuotesCustomerPrefill, queueSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
+import {
+  loadCustomerCalendarEvents,
+  type CustomerCalendarEventRow,
+} from "../../lib/customerSchedulingActivity"
+import {
+  queueQuotesCustomerPrefill,
+  queueSchedulingCustomerPrefill,
+  queueSchedulingQuotePrefill,
+} from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
@@ -300,6 +308,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
   const [customerReports, setCustomerReports] = useState<SpecialtyReportRegistryItem[]>([])
+  const [customerCalendarEvents, setCustomerCalendarEvents] = useState<CustomerCalendarEventRow[]>([])
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -722,6 +731,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         }
         merged.sort((a, b) => Date.parse(a.created_at || "") - Date.parse(b.created_at || ""))
         setCustomerCommEvents(merged)
+        setCustomerCalendarEvents(await loadCustomerCalendarEvents(supabase, userId, customerId))
       } finally {
         setCustomerActivityLoading(false)
       }
@@ -2310,7 +2320,94 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     gap: 14,
                                   }}
                                 >
-                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Scheduled jobs</div>
+                                  {customerActivityLoading ? (
+                                    <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Loading schedule…</p>
+                                  ) : customerCalendarEvents.length === 0 ? (
+                                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
+                                      No calendar events linked yet. Schedule from an open estimate with <strong>Add to calendar</strong>.
+                                    </p>
+                                  ) : (
+                                    <div style={{ display: "grid", gap: 8 }}>
+                                      {customerCalendarEvents.slice(0, 8).map((ev) => {
+                                        const when = ev.start_at
+                                          ? new Date(ev.start_at).toLocaleString([], {
+                                              dateStyle: "short",
+                                              timeStyle: "short",
+                                            })
+                                          : "—"
+                                        const done = Boolean(ev.completed_at)
+                                        return (
+                                          <div
+                                            key={ev.id}
+                                            style={{
+                                              border: `1px solid ${theme.border}`,
+                                              borderRadius: 8,
+                                              padding: "8px 10px",
+                                              background: done ? "#f1f5f9" : "#fff",
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{ev.title}</div>
+                                            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                                              {when}
+                                              {done ? " · Completed" : " · Scheduled"}
+                                              {ev.quote_id ? " · From estimate" : ""}
+                                            </div>
+                                            {ev.notes?.trim() ? (
+                                              <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>{ev.notes.trim()}</div>
+                                            ) : null}
+                                            {setPage && ev.quote_id ? (
+                                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    queueSchedulingQuotePrefill({
+                                                      customerId: c.id,
+                                                      quoteId: ev.quote_id!,
+                                                    })
+                                                    setPage("calendar")
+                                                  }}
+                                                  style={{
+                                                    padding: "5px 10px",
+                                                    borderRadius: 6,
+                                                    border: `1px solid ${theme.border}`,
+                                                    background: "#f8fafc",
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    cursor: "pointer",
+                                                    color: "#0f172a",
+                                                  }}
+                                                >
+                                                  View on calendar
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    queueQuotesCustomerPrefill(c.id)
+                                                    setPage("quotes")
+                                                  }}
+                                                  style={{
+                                                    padding: "5px 10px",
+                                                    borderRadius: 6,
+                                                    border: `1px solid ${theme.border}`,
+                                                    background: "#fff",
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    cursor: "pointer",
+                                                    color: theme.text,
+                                                  }}
+                                                >
+                                                  Open estimate
+                                                </button>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: 8 }}>Communications</div>
                                   {customerActivityLoading ? (
                                     <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading messages…</p>
                                   ) : customerActivityItems.length === 0 ? (

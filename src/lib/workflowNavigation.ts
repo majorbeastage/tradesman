@@ -2,6 +2,12 @@
 
 const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
+const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
+
+export type SchedulingQuotePrefill = {
+  customerId: string
+  quoteId: string
+}
 
 export function queueQuotesCustomerPrefill(customerId: string): void {
   if (!customerId?.trim() || typeof window === "undefined") return
@@ -61,6 +67,34 @@ export function consumeSchedulingCustomerPrefill(): string | null {
     /* ignore */
   }
   return null
+}
+
+export function queueSchedulingQuotePrefill(prefill: SchedulingQuotePrefill): void {
+  if (typeof window === "undefined") return
+  const customerId = prefill.customerId?.trim()
+  const quoteId = prefill.quoteId?.trim()
+  if (!customerId || !quoteId) return
+  try {
+    sessionStorage.setItem(SCHEDULING_QUOTE_PREFILL, JSON.stringify({ customerId, quoteId }))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeSchedulingQuotePrefill(): SchedulingQuotePrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(SCHEDULING_QUOTE_PREFILL)
+    if (!raw?.trim()) return null
+    sessionStorage.removeItem(SCHEDULING_QUOTE_PREFILL)
+    const j = JSON.parse(raw) as { customerId?: string; quoteId?: string }
+    const customerId = String(j.customerId ?? "").trim()
+    const quoteId = String(j.quoteId ?? "").trim()
+    if (!customerId || !quoteId) return null
+    return { customerId, quoteId }
+  } catch {
+    return null
+  }
 }
 
 /** Matches `CalendarSuiteState` in CalendarPage — queued before `setPage("calendar")` from dashboard shortcuts. */

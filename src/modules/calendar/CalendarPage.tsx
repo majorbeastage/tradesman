@@ -41,7 +41,11 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerFocus } from "../../lib/customerNavigation"
-import { consumeCalendarSuiteNavigation, consumeSchedulingCustomerPrefill } from "../../lib/workflowNavigation"
+import {
+  consumeCalendarSuiteNavigation,
+  consumeSchedulingCustomerPrefill,
+  consumeSchedulingQuotePrefill,
+} from "../../lib/workflowNavigation"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -1898,14 +1902,37 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   useEffect(() => {
+    if (!userId || !supabase) return
+    const quotePrefill = consumeSchedulingQuotePrefill()
+    if (quotePrefill?.customerId && quotePrefill.quoteId) {
+      resetAddForm()
+      setAddCustomerId(quotePrefill.customerId)
+      setAddQuoteId(quotePrefill.quoteId)
+      setShowAddItem(true)
+      setAddTargetUserId(userId)
+      void (async () => {
+        const { data } = await supabase
+          .from("quotes")
+          .select("id, job_type_id, customers(display_name)")
+          .eq("id", quotePrefill.quoteId)
+          .maybeSingle()
+        if (!data) return
+        const custName =
+          (data as { customers?: { display_name?: string | null } }).customers?.display_name?.trim() || "Job"
+        const jtId = String((data as { job_type_id?: string }).job_type_id ?? "").trim()
+        if (jtId) setAddJobTypeId(jtId)
+        setAddTitle(custName)
+      })()
+      return
+    }
     const cid = consumeSchedulingCustomerPrefill()
-    if (!cid || !userId) return
+    if (!cid) return
     resetAddForm()
     setAddCustomerId(cid)
     setShowAddItem(true)
     setAddTargetUserId(userId)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
-  }, [userId])
+  }, [userId, supabase])
 
   async function saveJobType() {
     if (!jtName.trim()) {
