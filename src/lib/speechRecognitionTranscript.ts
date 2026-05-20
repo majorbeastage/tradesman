@@ -23,6 +23,11 @@ export function speechRecognitionOptionsForPlatform(): { continuous: boolean; in
   return { continuous: true, interimResults: true }
 }
 
+/** User-controlled session: keep mic open until Stop (merge logic prevents duplicate text). */
+export function speechRecognitionListenUntilStopped(): { continuous: boolean; interimResults: boolean } {
+  return { continuous: true, interimResults: true }
+}
+
 function normalizeSpeechChunk(s: string): string {
   return s.replace(/\s+/g, " ").trim()
 }

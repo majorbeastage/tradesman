@@ -110,7 +110,7 @@ import {
 import {
   combineSpeechSessionDisplay,
   parseSpeechResultsList,
-  speechRecognitionOptionsForPlatform,
+  speechRecognitionListenUntilStopped,
 } from "../../lib/speechRecognitionTranscript"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
@@ -442,6 +442,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobDetailsSpeechSupported, setJobDetailsSpeechSupported] = useState(false)
   const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
   const jobDetailsRecognitionRef = useRef<SpeechRecognition | null>(null)
+  const jobDetailsVoiceKeepListeningRef = useRef(false)
   /** Baseline textarea value when recognition session starts (+ appended finals + interim transcript). */
   const jobDetailsVoiceSessionBaseRef = useRef("")
   const jobDetailsVoiceFinalSuffixRef = useRef("")
@@ -796,27 +797,37 @@ export default function QuotesPage(_props: QuotesPageProps) {
     [],
   )
 
+  const commitJobDetailsVoiceTurn = useCallback(() => {
+    const committed = combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, {
+      finals: jobDetailsVoiceFinalSuffixRef.current,
+      interim: "",
+    })
+    jobDetailsVoiceSessionBaseRef.current = committed
+    jobDetailsVoiceFinalSuffixRef.current = ""
+    setJobDetailsText(committed)
+    return committed
+  }, [])
+
   const stopJobDetailsVoice = useCallback(() => {
+    jobDetailsVoiceKeepListeningRef.current = false
     try {
       jobDetailsRecognitionRef.current?.stop()
     } catch {
       /* ignore */
     }
     jobDetailsRecognitionRef.current = null
+    commitJobDetailsVoiceTurn()
     jobDetailsVoiceSessionBaseRef.current = ""
     jobDetailsVoiceFinalSuffixRef.current = ""
     setJobDetailsVoiceListening(false)
-  }, [])
+  }, [commitJobDetailsVoiceTurn])
 
-  const startJobDetailsVoice = useCallback(() => {
-    if (!jobDetailsSpeechSupported || typeof window === "undefined") return
+  const beginJobDetailsVoiceTurn = useCallback(() => {
+    if (!jobDetailsSpeechSupported || typeof window === "undefined" || !jobDetailsVoiceKeepListeningRef.current) return
     const Ctor =
       (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition
     if (!Ctor) return
-    stopJobDetailsVoice()
-    jobDetailsVoiceSessionBaseRef.current = jobDetailsText
-    jobDetailsVoiceFinalSuffixRef.current = ""
-    const speechOpts = speechRecognitionOptionsForPlatform()
+    const speechOpts = speechRecognitionListenUntilStopped()
     try {
       const rec = new Ctor()
       jobDetailsRecognitionRef.current = rec
@@ -828,16 +839,40 @@ export default function QuotesPage(_props: QuotesPageProps) {
         jobDetailsVoiceFinalSuffixRef.current = parsed.finals
         setJobDetailsText(combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, parsed))
       }
-      rec.onerror = () => stopJobDetailsVoice()
+      rec.onerror = () => {
+        if (!jobDetailsVoiceKeepListeningRef.current) return
+        commitJobDetailsVoiceTurn()
+        window.setTimeout(() => beginJobDetailsVoiceTurn(), 320)
+      }
       rec.onend = () => {
-        stopJobDetailsVoice()
+        if (!jobDetailsVoiceKeepListeningRef.current) {
+          jobDetailsRecognitionRef.current = null
+          setJobDetailsVoiceListening(false)
+          return
+        }
+        commitJobDetailsVoiceTurn()
+        window.setTimeout(() => beginJobDetailsVoiceTurn(), 280)
       }
       rec.start()
-      setJobDetailsVoiceListening(true)
     } catch {
       stopJobDetailsVoice()
     }
-  }, [jobDetailsSpeechSupported, jobDetailsText, stopJobDetailsVoice])
+  }, [jobDetailsSpeechSupported, commitJobDetailsVoiceTurn, stopJobDetailsVoice])
+
+  const startJobDetailsVoice = useCallback(() => {
+    if (!jobDetailsSpeechSupported || typeof window === "undefined") return
+    try {
+      jobDetailsRecognitionRef.current?.stop()
+    } catch {
+      /* ignore */
+    }
+    jobDetailsRecognitionRef.current = null
+    jobDetailsVoiceKeepListeningRef.current = true
+    jobDetailsVoiceSessionBaseRef.current = jobDetailsText
+    jobDetailsVoiceFinalSuffixRef.current = ""
+    setJobDetailsVoiceListening(true)
+    beginJobDetailsVoiceTurn()
+  }, [jobDetailsSpeechSupported, jobDetailsText, beginJobDetailsVoiceTurn])
 
   useEffect(() => {
     stopJobDetailsVoice()

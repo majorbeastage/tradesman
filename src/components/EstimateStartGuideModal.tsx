@@ -497,9 +497,9 @@ export default function EstimateStartGuideModal({
                 disabled={jobPackBulletsBusy}
                 onClick={onGenerateJobPackBullets}
                 style={{
-                  ...secondaryBtnStyle,
+                  ...primaryBtnStyle,
                   cursor: jobPackBulletsBusy ? "wait" : "pointer",
-                  opacity: jobPackBulletsBusy ? 0.75 : 1,
+                  opacity: jobPackBulletsBusy ? 0.8 : 1,
                 }}
               >
                 {jobPackBulletsBusy ? "Generating…" : "Suggest scope bullets"}
@@ -544,8 +544,18 @@ export default function EstimateStartGuideModal({
                     {jobDetailsVoiceSupported ? "Voice to text" : "Voice not available in this browser"}
                   </button>
                 ) : (
-                  <button type="button" onClick={() => onJobDetailsVoiceStop?.()} style={{ ...secondaryBtnStyle, fontWeight: 700 }}>
-                    Stop voice
+                  <button
+                    type="button"
+                    onClick={() => onJobDetailsVoiceStop?.()}
+                    style={{
+                      ...secondaryBtnStyle,
+                      fontWeight: 700,
+                      border: "1px solid #b45309",
+                      background: "#fff7ed",
+                      color: "#9a3412",
+                    }}
+                  >
+                    Stop listening
                   </button>
                 )}
               </div>
