@@ -27,6 +27,9 @@ export type SpecialtyReportParseResult = {
   assignments: SpecialtyReportFieldAssignment[]
   skippedExisting: number
   unmatched: string[]
+  /** Navigation-only patches (open section, focus) — conditions map to assignments as cond:sub: */
+  structuredPatches: SpecialtyReportStructuredPatch[]
+  /** First navigation patch, if any (legacy) */
   structured: SpecialtyReportStructuredPatch | null
   structuredSummary: string | null
 }
@@ -238,7 +241,9 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
   if (tail) chunks.push(tail)
   if (chunks.length > 1) return chunks
 
-  const andSplit = text.split(/\s+(?:and|also|then)\s+(?=(?:please\s+)?(?:set|fill|put|use|change|the\s+)\b)/i)
+  const andSplit = text.split(
+    /\s+(?:and|also|then)\s+(?=(?:please\s+)?(?:set|fill|put|use|change|mark|weather\b|inspector\b|license\b|gutters\b|roof\b|condition\b))/i,
+  )
   if (andSplit.length > 1) return andSplit.map((s) => s.trim()).filter(Boolean)
 
   const multiSet = text.split(/(?=\b(?:please\s+)?set\s+(?:the\s+)?)/i).map((s) => s.trim()).filter(Boolean)
@@ -412,46 +417,24 @@ export function parseSpecialtyReportFieldAssignments(
   opts: { allowStructure: boolean; readFieldValue: (fieldKey: string) => string },
 ): SpecialtyReportParseResult {
   const assignments: SpecialtyReportFieldAssignment[] = []
+  const structuredPatches: SpecialtyReportStructuredPatch[] = []
   const unmatched: string[] = []
   let skippedExisting = 0
   const seen = new Set<string>()
-
-  const structured = parseStructuredFillAndNavCommands(raw, ctx, opts.allowStructure)
-  if (structured?.patch.fieldKey && structured.patch.value) {
-    const key = structured.patch.fieldKey
-    if (!seen.has(key)) {
-      seen.add(key)
-      assignments.push({ fieldKey: key, value: structured.patch.value })
-    }
-    return {
-      assignments,
-      skippedExisting: 0,
-      unmatched: [],
-      structured: structured.patch,
-      structuredSummary: structured.summary,
-    }
-  }
-  if (structured?.patch.setCondition || structured?.patch.openMajorSection || structured?.patch.focusSubId) {
-    return {
-      assignments: [],
-      skippedExisting: 0,
-      unmatched: [],
-      structured: structured.patch,
-      structuredSummary: structured.summary,
-    }
-  }
+  const summaries: string[] = []
 
   const segments = splitCompoundAssistantUtterance(raw)
   for (const segment of segments) {
     const structuredSeg = parseStructuredFillAndNavCommands(segment, ctx, opts.allowStructure)
     if (structuredSeg?.patch.setCondition) {
-      return {
-        assignments: [],
-        skippedExisting: 0,
-        unmatched: [],
-        structured: structuredSeg.patch,
-        structuredSummary: structuredSeg.summary,
+      const { subId, condition } = structuredSeg.patch.setCondition
+      const key = `cond:sub:${subId}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        assignments.push({ fieldKey: key, value: condition })
       }
+      summaries.push(structuredSeg.summary)
+      continue
     }
     if (structuredSeg?.patch.fieldKey && structuredSeg.patch.value) {
       const key = structuredSeg.patch.fieldKey
@@ -459,6 +442,12 @@ export function parseSpecialtyReportFieldAssignments(
         seen.add(key)
         assignments.push({ fieldKey: key, value: structuredSeg.patch.value })
       }
+      summaries.push(structuredSeg.summary)
+      continue
+    }
+    if (structuredSeg?.patch.openMajorSection || structuredSeg?.patch.focusSubId) {
+      structuredPatches.push(structuredSeg.patch)
+      summaries.push(structuredSeg.summary)
       continue
     }
     const lineAssignment = parseLineToAssignment(segment, ctx)
@@ -481,8 +470,9 @@ export function parseSpecialtyReportFieldAssignments(
     assignments,
     skippedExisting,
     unmatched,
-    structured: null,
-    structuredSummary: null,
+    structuredPatches,
+    structured: structuredPatches[0] ?? null,
+    structuredSummary: summaries.length > 0 ? summaries.join(" ") : null,
   }
 }
 

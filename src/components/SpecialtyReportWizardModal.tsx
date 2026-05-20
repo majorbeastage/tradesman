@@ -26,6 +26,8 @@ import {
   parseStructuredFillAndNavCommands,
   utteranceLooksLikeFieldCommands,
   type SpecialtyReportFillContext,
+  type SpecialtyReportParseResult,
+  type SpecialtyReportStructuredPatch,
 } from "../lib/specialtyReportAssistantParse"
 import { fetchSpecialtyReportFieldFills, getPlatformToolsAccessToken } from "../lib/specialtyReportAssistantApi"
 
@@ -235,6 +237,8 @@ export default function SpecialtyReportWizardModal({
   /** Snapshot + appended finals + interim (Web Speech fires overlapping interim finals). */
   const voiceSessionBaseRef = useRef("")
   const voiceFinalSuffixRef = useRef("")
+  /** Chars of overall-assist transcript already parsed/applied (keeps listening on new fields). */
+  const voiceConsumedLenRef = useRef(0)
   const voiceOverallAssistRef = useRef(false)
   const activeVoiceFieldRef = useRef<string | null>(null)
 
@@ -650,34 +654,27 @@ export default function SpecialtyReportWizardModal({
       }
       writeFieldValue(fieldKey, value)
       applied += 1
-      if (fieldKey.startsWith("header.")) {
-        setPhase("home_header")
-        setAiTarget(fieldKey as AiTargetField)
-        window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
-      }
+      if (fieldKey.startsWith("header.")) setPhase("home_header")
       if (fieldKey.startsWith("sub:")) {
         const sid = fieldKey.slice(4)
         const maj = majorIdContainingSubsection(sid)
         if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
         setPhase("home_findings")
-        setAiTarget(`sub:${sid}` as AiTargetField)
-        window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(fieldKey))?.focus?.(), 120)
       }
       if (fieldKey === "scopeLimitations" || fieldKey === "summaryFindings" || fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") {
-        setAiTarget(fieldKey as AiTargetField)
+        if (fieldKey === "scopeLimitations") setPhase("home_header")
+        if (fieldKey === "summaryFindings") setPhase("home_review")
+        if (fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") setPhase("home_media")
       }
     }
     return { applied, skipped }
   }
 
-  function applyStructuredAssistantPatch(p: {
-    fieldKey?: string
-    value?: string
-    setCondition?: { subId: string; condition: ConditionRating }
-    openMajorSection?: string
-    focusSubId?: string
-  }) {
-    if (p.openMajorSection) setFindingSectionOpen((prev) => ({ ...prev, [p.openMajorSection!]: true }))
+  function applyStructuredAssistantPatch(p: SpecialtyReportStructuredPatch) {
+    if (p.openMajorSection) {
+      setFindingSectionOpen((prev) => ({ ...prev, [p.openMajorSection!]: true }))
+      setPhase("home_findings")
+    }
     if (p.fieldKey && p.value != null && String(p.value).length > 0) {
       writeFieldValue(p.fieldKey, String(p.value))
       if (p.fieldKey.startsWith("header.")) setPhase("home_header")
@@ -686,9 +683,7 @@ export default function SpecialtyReportWizardModal({
         const maj = majorIdContainingSubsection(sid)
         if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
         setPhase("home_findings")
-        setAiTarget(`sub:${sid}` as AiTargetField)
       }
-      window.setTimeout(() => document.getElementById(specialtyReportFieldDomId(p.fieldKey!))?.focus?.(), 200)
     }
     if (p.setCondition) {
       const { subId, condition } = p.setCondition
@@ -705,14 +700,35 @@ export default function SpecialtyReportWizardModal({
           },
         },
       }))
-      setAiTarget(`sub:${subId}` as AiTargetField)
     }
     if (p.focusSubId && !p.fieldKey && !p.setCondition) {
       const maj = majorIdContainingSubsection(p.focusSubId)
       if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
       setPhase("home_findings")
-      setAiTarget(`sub:${p.focusSubId}` as AiTargetField)
     }
+  }
+
+  function applyNavigationPatches(patches: SpecialtyReportStructuredPatch[]) {
+    for (const p of patches) applyStructuredAssistantPatch(p)
+  }
+
+  function resetOverallVoiceBuffer() {
+    voiceSessionBaseRef.current = ""
+    voiceFinalSuffixRef.current = ""
+    voiceConsumedLenRef.current = 0
+    setAssistantText("")
+  }
+
+  /** Mark transcript processed so the next final phrase parses as a new command (no stuck target field). */
+  function markOverallVoiceConsumed() {
+    const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
+    voiceConsumedLenRef.current = full.length
+    setAssistantText("")
+  }
+
+  function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
+    if (parsed.structuredPatches.length > 0) applyNavigationPatches(parsed.structuredPatches)
+    return applyParsedFieldAssignments(parsed.assignments)
   }
 
   async function attachFieldImage(fieldKey: string, file: File | null) {
@@ -813,9 +829,12 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
-  async function runAssistantCommand(raw: string) {
+  async function runAssistantCommand(
+    raw: string,
+    options?: { allowDefaultTarget?: boolean; voiceChunk?: boolean },
+  ): Promise<boolean> {
     const text = raw.trim()
-    if (!text || assistantProcessing) return
+    if (!text || assistantProcessing) return false
     const fillCtx: SpecialtyReportFillContext = {
       accountDisplayName,
       propertyAddressHint: propertyAddressHint ?? "",
@@ -828,7 +847,7 @@ export default function SpecialtyReportWizardModal({
       if (wakeParsed.consumed) {
         if (wakeParsed.hint) {
           setAssistantNote(wakeParsed.hint)
-          return
+          return false
         }
         let chunk = (wakeParsed.body ?? "").trim()
         if (!wakeParsed.target && picked === "home_inspection" && chunk) {
@@ -836,24 +855,19 @@ export default function SpecialtyReportWizardModal({
             allowStructure: true,
             readFieldValue,
           })
-          if (parsed.structured) {
-            applyStructuredAssistantPatch(parsed.structured)
-            if (parsed.structured.openMajorSection || parsed.structured.setCondition) setPhase("home_findings")
-            setAssistantNote(parsed.structuredSummary ?? "Updated report.")
-            setAssistantText("")
-            return
-          }
-          const { applied: wApplied, skipped: wSkip } = applyParsedFieldAssignments(parsed.assignments)
-          if (wApplied > 0 || wSkip > 0) {
+          const { applied: wApplied, skipped: wSkip } = applyHomeInspectionParseResult(parsed)
+          if (wApplied > 0 || wSkip > 0 || parsed.structuredSummary) {
             setAssistantNote(
-              wApplied > 0
-                ? `Recorded ${wApplied} field(s) from your note${wSkip ? ` (${wSkip} skipped — fields already had text).` : "."}`
-                : `${wSkip} line(s) skipped — fields already had text.`,
+              parsed.structuredSummary ??
+                (wApplied > 0
+                  ? `Recorded ${wApplied} field(s) from your note${wSkip ? ` (${wSkip} skipped — fields already had text).` : "."}`
+                  : `${wSkip} line(s) skipped — fields already had text.`),
             )
             chunk = parsed.unmatched.join(" ").trim()
             if (wApplied > 0 && !chunk) {
-              setAssistantText("")
-              return
+              if (options?.voiceChunk) markOverallVoiceConsumed()
+              else setAssistantText("")
+              return true
             }
           } else {
             chunk = parsed.unmatched.join(" ").trim() || chunk
@@ -869,8 +883,9 @@ export default function SpecialtyReportWizardModal({
         } else {
           setAssistantNote('Say a section after “Tradesman record” (scope, summary, media, …) or pick a field above.')
         }
-        setAssistantText("")
-        return
+        if (options?.voiceChunk) markOverallVoiceConsumed()
+        else setAssistantText("")
+        return true
       }
     }
 
@@ -879,42 +894,41 @@ export default function SpecialtyReportWizardModal({
         allowStructure: true,
         readFieldValue,
       })
-      if (parsed.structured) {
-        applyStructuredAssistantPatch(parsed.structured)
-        if (parsed.structured.openMajorSection || parsed.structured.setCondition) setPhase("home_findings")
-        setAssistantNote(parsed.structuredSummary ?? "Updated report.")
-        setAssistantText("")
-        return
-      }
-      const { applied, skipped } = applyParsedFieldAssignments(parsed.assignments)
-      if (applied > 0 || skipped > 0) {
-        let note = ""
-        if (applied > 0 && skipped > 0) {
-          note = `Updated ${applied} field(s) or rating(s). Skipped ${skipped} that already had text.`
-        } else if (applied > 0) {
-          note = `Updated ${applied} report field(s) or condition rating(s) from your voice/text.`
-        } else {
-          note = `${skipped} field(s) matched but already had text — clear a field to replace.`
+      const { applied, skipped } = applyHomeInspectionParseResult(parsed)
+      if (applied > 0 || skipped > 0 || parsed.structuredSummary) {
+        let note = parsed.structuredSummary ?? ""
+        if (!note) {
+          if (applied > 0 && skipped > 0) {
+            note = `Updated ${applied} field(s) or rating(s). Skipped ${skipped} that already had text.`
+          } else if (applied > 0) {
+            note = `Updated ${applied} report field(s) or condition rating(s) from your voice/text.`
+          } else {
+            note = `${skipped} field(s) matched but already had text — clear a field to replace.`
+          }
         }
         setAssistantNote(note)
         const tail = parsed.unmatched.join(" ").trim()
         if (applied > 0 && !tail) {
-          setAssistantText("")
-          return
+          if (options?.voiceChunk) markOverallVoiceConsumed()
+          else setAssistantText("")
+          return true
         }
         if (tail) {
-          await runAssistantCommand(tail)
-          return
+          const more = await runAssistantCommand(tail, options)
+          if (options?.voiceChunk && (applied > 0 || more)) markOverallVoiceConsumed()
+          return applied > 0 || more
         }
-        return
+        if (options?.voiceChunk && applied > 0) markOverallVoiceConsumed()
+        return applied > 0
       }
     } else {
       const structured = parseStructuredFillAndNavCommands(text, fillCtx, false)
       if (structured?.patch.fieldKey && structured.patch.value) {
         writeFieldValue(structured.patch.fieldKey, structured.patch.value)
         setAssistantNote(structured.summary)
-        setAssistantText("")
-        return
+        if (options?.voiceChunk) markOverallVoiceConsumed()
+        else setAssistantText("")
+        return true
       }
     }
 
@@ -922,37 +936,37 @@ export default function SpecialtyReportWizardModal({
     if (command === "next" || command === "next step") {
       goNextPhase()
       setAssistantNote("Moved to the next step.")
-      return
+      return true
     }
     if (command === "back" || command === "previous" || command === "prev") {
       goBackPhase()
       setAssistantNote("Moved to the previous step.")
-      return
+      return true
     }
     if (command.includes("go to findings")) {
       setPhase("home_findings")
       setAssistantNote("Opened findings.")
-      return
+      return true
     }
     if (command.includes("go to header")) {
       setPhase("home_header")
       setAssistantNote("Opened header & scope.")
-      return
+      return true
     }
     if (command.includes("go to media")) {
       setPhase("home_media")
       setAssistantNote("Opened media / integrations.")
-      return
+      return true
     }
     if (command.includes("go to review") || command.includes("go to summary")) {
       setPhase("home_review")
       setAssistantNote("Opened review & summary.")
-      return
+      return true
     }
     if (command.includes("go to scope")) {
       setPhase("home_header")
       setAssistantNote("Opened header & scope.")
-      return
+      return true
     }
 
     const shouldTryAi =
@@ -971,12 +985,13 @@ export default function SpecialtyReportWizardModal({
                 ? `AI updated ${applied} field(s) or rating(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
                 : note ?? "Could not apply AI field mapping.",
             )
-            setAssistantText("")
-            return
+            if (options?.voiceChunk && applied > 0) markOverallVoiceConsumed()
+            else setAssistantText("")
+            return applied > 0
           }
           if (note) {
             setAssistantNote(note)
-            return
+            return false
           }
         }
       } finally {
@@ -988,18 +1003,21 @@ export default function SpecialtyReportWizardModal({
       setAssistantNote(
         'Could not match fields. Try: "set inspector name to Joseph Snyder" · "weather: clear, 72°F" · or Label: value per line.',
       )
-      return
+      return false
     }
 
-    if (text.length <= 72) {
+    const allowDefaultTarget = options?.allowDefaultTarget !== false
+    if (allowDefaultTarget && text.length <= 72) {
       appendToTarget(aiTarget, text)
       setAssistantNote(`Added text into ${labelForAiTarget(aiTarget)}.`)
-      return
+      if (options?.voiceChunk) markOverallVoiceConsumed()
+      return true
     }
 
     setAssistantNote(
       'Long note not auto-placed. Pick a target field above, use "Tradesman record summary …", or say "set [field] to [value]".',
     )
+    return false
   }
 
   function startDictation(targetFieldKey?: string) {
@@ -1017,6 +1035,7 @@ export default function SpecialtyReportWizardModal({
       activeVoiceFieldRef.current = targetFieldKey ?? null
       voiceSessionBaseRef.current = targetFieldKey ? readFieldValue(targetFieldKey) : assistantText
       voiceFinalSuffixRef.current = ""
+      voiceConsumedLenRef.current = targetFieldKey ? 0 : assistantText.length
       const rec = new Ctor()
       recognitionRef.current = rec
       rec.continuous = true
@@ -1030,6 +1049,13 @@ export default function SpecialtyReportWizardModal({
           if (!piece) continue
           if (item.isFinal) {
             voiceFinalSuffixRef.current += piece
+            if (!targetFieldKey && voiceOverallAssistRef.current) {
+              const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
+              const chunk = full.slice(voiceConsumedLenRef.current).trim()
+              if (chunk.length >= 3) {
+                void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
+              }
+            }
           }
         }
         let interim = ""
@@ -1054,10 +1080,10 @@ export default function SpecialtyReportWizardModal({
         activeVoiceFieldRef.current = null
         setVoiceFieldKey(null)
         if (!fieldKey && voiceOverallAssistRef.current) {
-          const finalText = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`.trim()
-          if (finalText) {
-            setAssistantText(finalText)
-            void runAssistantCommand(finalText)
+          const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
+          const chunk = full.slice(voiceConsumedLenRef.current).trim()
+          if (chunk.length >= 3) {
+            void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
           }
         }
         voiceOverallAssistRef.current = false
@@ -1066,7 +1092,7 @@ export default function SpecialtyReportWizardModal({
       setAssistantListening(true)
       setVoiceFieldKey(targetFieldKey ?? null)
       setAssistantNote(
-        "Listening… Commands: fill inspector name with my name · copy estimate address to property address · set condition for gutters to satisfactory · open electrical section · go to roof covering. Or “Tradesman record” + scope / summary / a findings label.",
+        "Listening… Each phrase can target a different field. Examples: set inspector name to Jane · weather clear 72 · gutters deficient · roof covering satisfactory. Or “Tradesman record” + scope / summary.",
       )
     } catch {
       setAssistantListening(false)
@@ -1077,8 +1103,7 @@ export default function SpecialtyReportWizardModal({
   function stopDictation() {
     recognitionRef.current?.stop()
     recognitionRef.current = null
-    voiceSessionBaseRef.current = ""
-    voiceFinalSuffixRef.current = ""
+    resetOverallVoiceBuffer()
     setAssistantListening(false)
     setVoiceFieldKey(null)
   }
