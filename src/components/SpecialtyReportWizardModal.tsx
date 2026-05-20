@@ -252,6 +252,8 @@ export default function SpecialtyReportWizardModal({
   const activeVoiceFieldRef = useRef<string | null>(null)
   const voiceDisplayThrottleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
   const voiceParserDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Last throttled transcript shown in the assistant box (preserve on stop). */
+  const voiceLiveDisplayRef = useRef("")
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -723,20 +725,32 @@ export default function SpecialtyReportWizardModal({
     for (const p of patches) applyStructuredAssistantPatch(p)
   }
 
-  function resetOverallVoiceBuffer() {
+  function resetOverallVoiceSessionRefs() {
     voiceSessionBaseRef.current = ""
     voiceFinalSuffixRef.current = ""
     voiceConsumedLenRef.current = 0
     voiceLastParserFinalsLenRef.current = 0
-    setAssistantText("")
+    voiceLiveDisplayRef.current = ""
   }
 
-  /** Mark transcript processed so the next final phrase parses as a new command (no stuck target field). */
+  function preserveOverallVoiceTranscriptInUi() {
+    voiceDisplayThrottleRef.current?.flushNow()
+    if (!activeVoiceFieldRef.current) {
+      const display =
+        voiceLiveDisplayRef.current.trim() ||
+        combineSpeechSessionDisplay(voiceSessionBaseRef.current, {
+          finals: voiceFinalSuffixRef.current,
+          interim: "",
+        })
+      if (display.trim()) setAssistantText(display.trim())
+    }
+  }
+
+  /** Mark transcript processed so the next phrase parses fresh; keep text visible for review / Apply. */
   function markOverallVoiceConsumed() {
     const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
     voiceConsumedLenRef.current = full.length
     voiceLastParserFinalsLenRef.current = voiceFinalSuffixRef.current.length
-    setAssistantText("")
   }
 
   function maybeRunOverallVoiceParser(finals: string) {
@@ -1000,31 +1014,40 @@ export default function SpecialtyReportWizardModal({
       return true
     }
 
-    const shouldTryAi =
-      picked === "home_inspection" && (text.length > 36 || utteranceLooksLikeFieldCommands(text))
+    const shouldTryAi = picked === "home_inspection" && text.length >= 8
     if (shouldTryAi) {
       setAssistantProcessing(true)
       setAssistantNote("Mapping your speech to report fields…")
       try {
         const tok = await getPlatformToolsAccessToken()
-        if (tok) {
-          const { fills, note } = await fetchSpecialtyReportFieldFills(text, tok)
-          if (fills.length > 0) {
-            const { applied, skipped } = applyParsedFieldAssignments(fills)
-            setAssistantNote(
-              applied > 0
-                ? `AI updated ${applied} field(s) or rating(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
-                : note ?? "Could not apply AI field mapping.",
-            )
-            if (options?.voiceChunk && applied > 0) markOverallVoiceConsumed()
-            else setAssistantText("")
-            return applied > 0
-          }
-          if (note) {
-            setAssistantNote(note)
-            return false
-          }
+        if (!tok) {
+          setAssistantNote("Sign in again to use AI field mapping.")
+          return false
         }
+        const { fills, note } = await fetchSpecialtyReportFieldFills(text, tok)
+        if (fills.length > 0) {
+          const { applied, skipped } = applyHomeInspectionParseResult({
+            assignments: fills,
+            skippedExisting: 0,
+            unmatched: [],
+            structuredPatches: [],
+            structured: null,
+            structuredSummary: null,
+          })
+          setAssistantNote(
+            applied > 0
+              ? `AI updated ${applied} field(s) or rating(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
+              : note ?? "Could not apply AI field mapping.",
+          )
+          if (options?.voiceChunk && applied > 0) markOverallVoiceConsumed()
+          else if (applied > 0) setAssistantText("")
+          return applied > 0
+        }
+        setAssistantNote(
+          note?.trim() ||
+            "AI could not map that text to report fields. Try “set inspector name to …” or “gutters: deficient”.",
+        )
+        return false
       } finally {
         setAssistantProcessing(false)
       }
@@ -1070,7 +1093,9 @@ export default function SpecialtyReportWizardModal({
       voiceConsumedLenRef.current = targetFieldKey ? 0 : assistantText.length
       voiceLastParserFinalsLenRef.current = 0
       voiceDisplayThrottleRef.current?.cancel()
+      voiceLiveDisplayRef.current = voiceSessionBaseRef.current
       voiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
+        voiceLiveDisplayRef.current = display
         if (targetFieldKey) {
           writeFieldValue(targetFieldKey, display)
         } else {
@@ -1149,12 +1174,12 @@ export default function SpecialtyReportWizardModal({
       clearTimeout(voiceParserDebounceRef.current)
       voiceParserDebounceRef.current = null
     }
-    voiceDisplayThrottleRef.current?.flushNow()
+    preserveOverallVoiceTranscriptInUi()
     voiceDisplayThrottleRef.current?.cancel()
     voiceDisplayThrottleRef.current = null
     recognitionRef.current?.stop()
     recognitionRef.current = null
-    resetOverallVoiceBuffer()
+    resetOverallVoiceSessionRefs()
     setAssistantListening(false)
     setVoiceFieldKey(null)
     activeVoiceFieldRef.current = null

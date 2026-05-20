@@ -450,6 +450,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   /** Baseline textarea value when recognition session starts (+ appended finals + interim transcript). */
   const jobDetailsVoiceSessionBaseRef = useRef("")
   const jobDetailsVoiceFinalSuffixRef = useRef("")
+  const jobDetailsVoiceLiveDisplayRef = useRef("")
   const [specialtyReportWizardOpen, setSpecialtyReportWizardOpen] = useState(false)
   const [specialtyInspectionWorkflowEnabled, setSpecialtyInspectionWorkflowEnabled] = useState(false)
   const [specialtyReportTypesEnabled, setSpecialtyReportTypesEnabled] = useState<SpecialtyReportTypeKey[]>([])
@@ -804,13 +805,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const commitJobDetailsVoiceTurn = useCallback(() => {
     jobDetailsVoiceDisplayThrottleRef.current?.flushNow()
-    const committed = combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, {
-      finals: jobDetailsVoiceFinalSuffixRef.current,
-      interim: "",
-    })
+    const committed =
+      jobDetailsVoiceLiveDisplayRef.current.trim() ||
+      combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, {
+        finals: jobDetailsVoiceFinalSuffixRef.current,
+        interim: "",
+      })
     jobDetailsVoiceSessionBaseRef.current = committed
     jobDetailsVoiceFinalSuffixRef.current = ""
-    setJobDetailsText(committed)
+    jobDetailsVoiceLiveDisplayRef.current = committed
+    if (committed) setJobDetailsText(committed)
     return committed
   }, [])
 
@@ -829,6 +833,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const committed = commitJobDetailsVoiceTurn()
     jobDetailsVoiceSessionBaseRef.current = ""
     jobDetailsVoiceFinalSuffixRef.current = ""
+    jobDetailsVoiceLiveDisplayRef.current = committed
     setJobDetailsVoiceListening(false)
     if (committed && selectedQuoteId) {
       try {
@@ -855,6 +860,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const parsed = parseSpeechResultsList(ev.results)
         jobDetailsVoiceFinalSuffixRef.current = parsed.finals
         const display = combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, parsed)
+        jobDetailsVoiceLiveDisplayRef.current = display
         jobDetailsVoiceDisplayThrottleRef.current?.schedule(display)
       }
       rec.onerror = () => {
@@ -890,7 +896,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
     jobDetailsVoiceSessionBaseRef.current = jobDetailsText
     jobDetailsVoiceFinalSuffixRef.current = ""
     jobDetailsVoiceDisplayThrottleRef.current?.cancel()
-    jobDetailsVoiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => setJobDetailsText(display))
+    jobDetailsVoiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
+      jobDetailsVoiceLiveDisplayRef.current = display
+      setJobDetailsText(display)
+    })
     setJobDetailsVoiceListening(true)
     beginJobDetailsVoiceTurn()
   }, [jobDetailsSpeechSupported, jobDetailsText, beginJobDetailsVoiceTurn])
