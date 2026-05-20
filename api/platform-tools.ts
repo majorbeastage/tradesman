@@ -619,9 +619,11 @@ ${catalog}
 
 Rules:
 - Only include fields clearly stated in the utterance. Do not invent values.
-- Split compound commands ("set inspector name to Jane and weather to clear") into multiple fills.
+- Split compound commands ("set inspector name to Jane and gutters to deficient") into multiple fills.
 - Match informal labels ("inspectors name", "site conditions") to the closest fieldKey.
-- For findings subsections (fieldKey starts with "sub:"), value is inspector notes text only.
+- For findings NOTES use fieldKey "sub:{id}" with observation text.
+- For findings CONDITION dropdown use fieldKey "cond:sub:{id}" with exactly one of: satisfactory, marginal, deficient, not_inspected, na.
+- When the utterance only rates a subsection ("gutters deficient", "roof covering satisfactory"), use cond:sub: not sub:.
 - For header.inspectionDate use ISO YYYY-MM-DD when a date is given.
 - If nothing maps confidently, return {"fills":[]}.
 - Max 12 fills. Values max 500 chars each.`

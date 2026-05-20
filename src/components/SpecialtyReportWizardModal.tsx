@@ -6,6 +6,8 @@ import { DRONE_PROVIDER_CATALOG } from "../lib/specialtyReports/droneIntegration
 import {
   CONDITION_RATING_LABELS,
   HOME_INSPECTION_MAJOR_SECTIONS,
+  conditionRatingOptionLabel,
+  conditionRatingSelectStyle,
   type ConditionRating,
   type HomeInspectionReportV1,
   emptyHomeInspectionReport,
@@ -19,6 +21,7 @@ import {
 } from "../lib/specialtyReports/reportRecords"
 import {
   majorIdContainingSubsection,
+  parseConditionRating,
   parseSpecialtyReportFieldAssignments,
   parseStructuredFillAndNavCommands,
   utteranceLooksLikeFieldCommands,
@@ -616,9 +619,29 @@ export default function SpecialtyReportWizardModal({
     let applied = 0
     let skipped = 0
     for (const { fieldKey, value } of assignments) {
-      if (fieldKey.startsWith("sub:") && phase !== "home_findings" && phase !== "home_review") {
-        skipped += 1
+      if (fieldKey.startsWith("cond:sub:")) {
+        const subId = fieldKey.slice("cond:sub:".length)
+        const rating = parseConditionRating(value) ?? (value in CONDITION_RATING_LABELS ? (value as ConditionRating) : null)
+        if (!subId || !rating) {
+          skipped += 1
+          continue
+        }
+        applyStructuredAssistantPatch({ setCondition: { subId, condition: rating } })
+        applied += 1
         continue
+      }
+      if (fieldKey.startsWith("sub:")) {
+        const rating = parseConditionRating(value)
+        if (rating) {
+          const subId = fieldKey.slice(4)
+          applyStructuredAssistantPatch({ setCondition: { subId, condition: rating } })
+          applied += 1
+          continue
+        }
+        if (phase !== "home_findings" && phase !== "home_review") {
+          skipped += 1
+          continue
+        }
       }
       const cur = readFieldValue(fieldKey).trim()
       if (cur && cur !== value) {
@@ -815,7 +838,7 @@ export default function SpecialtyReportWizardModal({
           })
           if (parsed.structured) {
             applyStructuredAssistantPatch(parsed.structured)
-            if (parsed.structured.openMajorSection) setPhase("home_findings")
+            if (parsed.structured.openMajorSection || parsed.structured.setCondition) setPhase("home_findings")
             setAssistantNote(parsed.structuredSummary ?? "Updated report.")
             setAssistantText("")
             return
@@ -858,7 +881,7 @@ export default function SpecialtyReportWizardModal({
       })
       if (parsed.structured) {
         applyStructuredAssistantPatch(parsed.structured)
-        if (parsed.structured.openMajorSection) setPhase("home_findings")
+        if (parsed.structured.openMajorSection || parsed.structured.setCondition) setPhase("home_findings")
         setAssistantNote(parsed.structuredSummary ?? "Updated report.")
         setAssistantText("")
         return
@@ -867,9 +890,9 @@ export default function SpecialtyReportWizardModal({
       if (applied > 0 || skipped > 0) {
         let note = ""
         if (applied > 0 && skipped > 0) {
-          note = `Filled ${applied} field(s). Skipped ${skipped} that already had text.`
+          note = `Updated ${applied} field(s) or rating(s). Skipped ${skipped} that already had text.`
         } else if (applied > 0) {
-          note = `Filled ${applied} report field(s) from your voice/text.`
+          note = `Updated ${applied} report field(s) or condition rating(s) from your voice/text.`
         } else {
           note = `${skipped} field(s) matched but already had text — clear a field to replace.`
         }
@@ -945,7 +968,7 @@ export default function SpecialtyReportWizardModal({
             const { applied, skipped } = applyParsedFieldAssignments(fills)
             setAssistantNote(
               applied > 0
-                ? `AI filled ${applied} field(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
+                ? `AI updated ${applied} field(s) or rating(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
                 : note ?? "Could not apply AI field mapping.",
             )
             setAssistantText("")
@@ -1464,9 +1487,31 @@ export default function SpecialtyReportWizardModal({
                             <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{sub.label}</div>
                             {sub.hint ? <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{sub.hint}</div> : null}
                             <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                              {row.condition === "not_inspected" ? (
+                                <span
+                                  title="Not inspected"
+                                  aria-hidden
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    width: 22,
+                                    height: 22,
+                                    borderRadius: "50%",
+                                    background: "#fee2e2",
+                                    color: "#b91c1c",
+                                    fontWeight: 800,
+                                    fontSize: 13,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  !
+                                </span>
+                              ) : null}
                               <select
                                 id={specialtyReportFieldDomId(`cond:sub:${sub.id}`)}
                                 value={row.condition}
+                                aria-label={`${sub.label} condition`}
                                 onChange={(e) => {
                                   const condition = e.target.value as ConditionRating
                                   setHome((h) => ({
@@ -1477,11 +1522,11 @@ export default function SpecialtyReportWizardModal({
                                     },
                                   }))
                                 }}
-                                style={{ ...theme.formInput, minWidth: 200 }}
+                                style={conditionRatingSelectStyle(row.condition, { ...theme.formInput, minWidth: 200 })}
                               >
                                 {(Object.keys(CONDITION_RATING_LABELS) as ConditionRating[]).map((c) => (
                                   <option key={c} value={c}>
-                                    {CONDITION_RATING_LABELS[c]}
+                                    {conditionRatingOptionLabel(c)}
                                   </option>
                                 ))}
                               </select>

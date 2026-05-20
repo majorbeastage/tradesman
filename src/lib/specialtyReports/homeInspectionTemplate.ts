@@ -10,6 +10,26 @@ export const CONDITION_RATING_LABELS: Record<ConditionRating, string> = {
   na: "N/A",
 }
 
+/** Subtle emphasis when a finding is still not inspected (default). */
+export function conditionRatingSelectStyle(
+  condition: ConditionRating,
+  base: Record<string, string | number>,
+): Record<string, string | number> {
+  if (condition !== "not_inspected") return base
+  return {
+    ...base,
+    borderColor: "#fecaca",
+    backgroundColor: "#fff7f7",
+    color: "#991b1b",
+    fontWeight: 600,
+  }
+}
+
+export function conditionRatingOptionLabel(condition: ConditionRating): string {
+  if (condition === "not_inspected") return "! Not inspected"
+  return CONDITION_RATING_LABELS[condition]
+}
+
 export type HomeInspectionSubsection = {
   id: string
   label: string

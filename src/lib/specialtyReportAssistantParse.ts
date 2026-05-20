@@ -271,6 +271,10 @@ function parseLineToAssignment(
   }
   const fieldKey = matchHeaderOrSubFieldKey(left)
   if (!fieldKey) return null
+  const rating = parseConditionRating(valueRaw)
+  if (fieldKey.startsWith("sub:") && rating) {
+    return { fieldKey: `cond:${fieldKey}`, value: rating }
+  }
   const value = (resolveFillLiteral(valueRaw, ctx) || valueRaw).trim()
   if (!value) return null
   return { fieldKey, value }
@@ -321,12 +325,34 @@ export function parseStructuredFillAndNavCommands(
     const left = normAssistantPhrase(m[1])
     if (!left.includes("condition") && !/^condition\b/.test(left)) {
       const fieldKey = matchHeaderOrSubFieldKey(m[1])
+      const rating = parseConditionRating(m[2].trim())
+      if (fieldKey?.startsWith("sub:") && rating) {
+        const subId = fieldKey.slice(4)
+        return {
+          summary: `Set ${CONDITION_RATING_LABELS[rating]} for ${HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId}.`,
+          patch: { setCondition: { subId, condition: rating } },
+        }
+      }
       const value = resolveFillLiteral(m[2], ctx)
       if (fieldKey && value) {
         return {
           summary: `Updated ${fieldKey.startsWith("sub:") ? "findings" : "header"} field.`,
           patch: { fieldKey, value },
         }
+      }
+    }
+  }
+
+  const subRated = text.match(
+    /^(?:please\s+)?(?:mark\s+)?(.+?)\s+(?:as\s+|to\s+|rated\s+)?(satisfactory|marginal|deficient|not\s+inspected|n\/a|na|unchecked)\.?$/i,
+  )
+  if (subRated?.[1] && subRated[2]) {
+    const subId = matchSubsectionIdFromPhrase(subRated[1].trim())
+    const rating = parseConditionRating(subRated[2].trim())
+    if (subId && rating) {
+      return {
+        summary: `Set ${CONDITION_RATING_LABELS[rating]} for ${HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId}.`,
+        patch: { setCondition: { subId, condition: rating } },
       }
     }
   }
@@ -418,6 +444,15 @@ export function parseSpecialtyReportFieldAssignments(
   const segments = splitCompoundAssistantUtterance(raw)
   for (const segment of segments) {
     const structuredSeg = parseStructuredFillAndNavCommands(segment, ctx, opts.allowStructure)
+    if (structuredSeg?.patch.setCondition) {
+      return {
+        assignments: [],
+        skippedExisting: 0,
+        unmatched: [],
+        structured: structuredSeg.patch,
+        structuredSummary: structuredSeg.summary,
+      }
+    }
     if (structuredSeg?.patch.fieldKey && structuredSeg.patch.value) {
       const key = structuredSeg.patch.fieldKey
       if (!seen.has(key)) {
@@ -469,12 +504,19 @@ export function buildSpecialtyReportFieldCatalog(): SpecialtyReportFieldCatalogE
   ]
   for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
     for (const sub of sec.subsections) {
-      out.push({ fieldKey: `sub:${sub.id}`, label: sub.label, group: sec.title })
+      out.push({ fieldKey: `sub:${sub.id}`, label: `${sub.label} (notes)`, group: sec.title })
+      out.push({
+        fieldKey: `cond:sub:${sub.id}`,
+        label: `${sub.label} (condition)`,
+        group: sec.title,
+      })
     }
   }
   return out
 }
 
 export function utteranceLooksLikeFieldCommands(raw: string): boolean {
-  return /\b(set|fill|put|use|change|copy|inspector|license|weather|address|parties|condition|scope|summary)\b/i.test(raw)
+  return /\b(set|fill|put|use|change|copy|inspector|license|weather|address|parties|condition|scope|summary|satisfactory|marginal|deficient|not\s+inspected|rated|mark)\b/i.test(
+    raw,
+  )
 }
