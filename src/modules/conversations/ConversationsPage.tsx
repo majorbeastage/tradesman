@@ -39,6 +39,7 @@ import {
   maxUserCharsForFirstSmsVariant,
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
+import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
@@ -2824,6 +2825,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 </div>
                 <ConvoCollapsible title="Compose reply" defaultOpen={false}>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
                     <textarea
                       value={replyBody}
                       maxLength={smsComposeMaxChars}
@@ -2832,12 +2834,11 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                       placeholder="Reply to this text conversation..."
                       style={{ ...theme.formInput, resize: "vertical" }}
                     />
-                    <span style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.45, display: "block" }}>
-                      {replyBody.length}/{smsComposeMaxChars}
-                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
-                        ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
-                        : " — No compliance footer on this text."}
-                    </span>
+                    <SmsComposeCharBudget
+                      variant={smsFirstComplianceVariant}
+                      bodyLength={replyBody.length}
+                      maxChars={smsComposeMaxChars}
+                    />
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
                       MMS images (optional)
                       <input

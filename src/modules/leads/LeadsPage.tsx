@@ -35,6 +35,7 @@ import {
   maxUserCharsForFirstSmsVariant,
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
+import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
@@ -2642,6 +2643,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 12, fontWeight: 600, color: "#6b7280" }}>SMS</span>
                               </div>
+                              <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
                               <textarea
                                 placeholder="Text message to customer…"
                                 value={leadReplySms}
@@ -2650,12 +2652,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 rows={2}
                                 style={{ ...theme.formInput, resize: "vertical", maxWidth: 560 }}
                               />
-                              <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45, display: "block" }}>
-                                {leadReplySms.length}/{smsComposeMaxChars}
-                                {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
-                                  ? " — First SMS appends: Reply STOP to opt out, HELP for help. Msg sent via Tradesman Systems."
-                                  : " — No compliance footer on this text."}
-                              </span>
+                              <SmsComposeCharBudget
+                                variant={smsFirstComplianceVariant}
+                                bodyLength={leadReplySms.length}
+                                maxChars={smsComposeMaxChars}
+                              />
                               <button
                                 type="button"
                                 onClick={() => void sendLeadSms()}

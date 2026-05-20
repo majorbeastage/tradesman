@@ -42,6 +42,7 @@ import {
   maxUserCharsForFirstSmsVariant,
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
+import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import {
@@ -2495,6 +2496,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                 )}
                                                 {chan === "sms" ? (
                                                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                                                    <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
                                                     <textarea
                                                       placeholder="SMS reply…"
                                                       value={customerReplySms}
@@ -2503,12 +2505,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                       rows={2}
                                                       style={{ ...theme.formInput, resize: "vertical", maxWidth: "100%", color: "#0f172a" }}
                                                     />
-                                                    <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
-                                                      {customerReplySms.length}/{smsComposeMaxChars}
-                                                      {smsFirstComplianceVariant === "manual_long" || smsFirstComplianceVariant === "twilio_short"
-                                                        ? " — First SMS appends compliance footer when required."
-                                                        : ""}
-                                                    </span>
+                                                    <SmsComposeCharBudget
+                                                      variant={smsFirstComplianceVariant}
+                                                      bodyLength={customerReplySms.length}
+                                                      maxChars={smsComposeMaxChars}
+                                                    />
                                                     <button
                                                       type="button"
                                                       onClick={() => void sendCustomerSms()}
