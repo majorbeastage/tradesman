@@ -107,6 +107,11 @@ import {
   customerPayWorkflowLabel,
   parseQuoteCustomerPayWorkflow,
 } from "../../lib/quoteCustomerPayWorkflow"
+import {
+  combineSpeechSessionDisplay,
+  parseSpeechResultsList,
+  speechRecognitionOptionsForPlatform,
+} from "../../lib/speechRecognitionTranscript"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -811,31 +816,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
     stopJobDetailsVoice()
     jobDetailsVoiceSessionBaseRef.current = jobDetailsText
     jobDetailsVoiceFinalSuffixRef.current = ""
+    const speechOpts = speechRecognitionOptionsForPlatform()
     try {
       const rec = new Ctor()
       jobDetailsRecognitionRef.current = rec
-      rec.continuous = true
-      rec.interimResults = true
+      rec.continuous = speechOpts.continuous
+      rec.interimResults = speechOpts.interimResults
       rec.lang = "en-US"
       rec.onresult = (ev: SpeechRecognitionEvent) => {
-        const ri = typeof ev.resultIndex === "number" ? ev.resultIndex : 0
-        for (let i = ri; i < ev.results.length; i += 1) {
-          const item = ev.results[i]
-          const piece = item?.[0]?.transcript
-          if (!piece) continue
-          if (item.isFinal) {
-            jobDetailsVoiceFinalSuffixRef.current += piece
-          }
-        }
-        let interim = ""
-        for (let i = ri; i < ev.results.length; i += 1) {
-          const item = ev.results[i]
-          const piece = item?.[0]?.transcript
-          if (!piece || item.isFinal) continue
-          interim += piece
-        }
-        const display = `${jobDetailsVoiceSessionBaseRef.current}${jobDetailsVoiceFinalSuffixRef.current}${interim}`
-        setJobDetailsText(display)
+        const parsed = parseSpeechResultsList(ev.results)
+        jobDetailsVoiceFinalSuffixRef.current = parsed.finals
+        setJobDetailsText(combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, parsed))
       }
       rec.onerror = () => stopJobDetailsVoice()
       rec.onend = () => {

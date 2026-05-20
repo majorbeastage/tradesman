@@ -30,6 +30,11 @@ import {
   type SpecialtyReportStructuredPatch,
 } from "../lib/specialtyReportAssistantParse"
 import { fetchSpecialtyReportFieldFills, getPlatformToolsAccessToken } from "../lib/specialtyReportAssistantApi"
+import {
+  combineSpeechSessionDisplay,
+  parseSpeechResultsList,
+  speechRecognitionOptionsForPlatform,
+} from "../lib/speechRecognitionTranscript"
 
 type WizardPhase =
   | "pick_type"
@@ -239,6 +244,9 @@ export default function SpecialtyReportWizardModal({
   const voiceFinalSuffixRef = useRef("")
   /** Chars of overall-assist transcript already parsed/applied (keeps listening on new fields). */
   const voiceConsumedLenRef = useRef(0)
+  /** Length of merged finals last sent to the command parser (avoids duplicate mobile fires). */
+  const voiceLastParserFinalsLenRef = useRef(0)
+  const voiceKeepListeningRef = useRef(false)
   const voiceOverallAssistRef = useRef(false)
   const activeVoiceFieldRef = useRef<string | null>(null)
 
@@ -716,6 +724,7 @@ export default function SpecialtyReportWizardModal({
     voiceSessionBaseRef.current = ""
     voiceFinalSuffixRef.current = ""
     voiceConsumedLenRef.current = 0
+    voiceLastParserFinalsLenRef.current = 0
     setAssistantText("")
   }
 
@@ -723,7 +732,18 @@ export default function SpecialtyReportWizardModal({
   function markOverallVoiceConsumed() {
     const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
     voiceConsumedLenRef.current = full.length
+    voiceLastParserFinalsLenRef.current = voiceFinalSuffixRef.current.length
     setAssistantText("")
+  }
+
+  function maybeRunOverallVoiceParser(finals: string) {
+    if (finals.length <= voiceLastParserFinalsLenRef.current) return
+    const fullCommitted = `${voiceSessionBaseRef.current}${finals}`
+    const chunk = fullCommitted.slice(voiceConsumedLenRef.current).trim()
+    voiceLastParserFinalsLenRef.current = finals.length
+    if (chunk.length >= 3) {
+      void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
+    }
   }
 
   function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
@@ -1032,61 +1052,60 @@ export default function SpecialtyReportWizardModal({
     }
     try {
       voiceOverallAssistRef.current = !targetFieldKey
+      voiceKeepListeningRef.current = true
       activeVoiceFieldRef.current = targetFieldKey ?? null
       voiceSessionBaseRef.current = targetFieldKey ? readFieldValue(targetFieldKey) : assistantText
       voiceFinalSuffixRef.current = ""
       voiceConsumedLenRef.current = targetFieldKey ? 0 : assistantText.length
+      voiceLastParserFinalsLenRef.current = 0
+      const speechOpts = speechRecognitionOptionsForPlatform()
       const rec = new Ctor()
       recognitionRef.current = rec
-      rec.continuous = true
-      rec.interimResults = true
+      rec.continuous = speechOpts.continuous
+      rec.interimResults = speechOpts.interimResults
       rec.lang = "en-US"
       rec.onresult = (ev: SpeechRecognitionEvent) => {
-        const ri = typeof ev.resultIndex === "number" ? ev.resultIndex : 0
-        for (let i = ri; i < ev.results.length; i += 1) {
-          const item = ev.results[i]
-          const piece = item?.[0]?.transcript
-          if (!piece) continue
-          if (item.isFinal) {
-            voiceFinalSuffixRef.current += piece
-            if (!targetFieldKey && voiceOverallAssistRef.current) {
-              const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
-              const chunk = full.slice(voiceConsumedLenRef.current).trim()
-              if (chunk.length >= 3) {
-                void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
-              }
-            }
-          }
-        }
-        let interim = ""
-        for (let i = ri; i < ev.results.length; i += 1) {
-          const item = ev.results[i]
-          const piece = item?.[0]?.transcript
-          if (!piece || item.isFinal) continue
-          interim += piece
-        }
-        const display = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}${interim}`
+        const parsed = parseSpeechResultsList(ev.results)
+        voiceFinalSuffixRef.current = parsed.finals
+        const display = combineSpeechSessionDisplay(voiceSessionBaseRef.current, parsed)
         if (targetFieldKey) {
           writeFieldValue(targetFieldKey, display)
           setSaveNote("Voice text added to field.")
         } else {
           setAssistantText(display)
+          if (voiceOverallAssistRef.current) maybeRunOverallVoiceParser(parsed.finals)
         }
       }
-      rec.onerror = () => setAssistantNote("Voice input failed. Check mic permissions and retry.")
+      rec.onerror = () => {
+        voiceKeepListeningRef.current = false
+        setAssistantNote("Voice input failed. Check mic permissions and retry.")
+      }
       rec.onend = () => {
-        setAssistantListening(false)
         const fieldKey = activeVoiceFieldRef.current
+        if (!fieldKey && voiceOverallAssistRef.current) {
+          maybeRunOverallVoiceParser(voiceFinalSuffixRef.current)
+        }
+        const shouldRestart = voiceKeepListeningRef.current && !speechRecognitionOptionsForPlatform().continuous
+        if (shouldRestart && recognitionRef.current) {
+          window.setTimeout(() => {
+            if (!voiceKeepListeningRef.current || !recognitionRef.current) return
+            try {
+              recognitionRef.current.start()
+            } catch {
+              voiceKeepListeningRef.current = false
+              setAssistantListening(false)
+              setVoiceFieldKey(null)
+              activeVoiceFieldRef.current = null
+              voiceOverallAssistRef.current = false
+            }
+          }, 280)
+          return
+        }
+        setAssistantListening(false)
         activeVoiceFieldRef.current = null
         setVoiceFieldKey(null)
-        if (!fieldKey && voiceOverallAssistRef.current) {
-          const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
-          const chunk = full.slice(voiceConsumedLenRef.current).trim()
-          if (chunk.length >= 3) {
-            void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
-          }
-        }
         voiceOverallAssistRef.current = false
+        voiceKeepListeningRef.current = false
       }
       rec.start()
       setAssistantListening(true)
@@ -1101,11 +1120,14 @@ export default function SpecialtyReportWizardModal({
   }
 
   function stopDictation() {
+    voiceKeepListeningRef.current = false
     recognitionRef.current?.stop()
     recognitionRef.current = null
     resetOverallVoiceBuffer()
     setAssistantListening(false)
     setVoiceFieldKey(null)
+    activeVoiceFieldRef.current = null
+    voiceOverallAssistRef.current = false
   }
 
   function FieldTools({ fieldKey }: { fieldKey: string }) {
