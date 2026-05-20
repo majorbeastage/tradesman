@@ -450,3 +450,59 @@ export function downloadPdfBlob(bytes: Uint8Array, filename: string) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+/** Open the system print dialog for a PDF (same document as preview/download). */
+export function printPdfBlob(bytes: Uint8Array): void {
+  const buf = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buf).set(bytes)
+  const blob = new Blob([buf], { type: "application/pdf" })
+  const url = URL.createObjectURL(blob)
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    URL.revokeObjectURL(url)
+    iframe.remove()
+  }
+
+  const iframe = document.createElement("iframe")
+  iframe.setAttribute("title", "Estimate print preview")
+  Object.assign(iframe.style, {
+    position: "fixed",
+    right: "0",
+    bottom: "0",
+    width: "0",
+    height: "0",
+    border: "none",
+  })
+  iframe.src = url
+  document.body.appendChild(iframe)
+
+  const triggerPrint = () => {
+    try {
+      iframe.contentWindow?.focus()
+      iframe.contentWindow?.print()
+    } catch {
+      const w = window.open(url, "_blank", "noopener,noreferrer")
+      if (!w) {
+        alert("Allow pop-ups to print, or use Preview Estimate and print from the PDF tab.")
+        cleanup()
+        return
+      }
+      window.setTimeout(() => {
+        try {
+          w.focus()
+          w.print()
+        } catch {
+          /* user can print from the PDF tab */
+        }
+      }, 800)
+      window.setTimeout(cleanup, 120_000)
+      return
+    }
+    iframe.contentWindow?.addEventListener("afterprint", cleanup, { once: true })
+    window.setTimeout(cleanup, 120_000)
+  }
+
+  iframe.onload = () => window.setTimeout(triggerPrint, 300)
+}

@@ -36,7 +36,12 @@ import {
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
-import { buildQuotePdfBytes, downloadPdfBlob, type QuotePdfCustomerCopyAttachment } from "../../lib/documentPdf"
+import {
+  buildQuotePdfBytes,
+  downloadPdfBlob,
+  printPdfBlob,
+  type QuotePdfCustomerCopyAttachment,
+} from "../../lib/documentPdf"
 import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "../../lib/defaultEstimateLegal"
@@ -3756,43 +3761,49 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (selectedQuoteId) setQuoteEntityRows(await loadEntityAttachmentsForQuote(selectedQuoteId))
   }
 
+  async function buildCurrentEstimatePdfPayload() {
+    if (!selectedQuote) return null
+    const items = selectedQuoteItems.map((item) => {
+      const { desc, qty, up, tot } = getItemDisplay(item)
+      const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
+      const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
+      const total = typeof tot === "number" && !Number.isNaN(tot) ? tot : quantity * unitPrice
+      return { description: String(desc), quantity, unitPrice, total }
+    })
+    let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
+    if (quoteShowLogo && quoteLogoUrl.trim()) {
+      logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
+      if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
+    }
+    const legal =
+      quoteIncludeLegal || quoteLegalSignatures
+        ? {
+            body: quoteLegalText.trim() || DEFAULT_ESTIMATE_LEGAL_TEMPLATE,
+            cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE,
+            showSignatures: quoteLegalSignatures,
+          }
+        : null
+    return {
+      title: `Quote ${selectedQuote.id.slice(0, 8)}`,
+      businessLabel: profileDisplayNameForPdf || "Quote",
+      customerName: selectedQuote.customers?.display_name ?? "Customer",
+      items,
+      templateHeader: quotePdfTemplate,
+      templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
+      includePreparedDate: quoteIncludePreparedDate,
+      showLineNumbers: quoteShowLineNumbers,
+      logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
+      legal,
+      customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
+    }
+  }
+
   async function downloadQuoteDocumentClick() {
     if (!selectedQuote) return
     setQuotePdfBusy(true)
     try {
-      const items = selectedQuoteItems.map((item) => {
-        const { desc, qty, up, tot } = getItemDisplay(item)
-        const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
-        const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
-        const total = typeof tot === "number" && !Number.isNaN(tot) ? tot : quantity * unitPrice
-        return { description: String(desc), quantity, unitPrice, total }
-      })
-      let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
-      if (quoteShowLogo && quoteLogoUrl.trim()) {
-        logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
-        if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
-      }
-      const legal =
-        quoteIncludeLegal || quoteLegalSignatures
-          ? {
-              body: quoteLegalText.trim() || DEFAULT_ESTIMATE_LEGAL_TEMPLATE,
-              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE,
-              showSignatures: quoteLegalSignatures,
-            }
-          : null
-      const base = {
-        title: `Quote ${selectedQuote.id.slice(0, 8)}`,
-        businessLabel: profileDisplayNameForPdf || "Quote",
-        customerName: selectedQuote.customers?.display_name ?? "Customer",
-        items,
-        templateHeader: quotePdfTemplate,
-        templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
-        includePreparedDate: quoteIncludePreparedDate,
-        showLineNumbers: quoteShowLineNumbers,
-        logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
-        legal,
-        customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
-      }
+      const base = await buildCurrentEstimatePdfPayload()
+      if (!base) return
       const shortId = selectedQuote.id.slice(0, 8)
       if (quoteExportFormat === "docx") {
         const { buildQuoteDocxBlob, downloadDocxBlob } = await import("../../lib/documentQuoteDocx")
@@ -3813,44 +3824,28 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!selectedQuote) return
     setQuotePdfBusy(true)
     try {
-      const items = selectedQuoteItems.map((item) => {
-        const { desc, qty, up, tot } = getItemDisplay(item)
-        const quantity = typeof qty === "number" ? qty : Number.parseFloat(String(qty)) || 0
-        const unitPrice = typeof up === "number" ? up : Number.parseFloat(String(up)) || 0
-        const total = typeof tot === "number" && !Number.isNaN(tot) ? tot : quantity * unitPrice
-        return { description: String(desc), quantity, unitPrice, total }
-      })
-      let logo: { bytes: Uint8Array; kind: "png" | "jpeg" } | null = null
-      if (quoteShowLogo && quoteLogoUrl.trim()) {
-        logo = await fetchQuoteLogoForExport(quoteLogoUrl.trim())
-        if (!logo) console.warn("[quotes] Logo URL did not load (CORS, format, or network). Export continues without logo.")
-      }
-      const legal =
-        quoteIncludeLegal || quoteLegalSignatures
-          ? {
-              body: quoteLegalText.trim() || DEFAULT_ESTIMATE_LEGAL_TEMPLATE,
-              cancellation: quoteCancellationText.trim() ? quoteCancellationText.trim() : DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE,
-              showSignatures: quoteLegalSignatures,
-            }
-          : null
-      const base = {
-        title: `Quote ${selectedQuote.id.slice(0, 8)}`,
-        businessLabel: profileDisplayNameForPdf || "Quote",
-        customerName: selectedQuote.customers?.display_name ?? "Customer",
-        items,
-        templateHeader: quotePdfTemplate,
-        templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
-        includePreparedDate: quoteIncludePreparedDate,
-        showLineNumbers: quoteShowLineNumbers,
-        logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
-        legal,
-        customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
-      }
+      const base = await buildCurrentEstimatePdfPayload()
+      if (!base) return
       const bytes = await buildQuotePdfBytes(base)
       const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
       const url = URL.createObjectURL(blob)
       window.open(url, "_blank", "noopener,noreferrer")
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQuotePdfBusy(false)
+    }
+  }
+
+  async function printEstimateDocument() {
+    if (!selectedQuote) return
+    setQuotePdfBusy(true)
+    try {
+      const base = await buildCurrentEstimatePdfPayload()
+      if (!base) return
+      const bytes = await buildQuotePdfBytes(base)
+      printPdfBlob(bytes)
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {
@@ -6829,7 +6824,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.print()}
+                    disabled={quotePdfBusy}
+                    title="Print the estimate PDF preview (not this screen)"
+                    onClick={() => void printEstimateDocument()}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 8,
@@ -6837,10 +6834,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       background: "#fff",
                       color: theme.text,
                       fontWeight: 600,
-                      cursor: "pointer",
+                      cursor: quotePdfBusy ? "wait" : "pointer",
                     }}
                   >
-                    Print
+                    {quotePdfBusy ? "Working…" : "Print"}
                   </button>
                   <button
                     type="button"
