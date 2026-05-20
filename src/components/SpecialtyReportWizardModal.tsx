@@ -32,6 +32,7 @@ import {
 import { fetchSpecialtyReportFieldFills, getPlatformToolsAccessToken } from "../lib/specialtyReportAssistantApi"
 import {
   combineSpeechSessionDisplay,
+  createThrottledSpeechDisplay,
   parseSpeechResultsList,
   speechRecognitionOptionsForPlatform,
 } from "../lib/speechRecognitionTranscript"
@@ -249,6 +250,8 @@ export default function SpecialtyReportWizardModal({
   const voiceKeepListeningRef = useRef(false)
   const voiceOverallAssistRef = useRef(false)
   const activeVoiceFieldRef = useRef<string | null>(null)
+  const voiceDisplayThrottleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
+  const voiceParserDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -746,6 +749,14 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
+  function scheduleOverallVoiceParser(finals: string) {
+    if (voiceParserDebounceRef.current) clearTimeout(voiceParserDebounceRef.current)
+    voiceParserDebounceRef.current = setTimeout(() => {
+      voiceParserDebounceRef.current = null
+      maybeRunOverallVoiceParser(finals)
+    }, 1100)
+  }
+
   function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
     if (parsed.structuredPatches.length > 0) applyNavigationPatches(parsed.structuredPatches)
     return applyParsedFieldAssignments(parsed.assignments)
@@ -1058,6 +1069,14 @@ export default function SpecialtyReportWizardModal({
       voiceFinalSuffixRef.current = ""
       voiceConsumedLenRef.current = targetFieldKey ? 0 : assistantText.length
       voiceLastParserFinalsLenRef.current = 0
+      voiceDisplayThrottleRef.current?.cancel()
+      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
+        if (targetFieldKey) {
+          writeFieldValue(targetFieldKey, display)
+        } else {
+          setAssistantText(display)
+        }
+      })
       const speechOpts = speechRecognitionOptionsForPlatform()
       const rec = new Ctor()
       recognitionRef.current = rec
@@ -1068,12 +1087,11 @@ export default function SpecialtyReportWizardModal({
         const parsed = parseSpeechResultsList(ev.results)
         voiceFinalSuffixRef.current = parsed.finals
         const display = combineSpeechSessionDisplay(voiceSessionBaseRef.current, parsed)
+        voiceDisplayThrottleRef.current?.schedule(display)
         if (targetFieldKey) {
-          writeFieldValue(targetFieldKey, display)
-          setSaveNote("Voice text added to field.")
-        } else {
-          setAssistantText(display)
-          if (voiceOverallAssistRef.current) maybeRunOverallVoiceParser(parsed.finals)
+          /* save note only on flush — avoid setState every 50ms */
+        } else if (voiceOverallAssistRef.current) {
+          scheduleOverallVoiceParser(parsed.finals)
         }
       }
       rec.onerror = () => {
@@ -1081,10 +1099,16 @@ export default function SpecialtyReportWizardModal({
         setAssistantNote("Voice input failed. Check mic permissions and retry.")
       }
       rec.onend = () => {
+        voiceDisplayThrottleRef.current?.flushNow()
+        if (voiceParserDebounceRef.current) {
+          clearTimeout(voiceParserDebounceRef.current)
+          voiceParserDebounceRef.current = null
+        }
         const fieldKey = activeVoiceFieldRef.current
         if (!fieldKey && voiceOverallAssistRef.current) {
           maybeRunOverallVoiceParser(voiceFinalSuffixRef.current)
         }
+        if (targetFieldKey) setSaveNote("Voice text added to field.")
         const shouldRestart = voiceKeepListeningRef.current && !speechRecognitionOptionsForPlatform().continuous
         if (shouldRestart && recognitionRef.current) {
           window.setTimeout(() => {
@@ -1121,6 +1145,13 @@ export default function SpecialtyReportWizardModal({
 
   function stopDictation() {
     voiceKeepListeningRef.current = false
+    if (voiceParserDebounceRef.current) {
+      clearTimeout(voiceParserDebounceRef.current)
+      voiceParserDebounceRef.current = null
+    }
+    voiceDisplayThrottleRef.current?.flushNow()
+    voiceDisplayThrottleRef.current?.cancel()
+    voiceDisplayThrottleRef.current = null
     recognitionRef.current?.stop()
     recognitionRef.current = null
     resetOverallVoiceBuffer()

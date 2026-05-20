@@ -112,3 +112,42 @@ export function combineSpeechSessionDisplay(sessionBase: string, parsed: { final
   const gap = base.endsWith(" ") || body.startsWith(" ") ? "" : " "
   return `${base}${gap}${body}`
 }
+
+/** Throttle React/state updates from speech onresult (fires many times per second). */
+export function createThrottledSpeechDisplay(
+  onDisplay: (display: string) => void,
+  throttleMs = isLikelyMobileSpeechPlatform() ? 180 : 90,
+) {
+  let pending: string | null = null
+  let lastEmitted = ""
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const flush = () => {
+    timer = null
+    if (pending == null || pending === lastEmitted) return
+    lastEmitted = pending
+    onDisplay(pending)
+  }
+
+  return {
+    schedule(display: string) {
+      pending = display
+      if (display === lastEmitted) return
+      if (timer != null) return
+      timer = setTimeout(flush, throttleMs)
+    },
+    flushNow() {
+      if (timer != null) clearTimeout(timer)
+      timer = null
+      if (pending != null && pending !== lastEmitted) {
+        lastEmitted = pending
+        onDisplay(pending)
+      }
+    },
+    cancel() {
+      if (timer != null) clearTimeout(timer)
+      timer = null
+      pending = null
+    },
+  }
+}

@@ -109,6 +109,7 @@ import {
 } from "../../lib/quoteCustomerPayWorkflow"
 import {
   combineSpeechSessionDisplay,
+  createThrottledSpeechDisplay,
   parseSpeechResultsList,
   speechRecognitionListenUntilStopped,
 } from "../../lib/speechRecognitionTranscript"
@@ -443,6 +444,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
   const jobDetailsRecognitionRef = useRef<SpeechRecognition | null>(null)
   const jobDetailsVoiceKeepListeningRef = useRef(false)
+  /** While true, skip per-keystroke sessionStorage + metadata autosave (major source of UI jank). */
+  const jobDetailsVoiceActiveRef = useRef(false)
+  const jobDetailsVoiceDisplayThrottleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
   /** Baseline textarea value when recognition session starts (+ appended finals + interim transcript). */
   const jobDetailsVoiceSessionBaseRef = useRef("")
   const jobDetailsVoiceFinalSuffixRef = useRef("")
@@ -737,6 +741,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     if (!supabase || !userId || !selectedQuoteId) return
+    if (jobDetailsVoiceActiveRef.current) return
     const client = supabase
     const qRow = selectedQuotePersistRef.current
     if (!qRow || qRow.id !== selectedQuoteId) return
@@ -769,7 +774,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [jobDetailsText, selectedQuoteId, supabase, userId])
 
   useEffect(() => {
-    if (!selectedQuoteId) return
+    if (!selectedQuoteId || jobDetailsVoiceActiveRef.current) return
     try {
       sessionStorage.setItem(`tradesman_quote_job_details_${selectedQuoteId}`, jobDetailsText)
     } catch {
@@ -798,6 +803,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   )
 
   const commitJobDetailsVoiceTurn = useCallback(() => {
+    jobDetailsVoiceDisplayThrottleRef.current?.flushNow()
     const committed = combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, {
       finals: jobDetailsVoiceFinalSuffixRef.current,
       interim: "",
@@ -810,17 +816,28 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const stopJobDetailsVoice = useCallback(() => {
     jobDetailsVoiceKeepListeningRef.current = false
+    jobDetailsVoiceActiveRef.current = false
+    jobDetailsVoiceDisplayThrottleRef.current?.flushNow()
+    jobDetailsVoiceDisplayThrottleRef.current?.cancel()
+    jobDetailsVoiceDisplayThrottleRef.current = null
     try {
       jobDetailsRecognitionRef.current?.stop()
     } catch {
       /* ignore */
     }
     jobDetailsRecognitionRef.current = null
-    commitJobDetailsVoiceTurn()
+    const committed = commitJobDetailsVoiceTurn()
     jobDetailsVoiceSessionBaseRef.current = ""
     jobDetailsVoiceFinalSuffixRef.current = ""
     setJobDetailsVoiceListening(false)
-  }, [commitJobDetailsVoiceTurn])
+    if (committed && selectedQuoteId) {
+      try {
+        sessionStorage.setItem(`tradesman_quote_job_details_${selectedQuoteId}`, committed)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [commitJobDetailsVoiceTurn, selectedQuoteId])
 
   const beginJobDetailsVoiceTurn = useCallback(() => {
     if (!jobDetailsSpeechSupported || typeof window === "undefined" || !jobDetailsVoiceKeepListeningRef.current) return
@@ -837,7 +854,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       rec.onresult = (ev: SpeechRecognitionEvent) => {
         const parsed = parseSpeechResultsList(ev.results)
         jobDetailsVoiceFinalSuffixRef.current = parsed.finals
-        setJobDetailsText(combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, parsed))
+        const display = combineSpeechSessionDisplay(jobDetailsVoiceSessionBaseRef.current, parsed)
+        jobDetailsVoiceDisplayThrottleRef.current?.schedule(display)
       }
       rec.onerror = () => {
         if (!jobDetailsVoiceKeepListeningRef.current) return
@@ -868,8 +886,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     jobDetailsRecognitionRef.current = null
     jobDetailsVoiceKeepListeningRef.current = true
+    jobDetailsVoiceActiveRef.current = true
     jobDetailsVoiceSessionBaseRef.current = jobDetailsText
     jobDetailsVoiceFinalSuffixRef.current = ""
+    jobDetailsVoiceDisplayThrottleRef.current?.cancel()
+    jobDetailsVoiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => setJobDetailsText(display))
     setJobDetailsVoiceListening(true)
     beginJobDetailsVoiceTurn()
   }, [jobDetailsSpeechSupported, jobDetailsText, beginJobDetailsVoiceTurn])
