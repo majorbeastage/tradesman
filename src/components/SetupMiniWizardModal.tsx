@@ -6,6 +6,7 @@ import { applySetupMiniWizard, type WizardAnswers } from "../lib/setupWizardAppl
 import { getSetupMiniWizardFlow, type SetupWizardQuestion } from "../lib/setupMiniWizardSteps"
 import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
 import { parseSpokenLineItem } from "../lib/parseSpokenLineItem"
+import { speakNaturalPrompt, stopNaturalPrompt } from "../lib/speechSynthesisPrompt"
 
 const BTN_SECONDARY = {
   padding: "10px 14px",
@@ -23,15 +24,6 @@ type Props = {
   userId: string
   onClose: () => void
   onApplied?: (message: string) => void
-}
-
-function speakPrompt(text: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return
-  window.speechSynthesis.cancel()
-  const u = new SpeechSynthesisUtterance(text)
-  u.rate = 1
-  u.lang = "en-US"
-  window.speechSynthesis.speak(u)
 }
 
 export default function SetupMiniWizardModal({ wizardId, userId, onClose, onApplied }: Props) {
@@ -69,8 +61,11 @@ export default function SetupMiniWizardModal({ wizardId, userId, onClose, onAppl
 
   useEffect(() => {
     if (!q?.speakAloud) return
-    const t = window.setTimeout(() => speakPrompt(q.prompt), 400)
-    return () => window.clearTimeout(t)
+    const t = window.setTimeout(() => speakNaturalPrompt(q.prompt), 400)
+    return () => {
+      window.clearTimeout(t)
+      stopNaturalPrompt()
+    }
   }, [step, q?.prompt, q?.speakAloud])
 
   async function finishWizard() {
@@ -240,7 +235,7 @@ export default function SetupMiniWizardModal({ wizardId, userId, onClose, onAppl
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
             <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#0f172a", lineHeight: 1.45 }}>{q.prompt}</p>
             {q.speakAloud ? (
-              <button type="button" onClick={() => speakPrompt(q.prompt)} style={{ ...BTN_SECONDARY, fontSize: 11, padding: "6px 10px" }}>
+              <button type="button" onClick={() => speakNaturalPrompt(q.prompt)} style={{ ...BTN_SECONDARY, fontSize: 11, padding: "6px 10px" }}>
                 Listen
               </button>
             ) : null}

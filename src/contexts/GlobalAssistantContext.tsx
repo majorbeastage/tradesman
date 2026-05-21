@@ -15,7 +15,9 @@ type GlobalAssistantContextValue = {
   setMicFabVisible: (v: boolean) => void
   voiceListening: boolean
   speechSupported: boolean
-  toggleVoiceListening: (baseText?: string) => boolean
+  /** Pass `seedText` to continue dictation (e.g. variance report); omit for a fresh platform command. */
+  toggleVoiceListening: (seedText?: string) => boolean
+  submitVoiceAssistant: () => void
   stopVoiceListening: () => void
   reportModalOpen: boolean
   setReportModalOpen: (v: boolean) => void
@@ -47,14 +49,8 @@ export function GlobalAssistantProvider({
   const [micFabVisible, setMicFabVisible] = useState(() => isGlobalAssistantMicEnabled(profileMetadata))
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const setupGuideOpenerRef = useRef<(() => void) | null>(null)
+  const skipVoiceAutoApplyRef = useRef(false)
   const setupWizard = useSetupWizardOptional()
-
-  const {
-    speechSupported,
-    listening: voiceListening,
-    startListening,
-    stopListening,
-  } = useSpeechRecognitionInput(setAssistantText)
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
     setupGuideOpenerRef.current = fn
@@ -63,16 +59,6 @@ export function GlobalAssistantProvider({
   const openSetupGuide = useCallback(() => {
     setupGuideOpenerRef.current?.()
   }, [])
-
-  const persistMicPref = useCallback(
-    async (enabled: boolean) => {
-      if (!profileUserId || !supabase) return
-      const next = mergeGlobalAssistantMic(profileMetadata ?? {}, enabled)
-      const { error } = await supabase.from("profiles").update({ metadata: next }).eq("id", profileUserId)
-      if (!error) onMetadataPatch?.(next)
-    },
-    [profileUserId, profileMetadata, onMetadataPatch],
-  )
 
   const runAssistantCommand = useCallback(
     async (raw: string) => {
@@ -103,22 +89,73 @@ export function GlobalAssistantProvider({
     [openSetupGuide, setPage, setupWizard],
   )
 
+  const onVoiceSessionEnd = useCallback(
+    (text: string) => {
+      if (skipVoiceAutoApplyRef.current) {
+        skipVoiceAutoApplyRef.current = false
+        return
+      }
+      const t = text.trim()
+      if (!t) return
+      void runAssistantCommand(t)
+      setAssistantText("")
+    },
+    [runAssistantCommand],
+  )
+
+  const {
+    speechSupported,
+    listening: voiceListening,
+    startListening,
+    stopListening,
+  } = useSpeechRecognitionInput(setAssistantText, { onSessionEnd: onVoiceSessionEnd })
+
+  const persistMicPref = useCallback(
+    async (enabled: boolean) => {
+      if (!profileUserId || !supabase) return
+      const next = mergeGlobalAssistantMic(profileMetadata ?? {}, enabled)
+      const { error } = await supabase.from("profiles").update({ metadata: next }).eq("id", profileUserId)
+      if (!error) onMetadataPatch?.(next)
+    },
+    [profileUserId, profileMetadata, onMetadataPatch],
+  )
+
+  const submitVoiceAssistant = useCallback(() => {
+    const t = assistantText.trim()
+    skipVoiceAutoApplyRef.current = true
+    stopListening()
+    if (t) {
+      void runAssistantCommand(t)
+      setAssistantText("")
+    }
+    setAssistantNote(null)
+  }, [assistantText, runAssistantCommand, stopListening])
+
   const toggleVoiceListening = useCallback(
-    (baseText?: string) => {
+    (seedText?: string) => {
       if (voiceListening) {
         stopListening()
-        setAssistantNote(null)
         return false
       }
-      const base = typeof baseText === "string" ? baseText : assistantText
-      if (base.trim()) setAssistantText(base)
-      const started = startListening(base.trim() ? base : assistantText)
+      const fresh = seedText === undefined
+      const base = fresh ? "" : seedText
+      if (fresh) {
+        setAssistantText("")
+        setAssistantNote(null)
+      } else if (base.trim()) {
+        setAssistantText(base)
+      }
+      const started = startListening(base.trim() ? base : "")
       if (started) {
-        setAssistantNote("Platform assistant listening — say a tab or task (e.g. “take me to customers”).")
+        setAssistantNote(
+          fresh
+            ? "Listening… say a tab or task, then stop or tap Send. Example: take me to customers."
+            : "Listening… speak your update, then stop or tap Send.",
+        )
       }
       return started
     },
-    [assistantText, startListening, stopListening, voiceListening],
+    [startListening, stopListening, voiceListening],
   )
 
   const value = useMemo(
@@ -136,6 +173,7 @@ export function GlobalAssistantProvider({
       voiceListening,
       speechSupported,
       toggleVoiceListening,
+      submitVoiceAssistant,
       stopVoiceListening: stopListening,
       reportModalOpen,
       setReportModalOpen,
@@ -151,6 +189,7 @@ export function GlobalAssistantProvider({
       voiceListening,
       speechSupported,
       toggleVoiceListening,
+      submitVoiceAssistant,
       stopListening,
       reportModalOpen,
       runAssistantCommand,

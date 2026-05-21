@@ -834,6 +834,8 @@ export default function DashboardQuickActions(props: Props) {
               busy={ga.assistantBusy}
               note={ga.assistantNote}
               compact={isMobile}
+              autoApplyOnVoiceEnd
+              clearVoiceOnStart
             />
           </div>
         ) : null}

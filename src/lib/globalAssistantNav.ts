@@ -1,6 +1,6 @@
 /** Command routing for the platform assistant (rules-first; expand with AI API later). */
 
-import type { SetupMiniWizardId } from "./setupGuideWizards"
+import { getSetupMiniWizardDef, type SetupMiniWizardId } from "./setupGuideWizards"
 
 export type GlobalAssistantAction =
   | { type: "navigate"; page: string; message: string }
@@ -86,10 +86,13 @@ export function parseGlobalAssistantCommand(raw: string): GlobalAssistantAction 
 
   for (const row of WIZARD_ALIASES) {
     if (row.patterns.some((p) => p.test(text))) {
+      const def = getSetupMiniWizardDef(row.wizardId)
       return {
         type: "open_mini_wizard",
         wizardId: row.wizardId,
-        message: `Opening the ${row.wizardId.replace(/_/g, " ")} setup wizard.`,
+        message: def
+          ? `Opening ${def.label} on ${PAGE_LABELS[def.page] ?? def.page}. ${def.locationHint}`
+          : `Opening the ${row.wizardId.replace(/_/g, " ")} setup wizard.`,
       }
     }
   }

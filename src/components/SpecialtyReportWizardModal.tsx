@@ -1940,7 +1940,7 @@ export default function SpecialtyReportWizardModal({
         onToggle={() => {
           if (assistantListening) stopDictation()
           if (globalAssistant) {
-            globalAssistant.toggleVoiceListening(assistantText || globalAssistant.assistantText)
+            globalAssistant.toggleVoiceListening(assistantText || globalAssistant.assistantText || "")
             return
           }
           if (assistantListening) stopDictation()

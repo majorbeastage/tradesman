@@ -1,11 +1,22 @@
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 
-/** Site-wide assistant mic (indigo) — distinct from the orange variance-report mic. */
+const GREEN_SEND = "#059669"
+
+/** Site-wide assistant mic (indigo) + green Send — distinct from the orange variance-report mic. */
 export default function GlobalAssistantFab() {
   const ga = useGlobalAssistantOptional()
   if (!ga?.micFabVisible || ga.reportModalOpen) return null
 
-  const { voiceListening, speechSupported, toggleVoiceListening, assistantText } = ga
+  const {
+    voiceListening,
+    speechSupported,
+    toggleVoiceListening,
+    submitVoiceAssistant,
+    assistantText,
+    assistantBusy,
+  } = ga
+
+  const canSend = Boolean(assistantText.trim()) && !assistantBusy
 
   return (
     <>
@@ -18,50 +29,112 @@ export default function GlobalAssistantFab() {
           animation: tradesman-global-assistant-pulse 1.6s ease-in-out infinite;
         }
       `}</style>
-      <button
-        type="button"
-        className={voiceListening ? "tradesman-global-assistant-fab--listening" : undefined}
-        title={voiceListening ? "Stop platform assistant voice" : "Platform assistant — voice & navigation"}
-        aria-label={voiceListening ? "Stop listening" : "Start platform assistant voice"}
-        onClick={() => {
-          if (!speechSupported) return
-          toggleVoiceListening(assistantText)
-        }}
+      <div
         style={{
           position: "fixed",
           zIndex: 10050,
           right: 20,
           bottom: "max(20px, calc(12px + env(safe-area-inset-bottom, 0px)))",
-          width: 54,
-          height: 54,
-          borderRadius: "50%",
-          border: "2px solid #fff",
-          background: voiceListening
-            ? "linear-gradient(145deg, #4f46e5 0%, #3730a3 100%)"
-            : "linear-gradient(145deg, #6366f1 0%, #4f46e5 100%)",
-          color: "#fff",
-          cursor: speechSupported ? "pointer" : "not-allowed",
-          opacity: speechSupported ? 1 : 0.55,
           display: "flex",
+          flexDirection: "row-reverse",
           alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
+          gap: 10,
         }}
       >
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path
-            d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z"
-            fill="currentColor"
-          />
-          <path
-            d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
+        {voiceListening || canSend ? (
+          <button
+            type="button"
+            title="Send command (Go)"
+            aria-label="Send assistant command"
+            disabled={!canSend}
+            onClick={() => submitVoiceAssistant()}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              border: "2px solid #fff",
+              background: canSend ? GREEN_SEND : "#94a3b8",
+              color: "#fff",
+              cursor: canSend ? "pointer" : "not-allowed",
+              opacity: canSend ? 1 : 0.65,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              boxShadow: voiceListening ? "0 0 0 4px rgba(5,150,105,0.3)" : "0 6px 16px rgba(5,150,105,0.35)",
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M5 12h12M13 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={voiceListening ? "tradesman-global-assistant-fab--listening" : undefined}
+          title={voiceListening ? "Stop listening (runs Go when you stop)" : "Platform assistant — voice & navigation"}
+          aria-label={voiceListening ? "Stop listening" : "Start platform assistant voice"}
+          onClick={() => {
+            if (!speechSupported) return
+            toggleVoiceListening()
+          }}
+          style={{
+            width: 54,
+            height: 54,
+            borderRadius: "50%",
+            border: "2px solid #fff",
+            background: voiceListening
+              ? "linear-gradient(145deg, #4f46e5 0%, #3730a3 100%)"
+              : "linear-gradient(145deg, #6366f1 0%, #4f46e5 100%)",
+            color: "#fff",
+            cursor: speechSupported ? "pointer" : "not-allowed",
+            opacity: speechSupported ? 1 : 0.55,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+            flexShrink: 0,
+          }}
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z" fill="currentColor" />
+            <path
+              d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+      {voiceListening && assistantText.trim() ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            zIndex: 10049,
+            right: 20,
+            bottom: "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))",
+            maxWidth: 280,
+            padding: "8px 12px",
+            borderRadius: 10,
+            background: "rgba(15,23,42,0.92)",
+            color: "#f8fafc",
+            fontSize: 12,
+            lineHeight: 1.4,
+            boxShadow: "0 8px 24px rgba(15,23,42,0.25)",
+          }}
+        >
+          {assistantText.trim()}
+        </div>
+      ) : null}
     </>
   )
 }

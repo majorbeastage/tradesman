@@ -1,5 +1,8 @@
+import { useCallback } from "react"
 import { theme } from "../styles/theme"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
+
+const GREEN_SEND = "#059669"
 
 type Props = {
   value: string
@@ -10,6 +13,10 @@ type Props = {
   busy?: boolean
   note?: string | null
   compact?: boolean
+  /** After voice stops, run Go/Find setting automatically when there is text. */
+  autoApplyOnVoiceEnd?: boolean
+  /** Clear the field when starting a new voice session. */
+  clearVoiceOnStart?: boolean
 }
 
 export default function PlatformAssistantField({
@@ -21,8 +28,42 @@ export default function PlatformAssistantField({
   busy = false,
   note = null,
   compact = false,
+  autoApplyOnVoiceEnd = false,
+  clearVoiceOnStart = false,
 }: Props) {
-  const { speechSupported, listening, toggleListening } = useSpeechRecognitionInput(onChange)
+  const onVoiceSessionEnd = useCallback(
+    (text: string) => {
+      if (!autoApplyOnVoiceEnd) return
+      const t = text.trim()
+      if (!t) return
+      void onApply(t)
+      onChange("")
+    },
+    [autoApplyOnVoiceEnd, onApply, onChange],
+  )
+
+  const { speechSupported, listening, startListening, stopListening } = useSpeechRecognitionInput(
+    onChange,
+    { onSessionEnd: autoApplyOnVoiceEnd ? onVoiceSessionEnd : undefined },
+  )
+
+  const submitVoice = useCallback(() => {
+    const t = value.trim()
+    stopListening()
+    if (t) void onApply(t)
+    onChange("")
+  }, [onApply, onChange, stopListening, value])
+
+  const handleVoiceToggle = useCallback(() => {
+    if (listening) {
+      stopListening()
+      return
+    }
+    if (clearVoiceOnStart) onChange("")
+    startListening(clearVoiceOnStart ? "" : value)
+  }, [clearVoiceOnStart, listening, onChange, startListening, stopListening, value])
+
+  const showGreenSend = listening || Boolean(value.trim())
 
   return (
     <div
@@ -39,7 +80,14 @@ export default function PlatformAssistantField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ ...theme.formInput, resize: "vertical", width: "100%", marginBottom: 8 }}
+        style={{
+          ...theme.formInput,
+          resize: "vertical",
+          width: "100%",
+          marginBottom: 8,
+          outline: listening ? "2px solid #6366f1" : undefined,
+          outlineOffset: 1,
+        }}
       />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <button
@@ -63,7 +111,7 @@ export default function PlatformAssistantField({
         {speechSupported ? (
           <button
             type="button"
-            onClick={() => toggleListening(value)}
+            onClick={handleVoiceToggle}
             style={{
               padding: "8px 14px",
               borderRadius: 8,
@@ -76,6 +124,29 @@ export default function PlatformAssistantField({
             }}
           >
             {listening ? "Stop listening" : "Voice"}
+          </button>
+        ) : null}
+        {showGreenSend ? (
+          <button
+            type="button"
+            disabled={busy || !value.trim()}
+            title="Send voice command (same as Go)"
+            aria-label="Send voice command"
+            onClick={() => submitVoice()}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "none",
+              background: GREEN_SEND,
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: busy || !value.trim() ? "not-allowed" : "pointer",
+              opacity: busy || !value.trim() ? 0.55 : 1,
+              boxShadow: listening ? "0 0 0 3px rgba(5,150,105,0.25)" : undefined,
+            }}
+          >
+            Send
           </button>
         ) : null}
       </div>

@@ -281,6 +281,7 @@ export default function SetupGuideModal({
   async function runAdjustCommand(text: string) {
     setAdjustBusy(true)
     setAdjustNote(null)
+    setAdjustText("")
     try {
       const action = parseGlobalAssistantCommand(text)
       if (action.type === "open_setup_guide") {
@@ -292,9 +293,14 @@ export default function SetupGuideModal({
         setAdjustNote(action.message)
         return
       }
+      if (action.type === "open_mini_wizard") {
+        setupWizard?.launchWizard(action.wizardId, { fromSetupGuide: true })
+        setAdjustNote(action.message)
+        return
+      }
       if (action.type === "navigate") {
         setPage(action.page)
-        setAdjustNote(`${action.message} The relevant tab is open behind this guide.`)
+        setAdjustNote(`${action.message} The tab is open behind this guide.`)
         return
       }
     } finally {
@@ -493,7 +499,38 @@ export default function SetupGuideModal({
               applyLabel="Find setting"
               busy={adjustBusy}
               note={adjustNote}
+              autoApplyOnVoiceEnd
+              clearVoiceOnStart
             />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                "customers",
+                "automatic replies",
+                "estimate line items",
+                "scheduling alerts",
+                "call forwarding",
+                "voicemail greeting",
+              ].map((phrase) => (
+                <button
+                  key={phrase}
+                  type="button"
+                  disabled={adjustBusy}
+                  onClick={() => void runAdjustCommand(phrase)}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#334155",
+                    cursor: adjustBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {phrase}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => {

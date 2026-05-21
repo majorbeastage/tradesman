@@ -26,23 +26,40 @@ function speechCtor(): (new () => SpeechRecognitionInstance) | undefined {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition
 }
 
+export type SpeechRecognitionInputOptions = {
+  /** Fired once when a listen session ends (user stop, send, or single-phrase completion on mobile). */
+  onSessionEnd?: (finalText: string) => void
+}
+
 /** Browser speech-to-text into a string; shared by dashboard assistant and global FAB. */
-export function useSpeechRecognitionInput(onDisplay: (text: string) => void) {
+export function useSpeechRecognitionInput(
+  onDisplay: (text: string) => void,
+  options?: SpeechRecognitionInputOptions,
+) {
   const [speechSupported, setSpeechSupported] = useState(false)
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const voiceBaseRef = useRef("")
   const voiceKeepRef = useRef(false)
   const throttleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
+  const lastDisplayRef = useRef("")
   const onDisplayRef = useRef(onDisplay)
+  const onSessionEndRef = useRef(options?.onSessionEnd)
   onDisplayRef.current = onDisplay
+  onSessionEndRef.current = options?.onSessionEnd
+
+  const setDisplay = useCallback((text: string) => {
+    lastDisplayRef.current = text
+    onDisplayRef.current(text)
+  }, [])
 
   useEffect(() => {
     setSpeechSupported(Boolean(speechCtor()))
   }, [])
 
-  const stopListening = useCallback(() => {
+  const endSession = useCallback((notify: boolean) => {
     voiceKeepRef.current = false
+    throttleRef.current?.flushNow()
     throttleRef.current?.cancel()
     throttleRef.current = null
     try {
@@ -52,17 +69,24 @@ export function useSpeechRecognitionInput(onDisplay: (text: string) => void) {
     }
     recognitionRef.current = null
     setListening(false)
+    if (notify) onSessionEndRef.current?.(lastDisplayRef.current)
   }, [])
+
+  const stopListening = useCallback(() => {
+    const notify = voiceKeepRef.current
+    endSession(notify)
+  }, [endSession])
 
   const startListening = useCallback(
     (baseText = "") => {
       const Ctor = speechCtor()
       if (!Ctor) return false
       try {
-        stopListening()
+        endSession(false)
         voiceKeepRef.current = true
         voiceBaseRef.current = baseText
-        throttleRef.current = createThrottledSpeechDisplay((display) => onDisplayRef.current(display))
+        lastDisplayRef.current = baseText
+        throttleRef.current = createThrottledSpeechDisplay((display) => setDisplay(display))
         const rec = new Ctor()
         recognitionRef.current = rec
         const opts = speechRecognitionOptionsForPlatform()
@@ -71,35 +95,38 @@ export function useSpeechRecognitionInput(onDisplay: (text: string) => void) {
         rec.lang = "en-US"
         rec.onresult = (ev: { results: SpeechRecognitionResultList }) => {
           const parsed = parseSpeechResultsList(ev.results)
-          onDisplayRef.current(combineSpeechSessionDisplay(voiceBaseRef.current, parsed))
+          setDisplay(combineSpeechSessionDisplay(voiceBaseRef.current, parsed))
         }
         rec.onerror = () => {
-          voiceKeepRef.current = false
-          stopListening()
+          endSession(true)
         }
         rec.onend = () => {
           throttleRef.current?.flushNow()
           if (voiceKeepRef.current && recognitionRef.current) {
+            if (!opts.continuous) {
+              endSession(true)
+              return
+            }
             window.setTimeout(() => {
               try {
                 recognitionRef.current?.start()
               } catch {
-                stopListening()
+                endSession(true)
               }
             }, 280)
             return
           }
-          setListening(false)
+          endSession(false)
         }
         rec.start()
         setListening(true)
         return true
       } catch {
-        stopListening()
+        endSession(false)
         return false
       }
     },
-    [stopListening],
+    [endSession, setDisplay],
   )
 
   const toggleListening = useCallback(
@@ -113,7 +140,7 @@ export function useSpeechRecognitionInput(onDisplay: (text: string) => void) {
     [listening, startListening, stopListening],
   )
 
-  useEffect(() => () => stopListening(), [stopListening])
+  useEffect(() => () => endSession(false), [endSession])
 
   return { speechSupported, listening, startListening, stopListening, toggleListening }
 }
