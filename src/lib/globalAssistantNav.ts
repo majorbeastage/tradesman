@@ -178,9 +178,25 @@ export function parseGlobalAssistantCommand(
   }
 
   const hints = suggestPhrasesForPlatform(platform, 6).map((p) => `“${p}”`).join(", ")
+  logAssistantMiss(text, platform)
   return {
     type: "clarify",
     message: `I did not match that yet. Try ${hints}, or “setup guide”.`,
+  }
+}
+
+const ASSISTANT_MISS_LOG_KEY = "tradesman_assistant_miss_log"
+
+/** Dev aid: recent phrases that did not match (user can paste from Application → Session Storage). */
+function logAssistantMiss(phrase: string, platform: PlatformAssistantPlatform): void {
+  if (typeof window === "undefined" || !import.meta.env.DEV) return
+  try {
+    const raw = sessionStorage.getItem(ASSISTANT_MISS_LOG_KEY)
+    const list: Array<{ phrase: string; platform: string; at: string }> = raw ? JSON.parse(raw) : []
+    list.unshift({ phrase, platform, at: new Date().toISOString() })
+    sessionStorage.setItem(ASSISTANT_MISS_LOG_KEY, JSON.stringify(list.slice(0, 40)))
+  } catch {
+    /* ignore */
   }
 }
 

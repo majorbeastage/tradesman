@@ -1,0 +1,37 @@
+# Platform assistant — evolve parsing here
+
+## Architecture (do not fork)
+
+- **Registry (Phase 1):** `src/lib/platformAssistantRegistry.ts` — pages, mini-wizards, admin panels, phrases, `buildPlatformAssistantCatalogText()`.
+- **Parser:** `src/lib/globalAssistantNav.ts` — scoring, clarify, `parseGlobalAssistantCommand(text, ctx)`.
+- **Execute:** `src/contexts/GlobalAssistantContext.tsx` — `runAssistantCommand`, voice, `open_admin` via `setView("admin")` + `ASSISTANT_ADMIN_PANEL_STORAGE_KEY`.
+- **UI:** `PlatformAssistantField`, `GlobalAssistantFab`, Setup Guide adjustment mode.
+- **Separate product:** Admin **Portal builder** chat (`AdminPortalAssistant`, `supabase/functions/portal-assistant`) — config JSON, not tab navigation.
+
+## Intents
+
+| Phase | Intents | Where |
+|-------|---------|--------|
+| **1 (now)** | Navigate tabs, open setup wizards, setup guide, admin panels | Registry + rules |
+| **2 (next)** | Same catalog; LLM only when rules score &lt; threshold | API + `buildAssistantRoutingCatalog(ctx)` |
+| **3 (later)** | Find customer, create estimate, send SMS, explain | New action types + executors, not regex-only |
+
+## When the user reports a failed phrase
+
+1. Reproduce with `parseGlobalAssistantCommand(phrase, ctx)` mentally against registry.
+2. **Prefer registry:** add/adjust `patterns` on the right `PLATFORM_*_INTENT` row; keep wizards higher priority than vague page matches.
+3. Respect `availableTabIds` — if tab is disabled, improve clarify message, do not force navigation.
+4. **User vs office_manager:** check `platforms` on page intents; OM has no `settings` tab.
+5. **Admin:** only `open_admin` when `isAdmin`; panel id must match `AdminApp` `adminPanel` state.
+6. Do not break voice flow: `useSpeechRecognitionInput` `onSessionEnd` auto-applies Go in dashboard/FAB.
+
+## Phase 2 LLM router (when requested)
+
+- Constrained JSON output matching `GlobalAssistantAction` union only.
+- System prompt = `buildPlatformAssistantCatalogText(ctx)` + current page if useful.
+- Rules win when top score ≥ 8; LLM for long tail and paraphrases.
+- Reuse `api/_leadAutomation.ts` `openAiText` or new edge function; never expose API key client-side.
+
+## Mini-wizards
+
+- Definitions: `src/lib/setupGuideWizards.ts` — add wizard there + `PLATFORM_WIZARD_INTENTS` patterns + `setupMiniWizardSteps.ts` flow.
