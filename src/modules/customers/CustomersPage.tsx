@@ -21,6 +21,7 @@ import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
+import AddCustomerModal from "../../components/AddCustomerModal"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
@@ -251,6 +252,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [loadError, setLoadError] = useState<string>("")
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
+  const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [customerInsightOpen, setCustomerInsightOpen] = useState(false)
   const [contactJobDetailsOpen, setContactJobDetailsOpen] = useState(false)
@@ -1323,6 +1325,44 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
+  async function focusCustomerAfterCreate(customerId: string, reusedExisting: boolean) {
+    if (!supabase) return
+    const fullSelectOne = `
+      id,
+      display_name,
+      updated_at,
+      service_address,
+      service_lat,
+      service_lng,
+      best_contact_method,
+      job_pipeline_status,
+      communication_urgency,
+      last_activity_at,
+      customer_identifiers ( type, value )
+    `
+    let row: CustomerRow | null = null
+    const tried = await supabase.from("customers").select(fullSelectOne).eq("id", customerId).maybeSingle()
+    if (!tried.error && tried.data) row = tried.data as CustomerRow
+    if (!row) {
+      const fb = await supabase
+        .from("customers")
+        .select(`id, display_name, updated_at, service_address, service_lat, service_lng, customer_identifiers ( type, value )`)
+        .eq("id", customerId)
+        .maybeSingle()
+      if (!fb.error && fb.data) row = fb.data as CustomerRow
+    }
+    await loadCustomers()
+    setSection("active")
+    if (row) {
+      setSelectedCustomer(row)
+      applyDetailFromCustomer(row)
+      setDetailEditMode(false)
+    }
+    if (reusedExisting) {
+      alert("A customer with that phone or email already exists — opened their record.")
+    }
+  }
+
   async function saveLeadFilterPreferences() {
     if (!supabase || !userId) return
     setLeadFilterSaveBusy(true)
@@ -1452,6 +1492,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <button
           type="button"
+          onClick={() => setShowAddCustomer(true)}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "6px",
+            border: "none",
+            background: theme.primary,
+            color: "#fff",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Add customer
+        </button>
+        <button
+          type="button"
           onClick={() => setShowAutoReplies(true)}
           style={{
             padding: "8px 14px",
@@ -1492,6 +1547,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         saveBusy={leadFilterSaveBusy}
         aiAutomationsEnabled={aiAutomationsEnabled}
         t={t}
+      />
+
+      <AddCustomerModal
+        open={showAddCustomer}
+        onClose={() => setShowAddCustomer(false)}
+        userId={userId}
+        onCreated={focusCustomerAfterCreate}
       />
 
       <ConversationAutoRepliesModal
