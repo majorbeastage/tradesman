@@ -504,16 +504,31 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const quotesRes = await supabase.from("quotes").select("customer_id").eq("user_id", userId).is("removed_at", null).is("scheduled_at", null)
     addActive(quotesRes)
 
-    const allIds = new Set<string>()
-    const [allLeads, allConvos, allQuotes, allEvents] = await Promise.all([
+    /** Customers referenced by leads, quotes, conversations, or calendar (any history). */
+    const relatedIds = new Set<string>()
+    const [allLeads, allConvos, allQuotes, allEvents, ownedCustomersRes] = await Promise.all([
       supabase.from("leads").select("customer_id").eq("user_id", userId),
       supabase.from("conversations").select("customer_id").eq("user_id", userId),
       supabase.from("quotes").select("customer_id").eq("user_id", userId),
       supabase.from("calendar_events").select("customer_id").eq("user_id", userId),
+      supabase.from("customers").select("id").eq("user_id", userId),
     ])
     ;[allLeads.data, allConvos.data, allQuotes.data, allEvents.data].forEach((data) => {
-      if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && allIds.add(row.customer_id))
+      if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && relatedIds.add(row.customer_id))
     })
+
+    const allIds = new Set<string>()
+    if (ownedCustomersRes.error) {
+      setLoadError(ownedCustomersRes.error.message)
+      setActiveCustomers([])
+      setInProcessCustomers([])
+      setArchivedCustomers([])
+      return
+    }
+    for (const row of ownedCustomersRes.data ?? []) {
+      if (row.id) allIds.add(row.id as string)
+    }
+    relatedIds.forEach((id) => allIds.add(id))
 
     const idList = Array.from(allIds)
     if (idList.length === 0) {
@@ -672,9 +687,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
 
     // Completed customers should move to Archived even if legacy related rows still exist.
+    // Standalone customers (Add customer only — no lead/quote/conversation/calendar yet) stay on Active.
     let inProcess = list.filter((c) => recurringBookedIds.has(c.id) && !isCompletedJobStatus(c.job_pipeline_status))
-    let active = list.filter((c) => activeIds.has(c.id) && !recurringBookedIds.has(c.id) && !isCompletedJobStatus(c.job_pipeline_status))
-    let archived = list.filter((c) => !activeIds.has(c.id) || isCompletedJobStatus(c.job_pipeline_status))
+    let active = list.filter(
+      (c) =>
+        !recurringBookedIds.has(c.id) &&
+        !isCompletedJobStatus(c.job_pipeline_status) &&
+        (activeIds.has(c.id) || !relatedIds.has(c.id)),
+    )
+    let archived = list.filter(
+      (c) =>
+        isCompletedJobStatus(c.job_pipeline_status) ||
+        (relatedIds.has(c.id) && !activeIds.has(c.id) && !recurringBookedIds.has(c.id)),
+    )
     inProcess = await escalateList(inProcess, urgencyPrefs)
     active = await escalateList(active, urgencyPrefs)
     archived = await escalateList(archived, urgencyPrefs)
