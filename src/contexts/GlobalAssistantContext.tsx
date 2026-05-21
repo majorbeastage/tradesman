@@ -1,6 +1,11 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
 import { supabase } from "../lib/supabase"
-import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
+import {
+  ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
+  parseGlobalAssistantCommand,
+  type GlobalAssistantParseContext,
+} from "../lib/globalAssistantNav"
+import { useView } from "./ViewContext"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
 import { useSetupWizardOptional } from "./SetupWizardContext"
@@ -22,6 +27,7 @@ type GlobalAssistantContextValue = {
   reportModalOpen: boolean
   setReportModalOpen: (v: boolean) => void
   runAssistantCommand: (raw: string) => Promise<void>
+  parseContext: GlobalAssistantParseContext
   openSetupGuide: () => void
   registerSetupGuideOpener: (fn: () => void) => void
 }
@@ -34,6 +40,10 @@ type Props = {
   profileUserId: string | null
   profileMetadata: Record<string, unknown> | null
   onMetadataPatch?: (next: Record<string, unknown>) => void
+  /** user vs office_manager — drives registry and tab availability. */
+  platform?: GlobalAssistantParseContext["platform"]
+  availableTabIds?: string[]
+  isAdmin?: boolean
 }
 
 export function GlobalAssistantProvider({
@@ -42,7 +52,11 @@ export function GlobalAssistantProvider({
   profileUserId,
   profileMetadata,
   onMetadataPatch,
+  platform = "user",
+  availableTabIds,
+  isAdmin = false,
 }: Props) {
+  const { setView } = useView()
   const [assistantText, setAssistantText] = useState("")
   const [assistantNote, setAssistantNote] = useState<string | null>(null)
   const [assistantBusy, setAssistantBusy] = useState(false)
@@ -51,6 +65,11 @@ export function GlobalAssistantProvider({
   const setupGuideOpenerRef = useRef<(() => void) | null>(null)
   const skipVoiceAutoApplyRef = useRef(false)
   const setupWizard = useSetupWizardOptional()
+
+  const parseContext = useMemo<GlobalAssistantParseContext>(
+    () => ({ platform, availableTabIds, isAdmin }),
+    [platform, availableTabIds, isAdmin],
+  )
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
     setupGuideOpenerRef.current = fn
@@ -65,7 +84,7 @@ export function GlobalAssistantProvider({
       setAssistantBusy(true)
       setAssistantNote(null)
       try {
-        const action = parseGlobalAssistantCommand(raw)
+        const action = parseGlobalAssistantCommand(raw, parseContext)
         if (action.type === "clarify") {
           setAssistantNote(action.message)
           return
@@ -80,13 +99,23 @@ export function GlobalAssistantProvider({
           setAssistantNote(action.message)
           return
         }
+        if (action.type === "open_admin") {
+          try {
+            sessionStorage.setItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY, action.panel)
+          } catch {
+            /* ignore */
+          }
+          setView("admin")
+          setAssistantNote(action.message)
+          return
+        }
         setPage(action.page)
         setAssistantNote(action.message)
       } finally {
         setAssistantBusy(false)
       }
     },
-    [openSetupGuide, setPage, setupWizard],
+    [openSetupGuide, parseContext, setPage, setView, setupWizard],
   )
 
   const onVoiceSessionEnd = useCallback(
@@ -178,6 +207,7 @@ export function GlobalAssistantProvider({
       reportModalOpen,
       setReportModalOpen,
       runAssistantCommand,
+      parseContext,
       openSetupGuide,
       registerSetupGuideOpener,
     }),
@@ -193,6 +223,7 @@ export function GlobalAssistantProvider({
       stopListening,
       reportModalOpen,
       runAssistantCommand,
+      parseContext,
       openSetupGuide,
       registerSetupGuideOpener,
       persistMicPref,

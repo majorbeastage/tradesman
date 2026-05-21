@@ -34,6 +34,8 @@ import {
   formatPortalItemDependenciesSummary,
   sanitizePortalSettingItemDependencies,
 } from "../../types/portal-builder"
+import { ASSISTANT_ADMIN_PANEL_STORAGE_KEY } from "../../lib/platformAssistantRegistry"
+import type { AdminPanelId } from "../../lib/platformAssistantRegistry"
 import {
   ALL_PROFILES_ID,
   ALL_USERS_ID,
@@ -552,6 +554,26 @@ function AdminAppInner() {
   const [adminPanel, setAdminPanel] = useState<
     "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("portal")
+
+  useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY) as AdminPanelId | null
+      if (
+        pending === "signup" ||
+        pending === "communications" ||
+        pending === "users" ||
+        pending === "billing" ||
+        pending === "portal" ||
+        pending === "tickets" ||
+        pending === "about"
+      ) {
+        setAdminPanel(pending)
+        sessionStorage.removeItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return

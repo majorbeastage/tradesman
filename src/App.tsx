@@ -203,6 +203,9 @@ function MainApp() {
       profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
+      platform="user"
+      availableTabIds={portalTabs.map((t) => t.tab_id)}
+      isAdmin={authRole === "admin"}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal

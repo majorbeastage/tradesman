@@ -283,7 +283,7 @@ export default function SetupGuideModal({
     setAdjustNote(null)
     setAdjustText("")
     try {
-      const action = parseGlobalAssistantCommand(text)
+      const action = parseGlobalAssistantCommand(text, ga?.parseContext ?? { platform: "user" })
       if (action.type === "open_setup_guide") {
         setMode("pick")
         setAdjustNote("Choose initial setup or continue below.")
@@ -296,6 +296,11 @@ export default function SetupGuideModal({
       if (action.type === "open_mini_wizard") {
         setupWizard?.launchWizard(action.wizardId, { fromSetupGuide: true })
         setAdjustNote(action.message)
+        return
+      }
+      if (action.type === "open_admin") {
+        await ga?.runAssistantCommand(text)
+        setAdjustNote(ga?.assistantNote ?? action.message)
         return
       }
       if (action.type === "navigate") {

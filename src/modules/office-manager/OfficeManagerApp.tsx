@@ -522,6 +522,9 @@ function OfficeManagerAppContent() {
       profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
+      platform="office_manager"
+      availableTabIds={resolvedPortalTabs.map((t) => t.tab_id)}
+      isAdmin={false}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal
