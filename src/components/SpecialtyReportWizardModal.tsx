@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useIsMobile } from "../hooks/useIsMobile"
 import { useAuth } from "../contexts/AuthContext"
+import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { DRONE_PROVIDER_CATALOG } from "../lib/specialtyReports/droneIntegrationCatalog"
@@ -213,6 +214,7 @@ export default function SpecialtyReportWizardModal({
 }: Props) {
   const isMobile = useIsMobile()
   const { user } = useAuth()
+  const globalAssistant = useGlobalAssistantOptional()
   const accountDisplayName = useMemo(() => {
     const meta = user?.user_metadata as Record<string, unknown> | undefined
     const dn = typeof meta?.display_name === "string" ? meta.display_name.trim() : ""
@@ -387,6 +389,28 @@ export default function SpecialtyReportWizardModal({
     const ctor = typeof window !== "undefined" ? ((window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ?? window.webkitSpeechRecognition) : undefined
     setSpeechSupported(Boolean(ctor))
   }, [open])
+
+  useEffect(() => {
+    if (!globalAssistant) return
+    if (!open) {
+      globalAssistant.setReportModalOpen(false)
+      return
+    }
+    globalAssistant.setReportModalOpen(true)
+    return () => {
+      globalAssistant.setReportModalOpen(false)
+      globalAssistant.stopVoiceListening()
+    }
+  }, [open, globalAssistant])
+
+  useEffect(() => {
+    if (!globalAssistant?.voiceListening && !globalAssistant?.assistantText) return
+    setAssistantText(globalAssistant.assistantText)
+  }, [globalAssistant?.assistantText, globalAssistant?.voiceListening])
+
+  useEffect(() => {
+    if (globalAssistant?.voiceListening && assistantListening) stopDictation()
+  }, [globalAssistant?.voiceListening, assistantListening])
 
   const buildRegistryRow = useCallback(
     (existing: SpecialtyReportRegistryItem | undefined, nowIso: string): SpecialtyReportRegistryItem => {
@@ -1501,7 +1525,11 @@ export default function SpecialtyReportWizardModal({
               <textarea
                 rows={2}
                 value={assistantText}
-                onChange={(e) => setAssistantText(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setAssistantText(v)
+                  globalAssistant?.setAssistantText(v)
+                }}
                 placeholder='Example: set inspector name to Joseph Snyder · weather: clear, 72°F · set condition for gutters to satisfactory'
                 style={{ ...theme.formInput, resize: "vertical" }}
               />
@@ -1527,6 +1555,9 @@ export default function SpecialtyReportWizardModal({
                   Clear
                 </button>
               </div>
+              {globalAssistant?.voiceListening && globalAssistant.assistantNote ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#4338ca", lineHeight: 1.45 }}>{globalAssistant.assistantNote}</p>
+              ) : null}
               {assistantNote ? <p style={{ margin: 0, fontSize: 12, color: "#7c2d12" }}>{assistantNote}</p> : null}
             </div>
           </section>
@@ -1903,10 +1934,18 @@ export default function SpecialtyReportWizardModal({
         </div>
       </div>
       <SpecialtyReportVoiceFab
-        visible={Boolean(quoteId && speechSupported && phase !== "pick_type")}
-        listening={assistantListening}
+        visible={Boolean(quoteId && (globalAssistant?.speechSupported ?? speechSupported) && phase !== "pick_type")}
+        listening={globalAssistant?.voiceListening ?? assistantListening}
         isMobile={isMobile}
-        onToggle={() => (assistantListening ? stopDictation() : startDictation())}
+        onToggle={() => {
+          if (assistantListening) stopDictation()
+          if (globalAssistant) {
+            globalAssistant.toggleVoiceListening(assistantText || globalAssistant.assistantText)
+            return
+          }
+          if (assistantListening) stopDictation()
+          else startDictation()
+        }}
       />
     </>
   )
@@ -1963,8 +2002,8 @@ function SpecialtyReportVoiceFab({
       <button
         type="button"
         className={listening ? "specialty-report-voice-fab--active" : undefined}
-        aria-label={listening ? "Stop voice dictation" : "Start voice dictation"}
-        title={listening ? "Stop listening" : "Voice-to-text — stays on screen while you scroll"}
+        aria-label={listening ? "Stop platform assistant voice" : "Start platform assistant voice"}
+        title={listening ? "Stop platform assistant" : "Platform assistant voice — stays on screen while you scroll"}
         onClick={onToggle}
         style={{
           position: "fixed",

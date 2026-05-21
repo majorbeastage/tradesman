@@ -1,29 +1,5 @@
-import { useEffect, useRef, useState } from "react"
-
-declare global {
-  interface Window {
-    webkitSpeechRecognition?: new () => SpeechRecognition
-  }
-  interface SpeechRecognitionEvent extends Event {
-    readonly results: SpeechRecognitionResultList
-  }
-  interface SpeechRecognition extends EventTarget {
-    continuous: boolean
-    interimResults: boolean
-    lang: string
-    onresult: ((ev: SpeechRecognitionEvent) => void) | null
-    onend: (() => void) | null
-    start: () => void
-    stop: () => void
-  }
-}
 import { theme } from "../styles/theme"
-import {
-  combineSpeechSessionDisplay,
-  createThrottledSpeechDisplay,
-  parseSpeechResultsList,
-  speechRecognitionOptionsForPlatform,
-} from "../lib/speechRecognitionTranscript"
+import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 
 type Props = {
   value: string
@@ -46,71 +22,7 @@ export default function PlatformAssistantField({
   note = null,
   compact = false,
 }: Props) {
-  const [speechSupported, setSpeechSupported] = useState(false)
-  const [listening, setListening] = useState(false)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const voiceBaseRef = useRef("")
-  const voiceKeepRef = useRef(false)
-  const throttleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
-
-  useEffect(() => {
-    const ctor =
-      typeof window !== "undefined"
-        ? (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ??
-          window.webkitSpeechRecognition
-        : undefined
-    setSpeechSupported(Boolean(ctor))
-  }, [])
-
-  function stopListening() {
-    voiceKeepRef.current = false
-    throttleRef.current?.cancel()
-    throttleRef.current = null
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
-    setListening(false)
-  }
-
-  function startListening() {
-    if (!speechSupported || typeof window === "undefined") return
-    const Ctor =
-      (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ??
-      window.webkitSpeechRecognition
-    if (!Ctor) return
-    try {
-      voiceKeepRef.current = true
-      voiceBaseRef.current = value
-      throttleRef.current = createThrottledSpeechDisplay((display) => onChange(display))
-      const rec = new Ctor()
-      recognitionRef.current = rec
-      const opts = speechRecognitionOptionsForPlatform()
-      rec.continuous = opts.continuous
-      rec.interimResults = opts.interimResults
-      rec.lang = "en-US"
-      rec.onresult = (ev: SpeechRecognitionEvent) => {
-        const parsed = parseSpeechResultsList(ev.results)
-        onChange(combineSpeechSessionDisplay(voiceBaseRef.current, parsed))
-      }
-      rec.onend = () => {
-        throttleRef.current?.flushNow()
-        if (voiceKeepRef.current && recognitionRef.current) {
-          window.setTimeout(() => {
-            try {
-              recognitionRef.current?.start()
-            } catch {
-              stopListening()
-            }
-          }, 280)
-          return
-        }
-        setListening(false)
-      }
-      rec.start()
-      setListening(true)
-    } catch {
-      stopListening()
-    }
-  }
+  const { speechSupported, listening, toggleListening } = useSpeechRecognitionInput(onChange)
 
   return (
     <div
@@ -151,7 +63,7 @@ export default function PlatformAssistantField({
         {speechSupported ? (
           <button
             type="button"
-            onClick={() => (listening ? stopListening() : startListening())}
+            onClick={() => toggleListening(value)}
             style={{
               padding: "8px 14px",
               borderRadius: 8,

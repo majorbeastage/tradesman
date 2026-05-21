@@ -1,15 +1,23 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
 import { supabase } from "../lib/supabase"
 import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
+import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
 
 type GlobalAssistantContextValue = {
   assistantText: string
   setAssistantText: (v: string) => void
   assistantNote: string | null
+  setAssistantNote: (v: string | null) => void
   assistantBusy: boolean
   micFabVisible: boolean
   setMicFabVisible: (v: boolean) => void
+  voiceListening: boolean
+  speechSupported: boolean
+  toggleVoiceListening: (baseText?: string) => boolean
+  stopVoiceListening: () => void
+  reportModalOpen: boolean
+  setReportModalOpen: (v: boolean) => void
   runAssistantCommand: (raw: string) => Promise<void>
   openSetupGuide: () => void
   registerSetupGuideOpener: (fn: () => void) => void
@@ -36,11 +44,15 @@ export function GlobalAssistantProvider({
   const [assistantNote, setAssistantNote] = useState<string | null>(null)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [micFabVisible, setMicFabVisible] = useState(() => isGlobalAssistantMicEnabled(profileMetadata))
-
-  useEffect(() => {
-    setMicFabVisible(isGlobalAssistantMicEnabled(profileMetadata))
-  }, [profileMetadata])
+  const [reportModalOpen, setReportModalOpen] = useState(false)
   const setupGuideOpenerRef = useRef<(() => void) | null>(null)
+
+  const {
+    speechSupported,
+    listening: voiceListening,
+    startListening,
+    stopListening,
+  } = useSpeechRecognitionInput(setAssistantText)
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
     setupGuideOpenerRef.current = fn
@@ -84,17 +96,42 @@ export function GlobalAssistantProvider({
     [openSetupGuide, setPage],
   )
 
+  const toggleVoiceListening = useCallback(
+    (baseText?: string) => {
+      if (voiceListening) {
+        stopListening()
+        setAssistantNote(null)
+        return false
+      }
+      const base = typeof baseText === "string" ? baseText : assistantText
+      if (base.trim()) setAssistantText(base)
+      const started = startListening(base.trim() ? base : assistantText)
+      if (started) {
+        setAssistantNote("Platform assistant listening — say a tab or task (e.g. “take me to customers”).")
+      }
+      return started
+    },
+    [assistantText, startListening, stopListening, voiceListening],
+  )
+
   const value = useMemo(
     () => ({
       assistantText,
       setAssistantText,
       assistantNote,
+      setAssistantNote: setAssistantNote,
       assistantBusy,
       micFabVisible,
       setMicFabVisible: (v: boolean) => {
         setMicFabVisible(v)
         void persistMicPref(v)
       },
+      voiceListening,
+      speechSupported,
+      toggleVoiceListening,
+      stopVoiceListening: stopListening,
+      reportModalOpen,
+      setReportModalOpen,
       runAssistantCommand,
       openSetupGuide,
       registerSetupGuideOpener,
@@ -104,6 +141,11 @@ export function GlobalAssistantProvider({
       assistantNote,
       assistantBusy,
       micFabVisible,
+      voiceListening,
+      speechSupported,
+      toggleVoiceListening,
+      stopListening,
+      reportModalOpen,
       runAssistantCommand,
       openSetupGuide,
       registerSetupGuideOpener,
