@@ -8,7 +8,7 @@
  *   download=1 — Content-Disposition: attachment (default inline for print preview)
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { buildSmsOptInConsentFormPdfBytes, smsOptInConsentFormFilename } from "../src/lib/smsOptInConsentFormPdf.js"
+import { buildSmsOptInConsentFormPdfBytes, smsOptInConsentFormFilename } from "./_smsOptInConsentFormPdf.js"
 
 function pickQueryString(v: string | string[] | undefined, maxLen: number): string {
   const raw = Array.isArray(v) ? v[0] : v

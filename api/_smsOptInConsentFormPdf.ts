@@ -1,12 +1,15 @@
-import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib"
-import { buildManualSmsConsentDisclosure } from "./customerSmsConsent"
-import { downloadPdfBlob } from "./documentPdf"
+/**
+ * Serverless-safe SMS opt-in consent PDF builder (no imports from src/).
+ * Mirror disclosure + layout in `src/lib/smsOptInConsentFormPdf.ts`.
+ */
+import { PDFDocument, type PDFFont, StandardFonts, rgb } from "pdf-lib"
 
-export type SmsOptInConsentFormPdfParams = {
-  /** When set, disclosure uses this name; fields still include write-in lines. */
-  businessName?: string
-  /** Optional pre-print on the business phone line. */
-  businessPhone?: string
+/** Same text as `DEFAULT_SMS_CONSENT_PAGE.consent_statement` in src/types/legal-pages.ts */
+const SMS_CTA_DISCLOSURE_DEFAULT = `“By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”`
+
+function buildManualSmsConsentDisclosure(businessName: string): string {
+  const biz = businessName.trim() || "Your business"
+  return SMS_CTA_DISCLOSURE_DEFAULT.replace(/\[Business Name\]/g, biz)
 }
 
 /** Standard Helvetica on pdf-lib only supports WinAnsi; strip common Unicode punctuation. */
@@ -16,6 +19,11 @@ function pdfSafeText(text: string): string {
     .replace(/\u00b7/g, " - ")
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2018\u2019]/g, "'")
+}
+
+export type SmsOptInConsentFormPdfParams = {
+  businessName?: string
+  businessPhone?: string
 }
 
 function wrapParagraphToLines(text: string, font: PDFFont, maxWidth: number, size: number): string[] {
@@ -57,9 +65,6 @@ function wrapParagraphToLines(text: string, font: PDFFont, maxWidth: number, siz
   return lines
 }
 
-/**
- * Printable / downloadable SMS opt-in consent form for in-person customer signatures (A2P evidence).
- */
 export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFormPdfParams = {}): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
@@ -75,7 +80,6 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
 
   const newPageIfNeeded = (minY: number) => {
     if (y >= minY) return
-    /* single-page form by design; shrink spacing if needed */
   }
 
   const drawText = (text: string, size: number, bold = false, gray = 0.12) => {
@@ -233,20 +237,6 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
   })
 
   return doc.save()
-}
-
-export function smsOptInConsentFormPdfPath(download = false, businessName?: string): string {
-  const q = new URLSearchParams()
-  if (download) q.set("download", "1")
-  if (businessName?.trim()) q.set("businessName", businessName.trim().slice(0, 120))
-  const s = q.toString()
-  return `/api/sms-opt-in-consent-form-pdf${s ? `?${s}` : ""}`
-}
-
-/** Client-side PDF download (works on local dev without API). */
-export async function downloadPrintableSmsConsentForm(businessName?: string): Promise<void> {
-  const bytes = await buildSmsOptInConsentFormPdfBytes({ businessName: businessName?.trim() || undefined })
-  downloadPdfBlob(bytes, smsOptInConsentFormFilename(businessName))
 }
 
 export function smsOptInConsentFormFilename(businessName?: string): string {
