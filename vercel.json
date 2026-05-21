@@ -26,7 +26,8 @@
     "api/sms.ts": { "maxDuration": 30 },
     "api/legal-health.ts": { "maxDuration": 10 },
     "api/robots.ts": { "maxDuration": 10 },
-    "api/sitemap.ts": { "maxDuration": 10 }
+    "api/sitemap.ts": { "maxDuration": 10 },
+    "api/sms-opt-in-consent-form-pdf.ts": { "maxDuration": 15 }
   },
   "rewrites": [
     {
@@ -98,6 +99,10 @@
     {
       "source": "/sms/",
       "destination": "/api/sms"
+    },
+    {
+      "source": "/sms-cta/consent-form.pdf",
+      "destination": "/api/sms-opt-in-consent-form-pdf"
     },
     {
       "source": "/sms-cta",

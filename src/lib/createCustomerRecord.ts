@@ -1,12 +1,40 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { ensureCustomerIdentifiers, normalizeCustomerEmail } from "./customerIdentifiers"
+import {
+  buildConsentAuditNote,
+  mapManualMethodToSource,
+  persistCustomerSmsConsent,
+  validateManualSmsConsentSourceInput,
+  type ManualSmsConsentSourceInput,
+} from "./customerSmsConsent"
 import { geocodeAddressToLatLng } from "./jobSiteLocation"
+import { requiresManualSmsOptInRecord, type CommEventLite } from "./smsFirstOutboundCompliance"
+
+async function loadCustomerCommEventsLite(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<CommEventLite[]> {
+  const { data } = await supabase
+    .from("communication_events")
+    .select("event_type, direction, created_at")
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+    .order("created_at", { ascending: true })
+    .limit(300)
+  return (data as CommEventLite[] | null) ?? []
+}
 
 export type CreateCustomerInput = {
   name?: string
   phone?: string
   email?: string
   serviceAddress?: string
+  /** Required when `phone` is set — records express SMS opt-in on the customer. */
+  smsConsent?: boolean
+  businessName?: string
+  /** Required when `phone` + `smsConsent` (manual entry). */
+  smsConsentSource?: ManualSmsConsentSourceInput
 }
 
 export type CreateCustomerResult = {
@@ -63,8 +91,50 @@ export async function createCustomerRecord(
   if (!phone && !email && !name) {
     throw new Error("Enter at least a name, phone, or email.")
   }
-
   const existingId = await findCustomerIdByPhoneOrEmail(supabase, userId, phone, email)
+
+  let manualSmsOptInRequired = Boolean(phone)
+  if (phone && existingId) {
+    const events = await loadCustomerCommEventsLite(supabase, userId, existingId)
+    manualSmsOptInRequired = requiresManualSmsOptInRecord(events)
+  }
+
+  if (phone && manualSmsOptInRequired && !input.smsConsent) {
+    throw new Error("SMS opt-in is required when adding a phone number. Confirm the customer agreed to receive texts.")
+  }
+  if (phone && manualSmsOptInRequired && input.smsConsent) {
+    const srcErr = validateManualSmsConsentSourceInput(
+      input.smsConsentSource ?? { method: "", consentUrl: "", consentNote: "" },
+    )
+    if (srcErr) throw new Error(srcErr)
+  }
+
+  async function maybeRecordSmsConsent(
+    customerId: string,
+    existingMetadata?: unknown,
+    optInRequired = true,
+  ) {
+    if (!phone || !optInRequired || !input.smsConsent || !input.smsConsentSource?.method) return
+    const biz = input.businessName?.trim() || "Your business"
+    const method = input.smsConsentSource.method
+    try {
+      await persistCustomerSmsConsent(supabase, customerId, existingMetadata, {
+        source: mapManualMethodToSource(method),
+        businessName: biz,
+        consentMethod: method,
+        consentUrl: input.smsConsentSource.consentUrl,
+        consentNote: buildConsentAuditNote(input.smsConsentSource),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.toLowerCase().includes("metadata")) {
+        throw new Error(
+          "SMS opt-in could not be saved: run supabase/customers-metadata.sql in the Supabase SQL editor, then try again.",
+        )
+      }
+      throw e
+    }
+  }
 
   if (existingId) {
     const customerId = existingId
@@ -89,7 +159,12 @@ export async function createCustomerRecord(
         })
         .eq("id", customerId)
     }
-    const { data: row } = await supabase.from("customers").select("display_name").eq("id", customerId).maybeSingle()
+    const { data: row } = await supabase
+      .from("customers")
+      .select("display_name, metadata")
+      .eq("id", customerId)
+      .maybeSingle()
+    await maybeRecordSmsConsent(customerId, row?.metadata, manualSmsOptInRequired)
     return {
       customerId,
       reusedExisting: true,
@@ -149,6 +224,8 @@ export async function createCustomerRecord(
     )
     if (identErr) throw identErr
   }
+
+  await maybeRecordSmsConsent(customerId)
 
   return { customerId, reusedExisting: false, displayName }
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Recommended SMS consent disclosure language for businesses using Tradesman Systems. Guidance for website forms, listings, and customer intake—not a consumer opt-in form."
+      content="SMS consent disclosure language, printable opt-in PDF, and platform screenshots for A2P compliance — Tradesman Systems."
     />
     <title>SMS Consent CTA Guidance | Tradesman Systems</title>
     <meta name="robots" content="index,follow" />
@@ -20,7 +20,7 @@
         font-size: 16px;
       }
       .wrap {
-        max-width: 820px;
+        max-width: 920px;
         margin: 0 auto;
         padding: 24px 16px 48px;
       }
@@ -52,16 +52,21 @@
         padding: 22px 24px;
       }
       main h2 {
-        margin: 0 0 14px;
+        margin: 28px 0 14px;
         font-size: 1.25rem;
+        color: #0f172a;
+      }
+      main h2:first-of-type {
+        margin-top: 0;
+      }
+      main h3 {
+        margin: 0 0 10px;
+        font-size: 1.05rem;
         color: #0f172a;
       }
       main p {
         margin: 0 0 14px;
         color: #374151;
-      }
-      main p:last-child {
-        margin-bottom: 0;
       }
       .disclosure {
         margin: 0 0 18px;
@@ -82,6 +87,114 @@
         color: #78350f;
         font-size: 14px;
         line-height: 1.55;
+      }
+      .form-card,
+      .shots-card {
+        margin: 0 0 22px;
+        padding: 16px 18px;
+        border-radius: 10px;
+        border: 1px solid #e5e7eb;
+        background: #fafafa;
+      }
+      .form-card {
+        border-color: #fed7aa;
+        background: #fff7ed;
+      }
+      .form-card h2,
+      .shots-card h2 {
+        margin-top: 0;
+      }
+      .form-grid {
+        display: grid;
+        gap: 12px;
+        margin: 14px 0 16px;
+      }
+      .form-grid label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+      }
+      .form-grid input {
+        padding: 10px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-size: 15px;
+        font-family: inherit;
+      }
+      .btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .btn {
+        display: inline-block;
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+        cursor: pointer;
+        border: none;
+        font-family: inherit;
+      }
+      .btn-primary {
+        background: #ea580c;
+        color: #fff;
+      }
+      .btn-secondary {
+        background: #fff;
+        color: #0f172a;
+        border: 1px solid #cbd5e1;
+      }
+      .btn:hover {
+        filter: brightness(0.96);
+      }
+      .hint {
+        margin: 10px 0 0;
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.5;
+      }
+      .pdf-preview {
+        margin: 14px 0 0;
+        width: 100%;
+        height: min(720px, 75vh);
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: #f1f5f9;
+      }
+      .shot {
+        margin: 0 0 28px;
+        padding: 0 0 24px;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .shot:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .shot figcaption {
+        margin: 0 0 12px;
+        font-size: 15px;
+        line-height: 1.55;
+        color: #334155;
+      }
+      .shot figcaption strong {
+        color: #0f172a;
+        display: block;
+        margin-bottom: 6px;
+        font-size: 16px;
+      }
+      .shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
       }
       a {
         color: #ea580c;
@@ -116,23 +229,101 @@
         <p class="kicker">Tradesman Systems · Compliance guidance</p>
         <h1>SMS Consent CTA Guidance</h1>
         <p class="lead">
-          This page provides recommended SMS consent disclosure language for businesses using Tradesman Systems. It is
-          <strong>not</strong> a consumer opt-in form and does <strong>not</strong> collect customer information.
+          Sample disclosure language, a printable in-person opt-in PDF, and platform screenshots for carriers and
+          reviewers. This page does <strong>not</strong> collect customer information.
         </p>
       </header>
 
       <main>
         <p class="notice">
-          <strong>For reviewers and business owners:</strong> Use the sample wording below on your own website, forms,
-          and listings. Customers opt in on <em>your</em> properties or by contacting your business directly—not on this
-          guidance page.
+          <strong>For reviewers and business owners:</strong> Use the disclosure on your website and intake forms.
+          Manually entered mobile numbers in Tradesman require documented consent before texting. Customers who
+          contact your business line first (call or voicemail) follow a different path—see screenshots below.
         </p>
+
+        <div class="form-card" id="printable-form">
+          <h2>Printable SMS opt-in consent form (PDF)</h2>
+          <p>
+            One-page form for in-person signatures (service call, counter, paper estimate). Keep the signed copy, then
+            record the same consent in Tradesman under <strong>Customers → SMS opt-in</strong>.
+          </p>
+          <div class="form-grid">
+            <label>
+              Your business name (optional — pre-fills the disclosure)
+              <input type="text" id="biz-name" placeholder="e.g. Acme Plumbing LLC" maxlength="120" autocomplete="organization" />
+            </label>
+            <label>
+              Business phone (optional)
+              <input type="tel" id="biz-phone" placeholder="e.g. (555) 123-4567" maxlength="40" autocomplete="tel" />
+            </label>
+          </div>
+          <div class="btn-row">
+            <a class="btn btn-primary" id="btn-download" href="/api/sms-opt-in-consent-form-pdf?download=1">Download PDF</a>
+            <a class="btn btn-secondary" id="btn-download-named" href="/api/sms-opt-in-consent-form-pdf?download=1">Download with business name</a>
+            <button type="button" class="btn btn-secondary" id="btn-print">Open PDF to print</button>
+          </div>
+          <p class="hint">
+            Direct link: <a href="/sms-cta/consent-form.pdf">/sms-cta/consent-form.pdf</a> · API:
+            <a href="/api/sms-opt-in-consent-form-pdf?download=1">/api/sms-opt-in-consent-form-pdf</a>
+          </p>
+          <iframe
+            class="pdf-preview"
+            id="pdf-preview"
+            title="SMS opt-in consent form PDF preview"
+            src="/api/sms-opt-in-consent-form-pdf"
+          ></iframe>
+        </div>
+
+        <div class="shots-card" id="platform-screenshots">
+          <h2>Platform screenshots (A2P / manual consent)</h2>
+          <p style="margin-bottom: 18px">
+            How Tradesman handles SMS opt-in for <strong>manually entered</strong> contacts versus customers who
+            already reached the business on your Tradesman line.
+          </p>
+
+          <figure class="shot">
+            <figcaption>
+              <strong>Figure 1 — Manually entered contact (consent required)</strong>
+              Platform view of a manually entered contact. The business must select an end-user consent method (checkbox
+              plus consent source, including external website URL when applicable) before SMS can be sent.
+            </figcaption>
+            <img src="/sms-cta/1.png" alt="Tradesman customer panel showing SMS opt-in consent form with consent source dropdown" width="1200" height="auto" loading="lazy" />
+          </figure>
+
+          <figure class="shot">
+            <figcaption>
+              <strong>Figure 2 — SMS console before consent is complete</strong>
+              SMS console before the consent method has been completed by the client/business. Compose and Send text are
+              disabled until opt-in is saved at the top of the customer panel.
+            </figcaption>
+            <img src="/sms-cta/2.png" alt="Tradesman SMS channel disabled until opt-in consent is recorded" width="1200" height="auto" loading="lazy" />
+          </figure>
+
+          <figure class="shot">
+            <figcaption>
+              <strong>Figure 3 — SMS console after consent or inbound contact</strong>
+              Platform view of the SMS console after consent has been recorded by the client/business and/or after the
+              end user initiated contact with the business number (inbound call). Texting is enabled; the first outbound
+              SMS includes an automatic compliance footer.
+            </figcaption>
+            <img src="/sms-cta/3.png" alt="Tradesman SMS channel enabled with first-text compliance notice" width="1200" height="auto" loading="lazy" />
+          </figure>
+
+          <figure class="shot">
+            <figcaption>
+              <strong>Figure 4 — Payment request URL (related workflow)</strong>
+              Payment request URL dashboard — separate from SMS consent, shown for context on customer payment links in
+              the platform.
+            </figcaption>
+            <img src="/sms-cta/4.png" alt="Tradesman Helcim customer payment link settings dashboard" width="1200" height="auto" loading="lazy" />
+          </figure>
+        </div>
 
         <h2>Recommended SMS Consent Disclosure</h2>
 
         <p>
-          Businesses using Tradesman Systems may place the following disclosure near website contact forms, estimate
-          request forms, service request forms, online listings, advertisements, and other customer intake points:
+          Place this disclosure near website contact forms, estimate requests, service requests, online listings, and
+          other intake points:
         </p>
 
         <blockquote class="disclosure" cite="https://www.tradesman-us.com/sms-cta">
@@ -142,13 +333,8 @@
         </blockquote>
 
         <p>
-          Customers may also opt in by directly calling, texting, or otherwise contacting a business regarding a service
-          request. SMS messages must be one-to-one, service-related, and connected to the customer’s inquiry.
-        </p>
-
-        <p>
-          Tradesman Systems does not support bulk messaging or unsolicited outreach. Businesses are responsible for
-          obtaining and maintaining customer consent before sending messages.
+          Customers may also opt in by calling or texting your business, or by signing the printable PDF above. SMS
+          must be one-to-one and tied to a service relationship. Tradesman does not support bulk or unsolicited messaging.
         </p>
 
         <footer class="nav" aria-label="Related pages">
@@ -162,8 +348,48 @@
       </main>
 
       <p style="margin: 18px 0 0; font-size: 13px; color: #6b7280; text-align: center">
-        Tradesman Systems — public compliance document (readable without JavaScript)
+        Tradesman Systems — public compliance documentation
       </p>
     </div>
+    <script>
+      (function () {
+        var nameEl = document.getElementById("biz-name")
+        var phoneEl = document.getElementById("biz-phone")
+        var btnDownload = document.getElementById("btn-download")
+        var btnDownloadNamed = document.getElementById("btn-download-named")
+        var btnPrint = document.getElementById("btn-print")
+        var pdfPreview = document.getElementById("pdf-preview")
+        if (!nameEl || !btnDownload) return
+
+        function pdfQuery(download) {
+          var q = new URLSearchParams()
+          if (download) q.set("download", "1")
+          var n = (nameEl.value || "").trim()
+          var p = phoneEl && phoneEl.value ? phoneEl.value.trim() : ""
+          if (n) q.set("businessName", n.slice(0, 120))
+          if (p) q.set("businessPhone", p.slice(0, 40))
+          var s = q.toString()
+          return "/api/sms-opt-in-consent-form-pdf" + (s ? "?" + s : "")
+        }
+
+        function refreshLinks() {
+          var dl = pdfQuery(true)
+          var inline = pdfQuery(false)
+          btnDownload.href = dl
+          btnDownloadNamed.href = dl
+          if (pdfPreview) pdfPreview.src = inline
+        }
+
+        nameEl.addEventListener("input", refreshLinks)
+        if (phoneEl) phoneEl.addEventListener("input", refreshLinks)
+        refreshLinks()
+
+        if (btnPrint) {
+          btnPrint.addEventListener("click", function () {
+            window.open(pdfQuery(false), "_blank", "noopener,noreferrer")
+          })
+        }
+      })()
+    </script>
   </body>
 </html>

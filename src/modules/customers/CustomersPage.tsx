@@ -22,6 +22,15 @@ import CustomerCallButton from "../../components/CustomerCallButton"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
 import AddCustomerModal from "../../components/AddCustomerModal"
+import CustomerSmsOptInSection from "../../components/CustomerSmsOptInSection"
+import { EMPTY_MANUAL_SMS_CONSENT_SOURCE } from "../../components/CustomerSmsConsentSourceFields"
+import {
+  buildConsentAuditNote,
+  mapManualMethodToSource,
+  parseCustomerSmsConsent,
+  persistCustomerSmsConsent,
+  validateManualSmsConsentSourceInput,
+} from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
@@ -44,7 +53,7 @@ import {
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
-import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import {
   SPECIALTY_REPORT_REGISTRY_KEY,
@@ -107,6 +116,7 @@ type CustomerRow = {
   fit_source?: string | null
   fit_manually_overridden?: boolean | null
   fit_evaluated_at?: string | null
+  metadata?: unknown
 }
 
 function inferDefaultBestContact(c: CustomerRow): string {
@@ -210,11 +220,13 @@ function activityPreviewSnippet(item: { kind: "msg" | "ev"; payload: any }): str
 function commChannelOneLineSummary(
   channel: "phone" | "sms" | "email",
   items: { sortMs: number; key: string; kind: "msg" | "ev"; payload: any }[],
+  contactOnFile?: string,
 ): string {
   if (items.length === 0) {
-    if (channel === "phone") return "Phone · No calls or voicemail logged yet"
-    if (channel === "sms") return "SMS · No texts in this thread yet"
-    return "Email · No email logged yet"
+    const hint = contactOnFile?.trim()
+    if (channel === "phone") return hint ? `Phone · ${hint} · No calls logged yet` : "Phone · No calls or voicemail logged yet"
+    if (channel === "sms") return hint ? `SMS · ${hint} · No texts yet` : "SMS · No texts in this thread yet"
+    return hint ? `Email · ${hint} · No email logged yet` : "Email · No email logged yet"
   }
   const last = items[items.length - 1]
   const when = last.sortMs ? new Date(last.sortMs).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"
@@ -253,6 +265,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
   const [showAddCustomer, setShowAddCustomer] = useState(false)
+  const [detailRecordSmsConsent, setDetailRecordSmsConsent] = useState(false)
+  const [detailConsentSource, setDetailConsentSource] = useState(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
+  const [detailConsentSourceTouched, setDetailConsentSourceTouched] = useState(false)
+  const [detailSmsConsentSaving, setDetailSmsConsentSaving] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [customerInsightOpen, setCustomerInsightOpen] = useState(false)
   const [contactJobDetailsOpen, setContactJobDetailsOpen] = useState(false)
@@ -389,10 +405,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   )
 
   useEffect(() => {
-    setCommCardOpen({ phone: false, sms: false, email: false })
     setCommHistoryChannel(null)
     setCustomerInsightOpen(false)
     setContactJobDetailsOpen(false)
+    setDetailRecordSmsConsent(false)
+    setDetailConsentSource(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
+    setDetailConsentSourceTouched(false)
+    if (!selectedCustomer) {
+      setCommCardOpen({ phone: false, sms: false, email: false })
+      return
+    }
+    const ids = selectedCustomer.customer_identifiers ?? []
+    const hasPhone = ids.some((i) => i.type === "phone" && String(i.value ?? "").trim())
+    const hasEmail = ids.some((i) => i.type === "email" && String(i.value ?? "").trim())
+    setCommCardOpen({ phone: hasPhone, sms: hasPhone, email: hasEmail })
   }, [selectedCustomer?.id])
 
   const smsFirstComplianceVariant = useMemo(
@@ -405,6 +431,67 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const biz = contractorSmsDisplayName.trim() || "Your business"
     return maxUserCharsForFirstSmsVariant(smsFirstComplianceVariant, biz, DEFAULT_SMS_POLICIES_URL)
   }, [smsFirstComplianceVariant, contractorSmsDisplayName])
+
+  const selectedCustomerSmsConsent = useMemo(
+    () => (selectedCustomer ? parseCustomerSmsConsent(selectedCustomer.metadata) : null),
+    [selectedCustomer],
+  )
+
+  const selectedCustomerPhoneOnFile = useMemo(() => {
+    if (!selectedCustomer) return ""
+    return selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
+  }, [selectedCustomer])
+
+  const customerHasPhone = Boolean(selectedCustomerPhoneOnFile || detailForm.phone.trim())
+
+  /** Manual opt-in UI only for manually entered numbers — not when they called/voicemail first. */
+  const showManualSmsOptInSection = useMemo(() => {
+    if (!customerHasPhone || customerActivityLoading) return false
+    return requiresManualSmsOptInRecord(customerCommEvents)
+  }, [customerHasPhone, customerActivityLoading, customerCommEvents])
+
+  const smsBlockedPendingManualOptIn =
+    showManualSmsOptInSection && !selectedCustomerSmsConsent
+
+  async function recordDetailSmsConsent() {
+    if (!supabase || !selectedCustomer || !detailRecordSmsConsent) return
+    const phone = selectedCustomerPhoneOnFile || detailForm.phone.trim()
+    if (!phone) {
+      alert("Add a phone number for this customer before recording SMS opt-in.")
+      return
+    }
+    const srcErr = validateManualSmsConsentSourceInput(detailConsentSource)
+    if (srcErr) {
+      setDetailConsentSourceTouched(true)
+      alert(srcErr)
+      return
+    }
+    const method = detailConsentSource.method
+    if (!method) return
+    setDetailSmsConsentSaving(true)
+    try {
+      const biz = contractorSmsDisplayName.trim() || "Your business"
+      const { metadata } = await persistCustomerSmsConsent(supabase, selectedCustomer.id, selectedCustomer.metadata, {
+        source: mapManualMethodToSource(method),
+        businessName: biz,
+        consentMethod: method,
+        consentUrl: detailConsentSource.consentUrl,
+        consentNote: buildConsentAuditNote(detailConsentSource),
+      })
+      const patched: CustomerRow = { ...selectedCustomer, metadata }
+      setSelectedCustomer(patched)
+      setActiveCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+      setInProcessCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+      setArchivedCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+      setDetailRecordSmsConsent(false)
+      setDetailConsentSource(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
+      setDetailConsentSourceTouched(false)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDetailSmsConsentSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -569,6 +656,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         fit_source,
         fit_manually_overridden,
         fit_evaluated_at,
+        metadata,
         customer_identifiers (
           type,
           value
@@ -584,6 +672,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         best_contact_method,
         job_pipeline_status,
         last_activity_at,
+        metadata,
         customer_identifiers (
           type,
           value
@@ -600,6 +689,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         job_pipeline_status,
         communication_urgency,
         last_activity_at,
+        metadata,
         customer_identifiers (
           type,
           value
@@ -637,6 +727,25 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         customers = (rU.data as CustomerRow[] | null) ?? null
         if (!error) {
           setLoadError((prev) => prev || "Run supabase/customers-communication-urgency.sql to enable the Urgency column.")
+        }
+      }
+      if (error && String(error.message || "").toLowerCase().includes("metadata")) {
+        const stripMeta = (s: string) => s.replace(/\s*metadata,\s*/g, "")
+        const rM = await supabase.from("customers").select(stripMeta(fullSelectPipeline)).in("id", idList)
+        error = rM.error
+        customers = (rM.data as CustomerRow[] | null) ?? null
+        if (error && String(error.message || "").toLowerCase().includes("fit_")) {
+          const rM2 = await supabase.from("customers").select(stripMeta(fullSelectPipelineNoFit)).in("id", idList)
+          error = rM2.error
+          customers = (rM2.data as CustomerRow[] | null) ?? null
+        }
+        if (error) {
+          const rM3 = await supabase.from("customers").select(fullSelectLegacy).in("id", idList)
+          error = rM3.error
+          customers = (rM3.data as CustomerRow[] | null) ?? null
+        }
+        if (!error) {
+          setLoadError((prev) => prev || "Run supabase/customers-metadata.sql to store SMS opt-in on customers.")
         }
       }
     }
@@ -1090,6 +1199,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         job_pipeline_status,
         communication_urgency,
         last_activity_at,
+        metadata,
         customer_identifiers ( type, value )
       `
       const tried = await supabase.from("customers").select(fullSelectOne).eq("id", cid).maybeSingle()
@@ -1113,6 +1223,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   async function sendCustomerSms() {
     if (!userId || !selectedCustomer?.id) return
+    if (smsBlockedPendingManualOptIn) {
+      alert("SMS is blocked until you complete SMS opt-in consent for this customer (checkbox + consent source).")
+      return
+    }
     const trimmed = clampSmsUserPortion(customerReplySms, smsComposeMaxChars)
     const to = detailForm.phone.trim() || selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() || ""
     if (!trimmed) {
@@ -1363,6 +1477,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       job_pipeline_status,
       communication_urgency,
       last_activity_at,
+      metadata,
       customer_identifiers ( type, value )
     `
     let row: CustomerRow | null = null
@@ -1382,6 +1497,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setSelectedCustomer(row)
       applyDetailFromCustomer(row)
       setDetailEditMode(false)
+      setContactJobDetailsOpen(false)
     }
     if (reusedExisting) {
       alert("A customer with that phone or email already exists — opened their record.")
@@ -1987,6 +2103,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </div>
                             </div>
 
+                            {showManualSmsOptInSection ? (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <CustomerSmsOptInSection
+                                  businessName={contractorSmsDisplayName.trim() || "Your business"}
+                                  consent={selectedCustomerSmsConsent}
+                                  phoneOnFile={selectedCustomerPhoneOnFile}
+                                  draftPhone={detailForm.phone}
+                                  recordChecked={detailRecordSmsConsent}
+                                  onRecordCheckedChange={setDetailRecordSmsConsent}
+                                  consentSource={detailConsentSource}
+                                  onConsentSourceChange={setDetailConsentSource}
+                                  showSourceValidation={detailConsentSourceTouched}
+                                  onSave={() => void recordDetailSmsConsent()}
+                                  saving={detailSmsConsentSaving}
+                                />
+                              </div>
+                            ) : null}
+
                             <div
                               onClick={(e) => e.stopPropagation()}
                               style={{
@@ -2503,15 +2637,23 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   )}
 
                                   <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: 8 }}>Communications</div>
+                                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                    Preferred: <strong>{displayBestContact(c)}</strong>
+                                    {selectedCustomerPhoneOnFile ? ` · Phone ${selectedCustomerPhoneOnFile}` : ""}
+                                    {customerEmailFromIdentifiers(c.customer_identifiers ?? null)
+                                      ? ` · ${customerEmailFromIdentifiers(c.customer_identifiers ?? null)}`
+                                      : ""}
+                                  </p>
                                   {customerActivityLoading ? (
                                     <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading messages…</p>
-                                  ) : customerActivityItems.length === 0 ? (
-                                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No communication activity logged yet.</p>
-                                  ) : (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                                      {(["phone", "sms", "email"] as const).map((chan) => {
+                                  ) : null}
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    {(["phone", "sms", "email"] as const).map((chan) => {
                                         const list = commItemsByChannel[chan]
                                         const open = commCardOpen[chan]
+                                        const phoneHint = c.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
+                                        const emailHint = customerEmailFromIdentifiers(c.customer_identifiers ?? null) ?? ""
+                                        const contactHint = chan === "email" ? emailHint : phoneHint
                                         return (
                                           <div
                                             key={chan}
@@ -2528,7 +2670,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                               style={CUSTOMER_COMM_CARD_SUMMARY}
                                             >
                                               <span style={{ color: "#64748b", fontSize: 13 }}>{open ? "▾" : "▸"}</span>
-                                              <span style={{ flex: 1, minWidth: 0 }}>{commChannelOneLineSummary(chan, list)}</span>
+                                              <span style={{ flex: 1, minWidth: 0 }}>
+                                                {commChannelOneLineSummary(chan, list, contactHint)}
+                                              </span>
                                             </button>
                                             {open ? (
                                               <div style={{ padding: "0 12px 12px", display: "grid", gap: 10 }}>
@@ -2583,33 +2727,75 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                 )}
                                                 {chan === "sms" ? (
                                                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-                                                    <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
+                                                    {smsBlockedPendingManualOptIn ? (
+                                                      <p
+                                                        style={{
+                                                          margin: 0,
+                                                          padding: "10px 12px",
+                                                          borderRadius: 8,
+                                                          background: "#fef2f2",
+                                                          border: "1px solid #fecaca",
+                                                          fontSize: 12,
+                                                          fontWeight: 600,
+                                                          color: "#991b1b",
+                                                          lineHeight: 1.45,
+                                                        }}
+                                                      >
+                                                        SMS compose is disabled — complete <strong>SMS opt-in consent</strong>{" "}
+                                                        at the top of this customer panel first.
+                                                      </p>
+                                                    ) : (
+                                                      <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
+                                                    )}
                                                     <textarea
-                                                      placeholder="SMS reply…"
+                                                      placeholder={
+                                                        smsBlockedPendingManualOptIn
+                                                          ? "Complete SMS opt-in above to enable texting"
+                                                          : "SMS reply…"
+                                                      }
                                                       value={customerReplySms}
                                                       maxLength={smsComposeMaxChars}
                                                       onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
                                                       rows={2}
-                                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: "100%", color: "#0f172a" }}
+                                                      disabled={smsBlockedPendingManualOptIn || customerSmsSending}
+                                                      style={{
+                                                        ...theme.formInput,
+                                                        resize: "vertical",
+                                                        maxWidth: "100%",
+                                                        color: "#0f172a",
+                                                        opacity: smsBlockedPendingManualOptIn ? 0.55 : 1,
+                                                        cursor: smsBlockedPendingManualOptIn ? "not-allowed" : "text",
+                                                      }}
                                                     />
-                                                    <SmsComposeCharBudget
-                                                      variant={smsFirstComplianceVariant}
-                                                      bodyLength={customerReplySms.length}
-                                                      maxChars={smsComposeMaxChars}
-                                                    />
+                                                    {!smsBlockedPendingManualOptIn ? (
+                                                      <SmsComposeCharBudget
+                                                        variant={smsFirstComplianceVariant}
+                                                        bodyLength={customerReplySms.length}
+                                                        maxChars={smsComposeMaxChars}
+                                                      />
+                                                    ) : null}
                                                     <button
                                                       type="button"
                                                       onClick={() => void sendCustomerSms()}
-                                                      disabled={customerSmsSending}
+                                                      disabled={customerSmsSending || smsBlockedPendingManualOptIn}
+                                                      title={
+                                                        smsBlockedPendingManualOptIn
+                                                          ? "Complete SMS opt-in consent before sending texts"
+                                                          : undefined
+                                                      }
                                                       style={{
                                                         alignSelf: "flex-start",
                                                         padding: "8px 14px",
-                                                        background: theme.primary,
+                                                        background: smsBlockedPendingManualOptIn ? "#94a3b8" : theme.primary,
                                                         color: "white",
                                                         border: "none",
                                                         borderRadius: "6px",
-                                                        cursor: customerSmsSending ? "wait" : "pointer",
+                                                        cursor:
+                                                          customerSmsSending || smsBlockedPendingManualOptIn
+                                                            ? "not-allowed"
+                                                            : "pointer",
                                                         fontWeight: 600,
+                                                        opacity: smsBlockedPendingManualOptIn ? 0.7 : 1,
                                                       }}
                                                     >
                                                       {customerSmsSending ? "Sending…" : "Send text"}
@@ -2662,7 +2848,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         )
                                       })}
                                     </div>
-                                  )}
 
                                   {commHistoryChannel ? (
                                     <div

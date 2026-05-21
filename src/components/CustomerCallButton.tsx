@@ -39,16 +39,21 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
           />
           <span style={{ fontSize: 11, color: "#047857", maxWidth: 320, lineHeight: 1.35, fontWeight: 600 }}>
             {twilioPrimaryNative
-              ? "Rings your Account Best contact / Primary phone first (must be your personal cell, not your Twilio business number). Customer sees your business caller ID."
-              : "Rings your Account Best contact / Primary phone first — use a personal cell, not the same number as your Twilio business line, or you may hit voicemail."}
+              ? "Rings your Account Best contact / Primary phone first (use your personal cell, not your Twilio business line). Customer sees your business caller ID."
+              : "Rings your Account Best contact / Primary phone first — use a personal cell, not your Twilio business line."}
           </span>
-          <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 320, lineHeight: 1.35 }}>
-            <strong>Which number rings first:</strong> Account uses <strong>Best contact phone</strong> if it is filled; otherwise <strong>Primary phone</strong>. Put your <strong>mobile</strong> in Best contact for bridge calls to ring your cell — if Best contact is your home line, the home phone rings, not your cell.
-            {" "}
-            Inbound calls use <strong>Admin → Communications → Forward to phone</strong> (set that to your cell if you want the business line to ring there).
-            {" "}
-            If the cell never rings: turn off <strong>Announce caller before I connect</strong> under Call forwarding and save. Check the message under the Call button for a Twilio Call SID.
-          </span>
+          <details style={{ fontSize: 11, color: "#6b7280", maxWidth: 340, lineHeight: 1.4 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>Which number rings first?</summary>
+            <p style={{ margin: "8px 0 0" }}>
+              Account uses <strong>Best contact phone</strong> when set; otherwise <strong>Primary phone</strong>. Put
+              your <strong>mobile</strong> in Best contact so bridge calls ring your cell.
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              Inbound calls: <strong>Admin → Communications → Forward to phone</strong>. If your cell never rings, turn
+              off <strong>Announce caller before I connect</strong> under Call forwarding and save. Check under the Call
+              button for a Twilio Call SID.
+            </p>
+          </details>
         </>
       ) : null}
       <button

@@ -53,7 +53,7 @@ function buildEmail(businessName: string): { subject: string; text: string; html
     "",
     "This disclosure helps customers understand how SMS follow-up may be used after they contact your business.",
     "",
-    "You can also review our SMS consent guidance here:",
+    "You can also review our SMS consent guidance and download a printable in-person opt-in PDF here:",
     SMS_CTA_URL,
     "",
     "Tradesman Systems does not support bulk messaging or unsolicited outreach. SMS should only be used for one-to-one communication with customers who contacted your business or agreed to receive messages.",
