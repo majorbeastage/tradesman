@@ -12,6 +12,7 @@ import {
 import { miniWizardsForSetupStep, type SetupMiniWizardDef } from "../lib/setupGuideWizards"
 import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
+import { useSetupWizardOptional } from "../contexts/SetupWizardContext"
 
 export type SetupGuideStepId =
   | "welcome"
@@ -187,11 +188,9 @@ function MiniWizardButtons({
           }}
         >
           {w.label}
-          {w.comingSoon ? (
-            <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 4 }}>
-              Opens {w.locationHint} — dedicated wizard coming next.
-            </span>
-          ) : null}
+          <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 4 }}>
+            {w.summary}
+          </span>
         </button>
       ))}
     </div>
@@ -208,6 +207,7 @@ export default function SetupGuideModal({
   forceInitial = false,
 }: Props) {
   const ga = useGlobalAssistantOptional()
+  const setupWizard = useSetupWizardOptional()
   const completed = hasCompletedInitialSetup(profileMetadata)
   const [mode, setMode] = useState<"pick" | "initial" | "adjust">("pick")
   const [stepIndex, setStepIndex] = useState(0)
@@ -274,7 +274,8 @@ export default function SetupGuideModal({
 
   function openMiniWizard(w: SetupMiniWizardDef) {
     setPage(w.page)
-    setStepHint(`Opened ${w.label}. ${w.locationHint}`)
+    setupWizard?.launchWizard(w.id, { fromSetupGuide: true })
+    setStepHint(`Opening ${w.label} wizard — ${w.locationHint}`)
   }
 
   async function runAdjustCommand(text: string) {

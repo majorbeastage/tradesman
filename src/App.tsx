@@ -47,6 +47,7 @@ import DashboardQuickActions from "./components/DashboardQuickActions"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
+import { SetupWizardProvider } from "./contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
@@ -191,6 +192,12 @@ function MainApp() {
   }, [user?.id])
 
   return (
+    <SetupWizardProvider
+      setPage={setPage}
+      userId={user?.id ?? null}
+      profileMetadata={profileMetadata}
+      onMetadataPatch={setProfileMetadata}
+    >
     <GlobalAssistantProvider
       setPage={setPage}
       profileUserId={user?.id ?? null}
@@ -331,6 +338,7 @@ function MainApp() {
       )}
     </AppLayout>
     </GlobalAssistantProvider>
+    </SetupWizardProvider>
   )
 }
 

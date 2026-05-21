@@ -7,6 +7,7 @@ export const GLOBAL_ASSISTANT_MIC_ENABLED_KEY = "global_assistant_mic_enabled"
 export type SetupGuideProgress = {
   initial_started_at?: string
   steps_completed?: string[]
+  mini_wizards_completed?: string[]
 }
 
 export function parseSetupGuideProgress(raw: unknown): SetupGuideProgress {
@@ -15,9 +16,22 @@ export function parseSetupGuideProgress(raw: unknown): SetupGuideProgress {
   const steps = Array.isArray(o.steps_completed)
     ? o.steps_completed.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
     : undefined
+  const mini = Array.isArray(o.mini_wizards_completed)
+    ? o.mini_wizards_completed.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : undefined
   return {
     initial_started_at: typeof o.initial_started_at === "string" ? o.initial_started_at : undefined,
     steps_completed: steps,
+    mini_wizards_completed: mini,
+  }
+}
+
+export function mergeMiniWizardCompleted(meta: Record<string, unknown>, wizardId: string): Record<string, unknown> {
+  const progress = parseSetupGuideProgress(meta[SETUP_GUIDE_PROGRESS_KEY])
+  const list = [...new Set([...(progress.mini_wizards_completed ?? []), wizardId])]
+  return {
+    ...meta,
+    [SETUP_GUIDE_PROGRESS_KEY]: { ...progress, mini_wizards_completed: list },
   }
 }
 

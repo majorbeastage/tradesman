@@ -30,6 +30,7 @@
  * **2.0.0** — Major portal release: estimates UX (AI guidance, customer-copy attachments in PDF/email preview), payments/billing portal hardening, dashboard quick actions + today’s to-do, insurance/reporting placeholders, lead fit & urgency UI, auth/password UX, calendar team management & OM policies, client-facing copy cleanup, attachment thumbnails, and assorted mobile/admin fixes.
  * **2.0.1** — Estimate workspace: Start Quote guide, scope assistant (OpenAI line suggestions), Conversations label, collapsible customer/templates, status cues.
  * **2.1.0** — Setup Guide wizard (initial + adjustment modes), dashboard platform assistant with voice, global indigo assistant FAB, paper quick-link theme, help desk menu playback fix.
+ * **2.2.0** — Eight interactive setup mini-wizards (auto-replies, lead filters, line items, job types, scheduling alerts, receipt template, call forwarding, voicemail) with voice/TTS; platform assistant routes to wizards; shared speech input.
  *
  * @see CopyrightVersionFooter
  */

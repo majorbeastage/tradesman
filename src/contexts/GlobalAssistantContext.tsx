@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase"
 import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
+import { useSetupWizardOptional } from "./SetupWizardContext"
 
 type GlobalAssistantContextValue = {
   assistantText: string
@@ -46,6 +47,7 @@ export function GlobalAssistantProvider({
   const [micFabVisible, setMicFabVisible] = useState(() => isGlobalAssistantMicEnabled(profileMetadata))
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const setupGuideOpenerRef = useRef<(() => void) | null>(null)
+  const setupWizard = useSetupWizardOptional()
 
   const {
     speechSupported,
@@ -87,13 +89,18 @@ export function GlobalAssistantProvider({
           openSetupGuide()
           return
         }
+        if (action.type === "open_mini_wizard") {
+          setupWizard?.launchWizard(action.wizardId)
+          setAssistantNote(action.message)
+          return
+        }
         setPage(action.page)
         setAssistantNote(action.message)
       } finally {
         setAssistantBusy(false)
       }
     },
-    [openSetupGuide, setPage],
+    [openSetupGuide, setPage, setupWizard],
   )
 
   const toggleVoiceListening = useCallback(

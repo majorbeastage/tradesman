@@ -18,8 +18,11 @@ export type SetupMiniWizardDef = {
   page: string
   /** Where to find it in the UI after navigation */
   locationHint: string
-  /** Shown in main guide; true until a dedicated wizard component exists */
-  comingSoon?: boolean
+  summary: string
+}
+
+export function getSetupMiniWizardDef(id: SetupMiniWizardId): SetupMiniWizardDef | undefined {
+  return SETUP_MINI_WIZARDS.find((w) => w.id === id)
 }
 
 export const SETUP_MINI_WIZARDS: SetupMiniWizardDef[] = [
@@ -27,57 +30,57 @@ export const SETUP_MINI_WIZARDS: SetupMiniWizardDef[] = [
     id: "customers_auto_replies",
     label: "Automatic replies",
     page: "customers",
-    locationHint: "Customers → Automatic replies (top action bar)",
-    comingSoon: true,
+    locationHint: "Customers → Automatic replies",
+    summary: "Turn on replies, pick a channel, and optional AI drafts.",
   },
   {
     id: "customers_lead_filters",
     label: "Lead filters & alerts",
     page: "customers",
-    locationHint: "Customers → Lead filter preferences and Alerts",
-    comingSoon: true,
+    locationHint: "Customers → Lead scoring rules",
+    summary: "Job types, minimum size, auto-scoring, and urgent notifications.",
   },
   {
     id: "estimates_line_items",
     label: "Estimate line items",
     page: "quotes",
-    locationHint: "Estimates → Library → Estimate line items",
-    comingSoon: true,
+    locationHint: "Estimates → Library → Line items",
+    summary: "Speak or type one line item; we fill title, qty, and price.",
   },
   {
     id: "estimates_job_types",
     label: "Job types",
     page: "quotes",
     locationHint: "Estimates → Library → Job types",
-    comingSoon: true,
+    summary: "Name, duration, and color for a reusable job type.",
   },
   {
     id: "scheduling_alerts",
     label: "Scheduling alerts",
     page: "calendar",
     locationHint: "Scheduling → Alerts",
-    comingSoon: true,
+    summary: "Push, email, SMS, and on-the-way customer messages.",
   },
   {
     id: "scheduling_receipt_template",
     label: "Receipt template",
     page: "calendar",
     locationHint: "Scheduling → Receipt template",
-    comingSoon: true,
+    summary: "Intro line, logo, and itemized receipt defaults.",
   },
   {
     id: "myt_call_forwarding",
     label: "Call forwarding",
     page: "account",
     locationHint: "My T → Call forwarding",
-    comingSoon: true,
+    summary: "Ring your cell from your business line with optional whisper.",
   },
   {
     id: "myt_voicemail_greeting",
     label: "Voicemail greeting",
     page: "account",
     locationHint: "My T → Voicemail greeting",
-    comingSoon: true,
+    summary: "Recorded or text-to-speech greeting for missed calls.",
   },
 ]
 
