@@ -41,3 +41,11 @@ export function mergeSetupGuideCompleted(meta: Record<string, unknown>, atIso?: 
 export function mergeGlobalAssistantMic(meta: Record<string, unknown>, enabled: boolean): Record<string, unknown> {
   return { ...meta, [GLOBAL_ASSISTANT_MIC_ENABLED_KEY]: enabled }
 }
+
+/** Remove setup-guide keys so the initial walkthrough shows again (profile update or SQL batch). */
+export function clearSetupGuideFromMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...meta }
+  delete next[SETUP_GUIDE_COMPLETED_AT_KEY]
+  delete next[SETUP_GUIDE_PROGRESS_KEY]
+  return next
+}

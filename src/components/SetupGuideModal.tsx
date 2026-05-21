@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import PlatformAssistantField from "./PlatformAssistantField"
@@ -9,6 +9,7 @@ import {
   mergeSetupGuideCompleted,
   parseSetupGuideProgress,
 } from "../lib/setupGuideState"
+import { miniWizardsForSetupStep, type SetupMiniWizardDef } from "../lib/setupGuideWizards"
 import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 
@@ -27,62 +28,125 @@ const INITIAL_STEPS: Array<{
   title: string
   body: string
   page?: string
+  bullets?: string[]
   question?: string
 }> = [
   {
     id: "welcome",
     title: "Welcome",
-    body: "This walkthrough sets up the main areas of Tradesman. You can change anything later in Settings or open this guide again from Quick Links.",
+    body: "This walkthrough introduces the main areas of Tradesman and points you to focused setup wizards inside each tab. You can reopen Setup Guide anytime from Dashboard → Quick Links.",
+    bullets: [
+      "We open each tab behind this panel so you can see where settings live.",
+      "Short wizards inside Customers, Estimates, Scheduling, and My T will handle detailed choices (voice + AI where noted).",
+      "Nothing here locks you in — change settings anytime.",
+    ],
   },
   {
     id: "dashboard",
     title: "Dashboard",
     page: "dashboard",
-    body: "Your home base shows quick links and the platform assistant. Ask for a tab by name — for example “take me to customers”.",
-    question: "Do you want the floating assistant microphone visible on every page? (You can change this at the end.)",
+    body: "Your home base: quick links, today’s work, and the platform assistant (“What would you like to do today?”). Use voice or type to jump to a tab or task.",
+    bullets: [
+      "Quick Links use the paper tile style; Setup Guide stays here for later changes.",
+      "The indigo microphone (bottom-right) talks to the same assistant from any page when enabled.",
+    ],
+    question: "Do you want the floating assistant microphone visible on every page? (You choose at the end of this walkthrough.)",
   },
   {
     id: "customers",
     title: "Customers",
     page: "customers",
-    body: "Store clients, conversations, and reports. Automatic replies and lead filters live here — we will add wizards inside those panels next.",
-    question: "Will you use automatic text or email replies for customers? (You can configure this under Customers → Automatic replies.)",
+    body: "Clients, conversation history, SMS/email from the contact card, and specialty reports. Lead fit and urgency also show on this tab.",
+    bullets: [
+      "Automatic replies — wizard will ask simple questions and map answers to your reply templates.",
+      "Lead filter preferences & Alerts — separate wizards for who you hear from and how you get notified.",
+      "First outbound texts include a compliance footer; the composer shows what will be appended.",
+    ],
+    question: "Will you use automatic text or email replies? (Use the Automatic replies wizard below when it is available.)",
   },
   {
     id: "estimates",
     title: "Estimates",
     page: "quotes",
-    body: "Build quotes, line items, and job types. The Estimates Library holds reusable lines and job types for faster quoting.",
-    question: "Do you already have standard line items or job types to add? (Library → Estimate line items / Job types.)",
+    body: "Quotes, PDF/email send, scope assistant, and the Estimates Library for reusable content.",
+    bullets: [
+      "Estimate line items — speak or type; AI fills title, description, and cost from what you say.",
+      "Job types — step-by-step wizard (criteria, linked line items, defaults).",
+      "Start Quote guide on new estimates walks job details and customer copy options.",
+    ],
+    question: "Do you already have standard prices or job types to import? (Line items and job type wizards below.)",
   },
   {
     id: "scheduling",
     title: "Scheduling",
     page: "calendar",
-    body: "Calendar, team management, alerts, and receipt templates. Office managers can assign work from here.",
-    question: "Will you schedule jobs yourself or assign them to a team? (Scheduling tools and Team management on this tab.)",
+    body: "Calendar views, job completion, team assignment (office managers), and customer notifications tied to events.",
+    bullets: [
+      "Alerts wizard — push, email, and SMS preferences for calendar events.",
+      "Receipt template wizard — intro text, logo, and line layout for completion receipts.",
+      "Team management is optional; solo contractors can use Scheduling tools only.",
+    ],
+    question: "Will you schedule jobs yourself or assign work to a team?",
   },
   {
     id: "myt",
     title: "My T",
     page: "account",
-    body: "Call forwarding sends your Tradesman number to your cell. Voicemail greeting is what callers hear when you miss a call — record it here with your PIN.",
-    question: "Have you set up call forwarding and your voicemail greeting yet? (My T → Call forwarding / Voicemail greeting.)",
+    body: "Your Tradesman phone identity: forwarding, voicemail, push/GPS prefs, and profile photo on the mobile app.",
+    bullets: [
+      "Call forwarding — wizard explains forwarding your business line to your cell in plain language.",
+      "Voicemail greeting — record or upload what callers hear; PIN flow for phone updates.",
+      "Push notifications and location sync from My T when you use the native app.",
+    ],
+    question: "Have you set call forwarding and a voicemail greeting yet?",
   },
   {
     id: "payments",
     title: "Payments",
     page: "payments",
-    body: "Subscription billing and customer payment links. Helcim connects when your admin enables it.",
-    question: "Do you need to collect payments from customers through Tradesman? (Payments tab when enabled.)",
+    body: "Subscription billing for your Tradesman account and (when enabled) Helcim links to collect from customers.",
+    bullets: [
+      "Payments tab visibility depends on your role and admin configuration.",
+      "Customer payment requests are created from the customer record when collections are enabled.",
+    ],
+    question: "Do you need to collect payments from customers through Tradesman?",
   },
   {
     id: "finish",
     title: "All set",
     page: "dashboard",
-    body: "Initial setup is complete. Use Setup Guide anytime from Quick Links for changes, or ask the dashboard assistant.",
+    body: "Initial setup is marked complete. Reopen Setup Guide from Quick Links for changes, or use adjustment mode with the AI assistant.",
+    bullets: [
+      "Per-area setup wizards will appear inside each settings panel as we ship them.",
+      "Dashboard assistant and Setup Guide share the same navigation map.",
+    ],
   },
 ]
+
+const BTN_SECONDARY: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 8,
+  border: "1px solid #94a3b8",
+  background: "#f1f5f9",
+  color: "#0f172a",
+  fontWeight: 700,
+  fontSize: 14,
+  cursor: "pointer",
+}
+
+const BTN_CLOSE: CSSProperties = {
+  width: 38,
+  height: 38,
+  borderRadius: 8,
+  border: "1px solid #94a3b8",
+  background: "#f1f5f9",
+  color: "#0f172a",
+  fontSize: 20,
+  lineHeight: 1,
+  fontWeight: 800,
+  cursor: "pointer",
+  flexShrink: 0,
+}
 
 type Props = {
   open: boolean
@@ -92,6 +156,46 @@ type Props = {
   onMetadataPatch: (next: Record<string, unknown>) => void
   setPage: (page: string) => void
   forceInitial?: boolean
+}
+
+function MiniWizardButtons({
+  wizards,
+  onOpen,
+}: {
+  wizards: SetupMiniWizardDef[]
+  onOpen: (w: SetupMiniWizardDef) => void
+}) {
+  if (wizards.length === 0) return null
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", letterSpacing: "0.03em" }}>SETUP WIZARDS ON THIS TAB</div>
+      {wizards.map((w) => (
+        <button
+          key={w.id}
+          type="button"
+          onClick={() => onOpen(w)}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            color: "#0f172a",
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          {w.label}
+          {w.comingSoon ? (
+            <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 4 }}>
+              Opens {w.locationHint} — dedicated wizard coming next.
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export default function SetupGuideModal({
@@ -112,6 +216,7 @@ export default function SetupGuideModal({
   const [adjustBusy, setAdjustBusy] = useState(false)
   const [showGlobalMic, setShowGlobalMic] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [stepHint, setStepHint] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -123,10 +228,12 @@ export default function SetupGuideModal({
     }
     setAdjustText("")
     setAdjustNote(null)
+    setStepHint(null)
     setShowGlobalMic(true)
   }, [open, completed, forceInitial])
 
   const step = INITIAL_STEPS[stepIndex]
+  const stepMiniWizards = step ? miniWizardsForSetupStep(step.id) : []
 
   const persistMeta = useCallback(
     async (patch: Record<string, unknown>) => {
@@ -163,6 +270,11 @@ export default function SetupGuideModal({
 
   function goToStepPage(page?: string) {
     if (page) setPage(page)
+  }
+
+  function openMiniWizard(w: SetupMiniWizardDef) {
+    setPage(w.page)
+    setStepHint(`Opened ${w.label}. ${w.locationHint}`)
   }
 
   async function runAdjustCommand(text: string) {
@@ -219,19 +331,24 @@ export default function SetupGuideModal({
           padding: "20px 20px 16px",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>SETUP GUIDE</div>
-            <h2 style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: theme.text }}>{headerTitle}</h2>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#475569", letterSpacing: "0.06em" }}>SETUP GUIDE</div>
+            <h2 style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#0f172a" }}>{headerTitle}</h2>
+            {mode === "initial" && step && step.id !== "welcome" && step.id !== "finish" ? (
+              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b" }}>
+                Step {stepIndex + 1} of {INITIAL_STEPS.length}
+              </p>
+            ) : null}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc", cursor: "pointer", fontWeight: 800 }}>
+          <button type="button" onClick={onClose} aria-label="Close" style={BTN_CLOSE}>
             ✕
           </button>
         </div>
 
         {mode === "pick" ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
+            <p style={{ margin: 0, fontSize: 14, color: "#334155", lineHeight: 1.55 }}>
               {completed
                 ? "You have already completed initial setup. Start the full walkthrough again, or make targeted changes."
                 : "It looks like you have not finished initial setup yet. We recommend starting with your profile and core tabs."}
@@ -266,9 +383,9 @@ export default function SetupGuideModal({
               style={{
                 padding: "12px 14px",
                 borderRadius: 10,
-                border: `1px solid ${theme.border}`,
+                border: "1px solid #94a3b8",
                 background: "#f8fafc",
-                color: "#334155",
+                color: "#0f172a",
                 fontWeight: 600,
                 fontSize: 13,
                 cursor: "pointer",
@@ -282,28 +399,51 @@ export default function SetupGuideModal({
 
         {mode === "initial" && step ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <p style={{ margin: 0, fontSize: 14, color: "#334155", lineHeight: 1.55 }}>{step.body}</p>
+            <p style={{ margin: 0, fontSize: 14, color: "#1e293b", lineHeight: 1.55 }}>{step.body}</p>
+            {step.bullets && step.bullets.length > 0 ? (
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                {step.bullets.map((b) => (
+                  <li key={b} style={{ marginBottom: 6 }}>
+                    {b}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {step.question ? (
-              <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5, fontStyle: "italic" }}>{step.question}</p>
+              <p style={{ margin: 0, fontSize: 13, color: "#334155", lineHeight: 1.5, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, border: `1px solid ${theme.border}` }}>
+                <strong style={{ color: "#0f172a" }}>Quick question: </strong>
+                {step.question}
+              </p>
+            ) : null}
+            <MiniWizardButtons wizards={stepMiniWizards} onOpen={openMiniWizard} />
+            {stepHint ? (
+              <p style={{ margin: 0, fontSize: 12, color: "#0369a1", lineHeight: 1.45, padding: "8px 10px", background: "#e0f2fe", borderRadius: 6 }}>
+                {stepHint}
+              </p>
             ) : null}
             {step.id === "finish" ? (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f172a", fontWeight: 600 }}>
                 <input type="checkbox" checked={showGlobalMic} onChange={(e) => setShowGlobalMic(e.target.checked)} />
                 Show floating assistant microphone on all pages (indigo button, bottom-right)
               </label>
             ) : null}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
               <button
                 type="button"
                 disabled={stepIndex === 0}
                 onClick={() => {
                   const next = Math.max(0, stepIndex - 1)
                   setStepIndex(next)
+                  setStepHint(null)
                   goToStepPage(INITIAL_STEPS[next]?.page)
                 }}
-                style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", cursor: stepIndex === 0 ? "not-allowed" : "pointer", opacity: stepIndex === 0 ? 0.5 : 1 }}
+                style={{
+                  ...BTN_SECONDARY,
+                  cursor: stepIndex === 0 ? "not-allowed" : "pointer",
+                  opacity: stepIndex === 0 ? 0.45 : 1,
+                }}
               >
-                Back
+                ← Back
               </button>
               {stepIndex < INITIAL_STEPS.length - 1 ? (
                 <button
@@ -311,6 +451,7 @@ export default function SetupGuideModal({
                   onClick={() => {
                     const next = stepIndex + 1
                     setStepIndex(next)
+                    setStepHint(null)
                     goToStepPage(INITIAL_STEPS[next]?.page)
                   }}
                   style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
@@ -322,13 +463,17 @@ export default function SetupGuideModal({
                   type="button"
                   disabled={saving}
                   onClick={() => void finishInitialSetup()}
-                  style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#059669", color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                  style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#059669", color: "#fff", fontWeight: 700, cursor: saving ? "wait" : "pointer" }}
                 >
                   {saving ? "Saving…" : "Finish setup"}
                 </button>
               )}
             </div>
-            <button type="button" onClick={() => setMode("adjust")} style={{ border: "none", background: "none", color: "#6366f1", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", padding: 0 }}>
+            <button
+              type="button"
+              onClick={() => setMode("adjust")}
+              style={{ border: "none", background: "none", color: theme.primary, fontSize: 13, fontWeight: 700, cursor: "pointer", textAlign: "left", padding: 0 }}
+            >
               Switch to adjustment mode (AI assistant)
             </button>
           </div>
@@ -336,7 +481,7 @@ export default function SetupGuideModal({
 
         {mode === "adjust" ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
+            <p style={{ margin: 0, fontSize: 14, color: "#334155", lineHeight: 1.55 }}>
               Describe what you want to change. We will open the right tab behind this guide. Example: “automatic replies for customers” or “estimate line items”.
             </p>
             <PlatformAssistantField
@@ -353,9 +498,10 @@ export default function SetupGuideModal({
               onClick={() => {
                 setMode("initial")
                 setStepIndex(0)
+                setStepHint(null)
                 goToStepPage("dashboard")
               }}
-              style={{ border: "none", background: "none", color: "#6366f1", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left", padding: 0 }}
+              style={{ border: "none", background: "none", color: theme.primary, fontSize: 13, fontWeight: 700, cursor: "pointer", textAlign: "left", padding: 0 }}
             >
               Switch to Initial Setup Guide
             </button>
