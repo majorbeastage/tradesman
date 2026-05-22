@@ -10,11 +10,14 @@ export type OpenSpecialtyReportWizardRequest = {
   quoteId?: string
 }
 
+export const OPEN_SPECIALTY_REPORT_WIZARD_EVENT = "tradesman:open-specialty-report-wizard"
+
 export function queueOpenSpecialtyReportWizard(req: OpenSpecialtyReportWizardRequest = {}): void {
   if (typeof window === "undefined") return
   try {
     const quoteId = req.quoteId?.trim()
     sessionStorage.setItem(OPEN_SPECIALTY_REPORT_WIZARD, JSON.stringify({ quoteId: quoteId || undefined }))
+    window.dispatchEvent(new CustomEvent(OPEN_SPECIALTY_REPORT_WIZARD_EVENT))
   } catch {
     /* ignore */
   }

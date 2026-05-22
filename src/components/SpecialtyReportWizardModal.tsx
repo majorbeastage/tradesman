@@ -563,6 +563,17 @@ export default function SpecialtyReportWizardModal({
     return Object.values(home.subsections).filter((s) => s.condition === "deficient").length
   }, [home.subsections])
 
+  const exportMeta = useMemo((): HomeInspectionExportMeta => {
+    const title =
+      reportTitle.trim() ||
+      (picked ? SPECIALTY_REPORT_TYPE_LABELS[picked] : "Inspection report")
+    return {
+      title,
+      customerLabel: customerLabel?.trim() || undefined,
+      quoteId: quoteId ?? undefined,
+    }
+  }, [reportTitle, picked, customerLabel, quoteId])
+
   const close = () => {
     reset()
     onClose()
@@ -1061,17 +1072,6 @@ export default function SpecialtyReportWizardModal({
   function fieldMediaList(fieldKey: string) {
     return fieldKey === "genericNotes" ? genericFieldMedia[fieldKey] ?? [] : home.field_media[fieldKey] ?? []
   }
-
-  const exportMeta = useMemo((): HomeInspectionExportMeta => {
-    const title =
-      reportTitle.trim() ||
-      (picked ? SPECIALTY_REPORT_TYPE_LABELS[picked] : "Inspection report")
-    return {
-      title,
-      customerLabel: customerLabel?.trim() || undefined,
-      quoteId: quoteId ?? undefined,
-    }
-  }, [reportTitle, picked, customerLabel, quoteId])
 
   function reportExportFilename(ext: string): string {
     const addr = home.header.propertyAddress.trim().slice(0, 40).replace(/[^\w.-]+/g, "_")

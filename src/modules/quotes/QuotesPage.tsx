@@ -108,7 +108,11 @@ import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContext"
-import { consumeOpenSpecialtyReportWizard, consumeQuotesCustomerPrefill } from "../../lib/workflowNavigation"
+import {
+  consumeOpenSpecialtyReportWizard,
+  consumeQuotesCustomerPrefill,
+  OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
+} from "../../lib/workflowNavigation"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
@@ -1933,10 +1937,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
 
   useEffect(() => {
-    const req = consumeOpenSpecialtyReportWizard()
-    if (!req) return
-    if (req.quoteId) setSelectedQuoteId(req.quoteId)
-    setSpecialtyReportWizardOpen(true)
+    function openQueuedSpecialtyReport() {
+      const req = consumeOpenSpecialtyReportWizard()
+      if (!req) return
+      if (req.quoteId) setSelectedQuoteId(req.quoteId)
+      setSpecialtyReportWizardOpen(true)
+    }
+    openQueuedSpecialtyReport()
+    window.addEventListener(OPEN_SPECIALTY_REPORT_WIZARD_EVENT, openQueuedSpecialtyReport)
+    return () => window.removeEventListener(OPEN_SPECIALTY_REPORT_WIZARD_EVENT, openQueuedSpecialtyReport)
   }, [userId])
 
   useEffect(() => {
