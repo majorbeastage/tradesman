@@ -15,6 +15,12 @@ import { extractCustomerSearchQuery } from "./customerAssistantSearch"
 import { isMissedCallAssistantPhrase } from "./customerAssistantMissedCall"
 import { buildAssistantExplainMessage } from "./assistantExplain"
 import {
+  buildCustomVocabularyCatalogSection,
+  matchCustomVocabularyEntry,
+  type AssistantCustomActionPayload,
+  type AssistantCustomVocabularyEntry,
+} from "./platformAssistantCustomVocabulary"
+import {
   buildPlatformAssistantDomainTraining,
   isCreateEstimatePhrase,
   isFocusSmsPhrase,
@@ -77,6 +83,59 @@ export type GlobalAssistantParseContext = {
   /** Customers tab — row/detail currently open (Phase 3). */
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
+  /** Admin-trained phrases from platform_settings (live). */
+  customVocabulary?: AssistantCustomVocabularyEntry[]
+}
+
+export function customPayloadToGlobalAction(
+  payload: AssistantCustomActionPayload,
+  ctx: Pick<GlobalAssistantParseContext, "selectedCustomerId" | "selectedCustomerName">,
+): GlobalAssistantAction | null {
+  const msg =
+    payload.message?.trim() ||
+    (payload.type === "navigate" && payload.page ? `Opening ${pageLabel(payload.page)}.` : "OK.")
+  switch (payload.type) {
+    case "navigate":
+      if (!payload.page?.trim()) return null
+      return { type: "navigate", page: payload.page.trim(), message: msg }
+    case "open_setup_guide":
+      return { type: "open_setup_guide", message: msg }
+    case "open_mini_wizard":
+      return { type: "open_mini_wizard", wizardId: payload.wizardId, message: msg }
+    case "open_admin":
+      return { type: "open_admin", panel: payload.panel, message: msg }
+    case "find_customer":
+      if (!payload.query?.trim()) return null
+      return { type: "find_customer", query: payload.query.trim(), message: msg }
+    case "open_last_missed_call":
+      return { type: "open_last_missed_call", message: msg }
+    case "open_current_customer":
+      return { type: "open_current_customer", message: msg }
+    case "create_estimate": {
+      if (payload.useSelectedCustomer && ctx.selectedCustomerId) {
+        return { type: "create_estimate", customerId: ctx.selectedCustomerId, message: msg }
+      }
+      const q = payload.customerQuery?.trim()
+      if (q) return { type: "create_estimate", customerQuery: q, message: msg }
+      if (ctx.selectedCustomerId) return { type: "create_estimate", customerId: ctx.selectedCustomerId, message: msg }
+      return { type: "create_estimate", message: msg }
+    }
+    case "focus_customer_sms": {
+      if (payload.useSelectedCustomer && ctx.selectedCustomerId) {
+        return { type: "focus_customer_sms", customerId: ctx.selectedCustomerId, message: msg }
+      }
+      const q = payload.customerQuery?.trim()
+      if (q) return { type: "focus_customer_sms", customerQuery: q, message: msg }
+      if (ctx.selectedCustomerId) {
+        return { type: "focus_customer_sms", customerId: ctx.selectedCustomerId, message: msg }
+      }
+      return { type: "focus_customer_sms", message: msg }
+    }
+    case "explain":
+      return { type: "explain", message: msg }
+    default:
+      return null
+  }
 }
 
 function scorePatterns(text: string, patterns: RegExp[]): number {
@@ -185,6 +244,19 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
         type: "clarify",
         message: `Tell me what you would like to do — for example “${suggestPhrasesForPlatform(platform, 3).join('”, “')}”.`,
       },
+    }
+  }
+
+  const customPayload = matchCustomVocabularyEntry(text, ctx.customVocabulary ?? [], ctx)
+  if (customPayload) {
+    const customAction = customPayloadToGlobalAction(customPayload, ctx)
+    if (customAction) {
+      return {
+        confidence: 97,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: customAction,
+      }
     }
   }
 
@@ -432,7 +504,9 @@ export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): 
     selectedCustomerId: ctx.selectedCustomerId,
     selectedCustomerName: ctx.selectedCustomerName,
   })
-  return `${base}\n\n${buildPlatformAssistantDomainTraining(ctx)}`
+  const custom = buildCustomVocabularyCatalogSection(ctx.customVocabulary ?? [])
+  const domain = buildPlatformAssistantDomainTraining(ctx)
+  return [base, custom, domain].filter(Boolean).join("\n\n")
 }
 
 export { ASSISTANT_ADMIN_PANEL_STORAGE_KEY }

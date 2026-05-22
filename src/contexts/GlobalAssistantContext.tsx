@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import AssistantConfirmDialog, { type AssistantConfirmOption } from "../components/AssistantConfirmDialog"
+import AssistantVocabularyTrainPanel from "../components/AssistantVocabularyTrainPanel"
 import { searchCustomersByQuery } from "../lib/customerAssistantSearch"
 import { findLastMissedCallCustomer } from "../lib/customerAssistantMissedCall"
 import type { AssistantPageSnapshot } from "../lib/assistantPageContext"
@@ -17,6 +18,11 @@ import {
   type GlobalAssistantAction,
   type GlobalAssistantParseContext,
 } from "../lib/globalAssistantNav"
+import {
+  loadPlatformAssistantVocabulary,
+  savePlatformAssistantVocabulary,
+  type AssistantCustomVocabularyEntry,
+} from "../lib/platformAssistantCustomVocabulary"
 import { routePlatformAssistantWithLlm } from "../lib/platformAssistantLlm"
 import { useView } from "./ViewContext"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
@@ -47,6 +53,10 @@ type GlobalAssistantContextValue = {
   setPageSnapshot: (patch: AssistantPageSnapshot) => void
   openSetupGuide: () => void
   registerSetupGuideOpener: (fn: () => void) => void
+  /** True when profile role is admin — shows vocabulary train control on FAB. */
+  isAdmin: boolean
+  vocabularyTrainOpen: boolean
+  toggleVocabularyTrain: () => void
 }
 
 const GlobalAssistantContext = createContext<GlobalAssistantContextValue | null>(null)
@@ -90,6 +100,24 @@ export function GlobalAssistantProvider({
     options: AssistantConfirmOption[]
   } | null>(null)
   const [pageSnapshot, setPageSnapshot] = useState<AssistantPageSnapshot>({})
+  const [customVocabulary, setCustomVocabulary] = useState<AssistantCustomVocabularyEntry[]>([])
+  const [vocabularyTrainOpen, setVocabularyTrainOpen] = useState(false)
+  const [vocabularySaveBusy, setVocabularySaveBusy] = useState(false)
+  const [vocabularySaveError, setVocabularySaveError] = useState<string | null>(null)
+
+  const reloadCustomVocabulary = useCallback(async () => {
+    if (!supabase) return
+    try {
+      const entries = await loadPlatformAssistantVocabulary(supabase)
+      setCustomVocabulary(entries)
+    } catch {
+      setCustomVocabulary([])
+    }
+  }, [])
+
+  useEffect(() => {
+    void reloadCustomVocabulary()
+  }, [reloadCustomVocabulary, profileUserId])
 
   const parseContext = useMemo<GlobalAssistantParseContext>(
     () => ({
@@ -99,8 +127,54 @@ export function GlobalAssistantProvider({
       currentPage,
       selectedCustomerId: pageSnapshot.selectedCustomerId,
       selectedCustomerName: pageSnapshot.selectedCustomerName,
+      customVocabulary,
     }),
-    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot],
+    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary],
+  )
+
+  const toggleVocabularyTrain = useCallback(() => {
+    setVocabularyTrainOpen((o) => !o)
+    setVocabularySaveError(null)
+  }, [])
+
+  const persistVocabularyEntries = useCallback(
+    async (entries: AssistantCustomVocabularyEntry[]) => {
+      if (!supabase) throw new Error("Not connected.")
+      setVocabularySaveBusy(true)
+      setVocabularySaveError(null)
+      try {
+        await savePlatformAssistantVocabulary(supabase, entries)
+        setCustomVocabulary(entries)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Could not save vocabulary."
+        setVocabularySaveError(msg)
+        throw e
+      } finally {
+        setVocabularySaveBusy(false)
+      }
+    },
+    [],
+  )
+
+  const saveCustomVocabularyEntry = useCallback(
+    async (draft: Omit<AssistantCustomVocabularyEntry, "id" | "createdAt" | "createdBy">) => {
+      const entry: AssistantCustomVocabularyEntry = {
+        ...draft,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        createdBy: profileUserId ?? undefined,
+      }
+      await persistVocabularyEntries([entry, ...customVocabulary])
+      setAssistantNote(`Saved training for “${entry.phrase}”.`)
+    },
+    [customVocabulary, persistVocabularyEntries, profileUserId],
+  )
+
+  const deleteCustomVocabularyEntry = useCallback(
+    async (id: string) => {
+      await persistVocabularyEntries(customVocabulary.filter((e) => e.id !== id))
+    },
+    [customVocabulary, persistVocabularyEntries],
   )
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
@@ -455,6 +529,9 @@ export function GlobalAssistantProvider({
       },
       openSetupGuide,
       registerSetupGuideOpener,
+      isAdmin,
+      vocabularyTrainOpen,
+      toggleVocabularyTrain,
     }),
     [
       assistantText,
@@ -472,12 +549,28 @@ export function GlobalAssistantProvider({
       openSetupGuide,
       registerSetupGuideOpener,
       persistMicPref,
+      isAdmin,
+      vocabularyTrainOpen,
+      toggleVocabularyTrain,
     ],
   )
 
   return (
     <GlobalAssistantContext.Provider value={value}>
       {children}
+      {isAdmin ? (
+        <AssistantVocabularyTrainPanel
+          open={vocabularyTrainOpen}
+          onClose={() => setVocabularyTrainOpen(false)}
+          initialPhrase={assistantText.trim()}
+          selectedCustomerName={pageSnapshot.selectedCustomerName}
+          entries={customVocabulary}
+          saveBusy={vocabularySaveBusy}
+          saveError={vocabularySaveError}
+          onSave={saveCustomVocabularyEntry}
+          onDelete={deleteCustomVocabularyEntry}
+        />
+      ) : null}
       <AssistantConfirmDialog
         open={Boolean(confirmDialog)}
         message={confirmDialog?.message ?? ""}

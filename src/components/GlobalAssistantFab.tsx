@@ -29,6 +29,9 @@ export default function GlobalAssistantFab() {
     submitVoiceAssistant,
     assistantText,
     assistantBusy,
+    isAdmin,
+    vocabularyTrainOpen,
+    toggleVocabularyTrain,
   } = ga
 
   const canSend = Boolean(assistantText.trim()) && !assistantBusy
@@ -66,6 +69,47 @@ export default function GlobalAssistantFab() {
           gap: 10,
         }}
       >
+        {isAdmin ? (
+          <button
+            type="button"
+            title={vocabularyTrainOpen ? "Close assistant training" : "Train assistant phrasing (admin)"}
+            aria-label={vocabularyTrainOpen ? "Close assistant training" : "Train assistant phrasing"}
+            aria-expanded={vocabularyTrainOpen}
+            onClick={() => toggleVocabularyTrain()}
+            style={{
+              width: isMobile ? 44 : 48,
+              height: isMobile ? 44 : 48,
+              borderRadius: "50%",
+              border: "2px solid #fff",
+              background: vocabularyTrainOpen
+                ? "linear-gradient(145deg, #b45309 0%, #92400e 100%)"
+                : "linear-gradient(145deg, #f59e0b 0%, #d97706 100%)",
+              color: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              flexShrink: 0,
+              boxShadow: vocabularyTrainOpen
+                ? "0 0 0 4px rgba(217,119,6,0.35)"
+                : "0 6px 16px rgba(217,119,6,0.35)",
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M12 3l1.5 4.5H18l-3.7 2.7 1.4 4.5L12 12l-3.7 2.7 1.4-4.5L6 7.5h4.5L12 3z"
+                fill="currentColor"
+              />
+              <path
+                d="M5 19h14M8 21h8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        ) : null}
         {voiceListening || canSend ? (
           <button
             type="button"
@@ -149,8 +193,8 @@ export default function GlobalAssistantFab() {
             zIndex: 10049,
             right: isMobile ? 12 : 20,
             bottom: isMobile
-              ? "max(72px, calc(64px + env(safe-area-inset-bottom, 0px)))"
-              : "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))",
+              ? `max(${isAdmin ? 128 : 72}px, calc(${isAdmin ? 120 : 64}px + env(safe-area-inset-bottom, 0px)))`
+              : `max(${isAdmin ? 148 : 88}px, calc(${isAdmin ? 140 : 80}px + env(safe-area-inset-bottom, 0px)))`,
             maxWidth: isMobile ? "min(58vw, 210px)" : 300,
             padding: isMobile ? "6px 10px" : "8px 12px",
             borderRadius: isMobile ? 8 : 10,
