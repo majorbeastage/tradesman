@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { refreshCustomerPipelineOnEngagement, type CustomerEngagementKind } from "./customerPipelineStatus"
 
 /** Record estimate → calendar scheduling on the customer timeline (email channel log). */
 export async function logEstimateScheduledCommunicationEvent(
@@ -48,9 +49,14 @@ export async function logEstimateScheduledCommunicationEvent(
 export async function bumpCustomerLastActivityAt(
   supabase: SupabaseClient,
   customerId: string,
+  pipelineKind?: CustomerEngagementKind,
 ): Promise<void> {
   const cid = customerId.trim()
   if (!cid) return
+  if (pipelineKind) {
+    await refreshCustomerPipelineOnEngagement(supabase, cid, pipelineKind)
+    return
+  }
   const nowIso = new Date().toISOString()
   const { error } = await supabase.from("customers").update({ last_activity_at: nowIso }).eq("id", cid)
   if (error && !String(error.message || "").toLowerCase().includes("last_activity")) {

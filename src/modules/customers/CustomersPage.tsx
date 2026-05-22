@@ -37,7 +37,6 @@ import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } fro
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
 import { consumeCustomerAssistantSmsFocus } from "../../lib/workflowNavigation"
-import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import {
   loadCustomerCalendarEvents,
   type CustomerCalendarEventRow,
@@ -1698,7 +1697,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         >
           {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
         </button>
-        <SetupWizardLaunchButton wizardId="customers_auto_replies" compact />
         <button
           type="button"
           onClick={() => setShowLeadFilterPrefs(true)}
@@ -1714,7 +1712,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         >
           Lead filter preferences
         </button>
-        <SetupWizardLaunchButton wizardId="customers_lead_filters" compact />
         {userId ? <TabNotificationAlertsButton tab="customers" profileUserId={userId} /> : null}
       </div>
 

@@ -11,7 +11,6 @@ import {
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
-import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
@@ -37,6 +36,12 @@ import {
   intervalsOverlap,
   portalHasRecurrenceControls,
 } from "../../lib/calendarRecurrence"
+import {
+  clampAppointmentDurationMinutes,
+  durationMinutesFromJobType,
+  readCalendarWorkingHoursFromStorage,
+} from "../../lib/scheduleDurationDefaults"
+import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
@@ -1772,16 +1777,25 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setAddError("Invalid start date or time.")
       return
     }
-    const addMin = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
-    if (addMin == null) {
+    const addMinRaw = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+    if (addMinRaw == null) {
       setAddError("Enter a valid duration (at least 15 minutes).")
       return
     }
+    const working = readCalendarWorkingHoursFromStorage()
+    const addMin = clampAppointmentDurationMinutes(addMinRaw, {
+      start,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
     const durationMs = addMin * 60 * 1000
-    /** Prefer recurrence from this modal so job type + recurring still work (Job Types modal is optional). */
+    /** Prefer recurrence from this modal; job-type defaults apply only when this form has no recurrence controls. */
     const recurrenceFromAddItem = resolveRecurrenceFromPortal(addItemPortalItems, addItemPortalValues)
     const recurrenceFromJobTypes =
-      addJobTypeId && jobTypesPortalItems.length > 0
+      !recurrenceFromAddItem &&
+      addJobTypeId &&
+      jobTypesPortalItems.length > 0 &&
+      !portalHasRecurrenceControls(addItemPortalItems)
         ? resolveRecurrenceFromPortal(jobTypesPortalItems, jobTypesPortalValues)
         : null
     let series = recurrenceFromAddItem ?? recurrenceFromJobTypes
@@ -1884,6 +1898,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     if (insertedEventIds.length > 0) void invokeNotifyCalendarStatus(insertedEventIds, "", "Scheduled")
+    if (addCustomerId) {
+      await refreshCustomerPipelineOnEngagement(supabase, addCustomerId, "scheduled")
+    }
     setShowAddItem(false)
     resetAddForm()
     loadEvents()
@@ -1932,6 +1949,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddCustomerId(cid)
     setShowAddItem(true)
     setAddTargetUserId(userId)
+    void (async () => {
+      const { data } = await supabase.from("customers").select("display_name").eq("id", cid).maybeSingle()
+      const name = String((data as { display_name?: string | null } | null)?.display_name ?? "").trim()
+      if (name) setAddTitle(name)
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
   }, [userId, supabase])
 
@@ -2145,8 +2167,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               ) : null}
               {userId ? (
                 <>
-                  <TabNotificationAlertsButton tab="calendar" profileUserId={userId} />
-                  <SetupWizardLaunchButton wizardId="scheduling_alerts" compact />
+                  <TabNotificationAlertsButton tab="calendar" profileUserId={userId} guideWizardId="scheduling_alerts" />
                 </>
               ) : null}
             </div>
@@ -2195,7 +2216,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 >
                   {receiptTemplateButtonLabel}
                 </button>
-                <SetupWizardLaunchButton wizardId="scheduling_receipt_template" compact />
               </>
             ) : null}
             {showManagedJobTypesEntry ? (
@@ -2946,9 +2966,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     setAddJobTypeId(id)
                     const jt = jobTypes.find((j) => j.id === id)
                     if (jt) {
-                      const mins = jt.duration_minutes
-                      const snapped = timeIncrement === 60 ? Math.max(60, Math.round(mins / 60) * 60) : mins
-                      setAddDurationStr(formatDurationFieldFromMinutes(snapped, timeIncrement))
+                      const start = parseLocalDateTime(addStartDate, addStartTime)
+                      const working = readCalendarWorkingHoursFromStorage()
+                      const mins = durationMinutesFromJobType(jt.duration_minutes, timeIncrement, {
+                        start: Number.isNaN(start.getTime()) ? undefined : start,
+                        workingStart: working.enabled ? working.start : undefined,
+                        workingEnd: working.enabled ? working.end : undefined,
+                      })
+                      setAddDurationStr(formatDurationFieldFromMinutes(mins, timeIncrement))
                       if (!jt.track_mileage) setAddMileage("")
                     } else {
                       setAddMileage("")
@@ -3077,6 +3102,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           isItemVisible={isReceiptTemplateItemVisible}
           onClose={() => void closeReceiptTemplateModal()}
           maxWidthPx={520}
+          guideWizardId="scheduling_receipt_template"
         />
       )}
       {showCompletionSettingsModal && (

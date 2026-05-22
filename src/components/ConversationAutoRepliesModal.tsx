@@ -14,6 +14,8 @@ import {
 } from "../types/portal-builder"
 import { carryConversationAutoRepliesToQuoteValues } from "../lib/automaticRepliesCarryOver"
 import { MessagingComplianceGuardrailsCard } from "./MessagingComplianceGuardrailsCard"
+import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
+import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -30,6 +32,7 @@ export type ConversationAutoRepliesModalProps = {
   aiAutomationsEnabled: boolean
   /** Hide “Carry over these settings to Quotes tab” (Customers hub primary comms). */
   hideCarryOverToQuotes?: boolean
+  guideWizardId?: SetupMiniWizardId
 }
 
 export default function ConversationAutoRepliesModal({
@@ -39,6 +42,7 @@ export default function ConversationAutoRepliesModal({
   portalConfig,
   aiAutomationsEnabled,
   hideCarryOverToQuotes,
+  guideWizardId = "customers_auto_replies",
 }: ConversationAutoRepliesModalProps) {
   const automaticRepliesItems = useMemo(
     () => getControlItemsForUser(portalConfig, "conversations", "automatic_replies", { aiAutomationsEnabled }),
@@ -285,13 +289,16 @@ export default function ConversationAutoRepliesModal({
           <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
             {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
           </h3>
-          <button
-            type="button"
-            onClick={() => void closeAutomaticRepliesModal()}
-            style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}
-          >
-            ✕
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {guideWizardId ? <SetupWizardLaunchButton wizardId={guideWizardId} compact /> : null}
+            <button
+              type="button"
+              onClick={() => void closeAutomaticRepliesModal()}
+              style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
         <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
           Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.

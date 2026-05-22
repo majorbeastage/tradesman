@@ -8,6 +8,8 @@ import {
 } from "./calendarRecurrence"
 import { mergeMaterialsListsForCalendar, materialDescriptionsFromQuoteItemRows } from "./quoteItemMath"
 import { parseLocalDateTime } from "./parseLocalDateTime"
+import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
+import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
 import type { PortalSettingItem } from "../types/portal-builder"
 
 export type ScheduleEstimateOnCalendarInput = {
@@ -75,6 +77,13 @@ export async function scheduleEstimateOnCalendar(
     return { ok: false, error: "Enter a valid duration (at least 15 minutes)." }
   }
 
+  const working = readCalendarWorkingHoursFromStorage()
+  const durationMinutes = clampAppointmentDurationMinutes(input.durationMinutes, {
+    start,
+    workingStart: working.enabled ? working.start : undefined,
+    workingEnd: working.enabled ? working.end : undefined,
+  })
+
   let series: RecurrenceSeries | null = null
   if (input.recurrenceExplicitlyEnabled(input.portalValues)) {
     const recurrenceFromQuote = resolveRecurrenceFromPortal(input.portalItems, input.portalValues)
@@ -82,7 +91,7 @@ export async function scheduleEstimateOnCalendar(
       series = applyRecurrenceEndLimitsFromPortal(input.portalItems, input.portalValues, recurrenceFromQuote)
     }
   }
-  const durationMs = input.durationMinutes * 60 * 1000
+  const durationMs = durationMinutes * 60 * 1000
   const starts = series ? computeOccurrenceStarts(start, series) : [start]
   const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
@@ -180,6 +189,10 @@ export async function scheduleEstimateOnCalendar(
     .update({ scheduled_at: new Date().toISOString() })
     .eq("id", input.quoteId)
   if (updateErr) return { ok: false, error: updateErr.message }
+
+  if (input.customerId) {
+    await refreshCustomerPipelineOnEngagement(input.supabase, input.customerId, "scheduled")
+  }
 
   return {
     ok: true,

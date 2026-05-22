@@ -1,7 +1,9 @@
 import type { ReactNode } from "react"
 import { theme } from "../styles/theme"
 import type { PortalSettingItem } from "../types/portal-builder"
+import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
 import PortalSettingItemsForm from "./PortalSettingItemsForm"
+import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 
 type Props = {
   title: string
@@ -20,6 +22,8 @@ type Props = {
   belowForm?: ReactNode
   /** Inserted after the main item list, before `belowForm` (e.g. collapsible option groups). */
   afterMainForm?: ReactNode
+  /** Optional guided setup chip in the modal header (not on the main tab toolbar). */
+  guideWizardId?: SetupMiniWizardId
 }
 
 export default function PortalSettingsModal({
@@ -34,6 +38,7 @@ export default function PortalSettingsModal({
   maxWidthPx = 480,
   belowForm,
   afterMainForm,
+  guideWizardId,
 }: Props) {
   return (
     <>
@@ -57,7 +62,10 @@ export default function PortalSettingsModal({
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: intro ? 12 : 20 }}>
           <h3 style={{ margin: 0, color: theme.text, fontSize: "18px", lineHeight: 1.3 }}>{title}</h3>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text, flexShrink: 0 }} aria-label="Close">✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {guideWizardId ? <SetupWizardLaunchButton wizardId={guideWizardId} compact /> : null}
+            <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }} aria-label="Close">✕</button>
+          </div>
         </div>
         {intro ? (
           <div style={{ marginBottom: 16, fontSize: 13, lineHeight: 1.5, color: theme.text, opacity: 0.88 }}>{intro}</div>

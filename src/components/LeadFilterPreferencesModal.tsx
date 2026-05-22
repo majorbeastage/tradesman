@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from "react"
 import { theme } from "../styles/theme"
+import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
+import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 
 export type LeadFilterPrefsState = {
   accepted_job_types: string
@@ -20,6 +22,7 @@ type Props = {
   saveBusy: boolean
   aiAutomationsEnabled: boolean
   t: (key: string) => string
+  guideWizardId?: SetupMiniWizardId
 }
 
 export default function LeadFilterPreferencesModal({
@@ -31,6 +34,7 @@ export default function LeadFilterPreferencesModal({
   saveBusy,
   aiAutomationsEnabled,
   t,
+  guideWizardId = "customers_lead_filters",
 }: Props) {
   if (!open) return null
 
@@ -56,9 +60,12 @@ export default function LeadFilterPreferencesModal({
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>Lead Filter Preferences</h3>
-          <button type="button" onClick={() => onClose()} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}>
-            ✕
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {guideWizardId ? <SetupWizardLaunchButton wizardId={guideWizardId} compact /> : null}
+            <button type="button" onClick={() => onClose()} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}>
+              ✕
+            </button>
+          </div>
         </div>
         <p style={{ margin: "0 0 16px", fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
           Optional automation scores new leads as <strong>Hot</strong>, <strong>Maybe</strong>, or <strong>Bad</strong> using your rules first. Uncertain leads stay{" "}

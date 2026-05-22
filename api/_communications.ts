@@ -713,6 +713,10 @@ export async function logCommunicationEvent(
     return
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
+  if (payload.direction === "inbound" && payload.customer_id) {
+    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline")
+    await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
+  }
 }
 
 /** Same as logCommunicationEvent but returns the new row id for attachment linking. */
@@ -750,6 +754,10 @@ export async function insertCommunicationEventReturningId(
     return null
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
+  if (payload.direction === "inbound" && payload.customer_id) {
+    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline")
+    await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
+  }
   return data?.id ? String(data.id) : null
 }
 

@@ -86,14 +86,18 @@ import {
   quoteJobDetailsFromMetadata,
 } from "../../lib/estimateQuoteMetadata"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
-import {
-  bumpCustomerLastActivityAt,
-  logEstimateScheduledCommunicationEvent,
-} from "../../lib/customerSchedulingActivity"
+import { logEstimateScheduledCommunicationEvent } from "../../lib/customerSchedulingActivity"
 import {
   notifyCalendarStatusScheduled,
   scheduleEstimateOnCalendar,
 } from "../../lib/scheduleEstimateOnCalendar"
+import {
+  clampAppointmentDurationMinutes,
+  durationMinutesFromJobType,
+  readCalendarWorkingHoursFromStorage,
+} from "../../lib/scheduleDurationDefaults"
+import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
+import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
   filterEstimateScopeSuggestions,
   normalizeScopeLineKind,
@@ -2082,6 +2086,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       await loadQuotes()
 
       if (existingQuoteId) {
+        await refreshCustomerPipelineOnEngagement(supabase, cid, "estimate_work")
         setEstimateGuideCustomerPick(cid)
         setCustomerPickerCustomerId(cid)
         const opened = await openQuote(existingQuoteId)
@@ -2107,6 +2112,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const quoteId = data.id as string
       const opened = await openQuote(quoteId)
       if (!opened) return false
+      await refreshCustomerPipelineOnEngagement(supabase, cid, "estimate_work")
       await prefillNewEstimateFromCustomerContext(quoteId, cid)
       return true
     } catch (err: unknown) {
@@ -2185,6 +2191,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     setCustomerPickerCustomerId("")
     setCustomerSummaryExpanded(false)
+    if (nextCustomerId) {
+      await refreshCustomerPipelineOnEngagement(supabase, nextCustomerId, "estimate_work")
+    }
     await openQuote(selectedQuote.id as string)
   }
 
@@ -2502,12 +2511,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
     )
     setCalTime("09:00")
     const jt = jobTypes.find((j) => j.id === jtId)
+    const working = readCalendarWorkingHoursFromStorage()
+    const start = parseLocalDateTime(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+      "09:00",
+    )
     if (jt) {
-      const mins =
-        quoteCalTimeIncrement === 60
-          ? Math.max(60, Math.round(jt.duration_minutes / 60) * 60)
-          : Math.max(15, jt.duration_minutes)
+      const mins = durationMinutesFromJobType(jt.duration_minutes, quoteCalTimeIncrement, {
+        start: Number.isNaN(start.getTime()) ? undefined : start,
+        workingStart: working.enabled ? working.start : undefined,
+        workingEnd: working.enabled ? working.end : undefined,
+      })
       setCalDurationInput(formatDurationFieldFromMinutes(mins, quoteCalTimeIncrement))
+    } else {
+      setCalDurationInput(formatDurationFieldFromMinutes(60, quoteCalTimeIncrement))
     }
     setCalendarTargetUserId(authUserId || userId || "")
     setShowAddToCalendar(true)
@@ -4878,7 +4895,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {estimateLineItemsButtonLabel}
                 </button>
               ) : null}
-              {showQuotesEstimateLineItems ? <SetupWizardLaunchButton wizardId="estimates_line_items" compact /> : null}
               {showQuotesJobTypesPanel ? (
                 <button
                   type="button"
@@ -4900,7 +4916,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {quoteJobTypesButtonLabel}
                 </button>
               ) : null}
-              {showQuotesJobTypesPanel ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
               <button
                 type="button"
                 onClick={() => setLibrarySection("reports")}
@@ -7432,11 +7447,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         const { tot } = getItemDisplay(item)
                         return sum + (typeof tot === "number" && !Number.isNaN(tot) ? tot : 0)
                       }, 0)
-                      const durMinutes = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
-                      if (durMinutes == null) {
+                      const durMinutesRaw = parseDurationFieldToMinutes(calDurationInput, quoteCalTimeIncrement)
+                      if (durMinutesRaw == null) {
                         alert("Enter a valid duration (at least 15 minutes).")
                         return
                       }
+                      const calStart = parseLocalDateTime(calDate, calTime)
+                      const working = readCalendarWorkingHoursFromStorage()
+                      const durMinutes = clampAppointmentDurationMinutes(durMinutesRaw, {
+                        start: Number.isNaN(calStart.getTime()) ? undefined : calStart,
+                        workingStart: working.enabled ? working.start : undefined,
+                        workingEnd: working.enabled ? working.end : undefined,
+                      })
                       const milesRaw = calMileage.trim().replace(/[^0-9.]/g, "")
                       const milesParsed = milesRaw ? Number.parseFloat(milesRaw) : Number.NaN
                       const jtRow = calJobTypeId ? jobTypes.find((j) => j.id === calJobTypeId) : null
@@ -7474,7 +7496,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       void notifyCalendarStatusScheduled(supabase, result.eventIds)
                       const cid = selectedQuote.customer_id
                       if (cid) {
-                        await bumpCustomerLastActivityAt(supabase, cid)
                         await logEstimateScheduledCommunicationEvent(supabase, userId, cid, {
                           title: calTitle.trim(),
                           startAtIso: result.firstStartIso,
@@ -7547,13 +7568,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>{estimateLineItemsButtonLabel}</h3>
-                <button
-                  type="button"
-                  onClick={() => setShowEstimateLineItemsModal(false)}
-                  style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
-                >
-                  ✕
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {showQuotesEstimateLineItems ? <SetupWizardLaunchButton wizardId="estimates_line_items" compact /> : null}
+                  <button
+                    type="button"
+                    onClick={() => setShowEstimateLineItemsModal(false)}
+                    style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
               <p style={{ margin: "0 0 16px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
                 Build <strong>saved lines</strong> here, then use them from <strong>Quote items → Saved lines</strong> on any open quote.
@@ -8083,17 +8107,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>{quoteJobTypesButtonLabel}</h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    cancelEditQuoteJobType()
-                    setShowQuoteJobTypesModal(false)
-                    setQuoteJobTypeEditorOpen(false)
-                  }}
-                  style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
-                >
-                  ✕
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {showQuotesJobTypesPanel ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      cancelEditQuoteJobType()
+                      setShowQuoteJobTypesModal(false)
+                      setQuoteJobTypeEditorOpen(false)
+                    }}
+                    style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
               <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
                 Same list as <strong>Calendar → Job Types</strong>. Color and duration apply to calendar events; types also appear on quote lines and estimate presets.

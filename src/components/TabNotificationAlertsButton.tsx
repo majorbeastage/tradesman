@@ -10,6 +10,8 @@ import {
   parseTabNotificationsMap,
   setPrefsForTab,
 } from "../lib/tabNotificationPrefs"
+import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
+import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 
 const BTN: CSSProperties = {
   padding: "8px 14px",
@@ -35,6 +37,7 @@ const CALENDAR_ALERT_OPTION_LABEL: CSSProperties = {
 type Props = {
   tab: NotificationTabId
   profileUserId: string
+  guideWizardId?: SetupMiniWizardId
 }
 
 function ChannelBlock(props: {
@@ -81,7 +84,7 @@ function ChannelBlock(props: {
   )
 }
 
-export default function TabNotificationAlertsButton({ tab, profileUserId }: Props) {
+export default function TabNotificationAlertsButton({ tab, profileUserId, guideWizardId }: Props) {
   const [open, setOpen] = useState(false)
   const [prefs, setPrefs] = useState<TabNotificationPrefs>(() => defaultTabNotificationPrefs())
   const [loading, setLoading] = useState(false)
@@ -198,9 +201,12 @@ export default function TabNotificationAlertsButton({ tab, profileUserId }: Prop
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ margin: 0, fontSize: 17, color: theme.text }}>{tabLabel} — notifications</h3>
-              <button type="button" onClick={() => setOpen(false)} style={{ border: "none", background: "none", fontSize: 20, cursor: "pointer" }}>
-                ✕
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {guideWizardId ? <SetupWizardLaunchButton wizardId={guideWizardId} compact /> : null}
+                <button type="button" onClick={() => setOpen(false)} style={{ border: "none", background: "none", fontSize: 20, cursor: "pointer" }}>
+                  ✕
+                </button>
+              </div>
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
               Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()} record&apos;s status
