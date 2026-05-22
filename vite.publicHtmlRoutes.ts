@@ -6,6 +6,8 @@ import { resolve } from "node:path"
 const PUBLIC_HTML_ROUTES: Record<string, string> = {
   "/sms-cta": "sms-cta.html",
   "/sms-cta/": "sms-cta.html",
+  "/sms-cta/submit": "sms-cta-submit.html",
+  "/sms-cta/submit/": "sms-cta-submit.html",
   "/sms-cts": "sms-cta.html",
   "/sms-cts/": "sms-cta.html",
   "/account-deletion": "account-deletion.html",

@@ -27,7 +27,8 @@
     "api/legal-health.ts": { "maxDuration": 10 },
     "api/robots.ts": { "maxDuration": 10 },
     "api/sitemap.ts": { "maxDuration": 10 },
-    "api/sms-opt-in-consent-form-pdf.ts": { "maxDuration": 15 }
+    "api/sms-opt-in-consent-form-pdf.ts": { "maxDuration": 15 },
+    "api/sms-opt-in-consent-submit.ts": { "maxDuration": 30 }
   },
   "rewrites": [
     {
@@ -103,6 +104,14 @@
     {
       "source": "/sms-cta/consent-form.pdf",
       "destination": "/api/sms-opt-in-consent-form-pdf"
+    },
+    {
+      "source": "/sms-cta/submit",
+      "destination": "/sms-cta-submit.html"
+    },
+    {
+      "source": "/sms-cta/submit/",
+      "destination": "/sms-cta-submit.html"
     },
     {
       "source": "/sms-cta",

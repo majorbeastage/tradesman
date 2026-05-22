@@ -229,8 +229,9 @@
         <p class="kicker">Tradesman Systems · Compliance guidance</p>
         <h1>SMS Consent CTA Guidance</h1>
         <p class="lead">
-          Sample disclosure language, a printable in-person opt-in PDF, and platform screenshots for carriers and
-          reviewers. This page does <strong>not</strong> collect customer information.
+          Sample disclosure language, a printable in-person opt-in PDF, an optional
+          <a href="/sms-cta/submit">online consent submission form</a>, and platform screenshots for carriers and
+          reviewers.
         </p>
       </header>
 
@@ -246,6 +247,12 @@
           <p>
             One-page form for in-person signatures (service call, counter, paper estimate). Keep the signed copy, then
             record the same consent in Tradesman under <strong>Customers → SMS opt-in</strong>.
+          </p>
+          <p>
+            <strong>Online submission (A2P):</strong>
+            <a href="/sms-cta/submit">/sms-cta/submit</a> — requires business and customer information plus an
+            <strong>unchecked-by-default</strong> opt-in checkbox. Submissions email a PDF to
+            <strong>admin@tradesman-us.com</strong> (override with <code>SMS_OPT_IN_NOTIFY_EMAIL</code> on Vercel).
           </p>
           <div class="form-grid">
             <label>
@@ -283,7 +290,21 @@
 
           <figure class="shot">
             <figcaption>
-              <strong>Figure 1 — Manually entered contact (consent required)</strong>
+              <strong>Figure 1 — Opt-in method requirement (default view)</strong>
+              Example of Opt In method requirement default view, unchecked box.
+            </figcaption>
+            <img
+              src="/sms-cta/default-opt-in-view.png"
+              alt="Example of Opt In method requirement default view, unchecked box"
+              width="1200"
+              height="auto"
+              loading="lazy"
+            />
+          </figure>
+
+          <figure class="shot">
+            <figcaption>
+              <strong>Figure 2 — Manually entered contact (consent required)</strong>
               Platform view of a manually entered contact. The business must select an end-user consent method (checkbox
               plus consent source, including external website URL when applicable) before SMS can be sent.
             </figcaption>
@@ -292,7 +313,7 @@
 
           <figure class="shot">
             <figcaption>
-              <strong>Figure 2 — SMS console before consent is complete</strong>
+              <strong>Figure 3 — SMS console before consent is complete</strong>
               SMS console before the consent method has been completed by the client/business. Compose and Send text are
               disabled until opt-in is saved at the top of the customer panel.
             </figcaption>
@@ -301,7 +322,7 @@
 
           <figure class="shot">
             <figcaption>
-              <strong>Figure 3 — SMS console after consent or inbound contact</strong>
+              <strong>Figure 4 — SMS console after consent or inbound contact</strong>
               Platform view of the SMS console after consent has been recorded by the client/business and/or after the
               end user initiated contact with the business number (inbound call). Texting is enabled; the first outbound
               SMS includes an automatic compliance footer.
@@ -311,7 +332,7 @@
 
           <figure class="shot">
             <figcaption>
-              <strong>Figure 4 — Payment request URL (related workflow)</strong>
+              <strong>Figure 5 — Payment request URL (related workflow)</strong>
               Payment request URL dashboard — separate from SMS consent, shown for context on customer payment links in
               the platform.
             </figcaption>
@@ -342,6 +363,7 @@
             <li><a href="/privacy">Privacy Policy</a></li>
             <li><a href="/terms">Terms &amp; Conditions</a></li>
             <li><a href="/sms">SMS Consent and Messaging Terms</a></li>
+            <li><a href="/sms-cta/submit">Submit SMS opt-in consent</a></li>
             <li><a href="/">Home</a></li>
           </ul>
         </footer>

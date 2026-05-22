@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Submit SMS opt-in consent with business and customer information. Unchecked opt-in checkbox for A2P compliance — Tradesman Systems."
+    />
+    <title>SMS Opt-In Consent Submission | Tradesman Systems</title>
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://www.tradesman-us.com/sms-cta/submit" />
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: #f3f4f6;
+        color: #111827;
+        line-height: 1.65;
+        font-size: 16px;
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      header h1 {
+        margin: 0 0 10px;
+        font-size: clamp(1.4rem, 4vw, 1.85rem);
+      }
+      header .lead {
+        margin: 0;
+        color: #4b5563;
+        font-size: 15px;
+      }
+      main {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        padding: 22px 24px;
+      }
+      .notice {
+        margin: 0 0 18px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1e3a8a;
+        font-size: 14px;
+      }
+      fieldset {
+        margin: 0 0 20px;
+        padding: 14px 16px 16px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+      }
+      fieldset legend {
+        font-weight: 800;
+        font-size: 15px;
+        color: #0f172a;
+        padding: 0 6px;
+      }
+      .form-grid {
+        display: grid;
+        gap: 12px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+      }
+      label .req {
+        color: #b91c1c;
+        font-weight: 800;
+      }
+      input[type="text"],
+      input[type="tel"],
+      input[type="email"] {
+        padding: 10px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-size: 15px;
+        font-family: inherit;
+      }
+      .consent-box {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        margin: 16px 0 18px;
+        padding: 14px;
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        font-size: 14px;
+        line-height: 1.55;
+        color: #334155;
+        cursor: pointer;
+      }
+      .consent-box:has(input:checked) {
+        border-color: #ea580c;
+        background: #fff7ed;
+      }
+      .consent-box input {
+        margin-top: 4px;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+      }
+      .disclosure-quote {
+        margin: 0 0 14px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        font-size: 14px;
+        color: #1e293b;
+      }
+      .btn {
+        padding: 11px 18px;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 700;
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+        background: #ea580c;
+        color: #fff;
+      }
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .status {
+        margin-top: 14px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .status.ok {
+        color: #047857;
+      }
+      .status.err {
+        color: #b91c1c;
+      }
+      .hp {
+        position: absolute;
+        left: -9999px;
+        opacity: 0;
+        height: 0;
+        width: 0;
+        overflow: hidden;
+      }
+      a {
+        color: #ea580c;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      footer.nav {
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid #e5e7eb;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <p style="margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280">
+          Tradesman Systems · SMS compliance
+        </p>
+        <h1>SMS opt-in consent submission</h1>
+        <p class="lead">
+          For businesses documenting customer SMS consent (A2P / carrier review). Required fields include business and
+          customer contact information. The opt-in checkbox is <strong>not</strong> pre-selected.
+        </p>
+      </header>
+
+      <main>
+        <p class="notice">
+          Submitting sends a copy of this record and a PDF to <strong>admin@tradesman-us.com</strong> for Tradesman
+          compliance archives. You should still record the same consent inside your Tradesman account under
+          <strong>Customers → SMS opt-in</strong> before sending texts from the platform.
+        </p>
+
+        <form id="consent-form" novalidate>
+          <fieldset>
+            <legend>Business information</legend>
+            <div class="form-grid">
+              <label>
+                Business name <span class="req">*</span>
+                <input type="text" name="businessName" required maxlength="120" autocomplete="organization" />
+              </label>
+              <label>
+                Business phone <span class="req">*</span>
+                <input type="tel" name="businessPhone" required maxlength="40" autocomplete="tel" />
+              </label>
+              <label>
+                Business address (optional)
+                <input type="text" name="businessAddress" maxlength="200" autocomplete="street-address" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Customer information</legend>
+            <div class="form-grid">
+              <label>
+                Customer full name <span class="req">*</span>
+                <input type="text" name="customerName" required maxlength="120" autocomplete="name" />
+              </label>
+              <label>
+                Customer mobile phone <span class="req">*</span>
+                <input type="tel" name="customerPhone" required maxlength="40" autocomplete="tel" />
+              </label>
+              <label>
+                Customer email (optional)
+                <input type="email" name="customerEmail" maxlength="120" autocomplete="email" />
+              </label>
+            </div>
+          </fieldset>
+
+          <p class="disclosure-quote" id="disclosure-text">
+            “By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to
+            your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency
+            varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”
+          </p>
+
+          <label class="consent-box" id="consent-label">
+            <input type="checkbox" name="smsConsentAgreed" id="sms-consent" value="yes" />
+            <span id="consent-checkbox-text">
+              <strong style="display: block; margin-bottom: 6px; color: #0f172a">SMS opt-in (required)</strong>
+              The customer agrees to receive text messages from the business named above about quotes, appointments, job
+              updates, and customer service. Message frequency varies. Message and data rates may apply. Reply STOP to opt
+              out or HELP for help.
+            </span>
+          </label>
+
+          <label class="hp" aria-hidden="true">
+            Website
+            <input type="text" name="website" tabindex="-1" autocomplete="off" />
+          </label>
+
+          <button type="submit" class="btn" id="btn-submit">Submit consent to Tradesman</button>
+          <p class="status" id="status" role="status" aria-live="polite"></p>
+        </form>
+
+        <footer class="nav">
+          <a href="/sms-cta">← SMS consent guidance &amp; printable PDF</a>
+          · <a href="/sms">SMS terms</a>
+          · <a href="/privacy">Privacy</a>
+        </footer>
+      </main>
+    </div>
+    <script>
+      (function () {
+        var form = document.getElementById("consent-form")
+        var statusEl = document.getElementById("status")
+        var bizName = form && form.querySelector('[name="businessName"]')
+        var disclosure = document.getElementById("disclosure-text")
+        var consentText = document.getElementById("consent-checkbox-text")
+        if (!form) return
+
+        function bizLabel() {
+          var n = bizName && bizName.value ? bizName.value.trim() : ""
+          return n || "the business named above"
+        }
+
+        function refreshDisclosure() {
+          var b = bizLabel()
+          if (disclosure) {
+            disclosure.textContent =
+              '“By submitting a service request or contacting ' +
+              b +
+              ", you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from " +
+              b +
+              ". Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”"
+          }
+          if (consentText) {
+            consentText.innerHTML =
+              '<strong style="display:block;margin-bottom:6px;color:#0f172a">SMS opt-in (required)</strong>' +
+              "The customer agrees to receive text messages from <strong>" +
+              b +
+              "</strong> about quotes, appointments, job updates, and customer service. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help."
+          }
+        }
+
+        if (bizName) bizName.addEventListener("input", refreshDisclosure)
+        refreshDisclosure()
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault()
+          statusEl.className = "status"
+          statusEl.textContent = ""
+
+          var consent = document.getElementById("sms-consent")
+          if (!consent || !consent.checked) {
+            statusEl.className = "status err"
+            statusEl.textContent = "Check the SMS opt-in box to continue. The box starts unchecked by design."
+            return
+          }
+
+          var btn = document.getElementById("btn-submit")
+          if (btn) btn.disabled = true
+
+          var fd = new FormData(form)
+          var payload = {
+            businessName: String(fd.get("businessName") || "").trim(),
+            businessPhone: String(fd.get("businessPhone") || "").trim(),
+            businessAddress: String(fd.get("businessAddress") || "").trim(),
+            customerName: String(fd.get("customerName") || "").trim(),
+            customerPhone: String(fd.get("customerPhone") || "").trim(),
+            customerEmail: String(fd.get("customerEmail") || "").trim(),
+            smsConsentAgreed: true,
+            website: String(fd.get("website") || "").trim(),
+          }
+
+          fetch("/api/sms-opt-in-consent-submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { ok: res.ok, data: data }
+              })
+            })
+            .then(function (r) {
+              if (r.ok && r.data && r.data.ok) {
+                statusEl.className = "status ok"
+                statusEl.textContent =
+                  "Submitted. A PDF record was emailed to Tradesman. Record the same consent in your Tradesman customer profile before texting."
+                form.reset()
+                refreshDisclosure()
+                return
+              }
+              var msg =
+                (r.data && (r.data.error || r.data.hint)) ||
+                "Could not submit. Try again or use the printable PDF on the guidance page."
+              statusEl.className = "status err"
+              statusEl.textContent = msg
+            })
+            .catch(function () {
+              statusEl.className = "status err"
+              statusEl.textContent = "Network error. Try again."
+            })
+            .finally(function () {
+              if (btn) btn.disabled = false
+            })
+        })
+      })()
+    </script>
+  </body>
+</html>

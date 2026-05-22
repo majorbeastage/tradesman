@@ -24,6 +24,13 @@ function pdfSafeText(text: string): string {
 export type SmsOptInConsentFormPdfParams = {
   businessName?: string
   businessPhone?: string
+  businessAddress?: string
+  customerName?: string
+  customerPhone?: string
+  customerEmail?: string
+  /** ISO timestamp — marks consent checkbox on electronic submissions. */
+  electronicConsentAt?: string
+  consentMethodNote?: string
 }
 
 function wrapParagraphToLines(text: string, font: PDFFont, maxWidth: number, size: number): string[] {
@@ -149,13 +156,13 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
   drawText("Business information", 11, true, 0.15)
   drawField("Business name", bizDisplay)
   drawField("Business phone", params.businessPhone?.trim() ?? "")
-  drawField("Business address (optional)", "")
+  drawField("Business address (optional)", params.businessAddress?.trim() ?? "")
 
   y -= 4
   drawText("Customer information", 11, true, 0.15)
-  drawField("Customer full name", "")
-  drawField("Mobile phone number", "")
-  drawField("Email (optional)", "")
+  drawField("Customer full name", params.customerName?.trim() ?? "")
+  drawField("Mobile phone number", params.customerPhone?.trim() ?? "")
+  drawField("Email (optional)", params.customerEmail?.trim() ?? "")
 
   y -= 4
   drawText("Consent disclosure (read to customer or provide a copy)", 11, true, 0.15)
@@ -199,6 +206,15 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
     borderColor: rgb(0.2, 0.2, 0.2),
     borderWidth: 1,
   })
+  if (params.electronicConsentAt?.trim()) {
+    page.drawText("X", {
+      x: left + 2.5,
+      y: checkY - boxSize + 2,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.1, 0.1, 0.1),
+    })
+  }
   const agreeLead =
     "I agree to receive text messages as described above. I understand message frequency varies, message and data rates may apply, and I can reply STOP to opt out or HELP for help."
   const agreeLines = wrapParagraphToLines(agreeLead, font, maxW - boxSize - 10, 9.5)
@@ -209,14 +225,18 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
   }
   y = Math.min(checkY - boxSize - 6, agreeY) - 10
 
-  drawField("Customer signature", "", 108)
-  drawField("Date (customer)", "", 108)
+  const electronicAt = params.electronicConsentAt?.trim() ?? ""
+  const consentDateLabel = electronicAt
+    ? new Date(electronicAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC"
+    : ""
+  drawField("Customer signature", electronicAt ? "Electronic (web form)" : "", 108)
+  drawField("Date (customer)", consentDateLabel, 108)
 
   y -= 2
   drawText("Business record (optional)", 10, true, 0.3)
-  drawField("Recorded by (staff name)", "", 130)
-  drawField("Date (recorded)", "", 108)
-  drawField("Consent method (e.g. in person, phone)", "", 200)
+  drawField("Recorded by (staff name)", electronicAt ? "Tradesman public opt-in form" : "", 130)
+  drawField("Date (recorded)", consentDateLabel, 108)
+  drawField("Consent method (e.g. in person, phone)", params.consentMethodNote?.trim() ?? "", 200)
 
   y -= 2
   drawWrapped(
