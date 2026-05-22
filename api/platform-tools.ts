@@ -8,6 +8,7 @@
  * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
  * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=platform-assistant-route — Phase 2 LLM router for platform assistant (Bearer JWT)
+ * POST /api/platform-tools?__route=platform-assistant-vocabulary-train — Admin AI coach for training phrases (Bearer JWT, admin role)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (bundled public/sms-consent.html; legacy)
  * GET  /api/platform-tools?__route=legal-html&page=privacy|terms|sms  — HTML from platform_settings (crawlable; no JS)
@@ -38,6 +39,7 @@ import { handleNotifyClientSmsDisclosure } from "./_clientPostVerifySmsDisclosur
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
+import { handlePlatformAssistantVocabularyTrain } from "./_platformAssistantVocabularyTrain.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
@@ -1790,6 +1792,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "billing-portal-config",
         "ai-summarize-customer-event",
         "platform-assistant-route",
+        "platform-assistant-vocabulary-train",
       ],
     })
     return
@@ -1868,6 +1871,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       const auth = await getUserIdFromBearer(req, res)
       if (!auth) return
       await handlePlatformAssistantRoute(req, res)
+      return
+    }
+    if (route === "platform-assistant-vocabulary-train") {
+      await handlePlatformAssistantVocabularyTrain(req, res)
       return
     }
     res.status(400).json({

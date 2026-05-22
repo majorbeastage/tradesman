@@ -61,6 +61,52 @@ export const USER_PORTAL_TAB_IDS = [
   'settings',
 ] as const
 
+/**
+ * V2 contractor sidebar: legacy tabs hidden unless explicitly re-enabled in portal_config.
+ * Routes and page modules remain for rollback / deep links.
+ */
+export const V2_DEPRECATED_PORTAL_TAB_IDS = [
+  'leads',
+  'conversations',
+  'settings',
+  'web-support',
+] as const
+
+/** Default sidebar when portal config is still loading (avoids flashing legacy tabs). */
+export const V2_SIDEBAR_DEFAULT_TAB_IDS = [
+  'dashboard',
+  'customers',
+  'quotes',
+  'calendar',
+  'payments',
+  'tech-support',
+] as const
+
+export function isV2DeprecatedPortalTab(tabId: string): boolean {
+  return (V2_DEPRECATED_PORTAL_TAB_IDS as readonly string[]).includes(tabId)
+}
+
+/** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
+export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
+  if (!isV2DeprecatedPortalTab(tabId)) {
+    return portalConfig?.tabs?.[tabId] !== false
+  }
+  if (tabId === 'leads' || tabId === 'conversations') {
+    return (
+      portalConfig?.show_legacy_contractor_leads_conversations === true &&
+      portalConfig?.tabs?.[tabId] !== false
+    )
+  }
+  return portalConfig?.tabs?.[tabId] === true
+}
+
+export function filterPortalTabsForV2(
+  tabs: PortalNavTab[],
+  portalConfig: PortalConfig | null | undefined,
+): PortalNavTab[] {
+  return tabs.filter((t) => isPortalTabVisibleInV2(t.tab_id, portalConfig))
+}
+
 export const OFFICE_PORTAL_TAB_IDS = [
   'dashboard',
   'leads',
@@ -141,6 +187,10 @@ export type CustomActionButton = {
  * For users assigned to an office manager, `tabs.payments` defaults off in the UI until set to true.
  */
 export type PortalConfig = {
+  /**
+   * Per-tab visibility. V2-deprecated tabs (`leads`, `conversations`, `settings`, `web-support`) must be **true** to show.
+   * Other tabs: omitted or true = visible; false = hidden.
+   */
   tabs?: Record<string, boolean>
   settings?: Record<string, boolean>
   dropdowns?: Record<string, boolean>
@@ -189,6 +239,7 @@ export type PortalConfig = {
   /**
    * When true, contractor portals (user + office manager) show legacy **Leads** and **Conversations** sidebar tabs.
    * Default omitted or false: those tabs stay hidden (admin can re-enable for rollback/testing).
+   * Also set `tabs.leads` / `tabs.conversations` true in portal builder to show them.
    */
   show_legacy_contractor_leads_conversations?: boolean
   /**
@@ -214,7 +265,7 @@ export const NEW_USER_VISIBLE_TAB_IDS: readonly string[] = ['dashboard', 'accoun
 export function getDefaultPortalConfigForNewUser(): PortalConfig {
   const tabs: Record<string, boolean> = {}
   for (const id of USER_PORTAL_TAB_IDS) {
-    tabs[id] = NEW_USER_VISIBLE_TAB_IDS.includes(id)
+    tabs[id] = NEW_USER_VISIBLE_TAB_IDS.includes(id) && !isV2DeprecatedPortalTab(id)
   }
   return { tabs }
 }
@@ -224,7 +275,6 @@ const ESTIMATE_TOOLS_ONLY_TAB_IDS: readonly string[] = [
   "quotes",
   "payments",
   "account",
-  "web-support",
   "tech-support",
 ]
 
@@ -232,7 +282,7 @@ const ESTIMATE_TOOLS_ONLY_TAB_IDS: readonly string[] = [
 export function getPortalConfigForEstimateToolsOnlyUser(): PortalConfig {
   const tabs: Record<string, boolean> = {}
   for (const id of USER_PORTAL_TAB_IDS) {
-    tabs[id] = ESTIMATE_TOOLS_ONLY_TAB_IDS.includes(id)
+    tabs[id] = ESTIMATE_TOOLS_ONLY_TAB_IDS.includes(id) && !isV2DeprecatedPortalTab(id)
   }
   return { tabs, estimate_tools_only_package: true }
 }
@@ -268,7 +318,7 @@ export function upgradePortalConfigFromNewUserToUser(
     prev && typeof prev === "object" && !Array.isArray(prev) ? { ...prev } : {}
   const mergedTabs: Record<string, boolean> = { ...(base.tabs ?? {}) }
   for (const id of USER_PORTAL_TAB_IDS) {
-    mergedTabs[id] = true
+    mergedTabs[id] = !isV2DeprecatedPortalTab(id)
   }
   return { ...base, tabs: mergedTabs, estimate_tools_only_package: false }
 }
@@ -366,7 +416,10 @@ export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ t
   const labelById = new Map<string, string | null>()
   for (const id of USER_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   for (const t of customTabs) labelById.set(t.id, t.label)
-  return order.filter((id) => labelById.has(id)).map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+  return order
+    .filter((id) => labelById.has(id))
+    .map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+    .filter((t) => isPortalTabVisibleInV2(t.tab_id, portalConfig))
 }
 
 /** Office manager portal: same `sidebarTabOrder` as user config, canonical tabs exclude Settings. */
@@ -377,7 +430,10 @@ export function getOfficePortalTabListForConfig(portalConfig: PortalConfig): Arr
   const labelById = new Map<string, string | null>()
   for (const id of OFFICE_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   for (const t of customTabs) labelById.set(t.id, t.label)
-  return order.filter((id) => labelById.has(id)).map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+  return order
+    .filter((id) => labelById.has(id))
+    .map((tab_id) => ({ tab_id, label: labelById.get(tab_id) ?? null }))
+    .filter((t) => isPortalTabVisibleInV2(t.tab_id, portalConfig))
 }
 
 /** Account portal section definitions in admin/user order. */

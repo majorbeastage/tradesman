@@ -3,7 +3,7 @@ import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../constants/help
 import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
-import { TAB_ID_LABELS } from "../types/portal-builder"
+import { TAB_ID_LABELS, V2_SIDEBAR_DEFAULT_TAB_IDS } from "../types/portal-builder"
 import { useLocale } from "../i18n/LocaleContext"
 import { formatPortalTabLabel } from "../i18n/navLabel"
 import { useAuth } from "../contexts/AuthContext"
@@ -18,18 +18,7 @@ type SidebarProps = {
   onClose?: () => void
 }
 
-const DEFAULT_TABS = [
-  "dashboard",
-  "leads",
-  "conversations",
-  "customers",
-  "quotes",
-  "calendar",
-  "payments",
-  "web-support",
-  "tech-support",
-  "settings",
-]
+const DEFAULT_TABS = [...V2_SIDEBAR_DEFAULT_TAB_IDS]
 
 /** Shown on the dashboard only — keep off the left nav (including portal-configured tabs). */
 const SIDEBAR_EXCLUDED_TAB_IDS = new Set(["insurance-options"])

@@ -36,8 +36,10 @@ import { useManagedOmCalendarPolicy } from "./hooks/useManagedOmCalendarPolicy"
 import { useIsMobile } from "./hooks/useIsMobile"
 import {
   endUserHasSeparateBillingPortal,
+  filterPortalTabsForV2,
   filterUserPortalTabsForManagedPaymentsPolicy,
   getPortalTabListForConfig,
+  isPortalTabVisibleInV2,
   type PortalConfig,
   type PortalTab,
 } from "./types/portal-builder"
@@ -108,7 +110,7 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
   const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
   if (!hasTabs) return undefined
   const ordered = getPortalTabListForConfig(portalConfig)
-  const visible = ordered.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  const visible = ordered.filter(({ tab_id }) => isPortalTabVisibleInV2(tab_id, portalConfig))
   return visible.length > 0 ? visible : undefined
 }
 
@@ -135,9 +137,7 @@ function MainApp() {
   }, [portalConfig, portalTabsFromApi])
   const portalTabs = useMemo(() => {
     let t = filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager)
-    if (portalConfig?.show_legacy_contractor_leads_conversations !== true) {
-      t = t.filter((x) => x.tab_id !== "leads" && x.tab_id !== "conversations")
-    }
+    t = filterPortalTabsForV2(t, portalConfig)
     return t
   }, [mergedTabs, portalConfig, managedByOfficeManager])
   const estimateToolsOnlyPackage = portalConfig?.estimate_tools_only_package === true
@@ -183,9 +183,16 @@ function MainApp() {
   }, [page, estimateToolsOnlyPackage, setPage])
 
   useEffect(() => {
-    if (portalConfig?.show_legacy_contractor_leads_conversations === true) return
-    if (page === "leads" || page === "conversations") setPage("dashboard")
-  }, [page, portalConfig?.show_legacy_contractor_leads_conversations, setPage])
+    if (page === "web-support") setPage("tech-support")
+  }, [page, setPage])
+
+  useEffect(() => {
+    if (!isPortalTabVisibleInV2(page, portalConfig)) {
+      if (page === "leads" || page === "conversations" || page === "settings" || page === "web-support") {
+        setPage("dashboard")
+      }
+    }
+  }, [page, portalConfig, setPage])
 
   useEffect(() => {
     if (!supabase) {

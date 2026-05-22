@@ -144,6 +144,8 @@ export function GlobalAssistantProvider({
     [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary],
   )
 
+  const routingCatalog = useMemo(() => buildAssistantRoutingCatalog(parseContext), [parseContext])
+
   const toggleVocabularyTrain = useCallback(() => {
     setVocabularyTrainOpen((o) => !o)
     setVocabularySaveError(null)
@@ -592,6 +594,8 @@ export function GlobalAssistantProvider({
           onClose={() => setVocabularyTrainOpen(false)}
           initialPhrase={assistantText.trim()}
           selectedCustomerName={pageSnapshot.selectedCustomerName}
+          routingCatalog={routingCatalog}
+          trainContext={{ platform, currentPage }}
           entries={customVocabulary}
           saveBusy={vocabularySaveBusy}
           saveError={vocabularySaveError}

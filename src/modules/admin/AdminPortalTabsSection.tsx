@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { theme } from "../../styles/theme"
-import { TAB_ID_LABELS } from "../../types/portal-builder"
+import { isV2DeprecatedPortalTab, TAB_ID_LABELS } from "../../types/portal-builder"
 import { fetchPortalTabs, upsertPortalTab } from "../../lib/portal-builder-api"
 import type { PortalTab } from "../../types/portal-builder"
 
@@ -172,6 +172,9 @@ export default function AdminPortalTabsSection({ clientId, portalType, title }: 
             </button>
             <span style={{ flex: 1, fontWeight: 500, color: theme.text }}>
               {t.label ?? TAB_ID_LABELS[t.tab_id] ?? t.tab_id}
+              {isV2DeprecatedPortalTab(t.tab_id) ? (
+                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#b45309" }}>(legacy — hidden in V2)</span>
+              ) : null}
             </span>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
@@ -186,7 +189,12 @@ export default function AdminPortalTabsSection({ clientId, portalType, title }: 
         ))}
         {missing.map((tabId) => (
           <div key={tabId} style={cardStyle}>
-            <span style={{ flex: 1, color: theme.text }}>{TAB_ID_LABELS[tabId] ?? tabId}</span>
+            <span style={{ flex: 1, color: theme.text }}>
+              {TAB_ID_LABELS[tabId] ?? tabId}
+              {isV2DeprecatedPortalTab(tabId) ? (
+                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#b45309" }}>(legacy — hidden in V2)</span>
+              ) : null}
+            </span>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="checkbox"

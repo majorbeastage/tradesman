@@ -38,7 +38,7 @@ import {
   combineSpeechSessionDisplay,
   createThrottledSpeechDisplay,
   parseSpeechResultsList,
-  speechRecognitionOptionsForPlatform,
+  speechRecognitionListenUntilStopped,
 } from "../lib/speechRecognitionTranscript"
 
 type WizardPhase =
@@ -237,6 +237,8 @@ export default function SpecialtyReportWizardModal({
   const [speechSupported, setSpeechSupported] = useState(false)
   const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
   const [voiceFieldKey, setVoiceFieldKey] = useState<string | null>(null)
+  /** Live dictation overlay — avoids rewriting full report state on every speech tick. */
+  const [fieldVoicePreview, setFieldVoicePreview] = useState<{ key: string; text: string } | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
@@ -265,6 +267,8 @@ export default function SpecialtyReportWizardModal({
   const voiceParserDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Last throttled transcript shown in the assistant box (preserve on stop). */
   const voiceLiveDisplayRef = useRef("")
+  const userScrollingRef = useRef(false)
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadDraftForType = useCallback(
     async (reportType: SpecialtyReportTypeKey | null) => {
@@ -402,11 +406,6 @@ export default function SpecialtyReportWizardModal({
       globalAssistant.stopVoiceListening()
     }
   }, [open, globalAssistant])
-
-  useEffect(() => {
-    if (!globalAssistant?.voiceListening && !globalAssistant?.assistantText) return
-    setAssistantText(globalAssistant.assistantText)
-  }, [globalAssistant?.assistantText, globalAssistant?.voiceListening])
 
   useEffect(() => {
     if (globalAssistant?.voiceListening && assistantListening) stopDictation()
@@ -667,6 +666,69 @@ export default function SpecialtyReportWizardModal({
     return ""
   }
 
+  function readFieldValueFromHome(h: HomeInspectionReportV1, fieldKey: string, generic: string): string {
+    if (fieldKey === "genericNotes") return generic
+    if (fieldKey === "scopeLimitations") return h.scopeLimitations
+    if (fieldKey === "mediaWorkflowNotes") return h.mediaWorkflowNotes
+    if (fieldKey === "droneIntegrationNotes") return h.droneIntegrationNotes
+    if (fieldKey === "summaryFindings") return h.summaryFindings
+    if (fieldKey === "header.inspectorName") return h.header.inspectorName
+    if (fieldKey === "header.licenseId") return h.header.licenseId
+    if (fieldKey === "header.inspectionReference") return h.header.inspectionReference
+    if (fieldKey === "header.inspectionDate") return h.header.inspectionDate
+    if (fieldKey === "header.weather") return h.header.weather
+    if (fieldKey === "header.propertyAddress") return h.header.propertyAddress
+    if (fieldKey === "header.partiesPresent") return h.header.partiesPresent
+    if (fieldKey.startsWith("sub:")) return h.subsections[fieldKey.slice(4)]?.notes ?? ""
+    return ""
+  }
+
+  function applyFieldToHomeDraft(h: HomeInspectionReportV1, fieldKey: string, value: string): HomeInspectionReportV1 {
+    if (fieldKey === "scopeLimitations") return { ...h, scopeLimitations: value }
+    if (fieldKey === "mediaWorkflowNotes") return { ...h, mediaWorkflowNotes: value }
+    if (fieldKey === "droneIntegrationNotes") return { ...h, droneIntegrationNotes: value }
+    if (fieldKey === "summaryFindings") return { ...h, summaryFindings: value }
+    if (fieldKey === "header.inspectorName") return { ...h, header: { ...h.header, inspectorName: value } }
+    if (fieldKey === "header.licenseId") return { ...h, header: { ...h.header, licenseId: value } }
+    if (fieldKey === "header.inspectionReference") return { ...h, header: { ...h.header, inspectionReference: value } }
+    if (fieldKey === "header.inspectionDate") return { ...h, header: { ...h.header, inspectionDate: value } }
+    if (fieldKey === "header.weather") return { ...h, header: { ...h.header, weather: value } }
+    if (fieldKey === "header.propertyAddress") return { ...h, header: { ...h.header, propertyAddress: value } }
+    if (fieldKey === "header.partiesPresent") return { ...h, header: { ...h.header, partiesPresent: value } }
+    if (fieldKey.startsWith("sub:")) {
+      const subId = fieldKey.slice(4)
+      return {
+        ...h,
+        subsections: {
+          ...h.subsections,
+          [subId]: { ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }), notes: value },
+        },
+      }
+    }
+    return h
+  }
+
+  function displayValueForField(fieldKey: string): string {
+    if (fieldVoicePreview?.key === fieldKey) return fieldVoicePreview.text
+    return readFieldValue(fieldKey)
+  }
+
+  function trackAssignmentSideEffects(
+    fieldKey: string,
+    meta: { sectionOpen: Record<string, boolean>; phase: WizardPhase | null },
+  ) {
+    if (fieldKey.startsWith("header.")) meta.phase = "home_header"
+    if (fieldKey.startsWith("sub:")) {
+      const sid = fieldKey.slice(4)
+      const maj = majorIdContainingSubsection(sid)
+      if (maj) meta.sectionOpen[maj] = true
+      meta.phase = "home_findings"
+    }
+    if (fieldKey === "scopeLimitations") meta.phase = "home_header"
+    if (fieldKey === "summaryFindings") meta.phase = "home_review"
+    if (fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") meta.phase = "home_media"
+  }
+
   function writeFieldValue(fieldKey: string, value: string) {
     if (fieldKey === "genericNotes") {
       setGenericNotes(value)
@@ -728,94 +790,128 @@ export default function SpecialtyReportWizardModal({
   function applyParsedFieldAssignments(assignments: Array<{ fieldKey: string; value: string }>): { applied: number; skipped: number } {
     let applied = 0
     let skipped = 0
-    for (const { fieldKey, value } of assignments) {
-      if (fieldKey.startsWith("cond:sub:")) {
-        const subId = fieldKey.slice("cond:sub:".length)
-        const rating = parseConditionRating(value) ?? (value in CONDITION_RATING_LABELS ? (value as ConditionRating) : null)
-        if (!subId || !rating) {
-          skipped += 1
-          continue
-        }
-        applyStructuredAssistantPatch({ setCondition: { subId, condition: rating } })
-        applied += 1
-        continue
-      }
-      if (fieldKey.startsWith("sub:")) {
-        const rating = parseConditionRating(value)
-        if (rating) {
-          const subId = fieldKey.slice(4)
-          applyStructuredAssistantPatch({ setCondition: { subId, condition: rating } })
+    const meta = { sectionOpen: {} as Record<string, boolean>, phase: null as WizardPhase | null }
+    let genericPatch: string | null = null
+
+    setHome((h) => {
+      let next = h
+      for (const { fieldKey, value } of assignments) {
+        if (fieldKey.startsWith("cond:sub:")) {
+          const subId = fieldKey.slice("cond:sub:".length)
+          const rating =
+            parseConditionRating(value) ?? (value in CONDITION_RATING_LABELS ? (value as ConditionRating) : null)
+          if (!subId || !rating) {
+            skipped += 1
+            continue
+          }
+          next = {
+            ...next,
+            subsections: {
+              ...next.subsections,
+              [subId]: {
+                ...(next.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
+                condition: rating,
+              },
+            },
+          }
+          const maj = majorIdContainingSubsection(subId)
+          if (maj) meta.sectionOpen[maj] = true
+          meta.phase = "home_findings"
           applied += 1
           continue
         }
-        if (phase !== "home_findings" && phase !== "home_review") {
+        if (fieldKey.startsWith("sub:")) {
+          const rating = parseConditionRating(value)
+          if (rating) {
+            const subId = fieldKey.slice(4)
+            next = {
+              ...next,
+              subsections: {
+                ...next.subsections,
+                [subId]: {
+                  ...(next.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
+                  condition: rating,
+                },
+              },
+            }
+            const maj = majorIdContainingSubsection(subId)
+            if (maj) meta.sectionOpen[maj] = true
+            meta.phase = "home_findings"
+            applied += 1
+            continue
+          }
+          if (phase !== "home_findings" && phase !== "home_review") {
+            skipped += 1
+            continue
+          }
+        }
+        const cur = readFieldValueFromHome(next, fieldKey, genericPatch ?? genericNotes).trim()
+        if (cur && cur !== value) {
           skipped += 1
           continue
         }
+        if (fieldKey === "genericNotes") {
+          genericPatch = value
+          applied += 1
+          trackAssignmentSideEffects(fieldKey, meta)
+          continue
+        }
+        next = applyFieldToHomeDraft(next, fieldKey, value)
+        applied += 1
+        trackAssignmentSideEffects(fieldKey, meta)
       }
-      const cur = readFieldValue(fieldKey).trim()
-      if (cur && cur !== value) {
-        skipped += 1
-        continue
-      }
-      writeFieldValue(fieldKey, value)
-      applied += 1
-      if (fieldKey.startsWith("header.")) setPhase("home_header")
-      if (fieldKey.startsWith("sub:")) {
-        const sid = fieldKey.slice(4)
-        const maj = majorIdContainingSubsection(sid)
-        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-        setPhase("home_findings")
-      }
-      if (fieldKey === "scopeLimitations" || fieldKey === "summaryFindings" || fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") {
-        if (fieldKey === "scopeLimitations") setPhase("home_header")
-        if (fieldKey === "summaryFindings") setPhase("home_review")
-        if (fieldKey === "mediaWorkflowNotes" || fieldKey === "droneIntegrationNotes") setPhase("home_media")
-      }
+      return next
+    })
+    if (genericPatch !== null) setGenericNotes(genericPatch)
+    if (Object.keys(meta.sectionOpen).length > 0) {
+      setFindingSectionOpen((prev) => ({ ...prev, ...meta.sectionOpen }))
     }
+    if (meta.phase) setPhase(meta.phase)
+
     return { applied, skipped }
   }
 
-  function applyStructuredAssistantPatch(p: SpecialtyReportStructuredPatch) {
-    if (p.openMajorSection) {
-      setFindingSectionOpen((prev) => ({ ...prev, [p.openMajorSection!]: true }))
-      setPhase("home_findings")
-    }
-    if (p.fieldKey && p.value != null && String(p.value).length > 0) {
-      writeFieldValue(p.fieldKey, String(p.value))
-      if (p.fieldKey.startsWith("header.")) setPhase("home_header")
-      if (p.fieldKey.startsWith("sub:")) {
-        const sid = p.fieldKey.slice(4)
-        const maj = majorIdContainingSubsection(sid)
-        if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-        setPhase("home_findings")
-      }
-    }
-    if (p.setCondition) {
-      const { subId, condition } = p.setCondition
-      setPhase("home_findings")
-      const maj = majorIdContainingSubsection(subId)
-      if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-      setHome((h) => ({
-        ...h,
-        subsections: {
-          ...h.subsections,
-          [subId]: {
-            ...(h.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
-            condition,
-          },
-        },
-      }))
-    }
-    if (p.focusSubId && !p.fieldKey && !p.setCondition) {
-      const maj = majorIdContainingSubsection(p.focusSubId)
-      if (maj) setFindingSectionOpen((prev) => ({ ...prev, [maj]: true }))
-      setPhase("home_findings")
-    }
-  }
-
   function applyNavigationPatches(patches: SpecialtyReportStructuredPatch[]) {
-    for (const p of patches) applyStructuredAssistantPatch(p)
+    const meta = { sectionOpen: {} as Record<string, boolean>, phase: null as WizardPhase | null }
+    setHome((h) => {
+      let next = h
+      for (const p of patches) {
+        if (p.openMajorSection) {
+          meta.sectionOpen[p.openMajorSection] = true
+          meta.phase = "home_findings"
+        }
+        if (p.fieldKey && p.value != null && String(p.value).length > 0) {
+          next = applyFieldToHomeDraft(next, p.fieldKey, String(p.value))
+          trackAssignmentSideEffects(p.fieldKey, meta)
+        }
+        if (p.setCondition) {
+          const { subId, condition } = p.setCondition
+          meta.phase = "home_findings"
+          const maj = majorIdContainingSubsection(subId)
+          if (maj) meta.sectionOpen[maj] = true
+          next = {
+            ...next,
+            subsections: {
+              ...next.subsections,
+              [subId]: {
+                ...(next.subsections[subId] ?? { condition: "not_inspected" as ConditionRating, notes: "" }),
+                condition,
+              },
+            },
+          }
+        }
+        if (p.focusSubId && !p.fieldKey && !p.setCondition) {
+          const maj = majorIdContainingSubsection(p.focusSubId)
+          if (maj) meta.sectionOpen[maj] = true
+          meta.phase = "home_findings"
+        }
+      }
+      return next
+    })
+    if (Object.keys(meta.sectionOpen).length > 0) {
+      setFindingSectionOpen((prev) => ({ ...prev, ...meta.sectionOpen }))
+    }
+    if (meta.phase) setPhase(meta.phase)
   }
 
   function resetOverallVoiceSessionRefs() {
@@ -824,6 +920,29 @@ export default function SpecialtyReportWizardModal({
     voiceConsumedLenRef.current = 0
     voiceLastParserFinalsLenRef.current = 0
     voiceLiveDisplayRef.current = ""
+  }
+
+  function commitActiveFieldVoice() {
+    const fieldKey = activeVoiceFieldRef.current
+    if (!fieldKey) return
+    voiceDisplayThrottleRef.current?.flushNow()
+    const display =
+      voiceLiveDisplayRef.current.trim() ||
+      combineSpeechSessionDisplay(voiceSessionBaseRef.current, {
+        finals: voiceFinalSuffixRef.current,
+        interim: "",
+      })
+    if (display.trim()) writeFieldValue(fieldKey, display.trim())
+    setFieldVoicePreview(null)
+  }
+
+  function markModalScrolling() {
+    userScrollingRef.current = true
+    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current)
+    scrollIdleTimerRef.current = setTimeout(() => {
+      userScrollingRef.current = false
+      scrollIdleTimerRef.current = null
+    }, 450)
   }
 
   function preserveOverallVoiceTranscriptInUi() {
@@ -847,6 +966,7 @@ export default function SpecialtyReportWizardModal({
   }
 
   function maybeRunOverallVoiceParser(finals: string) {
+    if (userScrollingRef.current || assistantProcessing) return
     if (finals.length <= voiceLastParserFinalsLenRef.current) return
     const fullCommitted = `${voiceSessionBaseRef.current}${finals}`
     const chunk = fullCommitted.slice(voiceConsumedLenRef.current).trim()
@@ -857,11 +977,16 @@ export default function SpecialtyReportWizardModal({
   }
 
   function scheduleOverallVoiceParser(finals: string) {
+    if (userScrollingRef.current || assistantProcessing) return
     if (voiceParserDebounceRef.current) clearTimeout(voiceParserDebounceRef.current)
     voiceParserDebounceRef.current = setTimeout(() => {
       voiceParserDebounceRef.current = null
+      if (userScrollingRef.current) {
+        scheduleOverallVoiceParser(finals)
+        return
+      }
       maybeRunOverallVoiceParser(finals)
-    }, 1100)
+    }, 1400)
   }
 
   function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
@@ -959,10 +1084,19 @@ export default function SpecialtyReportWizardModal({
 
   async function runAssistantCommand(
     raw: string,
-    options?: { allowDefaultTarget?: boolean; voiceChunk?: boolean },
+    options?: { allowDefaultTarget?: boolean; voiceChunk?: boolean; explicitApply?: boolean },
   ): Promise<boolean> {
     const text = raw.trim()
     if (!text || assistantProcessing) return false
+    const explicitApply = options?.explicitApply === true && options?.voiceChunk !== true
+    if (explicitApply) {
+      setAssistantProcessing(true)
+      setAssistantNote("Applying to report fields…")
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+    }
+    try {
     const fillCtx: SpecialtyReportFillContext = {
       accountDisplayName,
       propertyAddressHint: propertyAddressHint ?? "",
@@ -1097,10 +1231,12 @@ export default function SpecialtyReportWizardModal({
       return true
     }
 
-    const shouldTryAi = picked === "home_inspection" && text.length >= 8
+    const shouldTryAi = picked === "home_inspection" && text.length >= 8 && !options?.voiceChunk
     if (shouldTryAi) {
-      setAssistantProcessing(true)
-      setAssistantNote("Mapping your speech to report fields…")
+      if (!explicitApply) {
+        setAssistantProcessing(true)
+        setAssistantNote("Mapping your speech to report fields…")
+      }
       try {
         const tok = await getPlatformToolsAccessToken()
         if (!tok) {
@@ -1132,7 +1268,7 @@ export default function SpecialtyReportWizardModal({
         )
         return false
       } finally {
-        setAssistantProcessing(false)
+        if (!explicitApply) setAssistantProcessing(false)
       }
     }
 
@@ -1155,6 +1291,9 @@ export default function SpecialtyReportWizardModal({
       'Long note not auto-placed. Pick a target field above, use "Tradesman record summary …", or say "set [field] to [value]".',
     )
     return false
+    } finally {
+      if (explicitApply) setAssistantProcessing(false)
+    }
   }
 
   function startDictation(targetFieldKey?: string) {
@@ -1177,15 +1316,21 @@ export default function SpecialtyReportWizardModal({
       voiceLastParserFinalsLenRef.current = 0
       voiceDisplayThrottleRef.current?.cancel()
       voiceLiveDisplayRef.current = voiceSessionBaseRef.current
-      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
-        voiceLiveDisplayRef.current = display
-        if (targetFieldKey) {
-          writeFieldValue(targetFieldKey, display)
-        } else {
-          setAssistantText(display)
-        }
-      })
-      const speechOpts = speechRecognitionOptionsForPlatform()
+      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay(
+        (display) => {
+          voiceLiveDisplayRef.current = display
+          const activeKey = activeVoiceFieldRef.current
+          if (activeKey) {
+            setFieldVoicePreview((prev) =>
+              prev?.key === activeKey && prev.text === display ? prev : { key: activeKey, text: display },
+            )
+          } else {
+            setAssistantText(display)
+          }
+        },
+        220,
+      )
+      const speechOpts = speechRecognitionListenUntilStopped()
       const rec = new Ctor()
       recognitionRef.current = rec
       rec.continuous = speechOpts.continuous
@@ -1216,8 +1361,12 @@ export default function SpecialtyReportWizardModal({
         if (!fieldKey && voiceOverallAssistRef.current) {
           maybeRunOverallVoiceParser(voiceFinalSuffixRef.current)
         }
-        if (targetFieldKey) setSaveNote("Voice text added to field.")
-        const shouldRestart = voiceKeepListeningRef.current && !speechRecognitionOptionsForPlatform().continuous
+        const fieldKeyNow = activeVoiceFieldRef.current
+        if (fieldKeyNow) {
+          commitActiveFieldVoice()
+          setSaveNote("Voice text added to field.")
+        }
+        const shouldRestart = voiceKeepListeningRef.current && !speechRecognitionListenUntilStopped().continuous
         if (shouldRestart && recognitionRef.current) {
           window.setTimeout(() => {
             if (!voiceKeepListeningRef.current || !recognitionRef.current) return
@@ -1257,6 +1406,7 @@ export default function SpecialtyReportWizardModal({
       clearTimeout(voiceParserDebounceRef.current)
       voiceParserDebounceRef.current = null
     }
+    commitActiveFieldVoice()
     preserveOverallVoiceTranscriptInUi()
     voiceDisplayThrottleRef.current?.cancel()
     voiceDisplayThrottleRef.current = null
@@ -1340,6 +1490,7 @@ export default function SpecialtyReportWizardModal({
           boxShadow: "0 24px 56px rgba(15,23,42,0.2)",
           padding: "20px 20px 16px",
         }}
+        onScroll={markModalScrolling}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
           <div style={{ minWidth: 0 }}>
@@ -1536,7 +1687,11 @@ export default function SpecialtyReportWizardModal({
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
                   type="button"
-                  onClick={() => void runAssistantCommand(assistantText)}
+                  onClick={() => {
+                    stopDictation()
+                    globalAssistant?.stopVoiceListening()
+                    void runAssistantCommand(assistantText, { explicitApply: true })
+                  }}
                   style={primaryBtn}
                   disabled={assistantProcessing}
                 >
@@ -1626,8 +1781,11 @@ export default function SpecialtyReportWizardModal({
                     Inspector name
                     <input
                       id={specialtyReportFieldDomId("header.inspectorName")}
-                      value={home.header.inspectorName}
-                      onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))}
+                      value={displayValueForField("header.inspectorName")}
+                      onChange={(e) => {
+                        setFieldVoicePreview((p) => (p?.key === "header.inspectorName" ? null : p))
+                        setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))
+                      }}
                       style={theme.formInput}
                     />
                     <FieldTools fieldKey="header.inspectorName" />
@@ -1700,8 +1858,11 @@ export default function SpecialtyReportWizardModal({
                   <textarea
                     id={specialtyReportFieldDomId("scopeLimitations")}
                     rows={5}
-                    value={home.scopeLimitations}
-                    onChange={(e) => setHome((h) => ({ ...h, scopeLimitations: e.target.value }))}
+                    value={displayValueForField("scopeLimitations")}
+                    onChange={(e) => {
+                      setFieldVoicePreview((p) => (p?.key === "scopeLimitations" ? null : p))
+                      setHome((h) => ({ ...h, scopeLimitations: e.target.value }))
+                    }}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
                   <FieldTools fieldKey="scopeLimitations" />
@@ -1762,9 +1923,10 @@ export default function SpecialtyReportWizardModal({
                               id={specialtyReportFieldDomId(`sub:${sub.id}`)}
                               placeholder="Observations, locations, photos referenced…"
                               rows={2}
-                              value={row.notes}
+                              value={displayValueForField(`sub:${sub.id}`)}
                               onChange={(e) => {
                                 const notes = e.target.value
+                                setFieldVoicePreview((p) => (p?.key === `sub:${sub.id}` ? null : p))
                                 setHome((h) => ({
                                   ...h,
                                   subsections: {
@@ -1860,7 +2022,7 @@ export default function SpecialtyReportWizardModal({
             </p>
             <textarea
               rows={12}
-              value={genericNotes}
+              value={displayValueForField("genericNotes")}
               onChange={(e) => setGenericNotes(e.target.value)}
               placeholder="Findings, scope, recommendations, next steps…"
               style={{ ...theme.formInput, resize: "vertical" }}
@@ -1935,16 +2097,15 @@ export default function SpecialtyReportWizardModal({
       </div>
       <SpecialtyReportVoiceFab
         visible={Boolean(quoteId && (globalAssistant?.speechSupported ?? speechSupported) && phase !== "pick_type")}
-        listening={globalAssistant?.voiceListening ?? assistantListening}
+        listening={assistantListening}
         isMobile={isMobile}
         onToggle={() => {
-          if (assistantListening) stopDictation()
-          if (globalAssistant) {
-            globalAssistant.toggleVoiceListening(assistantText || globalAssistant.assistantText || "")
+          if (assistantListening) {
+            stopDictation()
             return
           }
-          if (assistantListening) stopDictation()
-          else startDictation()
+          globalAssistant?.stopVoiceListening()
+          startDictation()
         }}
       />
     </>

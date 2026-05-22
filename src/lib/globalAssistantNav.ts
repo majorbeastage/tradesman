@@ -147,6 +147,18 @@ export function customPayloadToGlobalAction(
     }
     case "explain":
       return { type: "explain", message: msg }
+    case "handoff_specialist_assistant": {
+      const scope = payload.scopeText?.trim()
+      if (!scope || scope.length < 4 || !payload.specialist) return null
+      return {
+        type: "handoff_specialist_assistant",
+        specialist: payload.specialist,
+        scopeText: scope.slice(0, 2000),
+        jobTypeName: payload.jobTypeName?.trim() || undefined,
+        mode: payload.mode === "job_type_with_lines" ? "job_type_with_lines" : "line_items_only",
+        message: msg,
+      }
+    }
     default:
       return null
   }

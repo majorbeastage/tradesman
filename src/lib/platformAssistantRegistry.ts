@@ -77,25 +77,12 @@ export const PLATFORM_PAGE_INTENTS: PlatformPageIntent[] = [
       /\bclient\s+list\b/i,
       /\bcustomer\s+list\b/i,
       /\bcustomer\s+(page|tab|section)\b/i,
+      /\bleads?\b/i,
+      /\bincoming\s+leads?\b/i,
+      /\bconversations?\b/i,
+      /\bmessage\s+threads?\b/i,
+      /\binbox\b/i,
     ],
-    requiresTab: true,
-  },
-  {
-    kind: "page",
-    page: "leads",
-    label: TAB_ID_LABELS.leads,
-    description: "Incoming leads and lead table",
-    platforms: ["user", "office_manager"],
-    patterns: [/\bleads?\b/i, /\bincoming\s+leads?\b/i, /\blead\s+inbox\b/i],
-    requiresTab: true,
-  },
-  {
-    kind: "page",
-    page: "conversations",
-    label: TAB_ID_LABELS.conversations,
-    description: "Message threads with customers",
-    platforms: ["user", "office_manager"],
-    patterns: [/\bconversations?\b/i, /\bmessage\s+threads?\b/i, /\binbox\b/i, /\bchat\b/i],
     requiresTab: true,
   },
   {
@@ -150,34 +137,24 @@ export const PLATFORM_PAGE_INTENTS: PlatformPageIntent[] = [
       /\bprofile\b/i,
       /\bvoicemail\b/i,
       /\bcall\s+forward/i,
+      /\bsettings?\b/i,
+      /\bpreferences?\b/i,
     ],
-    requiresTab: true,
-  },
-  {
-    kind: "page",
-    page: "settings",
-    label: TAB_ID_LABELS.settings,
-    description: "App settings and custom fields (user portal)",
-    platforms: ["user"],
-    patterns: [/\bsettings?\b/i, /\bpreferences?\b/i, /\bcustom\s+fields?\b/i],
-    requiresTab: true,
-  },
-  {
-    kind: "page",
-    page: "web-support",
-    label: TAB_ID_LABELS["web-support"],
-    description: "Web support resources",
-    platforms: ["user", "office_manager"],
-    patterns: [/\bweb\s+support\b/i],
     requiresTab: true,
   },
   {
     kind: "page",
     page: "tech-support",
     label: TAB_ID_LABELS["tech-support"],
-    description: "Technical support",
+    description: "Technical support and help desk (replaces legacy Web Support tab)",
     platforms: ["user", "office_manager"],
-    patterns: [/\btech(nical)?\s+support\b/i, /\bhelp\s+desk\b/i],
+    patterns: [
+      /\btech(nical)?\s+support\b/i,
+      /\bhelp\s+desk\b/i,
+      /\bweb\s+support\b/i,
+      /\bget\s+help\b/i,
+      /\bcontact\s+support\b/i,
+    ],
     requiresTab: true,
   },
   {
@@ -412,7 +389,7 @@ export function suggestPhrasesForPlatform(platform: PlatformAssistantPlatform, l
     "help me here",
     "setup guide",
   ]
-  if (platform === "user") phrases.push("settings", "payments")
+  if (platform === "user") phrases.push("payments", "tech support")
   if (platform !== "user") phrases.push("scheduling alerts", "estimate line items")
   phrases.push("call forwarding", "portal builder")
   return phrases.slice(0, limit)

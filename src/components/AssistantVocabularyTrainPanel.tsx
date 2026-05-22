@@ -1,43 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { theme } from "../styles/theme"
-import { TAB_ID_LABELS, USER_PORTAL_TAB_IDS } from "../types/portal-builder"
-import { SETUP_MINI_WIZARDS } from "../lib/setupGuideWizards"
-import { ADMIN_PANEL_LABELS, type AdminPanelId } from "../lib/platformAssistantRegistry"
+import { supabase } from "../lib/supabase"
+import type { AssistantCustomVocabularyEntry } from "../lib/platformAssistantCustomVocabulary"
 import {
-  ASSISTANT_VOCABULARY_ACTION_OPTIONS,
-  type AssistantCustomActionPayload,
-  type AssistantCustomVocabularyEntry,
-  type AssistantVocabularyMatchMode,
-} from "../lib/platformAssistantCustomVocabulary"
+  askPlatformAssistantVocabularyCoach,
+  describeCustomAction,
+  proposalToDraftEntry,
+  type VocabularyTrainChatTurn,
+  type VocabularyTrainProposal,
+} from "../lib/platformAssistantVocabularyTrain"
+import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 
 const AMBER = "#d97706"
+const AMBER_DARK = "#b45309"
 const TEXT = "#0f172a"
 const TEXT_MUTED = "#475569"
-const INPUT_STYLE: CSSProperties = {
-  display: "block",
-  width: "100%",
-  marginTop: 6,
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: `1px solid ${theme.border}`,
-  fontSize: 13,
-  color: TEXT,
-  background: "#fff",
-  boxSizing: "border-box",
-}
-const LABEL_STYLE: CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  fontWeight: 600,
-  color: TEXT,
-  lineHeight: 1.35,
-}
 
 type Props = {
   open: boolean
   onClose: () => void
   initialPhrase?: string
   selectedCustomerName?: string | null
+  routingCatalog: string
+  trainContext?: {
+    platform?: string
+    currentPage?: string
+  }
   entries: AssistantCustomVocabularyEntry[]
   saveBusy: boolean
   saveError: string | null
@@ -45,23 +33,22 @@ type Props = {
   onDelete: (id: string) => Promise<void>
 }
 
-function defaultPayload(type: AssistantCustomActionPayload["type"]): AssistantCustomActionPayload {
-  switch (type) {
-    case "navigate":
-      return { type: "navigate", page: "customers" }
-    case "find_customer":
-      return { type: "find_customer", query: "" }
-    case "create_estimate":
-      return { type: "create_estimate", useSelectedCustomer: true }
-    case "focus_customer_sms":
-      return { type: "focus_customer_sms", useSelectedCustomer: true }
-    case "open_mini_wizard":
-      return { type: "open_mini_wizard", wizardId: "customers_auto_replies" }
-    case "open_admin":
-      return { type: "open_admin", panel: "portal" }
-    default:
-      return { type }
-  }
+const PLACEHOLDER =
+  "Tell me what the customer said, what went wrong, and what should happen instead… (mic works too)"
+
+function MicIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z" fill="currentColor" />
+      <path
+        d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
 }
 
 export default function AssistantVocabularyTrainPanel({
@@ -69,48 +56,139 @@ export default function AssistantVocabularyTrainPanel({
   onClose,
   initialPhrase = "",
   selectedCustomerName,
+  routingCatalog,
+  trainContext,
   entries,
   saveBusy,
   saveError,
   onSave,
   onDelete,
 }: Props) {
-  const [phrase, setPhrase] = useState(initialPhrase)
-  const [match, setMatch] = useState<AssistantVocabularyMatchMode>("contains")
-  const [actionType, setActionType] = useState<AssistantCustomActionPayload["type"]>("create_estimate")
-  const [payload, setPayload] = useState<AssistantCustomActionPayload>(() => defaultPayload("create_estimate"))
-  const [note, setNote] = useState("")
+  const [chatInput, setChatInput] = useState("")
+  const [chatHistory, setChatHistory] = useState<VocabularyTrainChatTurn[]>([])
+  const [coachBusy, setCoachBusy] = useState(false)
+  const [coachError, setCoachError] = useState<string | null>(null)
+  const [proposals, setProposals] = useState<VocabularyTrainProposal[]>([])
+  const [readyToSave, setReadyToSave] = useState(false)
+  const [quickReplies, setQuickReplies] = useState<string[]>([])
+  const [savedOpen, setSavedOpen] = useState(false)
+
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const {
+    speechSupported,
+    listening: voiceListening,
+    toggleListening,
+    stopListening,
+  } = useSpeechRecognitionInput(setChatInput, { preferLiveTranscript: true })
 
   useEffect(() => {
-    if (open) setPhrase(initialPhrase)
-  }, [open, initialPhrase])
+    if (!open) {
+      stopListening()
+      return
+    }
+    if (initialPhrase.trim()) setChatInput(initialPhrase.trim())
+    const t = window.setTimeout(() => inputRef.current?.focus(), 120)
+    return () => window.clearTimeout(t)
+  }, [open, initialPhrase, stopListening])
 
-  const onTypeChange = useCallback((t: AssistantCustomActionPayload["type"]) => {
-    setActionType(t)
-    setPayload(defaultPayload(t))
-  }, [])
+  useEffect(() => {
+    if (open) chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  }, [open, chatHistory, proposals, coachBusy, quickReplies])
 
   const sortedEntries = useMemo(
-    () => [...entries].sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1)).slice(0, 12),
+    () => [...entries].sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1)),
     [entries],
   )
 
+  const sendCoachMessage = useCallback(
+    async (text: string) => {
+      const msg = text.trim()
+      if (msg.length < 2 || coachBusy) return
+      setCoachError(null)
+      setProposals([])
+      setReadyToSave(false)
+      setQuickReplies([])
+      setCoachBusy(true)
+      stopListening()
+
+      const priorHistory = chatHistory
+      setChatHistory((h) => [...h, { role: "user", content: msg }])
+      setChatInput("")
+
+      try {
+        if (!supabase) throw new Error("Not connected.")
+        const { data: sessionData } = await supabase.auth.getSession()
+        const token = sessionData.session?.access_token
+        if (!token) throw new Error("Sign in again to use the training coach.")
+
+        const res = await askPlatformAssistantVocabularyCoach(token, {
+          message: msg,
+          catalog: routingCatalog,
+          context: {
+            platform: trainContext?.platform,
+            currentPage: trainContext?.currentPage,
+            selectedCustomerName,
+          },
+          history: priorHistory,
+        })
+
+        setChatHistory((h) => [...h, { role: "assistant", content: res.reply }])
+        setReadyToSave(Boolean(res.readyToSave))
+        if (res.proposals?.length) setProposals(res.proposals)
+        if (res.clarifyingQuestions?.length) setQuickReplies(res.clarifyingQuestions)
+      } catch (e) {
+        const err = e instanceof Error ? e.message : "Coach request failed."
+        setCoachError(err)
+        setChatHistory((h) => [...h, { role: "assistant", content: err }])
+      } finally {
+        setCoachBusy(false)
+      }
+    },
+    [chatHistory, coachBusy, routingCatalog, selectedCustomerName, stopListening, trainContext],
+  )
+
+  const applyProposal = useCallback(
+    async (p: VocabularyTrainProposal) => {
+      await onSave(proposalToDraftEntry(p))
+      setProposals((list) => list.filter((x) => x.phrase !== p.phrase))
+      if (proposals.length <= 1) {
+        setReadyToSave(false)
+        setChatHistory((h) => [
+          ...h,
+          {
+            role: "assistant",
+            content: "Saved. That phrase is live for everyone now. Anything else to train?",
+          },
+        ])
+      }
+    },
+    [onSave, proposals.length],
+  )
+
+  const applyAllProposals = useCallback(async () => {
+    for (const p of proposals) {
+      await onSave(proposalToDraftEntry(p))
+    }
+    setProposals([])
+    setReadyToSave(false)
+    setChatHistory((h) => [
+      ...h,
+      { role: "assistant", content: "Saved all phrases — they are live now. What should we tackle next?" },
+    ])
+  }, [onSave, proposals])
+
+  const toggleTrainMic = useCallback(() => {
+    if (!speechSupported) return
+    toggleListening(chatInput)
+  }, [chatInput, speechSupported, toggleListening])
+
+  const canSend = chatInput.trim().length >= 2 && !coachBusy
+
   if (!open) return null
 
-  const handleSave = () => {
-    const p = phrase.trim()
-    if (p.length < 2) return
-    void onSave({
-      phrase: p,
-      match,
-      action: payload,
-      enabled: true,
-      note: note.trim() || undefined,
-    }).then(() => {
-      setPhrase("")
-      setNote("")
-    })
-  }
+  const panelBottom = "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))"
 
   return (
     <div
@@ -120,252 +198,359 @@ export default function AssistantVocabularyTrainPanel({
         position: "fixed",
         zIndex: 10051,
         right: 12,
-        bottom: "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))",
-        width: "min(360px, calc(100vw - 24px))",
-        maxHeight: "min(70vh, 520px)",
-        overflow: "auto",
-        padding: 14,
+        bottom: panelBottom,
+        width: "min(420px, calc(100vw - 24px))",
+        height: "min(72vh, 640px)",
+        display: "flex",
+        flexDirection: "column",
         borderRadius: 12,
         border: `2px solid ${AMBER}`,
         background: "#ffffff",
         color: TEXT,
         boxShadow: "0 12px 40px rgba(15,23,42,0.22)",
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Train assistant</div>
-          <div style={{ fontSize: 12, color: TEXT_MUTED, lineHeight: 1.4, marginTop: 4 }}>
-            Saved phrases apply for all users after you save.
-          </div>
-        </div>
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-          style={{
-            border: "none",
-            background: "transparent",
-            fontSize: 20,
-            lineHeight: 1,
-            cursor: "pointer",
-            color: TEXT,
-            padding: 0,
-          }}
-        >
-          ×
-        </button>
-      </div>
-
-      <label style={{ ...LABEL_STYLE, marginBottom: 4 }}>When a user says…</label>
-      <textarea
-        rows={2}
-        value={phrase}
-        onChange={(e) => setPhrase(e.target.value)}
-        placeholder='e.g. "create an estimate for this customer"'
+      <div
         style={{
-          ...INPUT_STYLE,
-          marginBottom: 10,
-          resize: "vertical",
-        }}
-      />
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-        <label style={{ ...LABEL_STYLE, flex: 1 }}>
-          Match
-          <select
-            value={match}
-            onChange={(e) => setMatch(e.target.value as AssistantVocabularyMatchMode)}
-            style={INPUT_STYLE}
-          >
-            <option value="contains">Contains phrase</option>
-            <option value="exact">Exact phrase</option>
-            <option value="starts_with">Starts with</option>
-          </select>
-        </label>
-        <label style={{ ...LABEL_STYLE, flex: 2 }}>
-          Do this
-          <select
-            value={actionType}
-            onChange={(e) => onTypeChange(e.target.value as AssistantCustomActionPayload["type"])}
-            style={INPUT_STYLE}
-          >
-            {ASSISTANT_VOCABULARY_ACTION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {payload.type === "navigate" ? (
-        <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-          Tab
-          <select
-            value={payload.page}
-            onChange={(e) => setPayload({ ...payload, page: e.target.value })}
-            style={INPUT_STYLE}
-          >
-            {USER_PORTAL_TAB_IDS.map((id) => (
-              <option key={id} value={id}>
-                {TAB_ID_LABELS[id] ?? id}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      {payload.type === "find_customer" ? (
-        <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-          Customer name contains
-          <input
-            value={payload.query}
-            onChange={(e) => setPayload({ ...payload, query: e.target.value })}
-            style={INPUT_STYLE}
-          />
-        </label>
-      ) : null}
-
-      {payload.type === "create_estimate" || payload.type === "focus_customer_sms" ? (
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            marginBottom: 10,
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#f8fafc",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={Boolean(payload.useSelectedCustomer)}
-            onChange={(e) => setPayload({ ...payload, useSelectedCustomer: e.target.checked })}
-            style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0, accentColor: AMBER }}
-          />
-          <span style={{ fontSize: 13, fontWeight: 600, color: TEXT, lineHeight: 1.4 }}>
-            Use customer open on screen
-            {selectedCustomerName ? (
-              <span style={{ display: "block", fontWeight: 500, color: TEXT_MUTED, marginTop: 2 }}>{selectedCustomerName}</span>
-            ) : null}
-          </span>
-        </label>
-      ) : null}
-
-      {payload.type === "create_estimate" && !payload.useSelectedCustomer ? (
-        <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-          Or customer name
-          <input
-            value={payload.customerQuery ?? ""}
-            onChange={(e) => setPayload({ ...payload, customerQuery: e.target.value })}
-            style={INPUT_STYLE}
-            placeholder="e.g. Smith"
-          />
-        </label>
-      ) : null}
-
-      {payload.type === "open_mini_wizard" ? (
-        <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-          Wizard
-          <select
-            value={payload.wizardId}
-            onChange={(e) => setPayload({ ...payload, wizardId: e.target.value as typeof payload.wizardId })}
-            style={INPUT_STYLE}
-          >
-            {SETUP_MINI_WIZARDS.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      {payload.type === "open_admin" ? (
-        <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-          Admin panel
-          <select
-            value={payload.panel}
-            onChange={(e) => setPayload({ ...payload, panel: e.target.value as AdminPanelId })}
-            style={INPUT_STYLE}
-          >
-            {(Object.keys(ADMIN_PANEL_LABELS) as AdminPanelId[]).map((id) => (
-              <option key={id} value={id}>
-                {ADMIN_PANEL_LABELS[id]}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      <label style={{ ...LABEL_STYLE, marginBottom: 10 }}>
-        Note (optional)
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          style={INPUT_STYLE}
-          placeholder="Internal reminder for your team"
-        />
-      </label>
-
-      {saveError ? (
-        <p style={{ fontSize: 11, color: "#b91c1c", margin: "0 0 8px" }}>{saveError}</p>
-      ) : null}
-
-      <button
-        type="button"
-        disabled={saveBusy || phrase.trim().length < 2}
-        onClick={handleSave}
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: 8,
-          border: "none",
-          background: saveBusy ? "#fcd34d" : AMBER,
-          color: "#fff",
-          fontWeight: 600,
-          fontSize: 13,
-          cursor: saveBusy ? "wait" : "pointer",
-          marginBottom: 12,
+          flexShrink: 0,
+          padding: "12px 14px 10px",
+          borderBottom: `1px solid ${theme.border}`,
         }}
       >
-        {saveBusy ? "Saving…" : "Save training phrase"}
-      </button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Training assistant</div>
+            <div style={{ fontSize: 12, color: TEXT_MUTED, lineHeight: 1.45, marginTop: 4 }}>
+              Talk or type like you would to a teammate. I will ask follow-ups until we agree, then save what customers
+              should say.
+            </div>
+            {selectedCustomerName ? (
+              <div style={{ fontSize: 11, color: AMBER_DARK, marginTop: 6 }}>
+                Customer on screen: <strong>{selectedCustomerName}</strong>
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            style={{
+              border: "none",
+              background: "transparent",
+              fontSize: 22,
+              lineHeight: 1,
+              cursor: "pointer",
+              color: TEXT,
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
 
-      {sortedEntries.length > 0 ? (
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 6 }}>Saved ({entries.length})</div>
-          <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, color: TEXT }}>
-            {sortedEntries.map((e) => (
-              <li
-                key={e.id}
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "10px 14px",
+          background: "#fafafa",
+        }}
+      >
+        {chatHistory.length === 0 ? (
+          <div style={{ fontSize: 12, color: TEXT_MUTED, lineHeight: 1.5, padding: "8px 4px" }}>
+            <p style={{ margin: "0 0 10px" }}>
+              Example: &ldquo;On the Customers tab they said &lsquo;start a quote for this guy&rsquo; and nothing
+              happened.&rdquo;
+            </p>
+            <p style={{ margin: 0 }}>Use the mic or type below — no forms or dropdowns required.</p>
+          </div>
+        ) : (
+          chatHistory.map((turn, i) => (
+            <div
+              key={`${turn.role}-${i}`}
+              style={{
+                marginBottom: 10,
+                display: "flex",
+                justifyContent: turn.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
+              <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  padding: "6px 0",
-                  borderTop: `1px solid ${theme.border}`,
+                  maxWidth: "92%",
+                  padding: "10px 12px",
+                  borderRadius: turn.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+                  background: turn.role === "user" ? "#fffbeb" : "#fff",
+                  border: `1px solid ${turn.role === "user" ? AMBER : theme.border}`,
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  color: TEXT,
+                  whiteSpace: "pre-wrap",
                 }}
               >
-                <span style={{ flex: 1, lineHeight: 1.35 }}>
-                  <strong>{e.phrase}</strong>
-                  <span style={{ color: TEXT_MUTED }}> → {e.action.type}</span>
-                </span>
+                {turn.content}
+              </div>
+            </div>
+          ))
+        )}
+
+        {coachBusy ? (
+          <div style={{ fontSize: 12, color: TEXT_MUTED, fontStyle: "italic", padding: "4px 0" }}>Thinking…</div>
+        ) : null}
+
+        {quickReplies.length > 0 && !coachBusy ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4, marginBottom: 8 }}>
+            {quickReplies.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => void sendCoachMessage(q)}
+                style={{
+                  fontSize: 11,
+                  padding: "6px 10px",
+                  borderRadius: 16,
+                  border: `1px solid ${AMBER}`,
+                  background: "#fff",
+                  color: TEXT,
+                  cursor: "pointer",
+                  lineHeight: 1.3,
+                  textAlign: "left",
+                }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {readyToSave && proposals.length > 0 ? (
+          <div style={{ marginTop: 8, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 8 }}>Ready to turn on</div>
+            {proposals.map((p) => (
+              <div
+                key={p.phrase}
+                style={{
+                  padding: 12,
+                  marginBottom: 8,
+                  borderRadius: 10,
+                  border: `2px solid ${AMBER}`,
+                  background: "#fff",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, lineHeight: 1.4 }}>
+                  {p.label || `When someone says “${p.phrase}”`}
+                </div>
+                <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 6 }}>{describeCustomAction(p.action)}</div>
+                {p.note ? (
+                  <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 4, fontStyle: "italic" }}>{p.note}</div>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => void onDelete(e.id)}
                   disabled={saveBusy}
-                  style={{ fontSize: 10, color: "#b91c1c", border: "none", background: "none", cursor: "pointer" }}
+                  onClick={() => void applyProposal(p)}
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: saveBusy ? "#fcd34d" : AMBER,
+                    color: "#fff",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: saveBusy ? "wait" : "pointer",
+                  }}
                 >
-                  Remove
+                  Turn this on
                 </button>
-              </li>
+              </div>
             ))}
-          </ul>
+            {proposals.length > 1 ? (
+              <button
+                type="button"
+                disabled={saveBusy}
+                onClick={() => void applyAllProposals()}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: `2px solid ${AMBER}`,
+                  background: "#fff",
+                  color: AMBER_DARK,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: saveBusy ? "wait" : "pointer",
+                }}
+              >
+                Turn on all {proposals.length} phrases
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {coachError && !coachBusy ? (
+          <p style={{ fontSize: 11, color: "#b91c1c", margin: "8px 0" }}>{coachError}</p>
+        ) : null}
+        {saveError ? <p style={{ fontSize: 11, color: "#b91c1c", margin: "8px 0" }}>{saveError}</p> : null}
+
+        <div ref={chatEndRef} />
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "10px 12px 12px",
+          borderTop: `1px solid ${theme.border}`,
+          background: "#fff",
+        }}
+      >
+        <textarea
+          ref={inputRef}
+          rows={3}
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
+              if (canSend) void sendCoachMessage(chatInput)
+            }
+          }}
+          placeholder={PLACEHOLDER}
+          disabled={coachBusy}
+          aria-label="Message to training assistant"
+          style={{
+            display: "block",
+            width: "100%",
+            marginBottom: 8,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: `1px solid ${voiceListening ? AMBER : theme.border}`,
+            fontSize: 14,
+            color: TEXT,
+            background: voiceListening ? "#fffbeb" : "#fff",
+            boxSizing: "border-box",
+            resize: "none",
+            lineHeight: 1.45,
+            outline: voiceListening ? `2px solid ${AMBER}` : "none",
+          }}
+        />
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            type="button"
+            title={voiceListening ? "Stop dictation" : "Dictate with microphone"}
+            aria-label={voiceListening ? "Stop dictation" : "Start dictation"}
+            disabled={!speechSupported || coachBusy}
+            onClick={toggleTrainMic}
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              border: `2px solid ${voiceListening ? AMBER : theme.border}`,
+              background: voiceListening ? AMBER : "#f8fafc",
+              color: voiceListening ? "#fff" : TEXT,
+              cursor: speechSupported && !coachBusy ? "pointer" : "not-allowed",
+              opacity: speechSupported ? 1 : 0.5,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              padding: 0,
+            }}
+          >
+            <MicIcon />
+          </button>
+          <button
+            type="button"
+            disabled={!canSend}
+            onClick={() => void sendCoachMessage(chatInput)}
+            style={{
+              flex: 1,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: "none",
+              background: canSend ? AMBER : "#e2e8f0",
+              color: canSend ? "#fff" : TEXT_MUTED,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: canSend ? "pointer" : "not-allowed",
+            }}
+          >
+            Send
+          </button>
+        </div>
+        {!speechSupported ? (
+          <p style={{ fontSize: 10, color: TEXT_MUTED, margin: "6px 0 0", textAlign: "center" }}>
+            Voice dictation is not available in this browser — typing still works.
+          </p>
+        ) : null}
+      </div>
+
+      {sortedEntries.length > 0 ? (
+        <div style={{ flexShrink: 0, borderTop: `1px solid ${theme.border}`, background: "#fff" }}>
+          <button
+            type="button"
+            onClick={() => setSavedOpen((o) => !o)}
+            style={{
+              width: "100%",
+              padding: "8px 14px",
+              border: "none",
+              background: "transparent",
+              color: TEXT_MUTED,
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            {savedOpen ? "▾" : "▸"} Live phrases ({sortedEntries.length})
+          </button>
+          {savedOpen ? (
+            <ul
+              style={{
+                margin: 0,
+                padding: "0 14px 10px",
+                listStyle: "none",
+                fontSize: 11,
+                color: TEXT,
+                maxHeight: 120,
+                overflowY: "auto",
+              }}
+            >
+              {sortedEntries.slice(0, 20).map((e) => (
+                <li
+                  key={e.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "5px 0",
+                    borderTop: `1px solid ${theme.border}`,
+                  }}
+                >
+                  <span style={{ flex: 1, lineHeight: 1.35 }}>
+                    <strong>{e.phrase}</strong>
+                    <span style={{ color: TEXT_MUTED }}> → {describeCustomAction(e.action)}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onDelete(e.id)}
+                    disabled={saveBusy}
+                    style={{
+                      fontSize: 10,
+                      color: "#b91c1c",
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
     </div>

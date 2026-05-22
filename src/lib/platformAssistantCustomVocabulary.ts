@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { normalizeAssistantPhrase } from "./platformAssistantVocabulary"
 import type { AdminPanelId } from "./platformAssistantRegistry"
+import type { AssistantHandoffMode, SpecialistAssistantId } from "./assistantHandoff"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 
 export const PLATFORM_ASSISTANT_VOCABULARY_KEY = "platform_assistant_vocabulary"
@@ -23,6 +24,14 @@ export type AssistantCustomActionPayload =
   | { type: "create_estimate"; customerQuery?: string; useSelectedCustomer?: boolean; message?: string }
   | { type: "focus_customer_sms"; customerQuery?: string; useSelectedCustomer?: boolean; message?: string }
   | { type: "explain"; message?: string }
+  | {
+      type: "handoff_specialist_assistant"
+      specialist: SpecialistAssistantId
+      scopeText: string
+      jobTypeName?: string
+      mode: AssistantHandoffMode
+      message?: string
+    }
 
 export type AssistantCustomVocabularyEntry = {
   id: string
@@ -99,6 +108,8 @@ function defaultMessage(action: AssistantCustomActionPayload): string {
       return "Opening SMS compose."
     case "explain":
       return "Here is what you can do on this screen."
+    case "handoff_specialist_assistant":
+      return "Opening estimate specialist…"
     default:
       return "OK."
   }
@@ -154,6 +165,18 @@ export function resolveCustomVocabularyAction(
     }
     case "explain":
       return { type: "explain", message: msg }
+    case "handoff_specialist_assistant": {
+      const scope = payload.scopeText?.trim()
+      if (!scope || scope.length < 4 || !payload.specialist) return null
+      return {
+        type: "handoff_specialist_assistant",
+        specialist: payload.specialist,
+        scopeText: scope.slice(0, 2000),
+        jobTypeName: payload.jobTypeName?.trim() || undefined,
+        mode: payload.mode === "job_type_with_lines" ? "job_type_with_lines" : "line_items_only",
+        message: msg,
+      }
+    }
     default:
       return null
   }
@@ -193,6 +216,9 @@ export function buildCustomVocabularyCatalogSection(entries: AssistantCustomVoca
     } else if (a.type === "focus_customer_sms") {
       desc = a.useSelectedCustomer ? "focus_customer_sms (open customer on screen)" : "focus_customer_sms"
     } else if (a.type === "open_mini_wizard") desc = `open_mini_wizard → ${a.wizardId}`
+    else if (a.type === "handoff_specialist_assistant") {
+      desc = `handoff → ${a.specialist} (${a.mode})`
+    }
     lines.push(`- When user says “${e.phrase}” (${e.match}) → **${desc}**`)
   }
   lines.push("")
@@ -230,6 +256,7 @@ export const ASSISTANT_VOCABULARY_ACTION_OPTIONS: Array<{
   value: AssistantCustomActionPayload["type"]
   label: string
 }> = [
+  { value: "handoff_specialist_assistant", label: "Hand off to estimate specialist (AI lines)" },
   { value: "create_estimate", label: "Start / open estimate (quote)" },
   { value: "focus_customer_sms", label: "Open SMS compose for customer" },
   { value: "find_customer", label: "Find customer by name" },

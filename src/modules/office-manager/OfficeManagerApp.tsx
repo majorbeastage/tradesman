@@ -23,8 +23,10 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { useLocale } from "../../i18n/LocaleContext"
 import { supabase } from "../../lib/supabase"
 import {
+  filterPortalTabsForV2,
   getOfficePortalTabListForConfig,
   getPortalTabListForConfig,
+  isPortalTabVisibleInV2,
   USER_PORTAL_TAB_IDS,
   TAB_ID_LABELS,
   type PortalConfig,
@@ -53,7 +55,7 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
   const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
   if (!hasTabs) return undefined
   const ordered = getOfficePortalTabListForConfig(portalConfig)
-  const visible = ordered.filter(({ tab_id }) => portalConfig.tabs?.[tab_id] !== false)
+  const visible = ordered.filter(({ tab_id }) => isPortalTabVisibleInV2(tab_id, portalConfig))
   return visible.length > 0 ? visible : undefined
 }
 
@@ -468,12 +470,11 @@ function OfficeManagerAppContent() {
   const scope = useOfficeManagerScopeOptional()
   const hasClients = (scope?.clients.length ?? 0) > 0
   const resolvedPortalTabs = useMemo(() => {
-    let r = buildPortalTabsFromConfig(scope?.scopedPortalConfig ?? null) ?? portalTabs
-    if (portalConfig?.show_legacy_contractor_leads_conversations !== true) {
-      r = r.filter((t) => t.tab_id !== "leads" && t.tab_id !== "conversations")
-    }
+    const cfg = scope?.scopedPortalConfig ?? portalConfig
+    let r = buildPortalTabsFromConfig(cfg ?? null) ?? portalTabs.map((t) => ({ tab_id: t.tab_id, label: t.label }))
+    r = filterPortalTabsForV2(r, cfg)
     return r
-  }, [scope?.scopedPortalConfig, portalTabs, portalConfig?.show_legacy_contractor_leads_conversations])
+  }, [scope?.scopedPortalConfig, portalTabs, portalConfig])
   const selectedRow = scope?.clients.find((c) => c.userId === scope.selectedUserId) ?? null
   /** Bundled managed users (no Payments tab) do not get separate Helcim / dashboard billing alerts. */
   const separateBillingForScope =
@@ -482,9 +483,17 @@ function OfficeManagerAppContent() {
   const omSettingsTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "settings")
 
   useEffect(() => {
-    if (portalConfig?.show_legacy_contractor_leads_conversations === true) return
-    if (page === "leads" || page === "conversations") setPage("dashboard")
-  }, [page, portalConfig?.show_legacy_contractor_leads_conversations])
+    if (page === "web-support") setPage("tech-support")
+  }, [page, setPage])
+
+  useEffect(() => {
+    const cfg = scope?.scopedPortalConfig ?? portalConfig
+    if (!isPortalTabVisibleInV2(page, cfg)) {
+      if (page === "leads" || page === "conversations" || page === "settings" || page === "web-support") {
+        setPage("dashboard")
+      }
+    }
+  }, [page, portalConfig, scope?.scopedPortalConfig, setPage])
 
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
