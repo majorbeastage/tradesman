@@ -13,6 +13,7 @@ import {
 } from "./platformAssistantRegistry"
 import { extractCustomerSearchQuery } from "./customerAssistantSearch"
 import { isMissedCallAssistantPhrase } from "./customerAssistantMissedCall"
+import { buildAssistantExplainMessage } from "./assistantExplain"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 import { getSetupMiniWizardDef } from "./setupGuideWizards"
 import { TAB_ID_LABELS } from "../types/portal-builder"
@@ -25,6 +26,10 @@ export type GlobalAssistantAction =
   | { type: "find_customer"; query: string; message: string }
   | { type: "open_last_missed_call"; message: string }
   | { type: "open_customer"; customerId: string; customerName: string; message: string }
+  | { type: "open_current_customer"; message: string }
+  | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "explain"; message: string }
   | { type: "clarify"; message: string }
 
 export type AssistantParseResult = {
@@ -57,6 +62,9 @@ export type GlobalAssistantParseContext = {
   isAdmin?: boolean
   /** Active portal tab (dashboard, customers, calendar, …) — biases setup wizards on this page. */
   currentPage?: string
+  /** Customers tab — row/detail currently open (Phase 3). */
+  selectedCustomerId?: string | null
+  selectedCustomerName?: string | null
 }
 
 function normalizeCommandText(raw: string): string {
@@ -96,6 +104,45 @@ function describeScored(s: ScoredMatch): string {
 function tabAvailable(page: string, ctx: GlobalAssistantParseContext): boolean {
   if (!ctx.availableTabIds?.length) return true
   return ctx.availableTabIds.includes(page)
+}
+
+function refersToCurrentCustomer(text: string): boolean {
+  return /\b(this|current|selected)\s+customer\b/i.test(text) || /\b(customer\s+here|who\s+i(?:'m| am)\s+(?:viewing|looking\s+at))\b/i.test(text)
+}
+
+function isExplainPhrase(text: string): boolean {
+  return (
+    /\b(what\s+(?:is|does)\s+this|help\s+(?:me\s+)?(?:here|with\s+this)|explain\s+(?:this|where\s+i\s+am)|how\s+do\s+i\s+use\s+this)\b/i.test(
+      text,
+    ) || /\bwhere\s+am\s+i\b/i.test(text)
+  )
+}
+
+function isCreateEstimatePhrase(text: string): boolean {
+  return /\b(start|create|new|open|begin)\s+(?:an?\s+)?(?:estimate|quote)\b/i.test(text) || /\bestimate\s+for\b/i.test(text)
+}
+
+function isFocusSmsPhrase(text: string): boolean {
+  return (
+    /\b(text|sms|message)\s+(?:them|him|her|this\s+customer|customer)\b/i.test(text) ||
+    /\bsend\s+(?:a\s+)?(?:text|sms)\b/i.test(text) ||
+    /\bopen\s+sms\b/i.test(text)
+  )
+}
+
+function resolveCustomerTarget(
+  text: string,
+  ctx: GlobalAssistantParseContext,
+): { customerId?: string; customerQuery?: string } {
+  if (refersToCurrentCustomer(text) && ctx.selectedCustomerId) {
+    return { customerId: ctx.selectedCustomerId }
+  }
+  const q = extractCustomerSearchQuery(text)
+  if (q) return { customerQuery: q }
+  if (ctx.currentPage === "customers" && ctx.selectedCustomerId) {
+    return { customerId: ctx.selectedCustomerId }
+  }
+  return {}
 }
 
 function scoreToConfidence(ruleScore: number): number {
@@ -165,6 +212,76 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
         type: "clarify",
         message: `Tell me what you would like to do — for example “${suggestPhrasesForPlatform(platform, 3).join('”, “')}”.`,
       },
+    }
+  }
+
+  if (isExplainPhrase(text)) {
+    return {
+      confidence: 88,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: { type: "explain", message: buildAssistantExplainMessage(ctx, text) },
+    }
+  }
+
+  if (refersToCurrentCustomer(text) && ctx.selectedCustomerId) {
+    const name = ctx.selectedCustomerName?.trim() || "this customer"
+    return {
+      confidence: 92,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: {
+        type: "open_current_customer",
+        message: `Opening ${name} on Customers.`,
+      },
+    }
+  }
+
+  if (isFocusSmsPhrase(text)) {
+    const target = resolveCustomerTarget(text, ctx)
+    if (target.customerId || target.customerQuery) {
+      const label = target.customerId ? ctx.selectedCustomerName ?? "customer" : target.customerQuery ?? "customer"
+      return {
+        confidence: 88,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: {
+          type: "focus_customer_sms",
+          customerId: target.customerId,
+          customerQuery: target.customerQuery,
+          message: `Opening ${label} for SMS.`,
+        },
+      }
+    }
+  }
+
+  if (isCreateEstimatePhrase(text)) {
+    const target = resolveCustomerTarget(text, ctx)
+    if (target.customerId || target.customerQuery) {
+      const label = target.customerId ? ctx.selectedCustomerName ?? "customer" : target.customerQuery ?? "customer"
+      return {
+        confidence: 88,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: {
+          type: "create_estimate",
+          customerId: target.customerId,
+          customerQuery: target.customerQuery,
+          message: `Starting estimate for ${label}.`,
+        },
+      }
+    }
+    if (tabAvailable("quotes", ctx)) {
+      return {
+        confidence: 82,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: {
+          type: "navigate",
+          page: "quotes",
+          message: "Opening Estimates. Pick or link a customer in the estimate wizard.",
+        },
+      }
     }
   }
 

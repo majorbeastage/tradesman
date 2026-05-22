@@ -2,7 +2,10 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import AssistantConfirmDialog, { type AssistantConfirmOption } from "../components/AssistantConfirmDialog"
 import { searchCustomersByQuery } from "../lib/customerAssistantSearch"
 import { findLastMissedCallCustomer } from "../lib/customerAssistantMissedCall"
+import type { AssistantPageSnapshot } from "../lib/assistantPageContext"
+import { resolveCustomerIdForAssistant } from "../lib/assistantResolveCustomer"
 import { queueCustomerFocus } from "../lib/customerNavigation"
+import { queueCustomerAssistantSmsFocus, queueQuotesCustomerPrefill } from "../lib/workflowNavigation"
 import { supabase } from "../lib/supabase"
 import {
   ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
@@ -40,6 +43,8 @@ type GlobalAssistantContextValue = {
   setReportModalOpen: (v: boolean) => void
   runAssistantCommand: (raw: string) => Promise<void>
   parseContext: GlobalAssistantParseContext
+  /** Customers (and other pages) publish selection for “this customer” commands. */
+  setPageSnapshot: (patch: AssistantPageSnapshot) => void
   openSetupGuide: () => void
   registerSetupGuideOpener: (fn: () => void) => void
 }
@@ -84,10 +89,18 @@ export function GlobalAssistantProvider({
     message: string
     options: AssistantConfirmOption[]
   } | null>(null)
+  const [pageSnapshot, setPageSnapshot] = useState<AssistantPageSnapshot>({})
 
   const parseContext = useMemo<GlobalAssistantParseContext>(
-    () => ({ platform, availableTabIds, isAdmin, currentPage }),
-    [platform, availableTabIds, isAdmin, currentPage],
+    () => ({
+      platform,
+      availableTabIds,
+      isAdmin,
+      currentPage,
+      selectedCustomerId: pageSnapshot.selectedCustomerId,
+      selectedCustomerName: pageSnapshot.selectedCustomerName,
+    }),
+    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot],
   )
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
@@ -122,6 +135,77 @@ export function GlobalAssistantProvider({
         }
         setView("admin")
         setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "explain") {
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "open_current_customer") {
+        const id = pageSnapshot.selectedCustomerId?.trim()
+        if (!id) {
+          setAssistantNote("Open a customer on the Customers tab first, then try again.")
+          return
+        }
+        queueCustomerFocus(id)
+        setPage("customers")
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "create_estimate" || action.type === "focus_customer_sms") {
+        if (!supabase || !profileUserId) {
+          setAssistantNote("Sign in to use customer actions.")
+          return
+        }
+        setAssistantNote(action.message)
+        try {
+          const resolved = await resolveCustomerIdForAssistant(supabase, profileUserId, {
+            customerId: action.customerId,
+            customerQuery: action.customerQuery,
+          })
+          if (!resolved) {
+            setAssistantNote("Name a customer or open their record on Customers first.")
+            return
+          }
+          if ("picks" in resolved) {
+            setConfirmDialog({
+              message: `Several customers match. Which one?`,
+              options: resolved.picks.slice(0, 5).map((h) => ({
+                label: h.phone ? `${h.display_name} · ${h.phone}` : h.display_name,
+                action:
+                  action.type === "create_estimate"
+                    ? {
+                        type: "create_estimate",
+                        customerId: h.id,
+                        message: `Starting estimate for ${h.display_name}.`,
+                      }
+                    : {
+                        type: "focus_customer_sms",
+                        customerId: h.id,
+                        message: `Opening ${h.display_name} for SMS.`,
+                      },
+              })),
+            })
+            return
+          }
+          if (action.type === "create_estimate") {
+            const tabs = parseContext.availableTabIds
+            if (tabs?.length && !tabs.includes("quotes")) {
+              setAssistantNote("Estimates is not enabled on your portal menu.")
+              return
+            }
+            queueQuotesCustomerPrefill(resolved.id)
+            setPage("quotes")
+            setAssistantNote(`Opening estimate for ${resolved.name}.`)
+            return
+          }
+          queueCustomerFocus(resolved.id)
+          queueCustomerAssistantSmsFocus(resolved.id)
+          setPage("customers")
+          setAssistantNote(`Opening ${resolved.name} — SMS compose is below (complete opt-in if required).`)
+        } catch (e) {
+          setAssistantNote(e instanceof Error ? e.message : "Could not resolve customer.")
+        }
         return
       }
       if (action.type === "open_customer") {
@@ -194,7 +278,7 @@ export function GlobalAssistantProvider({
         setAssistantNote(action.message)
       }
     },
-    [openSetupGuide, profileUserId, setPage, setView, setupWizard],
+    [openSetupGuide, pageSnapshot.selectedCustomerId, parseContext.availableTabIds, profileUserId, setPage, setView, setupWizard],
   )
 
   const runAssistantCommand = useCallback(
@@ -246,7 +330,15 @@ export function GlobalAssistantProvider({
                     ? `Find customer “${action.query}”`
                     : action.type === "open_last_missed_call"
                       ? "Open last missed call"
-                      : action.message.replace(/\.$/, ""),
+                      : action.type === "create_estimate"
+                        ? "Start estimate"
+                        : action.type === "focus_customer_sms"
+                          ? "Open SMS compose"
+                          : action.type === "explain"
+                            ? "Show help"
+                            : action.type === "open_current_customer"
+                              ? "Open this customer"
+                              : action.message.replace(/\.$/, ""),
             action,
           },
         ]
@@ -358,6 +450,9 @@ export function GlobalAssistantProvider({
       setReportModalOpen,
       runAssistantCommand,
       parseContext,
+      setPageSnapshot: (patch: AssistantPageSnapshot) => {
+        setPageSnapshot((prev) => ({ ...prev, ...patch }))
+      },
       openSetupGuide,
       registerSetupGuideOpener,
     }),

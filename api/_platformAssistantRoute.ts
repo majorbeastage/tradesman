@@ -39,6 +39,10 @@ type LlmAction =
   | { type: "open_admin"; panel: string; message: string }
   | { type: "find_customer"; query: string; message: string }
   | { type: "open_last_missed_call"; message: string }
+  | { type: "open_current_customer"; message: string }
+  | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "explain"; message: string }
   | { type: "clarify"; message: string }
 
 export type PlatformAssistantLlmRouteResult = {
@@ -104,6 +108,34 @@ function validateAction(
   }
   if (type === "open_last_missed_call") {
     return { type: "open_last_missed_call", message }
+  }
+  if (type === "open_current_customer") {
+    return { type: "open_current_customer", message }
+  }
+  if (type === "create_estimate") {
+    const customerId = clip(o.customerId, 48)
+    const customerQuery = clip(o.customerQuery, 80)
+    if (!customerId && customerQuery.length < 2) return null
+    return {
+      type: "create_estimate",
+      customerId: customerId || undefined,
+      customerQuery: customerQuery || undefined,
+      message,
+    }
+  }
+  if (type === "focus_customer_sms") {
+    const customerId = clip(o.customerId, 48)
+    const customerQuery = clip(o.customerQuery, 80)
+    if (!customerId && customerQuery.length < 2) return null
+    return {
+      type: "focus_customer_sms",
+      customerId: customerId || undefined,
+      customerQuery: customerQuery || undefined,
+      message,
+    }
+  }
+  if (type === "explain") {
+    return { type: "explain", message: message.slice(0, 600) }
   }
   if (type === "clarify") {
     return { type: "clarify", message }
@@ -194,10 +226,14 @@ Allowed action shapes (use only these "type" values):
 - open_admin: {"type":"open_admin","panel":"<panel>","message":"..."} (only if user is admin)
 - find_customer: {"type":"find_customer","query":"<name fragment>","message":"..."}
 - open_last_missed_call: {"type":"open_last_missed_call","message":"..."}
+- open_current_customer: {"type":"open_current_customer","message":"..."} — only when catalog says a customer is already selected
+- create_estimate: {"type":"create_estimate","customerQuery":"Name"} OR customerId if known — never invent UUIDs
+- focus_customer_sms: {"type":"focus_customer_sms","customerQuery":"Name"} — opens SMS compose, does not send automatically
+- explain: {"type":"explain","message":"short helpful paragraph"}
 - clarify: {"type":"clarify","message":"helpful suggestion"} — only if nothing fits
 
 Hard rules:
-- NEVER return open_customer or invent customer UUIDs.
+- NEVER return open_customer or invent customer UUIDs. Use find_customer with query, or open_current_customer when appropriate.
 - For "missed call" / "who called" / "last call I missed" use open_last_missed_call.
 - For a person name use find_customer with query = the name.
 - navigate.page must be one of: ${pageList}

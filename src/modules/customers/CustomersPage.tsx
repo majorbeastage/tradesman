@@ -34,7 +34,9 @@ import {
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
+import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
+import { consumeCustomerAssistantSmsFocus } from "../../lib/workflowNavigation"
 import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import {
   loadCustomerCalendarEvents,
@@ -249,6 +251,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const portalConfig = usePortalConfigForPage()
   const showCustomersCustomerPayment = getPageActionVisible(portalConfig, "customers", "customer_payment")
   const isMobile = useIsMobile()
+  const globalAssistant = useGlobalAssistantOptional()
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [inProcessCustomers, setInProcessCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
@@ -979,6 +982,25 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setArchivedCustomers(patch)
     setSelectedCustomer((prev) => (prev?.id === selectedCustomer.id ? { ...prev, last_activity_at: iso } : prev))
   }, [activityMaxSortMs, selectedCustomer?.id])
+
+  useEffect(() => {
+    globalAssistant?.setPageSnapshot({
+      selectedCustomerId: selectedCustomer?.id ?? null,
+      selectedCustomerName: selectedCustomer?.display_name?.trim() || null,
+    })
+  }, [globalAssistant, selectedCustomer?.id, selectedCustomer?.display_name])
+
+  useEffect(() => {
+    if (!selectedCustomer?.id) return
+    if (consumeCustomerAssistantSmsFocus() !== selectedCustomer.id) return
+    setCommCardOpen((m) => ({ ...m, sms: true }))
+    const t = window.setTimeout(() => {
+      const el = document.getElementById("tradesman-customer-sms-compose")
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      if (el instanceof HTMLTextAreaElement) el.focus()
+    }, 400)
+    return () => window.clearTimeout(t)
+  }, [selectedCustomer?.id])
 
   useEffect(() => {
     if (!pendingFocusCustomerId) return
@@ -2765,6 +2787,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                       <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
                                                     )}
                                                     <textarea
+                                                      id="tradesman-customer-sms-compose"
                                                       placeholder={
                                                         smsBlockedPendingManualOptIn
                                                           ? "Complete SMS opt-in above to enable texting"

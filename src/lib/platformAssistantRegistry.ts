@@ -337,7 +337,7 @@ export function buildPlatformAssistantCatalogText(ctx: {
   currentPage?: string
 }): string {
   const lines: string[] = []
-  lines.push("## Tradesman platform assistant — allowed actions (Phase 1)")
+  lines.push("## Tradesman platform assistant — allowed actions")
   lines.push("")
   lines.push(`Current shell: **${ctx.platform}**${ctx.isAdmin ? " (user is admin)" : ""}.`)
   if (ctx.currentPage?.trim()) {
@@ -382,15 +382,22 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push("### Find customer (assistant)")
   lines.push("- “open customer Johnson”, “find client Mike”, “show customer Smith” — opens Customers and expands their record.")
   lines.push("- “last missed call”, “take me to the customer I missed a call for” — opens Customers and expands the most recent missed inbound call.")
+  lines.push("- “this customer” / “expand this customer” — uses the customer row you have open on Customers.")
 
   lines.push("")
-  lines.push("### Not yet supported here (Phase 3)")
-  lines.push("- Create estimate, send SMS, explain errors without opening a customer first.")
+  lines.push("### Do work (Phase 3)")
+  lines.push("- “start estimate for …” / “create quote for this customer” — opens Estimates and starts or resumes their estimate.")
+  lines.push("- “text them” / “send SMS” — opens Customers, expands SMS compose for that customer (opt-in rules apply).")
+  lines.push("- “what is this” / “help me here” — explains the current tab and selection.")
+
+  lines.push("")
+  lines.push("### Not yet supported")
+  lines.push("- Sending SMS automatically (opens compose only). Bulk actions.")
   return lines.join("\n")
 }
 
 export function suggestPhrasesForPlatform(platform: PlatformAssistantPlatform, limit = 8): string[] {
-  const phrases: string[] = ["take me to customers", "last missed call", "automatic replies", "setup guide"]
+  const phrases: string[] = ["take me to customers", "last missed call", "start estimate", "text them", "help me here", "setup guide"]
   if (platform === "user") phrases.push("settings", "payments")
   if (platform !== "user") phrases.push("scheduling alerts", "estimate line items")
   phrases.push("call forwarding", "portal builder")

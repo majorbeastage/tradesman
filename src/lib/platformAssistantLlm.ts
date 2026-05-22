@@ -7,9 +7,23 @@ export type PlatformAssistantLlmResponse = {
   note?: string
 }
 
+const ALLOWED_TYPES = new Set([
+  "navigate",
+  "open_setup_guide",
+  "open_mini_wizard",
+  "open_admin",
+  "find_customer",
+  "open_last_missed_call",
+  "open_current_customer",
+  "create_estimate",
+  "focus_customer_sms",
+  "explain",
+  "clarify",
+])
+
 function isValidAction(action: GlobalAssistantAction): boolean {
   if (action.type === "open_customer") return false
-  return true
+  return ALLOWED_TYPES.has(action.type)
 }
 
 function normalizeLlmResult(raw: PlatformAssistantLlmResponse["result"]): AssistantParseResult | null {

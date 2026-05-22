@@ -1,6 +1,7 @@
 /** Cross-tab navigation queues (sessionStorage) for Customers ↔ Estimates ↔ Scheduling. */
 
 const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
+const CUSTOMER_SMS_FOCUS = "tradesman_assistant_focus_customer_sms"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
 
@@ -16,6 +17,29 @@ export function queueQuotesCustomerPrefill(customerId: string): void {
   } catch {
     /* ignore */
   }
+}
+
+export function queueCustomerAssistantSmsFocus(customerId: string): void {
+  if (!customerId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(CUSTOMER_SMS_FOCUS, customerId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeCustomerAssistantSmsFocus(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(CUSTOMER_SMS_FOCUS) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(CUSTOMER_SMS_FOCUS)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 export function consumeQuotesCustomerPrefill(): string | null {

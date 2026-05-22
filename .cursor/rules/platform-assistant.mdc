@@ -13,8 +13,8 @@
 | Phase | Intents | Where |
 |-------|---------|--------|
 | **1** | Navigate tabs, open setup wizards, setup guide, admin panels | Registry + rules |
-| **2 (now)** | Same catalog; LLM when `ruleTopScore` &lt; 8 | `POST /api/platform-tools?__route=platform-assistant-route` + `buildAssistantRoutingCatalog(ctx)` |
-| **3 (later)** | Create estimate, send SMS, explain | New action types + executors, not regex-only |
+| **2** | Same catalog; LLM when `ruleTopScore` &lt; 8 | `POST /api/platform-tools?__route=platform-assistant-route` |
+| **3 (now)** | Current customer, estimate, SMS focus, explain | `setPageSnapshot` + workflow queues |
 
 ## When the user reports a failed phrase
 
@@ -31,6 +31,13 @@
 - Server: `api/_platformAssistantRoute.ts` via `platform-tools?__route=platform-assistant-route` (Bearer JWT). Catalog sent from client (`buildAssistantRoutingCatalog`).
 - Model output validated server-side; never allow `open_customer` with invented IDs.
 - Rules win when `ruleTopScore ≥ 8`; requires `OPENAI_API_KEY` on Vercel.
+
+## Phase 3 context + actions
+
+- `GlobalAssistantProvider` merges `pageSnapshot` (selected customer) into `parseContext`.
+- `CustomersPage` calls `setPageSnapshot` when selection changes.
+- Actions: `open_current_customer`, `create_estimate` (→ `queueQuotesCustomerPrefill` + quotes tab), `focus_customer_sms` (→ `queueCustomerAssistantSmsFocus`), `explain` (rule-based copy in `assistantExplain.ts`).
+- SMS compose: `#tradesman-customer-sms-compose`; does not auto-send.
 
 ## Mini-wizards
 
