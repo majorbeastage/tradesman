@@ -3,7 +3,8 @@
 ## Architecture (do not fork)
 
 - **Registry (Phase 1):** `src/lib/platformAssistantRegistry.ts` — pages, mini-wizards, admin panels, phrases, `buildPlatformAssistantCatalogText()`.
-- **Parser:** `src/lib/globalAssistantNav.ts` — scoring, clarify, `parseGlobalAssistantCommand(text, ctx)`.
+- **Vocabulary / training:** `src/lib/platformAssistantVocabulary.ts` — contractor domain glossary, workflow phrase banks, `buildPlatformAssistantDomainTraining()` (appended to LLM catalog).
+- **Parser:** `src/lib/globalAssistantNav.ts` — scoring, clarify, `parseAssistantCommand(text, ctx)`; workflow intents before `open_current_customer`.
 - **Execute:** `src/contexts/GlobalAssistantContext.tsx` — `runAssistantCommand`, voice, `open_admin` via `setView("admin")` + `ASSISTANT_ADMIN_PANEL_STORAGE_KEY`.
 - **UI:** `PlatformAssistantField`, `GlobalAssistantFab`, Setup Guide adjustment mode.
 - **Separate product:** Admin **Portal builder** chat (`AdminPortalAssistant`, `supabase/functions/portal-assistant`) — config JSON, not tab navigation.
@@ -18,8 +19,9 @@
 
 ## When the user reports a failed phrase
 
-1. Reproduce with `parseGlobalAssistantCommand(phrase, ctx)` mentally against registry.
-2. **Prefer registry:** add/adjust `patterns` on the right `PLATFORM_*_INTENT` row; keep wizards higher priority than vague page matches.
+1. Reproduce with `parseAssistantCommand(phrase, ctx)` mentally against registry + vocabulary.
+2. **Workflow phrases:** extend `platformAssistantVocabulary.ts` (`isCreateEstimatePhrase`, `refersToSelectedCustomer`, etc.) before adding vague page patterns.
+3. **Prefer registry:** add/adjust `patterns` on the right `PLATFORM_*_INTENT` row; keep wizards higher priority than vague page matches.
 3. Respect `availableTabIds` — if tab is disabled, improve clarify message, do not force navigation.
 4. **User vs office_manager:** check `platforms` on page intents; OM has no `settings` tab.
 5. **Admin:** only `open_admin` when `isAdmin`; panel id must match `AdminApp` `adminPanel` state.
@@ -27,8 +29,8 @@
 
 ## Phase 2 LLM router
 
-- Client: `shouldFallbackToLlm(parsed)` when `ruleTopScore < 8` → `routePlatformAssistantWithLlm` in `src/lib/platformAssistantLlm.ts`.
-- Server: `api/_platformAssistantRoute.ts` via `platform-tools?__route=platform-assistant-route` (Bearer JWT). Catalog sent from client (`buildAssistantRoutingCatalog`).
+- Client: `shouldFallbackToLlm(parsed, phrase)` when `ruleTopScore < 8` OR clarify + `phraseHasWorkflowCue` → `routePlatformAssistantWithLlm` in `src/lib/platformAssistantLlm.ts`.
+- Server: `api/_platformAssistantRoute.ts` via `platform-tools?__route=platform-assistant-route` (Bearer JWT). Catalog = registry + domain training + open customer name.
 - Model output validated server-side; never allow `open_customer` with invented IDs.
 - Rules win when `ruleTopScore ≥ 8`; requires `OPENAI_API_KEY` on Vercel.
 
