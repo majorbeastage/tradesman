@@ -375,8 +375,12 @@ export function buildPlatformAssistantCatalogText(ctx: {
   }
 
   lines.push("")
+  lines.push("### Find customer (assistant)")
+  lines.push("- “open customer Johnson”, “find client Mike”, “show customer Smith” — opens Customers and expands their record.")
+
+  lines.push("")
   lines.push("### Not yet supported here (Phase 3)")
-  lines.push("- Find/open a specific customer by name, create estimate, send SMS, explain errors.")
+  lines.push("- Create estimate, send SMS, explain errors without opening a customer first.")
   return lines.join("\n")
 }
 
