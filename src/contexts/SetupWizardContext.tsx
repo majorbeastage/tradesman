@@ -6,6 +6,7 @@ import {
   type SetupMiniWizardId,
 } from "../lib/setupGuideWizards"
 import { clearSetupWizardLaunch, readSetupWizardLaunch, writeSetupWizardLaunch } from "../lib/setupWizardLaunch"
+import { PROFILE_METADATA_APPLIED_EVENT } from "../lib/profileMetadataEvents"
 import { mergeMiniWizardCompleted } from "../lib/setupGuideState"
 import { supabase } from "../lib/supabase"
 
@@ -83,11 +84,18 @@ export function SetupWizardProvider({ children, setPage, userId, onMetadataPatch
           onClose={closeWizard}
           onApplied={(msg) => {
             setLastApplyMessage(msg)
-            if (userId && supabase && profileMetadata) {
-              const next = mergeMiniWizardCompleted(profileMetadata, activeWizardId)
-              void supabase.from("profiles").update({ metadata: next }).eq("id", userId).then(({ error }) => {
-                if (!error) onMetadataPatch?.(next)
-              })
+            if (userId && supabase) {
+              void (async () => {
+                const meta = profileMetadata ?? {}
+                const next = mergeMiniWizardCompleted(meta, activeWizardId)
+                const { error } = await supabase.from("profiles").update({ metadata: next }).eq("id", userId)
+                if (!error) {
+                  onMetadataPatch?.(next)
+                  window.dispatchEvent(
+                    new CustomEvent(PROFILE_METADATA_APPLIED_EVENT, { detail: { userId, metadata: next } }),
+                  )
+                }
+              })()
             }
           }}
         />

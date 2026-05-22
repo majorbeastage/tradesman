@@ -13,6 +13,7 @@ import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStat
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import PortalSettingsModal from "../../components/PortalSettingsModal"
+import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import PortalSettingItemsForm from "../../components/PortalSettingItemsForm"
 import {
   getControlItemsForUser,
@@ -4812,6 +4813,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {estimateLineItemsButtonLabel}
                 </button>
               ) : null}
+              {showQuotesEstimateLineItems ? <SetupWizardLaunchButton wizardId="estimates_line_items" compact /> : null}
               {showQuotesJobTypesPanel ? (
                 <button
                   type="button"
@@ -4833,6 +4835,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {quoteJobTypesButtonLabel}
                 </button>
               ) : null}
+              {showQuotesJobTypesPanel ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
               <button
                 type="button"
                 onClick={() => setLibrarySection("reports")}

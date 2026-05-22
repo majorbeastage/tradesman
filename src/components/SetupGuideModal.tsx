@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import PlatformAssistantField from "./PlatformAssistantField"
@@ -10,7 +10,6 @@ import {
   parseSetupGuideProgress,
 } from "../lib/setupGuideState"
 import { miniWizardsForSetupStep, type SetupMiniWizardDef } from "../lib/setupGuideWizards"
-import { parseGlobalAssistantCommand } from "../lib/globalAssistantNav"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { useSetupWizardOptional } from "../contexts/SetupWizardContext"
 
@@ -159,40 +158,69 @@ type Props = {
   forceInitial?: boolean
 }
 
+function SetupGuideStepper({ stepIndex, steps }: { stepIndex: number; steps: typeof INITIAL_STEPS }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+      {steps.map((s, i) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div
+            title={s.title}
+            style={{
+              width: i === stepIndex ? 12 : 9,
+              height: i === stepIndex ? 12 : 9,
+              borderRadius: "50%",
+              background: i < stepIndex ? "#059669" : i === stepIndex ? theme.primary : "#e2e8f0",
+              border: i === stepIndex ? `2px solid ${theme.primary}` : "none",
+              boxSizing: "border-box",
+            }}
+          />
+          {i < steps.length - 1 ? <div style={{ width: 14, height: 2, background: i < stepIndex ? "#86efac" : "#e2e8f0" }} /> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function MiniWizardButtons({
   wizards,
   onOpen,
+  completedIds,
 }: {
   wizards: SetupMiniWizardDef[]
   onOpen: (w: SetupMiniWizardDef) => void
+  completedIds: Set<string>
 }) {
   if (wizards.length === 0) return null
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", letterSpacing: "0.03em" }}>SETUP WIZARDS ON THIS TAB</div>
-      {wizards.map((w) => (
-        <button
-          key={w.id}
-          type="button"
-          onClick={() => onOpen(w)}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#fff",
-            color: "#0f172a",
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          {w.label}
-          <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 4 }}>
-            {w.summary}
-          </span>
-        </button>
-      ))}
+      <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", letterSpacing: "0.03em" }}>SETUP ON THIS STEP</div>
+      {wizards.map((w) => {
+        const done = completedIds.has(w.id)
+        return (
+          <button
+            key={w.id}
+            type="button"
+            onClick={() => onOpen(w)}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: `1px solid ${done ? "#86efac" : theme.border}`,
+              background: done ? "#f0fdf4" : "#fff",
+              color: "#0f172a",
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            {done ? "✓ " : ""}
+            {w.label}
+            <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 4 }}>
+              {done ? "Completed — tap to run again" : w.summary}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -217,6 +245,12 @@ export default function SetupGuideModal({
   const [showGlobalMic, setShowGlobalMic] = useState(true)
   const [saving, setSaving] = useState(false)
   const [stepHint, setStepHint] = useState<string | null>(null)
+  const autoLaunchedStepRef = useRef<string | null>(null)
+
+  const miniWizardCompleted = useMemo(() => {
+    const progress = parseSetupGuideProgress(profileMetadata?.[SETUP_GUIDE_PROGRESS_KEY])
+    return new Set(progress.mini_wizards_completed ?? [])
+  }, [profileMetadata])
 
   useEffect(() => {
     if (!open) return
@@ -230,6 +264,7 @@ export default function SetupGuideModal({
     setAdjustNote(null)
     setStepHint(null)
     setShowGlobalMic(true)
+    autoLaunchedStepRef.current = null
   }, [open, completed, forceInitial])
 
   const step = INITIAL_STEPS[stepIndex]
@@ -278,34 +313,25 @@ export default function SetupGuideModal({
     setStepHint(`Opening ${w.label} wizard — ${w.locationHint}`)
   }
 
+  useEffect(() => {
+    if (!open || mode !== "initial" || !step) return
+    if (step.id === "welcome" || step.id === "finish" || step.id === "payments") return
+    const pending = stepMiniWizards.filter((w) => !miniWizardCompleted.has(w.id))
+    if (pending.length === 0) return
+    if (autoLaunchedStepRef.current === step.id) return
+    autoLaunchedStepRef.current = step.id
+    setStepHint(`Guided setup: answering questions for “${pending[0].label}”…`)
+    openMiniWizard(pending[0])
+  }, [open, mode, step, stepMiniWizards, miniWizardCompleted])
+
   async function runAdjustCommand(text: string) {
     setAdjustBusy(true)
     setAdjustNote(null)
     setAdjustText("")
     try {
-      const action = parseGlobalAssistantCommand(text, ga?.parseContext ?? { platform: "user" })
-      if (action.type === "open_setup_guide") {
-        setMode("pick")
-        setAdjustNote("Choose initial setup or continue below.")
-        return
-      }
-      if (action.type === "clarify") {
-        setAdjustNote(action.message)
-        return
-      }
-      if (action.type === "open_mini_wizard") {
-        setupWizard?.launchWizard(action.wizardId, { fromSetupGuide: true })
-        setAdjustNote(action.message)
-        return
-      }
-      if (action.type === "open_admin") {
-        await ga?.runAssistantCommand(text)
-        setAdjustNote(ga?.assistantNote ?? action.message)
-        return
-      }
-      if (action.type === "navigate") {
-        setPage(action.page)
-        setAdjustNote(`${action.message} The tab is open behind this guide.`)
+      if (ga) {
+        await ga.runAssistantCommand(text)
+        setAdjustNote(ga.assistantNote)
         return
       }
     } finally {
@@ -411,6 +437,7 @@ export default function SetupGuideModal({
 
         {mode === "initial" && step ? (
           <div style={{ display: "grid", gap: 12 }}>
+            <SetupGuideStepper stepIndex={stepIndex} steps={INITIAL_STEPS} />
             <p style={{ margin: 0, fontSize: 14, color: "#1e293b", lineHeight: 1.55 }}>{step.body}</p>
             {step.bullets && step.bullets.length > 0 ? (
               <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
@@ -427,7 +454,7 @@ export default function SetupGuideModal({
                 {step.question}
               </p>
             ) : null}
-            <MiniWizardButtons wizards={stepMiniWizards} onOpen={openMiniWizard} />
+            <MiniWizardButtons wizards={stepMiniWizards} onOpen={openMiniWizard} completedIds={miniWizardCompleted} />
             {stepHint ? (
               <p style={{ margin: 0, fontSize: 12, color: "#0369a1", lineHeight: 1.45, padding: "8px 10px", background: "#e0f2fe", borderRadius: 6 }}>
                 {stepHint}

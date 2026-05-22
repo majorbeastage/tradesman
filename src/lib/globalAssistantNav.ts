@@ -11,6 +11,7 @@ import {
   type AdminPanelId,
   type PlatformAssistantPlatform,
 } from "./platformAssistantRegistry"
+import { extractCustomerSearchQuery } from "./customerAssistantSearch"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 import { getSetupMiniWizardDef } from "./setupGuideWizards"
 import { TAB_ID_LABELS } from "../types/portal-builder"
@@ -20,7 +21,21 @@ export type GlobalAssistantAction =
   | { type: "open_setup_guide"; message: string }
   | { type: "open_mini_wizard"; wizardId: SetupMiniWizardId; message: string }
   | { type: "open_admin"; panel: AdminPanelId; message: string }
+  | { type: "find_customer"; query: string; message: string }
+  | { type: "open_customer"; customerId: string; customerName: string; message: string }
   | { type: "clarify"; message: string }
+
+export type AssistantParseResult = {
+  action: GlobalAssistantAction
+  /** 0–100; ≥80 auto-acts, 68–79 shows “Did you mean?”, below clarifies only */
+  confidence: number
+  alternatives?: Array<{ label: string; action: GlobalAssistantAction; confidence: number }>
+}
+
+/** Auto-run without confirmation. */
+export const ASSISTANT_AUTO_CONFIDENCE = 80
+/** Show optional confirm dialog. */
+export const ASSISTANT_CONFIRM_MIN = 68
 
 export type GlobalAssistantParseContext = {
   platform?: PlatformAssistantPlatform
@@ -69,22 +84,87 @@ function tabAvailable(page: string, ctx: GlobalAssistantParseContext): boolean {
   return ctx.availableTabIds.includes(page)
 }
 
-export function parseGlobalAssistantCommand(
-  raw: string,
-  ctx: GlobalAssistantParseContext = {},
-): GlobalAssistantAction {
+function scoreToConfidence(ruleScore: number): number {
+  return Math.min(100, Math.round(ruleScore * 2.75))
+}
+
+function scoredToAction(top: ScoredMatch, text: string, ctx: GlobalAssistantParseContext): GlobalAssistantAction | null {
+  if (top.kind === "wizard") {
+    const def = getSetupMiniWizardDef(top.wizardId)
+    if (def && !tabAvailable(def.page, ctx)) {
+      return {
+        type: "clarify",
+        message: `“${def.label}” lives under ${pageLabel(def.page)}, but that tab is not enabled on your portal. Ask your admin or open Setup Guide.`,
+      }
+    }
+    return {
+      type: "open_mini_wizard",
+      wizardId: top.wizardId,
+      message: def
+        ? `Opening ${def.label} on ${pageLabel(def.page)}. ${def.locationHint}`
+        : `Opening the ${top.wizardId.replace(/_/g, " ")} setup wizard.`,
+    }
+  }
+  if (top.kind === "admin") {
+    return {
+      type: "open_admin",
+      panel: top.panel,
+      message: `Opening admin — ${ADMIN_PANEL_LABELS[top.panel]}.`,
+    }
+  }
+  if (top.kind === "page") {
+    if (!tabAvailable(top.page, ctx)) {
+      const alt = ctx.availableTabIds?.[0]
+      return {
+        type: "clarify",
+        message: alt
+          ? `The “${top.label}” tab is not on your portal menu. Try “${pageLabel(alt)}” or ask your admin to enable ${top.label}.`
+          : `The “${top.label}” tab is not enabled for your account.`,
+      }
+    }
+    if (/\bschedul/i.test(text) && /\b(problem|issue|help|confus|wrong)\b/i.test(text)) {
+      return {
+        type: "navigate",
+        page: "calendar",
+        message: "Opening Scheduling. Try “scheduling alerts” or “receipt template” for a guided setup.",
+      }
+    }
+    return {
+      type: "navigate",
+      page: top.page,
+      message: `Opening ${pageLabel(top.page)}.`,
+    }
+  }
+  return null
+}
+
+export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseContext = {}): AssistantParseResult {
   const text = normalizeCommandText(raw)
   const platform = ctx.platform ?? "user"
 
   if (!text) {
     return {
-      type: "clarify",
-      message: `Tell me what you would like to do — for example “${suggestPhrasesForPlatform(platform, 3).join('”, “')}”.`,
+      confidence: 0,
+      action: {
+        type: "clarify",
+        message: `Tell me what you would like to do — for example “${suggestPhrasesForPlatform(platform, 3).join('”, “')}”.`,
+      },
+    }
+  }
+
+  const customerQ = extractCustomerSearchQuery(text)
+  if (
+    customerQ &&
+    (/\b(open|find|show|view|go\s+to|pull\s+up|customer|client)\b/i.test(text) || customerQ.length >= 3)
+  ) {
+    return {
+      confidence: 86,
+      action: { type: "find_customer", query: customerQ, message: `Looking up customer “${customerQ}”…` },
     }
   }
 
   if (/\bsetup\s+guide\b/i.test(text) || /\binitial\s+setup\b/i.test(text) || /\bget\s+started\b/i.test(text)) {
-    return { type: "open_setup_guide", message: "Opening the Setup Guide." }
+    return { confidence: 95, action: { type: "open_setup_guide", message: "Opening the Setup Guide." } }
   }
 
   const scored: ScoredMatch[] = []
@@ -112,77 +192,64 @@ export function parseGlobalAssistantCommand(
   const second = scored[1]
 
   if (top && top.score >= 8) {
-    if (second && second.score >= top.score - 2 && top.kind !== second.kind) {
-      return {
-        type: "clarify",
-        message: `I heard multiple matches. Try being more specific — e.g. “${describeScored(top)}” or “${describeScored(second)}”.`,
+    const primary = scoredToAction(top, text, ctx)
+    if (!primary) {
+      return { confidence: 0, action: { type: "clarify", message: "Could not route that request." } }
+    }
+    if (primary.type === "clarify") {
+      return { confidence: 40, action: primary }
+    }
+
+    const confidence = scoreToConfidence(top.score)
+    const alternatives: AssistantParseResult["alternatives"] = []
+
+    if (second && second.score >= top.score - 3) {
+      const altAction = scoredToAction(second, text, ctx)
+      if (altAction && altAction.type !== "clarify" && altAction.type !== primary.type) {
+        alternatives.push({
+          label: describeScored(second),
+          action: altAction,
+          confidence: scoreToConfidence(second.score),
+        })
       }
     }
 
-    if (top.kind === "wizard") {
-      const def = getSetupMiniWizardDef(top.wizardId)
-      if (def && !tabAvailable(def.page, ctx)) {
-        return {
-          type: "clarify",
-          message: `“${def.label}” lives under ${pageLabel(def.page)}, but that tab is not enabled on your portal. Ask your admin or open Setup Guide.`,
-        }
-      }
+    if (alternatives.length > 0 && confidence < ASSISTANT_AUTO_CONFIDENCE) {
       return {
-        type: "open_mini_wizard",
-        wizardId: top.wizardId,
-        message: def
-          ? `Opening ${def.label} on ${pageLabel(def.page)}. ${def.locationHint}`
-          : `Opening the ${top.wizardId.replace(/_/g, " ")} setup wizard.`,
+        confidence,
+        action: primary,
+        alternatives: [{ label: describeScored(top), action: primary, confidence }, ...alternatives].slice(0, 3),
       }
     }
 
-    if (top.kind === "admin") {
-      return {
-        type: "open_admin",
-        panel: top.panel,
-        message: `Opening admin — ${ADMIN_PANEL_LABELS[top.panel]}.`,
-      }
-    }
-
-    if (top.kind === "page") {
-      if (!tabAvailable(top.page, ctx)) {
-        const alt = ctx.availableTabIds?.[0]
-        return {
-          type: "clarify",
-          message: alt
-            ? `The “${top.label}” tab is not on your portal menu. Try “${pageLabel(alt)}” or ask your admin to enable ${top.label}.`
-            : `The “${top.label}” tab is not enabled for your account.`,
-        }
-      }
-      if (/\bschedul/i.test(text) && /\b(problem|issue|help|confus|wrong)\b/i.test(text)) {
-        return {
-          type: "navigate",
-          page: "calendar",
-          message: "Opening Scheduling. Try “scheduling alerts” or “receipt template” for a guided setup.",
-        }
-      }
-      return {
-        type: "navigate",
-        page: top.page,
-        message: `Opening ${pageLabel(top.page)}.`,
-      }
-    }
+    return { confidence, action: primary, alternatives: alternatives.length ? alternatives : undefined }
   }
 
   if (/\bschedul/i.test(text) && /\b(problem|issue|help|confus|wrong)\b/i.test(text)) {
     return {
-      type: "navigate",
-      page: "calendar",
-      message: "Opening Scheduling. Try “scheduling alerts” or “receipt template” for a guided setup.",
+      confidence: 78,
+      action: {
+        type: "navigate",
+        page: "calendar",
+        message: "Opening Scheduling. Try “scheduling alerts” or “receipt template” for a guided setup.",
+      },
     }
   }
 
   const hints = suggestPhrasesForPlatform(platform, 6).map((p) => `“${p}”`).join(", ")
   logAssistantMiss(text, platform)
   return {
-    type: "clarify",
-    message: `I did not match that yet. Try ${hints}, or “setup guide”.`,
+    confidence: 0,
+    action: {
+      type: "clarify",
+      message: `I did not match that yet. Try ${hints}, or “setup guide”.`,
+    },
   }
+}
+
+/** @deprecated Prefer parseAssistantCommand for confidence; returns action only. */
+export function parseGlobalAssistantCommand(raw: string, ctx: GlobalAssistantParseContext = {}): GlobalAssistantAction {
+  return parseAssistantCommand(raw, ctx).action
 }
 
 const ASSISTANT_MISS_LOG_KEY = "tradesman_assistant_miss_log"

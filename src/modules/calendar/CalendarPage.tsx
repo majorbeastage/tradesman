@@ -11,6 +11,7 @@ import {
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
@@ -2142,7 +2143,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Team management
                 </button>
               ) : null}
-              {userId ? <TabNotificationAlertsButton tab="calendar" profileUserId={userId} /> : null}
+              {userId ? (
+                <>
+                  <TabNotificationAlertsButton tab="calendar" profileUserId={userId} />
+                  <SetupWizardLaunchButton wizardId="scheduling_alerts" compact />
+                </>
+              ) : null}
             </div>
             {showCalAutoResponse ? (
               <button
@@ -2181,13 +2187,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </button>
             ) : null}
             {showCalReceiptTemplate ? (
-              <button
-                type="button"
-                onClick={() => setShowReceiptTemplateModal(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-              >
-                {receiptTemplateButtonLabel}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowReceiptTemplateModal(true)}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
+                >
+                  {receiptTemplateButtonLabel}
+                </button>
+                <SetupWizardLaunchButton wizardId="scheduling_receipt_template" compact />
+              </>
             ) : null}
             {showManagedJobTypesEntry ? (
               <button

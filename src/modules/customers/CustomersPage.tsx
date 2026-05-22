@@ -33,7 +33,9 @@ import {
 } from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
+import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import {
   loadCustomerCalendarEvents,
   type CustomerCalendarEventRow,
@@ -899,6 +901,34 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }, [userId])
 
+  const hydrateLeadFilterPrefsFromMetadata = useCallback((meta: Record<string, unknown>) => {
+    const lf = meta.lead_filter_preferences
+    if (lf && typeof lf === "object" && !Array.isArray(lf)) {
+      const p = lf as Record<string, unknown>
+      const minRaw = p.minimum_job_size
+      const radRaw = p.service_radius_miles
+      setLeadFilterPrefs({
+        accepted_job_types: typeof p.accepted_job_types === "string" ? p.accepted_job_types : "",
+        minimum_job_size:
+          typeof minRaw === "number" && Number.isFinite(minRaw)
+            ? String(minRaw)
+            : typeof minRaw === "string"
+              ? minRaw
+              : "",
+        service_radius_miles:
+          typeof radRaw === "number" && Number.isFinite(radRaw)
+            ? String(radRaw)
+            : typeof radRaw === "string"
+              ? radRaw
+              : "",
+        use_account_service_radius: p.use_account_service_radius !== false,
+        availability: p.availability === "asap" ? "asap" : "flexible",
+        enable_auto_filter: p.enable_auto_filter === true,
+        use_ai_for_unclear: p.use_ai_for_unclear !== false,
+      })
+    }
+  }, [])
+
   useEffect(() => {
     if (!supabase || !userId) return
     let cancelled = false
@@ -909,37 +939,22 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
-        const meta = data.metadata as Record<string, unknown>
-        const lf = meta.lead_filter_preferences
-        if (lf && typeof lf === "object" && !Array.isArray(lf)) {
-          const p = lf as Record<string, unknown>
-          const minRaw = p.minimum_job_size
-          const radRaw = p.service_radius_miles
-          setLeadFilterPrefs({
-            accepted_job_types: typeof p.accepted_job_types === "string" ? p.accepted_job_types : "",
-            minimum_job_size:
-              typeof minRaw === "number" && Number.isFinite(minRaw)
-                ? String(minRaw)
-                : typeof minRaw === "string"
-                  ? minRaw
-                  : "",
-            service_radius_miles:
-              typeof radRaw === "number" && Number.isFinite(radRaw)
-                ? String(radRaw)
-                : typeof radRaw === "string"
-                  ? radRaw
-                  : "",
-            use_account_service_radius: p.use_account_service_radius !== false,
-            availability: p.availability === "asap" ? "asap" : "flexible",
-            enable_auto_filter: p.enable_auto_filter === true,
-            use_ai_for_unclear: p.use_ai_for_unclear !== false,
-          })
-        }
+        hydrateLeadFilterPrefsFromMetadata(data.metadata as Record<string, unknown>)
       })
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, hydrateLeadFilterPrefsFromMetadata])
+
+  useEffect(() => {
+    const onMeta = (ev: Event) => {
+      const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
+      if (!detail || detail.userId !== userId) return
+      hydrateLeadFilterPrefsFromMetadata(detail.metadata)
+    }
+    window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+    return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+  }, [userId, hydrateLeadFilterPrefsFromMetadata])
 
   useEffect(() => {
     void loadCustomers()
@@ -1661,6 +1676,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         >
           {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
         </button>
+        <SetupWizardLaunchButton wizardId="customers_auto_replies" compact />
         <button
           type="button"
           onClick={() => setShowLeadFilterPrefs(true)}
@@ -1676,6 +1692,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         >
           Lead filter preferences
         </button>
+        <SetupWizardLaunchButton wizardId="customers_lead_filters" compact />
         {userId ? <TabNotificationAlertsButton tab="customers" profileUserId={userId} /> : null}
       </div>
 

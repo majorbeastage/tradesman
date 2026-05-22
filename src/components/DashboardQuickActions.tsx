@@ -807,22 +807,43 @@ export default function DashboardQuickActions(props: Props) {
           >
             {sectionTitle}
           </h2>
-          <button
-            type="button"
-            onClick={() => setCustomize((c) => !c)}
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: `1px solid ${hoverBorder}`,
-            background: customize ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.3)",
-            color: "#0f172a",
-              cursor: "pointer",
-            }}
-          >
-            {customize ? labels.customizeDone : labels.customizeHint}
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            {onOpenSetupGuide && !customize ? (
+              <button
+                type="button"
+                onClick={onOpenSetupGuide}
+                style={{
+                  fontSize: 13,
+                  fontWeight: 800,
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#6366f1",
+                  color: "#fff",
+                  cursor: "pointer",
+                  boxShadow: "0 4px 14px rgba(99,102,241,0.35)",
+                }}
+              >
+                {labels.setupGuide}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setCustomize((c) => !c)}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${hoverBorder}`,
+                background: customize ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.3)",
+                color: "#0f172a",
+                cursor: "pointer",
+              }}
+            >
+              {customize ? labels.customizeDone : labels.customizeHint}
+            </button>
+          </div>
         </div>
         {ga && !customize ? (
           <div style={{ marginTop: 10 }}>

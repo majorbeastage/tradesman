@@ -1,14 +1,22 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
+import AssistantConfirmDialog, { type AssistantConfirmOption } from "../components/AssistantConfirmDialog"
+import { searchCustomersByQuery } from "../lib/customerAssistantSearch"
+import { queueCustomerFocus } from "../lib/customerNavigation"
 import { supabase } from "../lib/supabase"
 import {
   ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
-  parseGlobalAssistantCommand,
+  ASSISTANT_AUTO_CONFIDENCE,
+  ASSISTANT_CONFIRM_MIN,
+  parseAssistantCommand,
+  type GlobalAssistantAction,
   type GlobalAssistantParseContext,
 } from "../lib/globalAssistantNav"
 import { useView } from "./ViewContext"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
 import { useSetupWizardOptional } from "./SetupWizardContext"
+import { getSetupMiniWizardDef } from "../lib/setupGuideWizards"
+
 
 type GlobalAssistantContextValue = {
   assistantText: string
@@ -65,6 +73,10 @@ export function GlobalAssistantProvider({
   const setupGuideOpenerRef = useRef<(() => void) | null>(null)
   const skipVoiceAutoApplyRef = useRef(false)
   const setupWizard = useSetupWizardOptional()
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string
+    options: AssistantConfirmOption[]
+  } | null>(null)
 
   const parseContext = useMemo<GlobalAssistantParseContext>(
     () => ({ platform, availableTabIds, isAdmin }),
@@ -79,43 +91,125 @@ export function GlobalAssistantProvider({
     setupGuideOpenerRef.current?.()
   }, [])
 
+  const executeAssistantAction = useCallback(
+    async (action: GlobalAssistantAction) => {
+      if (action.type === "clarify") {
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "open_setup_guide") {
+        setAssistantNote(action.message)
+        openSetupGuide()
+        return
+      }
+      if (action.type === "open_mini_wizard") {
+        setupWizard?.launchWizard(action.wizardId)
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "open_admin") {
+        try {
+          sessionStorage.setItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY, action.panel)
+        } catch {
+          /* ignore */
+        }
+        setView("admin")
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "open_customer") {
+        queueCustomerFocus(action.customerId)
+        setPage("customers")
+        setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "find_customer") {
+        if (!supabase || !profileUserId) {
+          setAssistantNote("Sign in to look up customers.")
+          return
+        }
+        setAssistantNote(action.message)
+        const hits = await searchCustomersByQuery(supabase, profileUserId, action.query)
+        if (hits.length === 0) {
+          setAssistantNote(`No customer matched “${action.query}”. Try their full name from your customer list.`)
+          return
+        }
+        if (hits.length === 1) {
+          await executeAssistantAction({
+            type: "open_customer",
+            customerId: hits[0].id,
+            customerName: hits[0].display_name,
+            message: `Opening ${hits[0].display_name}.`,
+          })
+          return
+        }
+        setConfirmDialog({
+          message: `Several customers match “${action.query}”. Which one?`,
+          options: hits.slice(0, 5).map((h) => ({
+            label: h.phone ? `${h.display_name} · ${h.phone}` : h.display_name,
+            action: {
+              type: "open_customer",
+              customerId: h.id,
+              customerName: h.display_name,
+              message: `Opening ${h.display_name}.`,
+            },
+          })),
+        })
+        return
+      }
+      if (action.type === "navigate") {
+        setPage(action.page)
+        setAssistantNote(action.message)
+      }
+    },
+    [openSetupGuide, profileUserId, setPage, setView, setupWizard],
+  )
+
   const runAssistantCommand = useCallback(
     async (raw: string) => {
       setAssistantBusy(true)
       setAssistantNote(null)
+      setConfirmDialog(null)
       try {
-        const action = parseGlobalAssistantCommand(raw, parseContext)
-        if (action.type === "clarify") {
+        const parsed = parseAssistantCommand(raw, parseContext)
+        const { action, confidence, alternatives } = parsed
+
+        if (action.type === "clarify" || confidence < ASSISTANT_CONFIRM_MIN) {
           setAssistantNote(action.message)
           return
         }
-        if (action.type === "open_setup_guide") {
-          setAssistantNote(action.message)
-          openSetupGuide()
+
+        if (confidence >= ASSISTANT_AUTO_CONFIDENCE) {
+          await executeAssistantAction(action)
           return
         }
-        if (action.type === "open_mini_wizard") {
-          setupWizard?.launchWizard(action.wizardId)
-          setAssistantNote(action.message)
-          return
+
+        const options: AssistantConfirmOption[] = [
+          {
+            label:
+              action.type === "navigate"
+                ? `Open ${action.message.replace(/^Opening\s+/i, "").replace(/\.$/, "")}`
+                : action.type === "open_mini_wizard"
+                  ? getSetupMiniWizardDef(action.wizardId)?.label ?? "Open setup wizard"
+                  : action.type === "find_customer"
+                    ? `Find customer “${action.query}”`
+                    : action.message.replace(/\.$/, ""),
+            action,
+          },
+        ]
+        for (const alt of alternatives ?? []) {
+          if (options.length >= 3) break
+          options.push({ label: alt.label, action: alt.action })
         }
-        if (action.type === "open_admin") {
-          try {
-            sessionStorage.setItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY, action.panel)
-          } catch {
-            /* ignore */
-          }
-          setView("admin")
-          setAssistantNote(action.message)
-          return
-        }
-        setPage(action.page)
-        setAssistantNote(action.message)
+        setConfirmDialog({
+          message: `I'm about ${Math.round(confidence)}% sure. Confirm what you meant:`,
+          options,
+        })
       } finally {
         setAssistantBusy(false)
       }
     },
-    [openSetupGuide, parseContext, setPage, setView, setupWizard],
+    [executeAssistantAction, parseContext],
   )
 
   const onVoiceSessionEnd = useCallback(
@@ -230,7 +324,21 @@ export function GlobalAssistantProvider({
     ],
   )
 
-  return <GlobalAssistantContext.Provider value={value}>{children}</GlobalAssistantContext.Provider>
+  return (
+    <GlobalAssistantContext.Provider value={value}>
+      {children}
+      <AssistantConfirmDialog
+        open={Boolean(confirmDialog)}
+        message={confirmDialog?.message ?? ""}
+        options={confirmDialog?.options ?? []}
+        onPick={(action) => {
+          setConfirmDialog(null)
+          void executeAssistantAction(action)
+        }}
+        onCancel={() => setConfirmDialog(null)}
+      />
+    </GlobalAssistantContext.Provider>
+  )
 }
 
 export function useGlobalAssistant(): GlobalAssistantContextValue {
