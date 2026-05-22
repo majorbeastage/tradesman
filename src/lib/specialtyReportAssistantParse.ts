@@ -101,28 +101,46 @@ export function matchSubsectionIdFromPhrase(rest: string): string | null {
   return null
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/** Avoid mapping long free-form dictation into a header when a short hint appears as a substring. */
+function fieldPhraseMatchesHint(fieldNorm: string, hint: string): boolean {
+  const h = hint.trim()
+  if (!h || !fieldNorm) return false
+  if (fieldNorm === h) return true
+  if (h.includes(" ")) {
+    if (fieldNorm.includes(h)) return true
+    if (h.length >= 14 && fieldNorm.length <= 72 && h.includes(fieldNorm)) return true
+    return false
+  }
+  if (fieldNorm.length > 72) return false
+  const re = new RegExp(`\\b${escapeRegex(h)}\\b`, "i")
+  return re.test(fieldNorm)
+}
+
 export function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
   const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
   const headerPairs: Array<[string[], string]> = [
-    [["inspector name", "inspector", "inspectors name", "inspector's name"], "header.inspectorName"],
+    [["inspector name", "inspectors name", "inspector's name"], "header.inspectorName"],
     [
       ["inspection id", "inspection number", "file id", "report id", "file number", "reference number", "trec id"],
       "header.inspectionReference",
     ],
-    [["license id", "license number", "license", "cert id", "certification"], "header.licenseId"],
+    [["license id", "license number", "cert id", "certification"], "header.licenseId"],
     [["inspection date", "report date", "date of inspection"], "header.inspectionDate"],
     [["weather", "site conditions", "site condition", "weather conditions"], "header.weather"],
     [["property address", "job address", "site address", "address of property"], "header.propertyAddress"],
-    [["address"], "header.propertyAddress"],
     [["parties present", "parties", "attendees", "people present"], "header.partiesPresent"],
-    [["scope and limitations", "scope limitations", "limitations", "scope"], "scopeLimitations"],
-    [["executive summary", "summary", "summary findings"], "summaryFindings"],
+    [["scope and limitations", "scope limitations", "limitations"], "scopeLimitations"],
+    [["executive summary", "summary findings"], "summaryFindings"],
     [["media notes", "workflow notes", "media workflow"], "mediaWorkflowNotes"],
     [["drone notes", "drone integration"], "droneIntegrationNotes"],
   ]
   for (const [hints, key] of headerPairs) {
     for (const h of hints) {
-      if (f === h || f.includes(h) || (h.length >= 6 && h.includes(f))) return key
+      if (fieldPhraseMatchesHint(f, h)) return key
     }
   }
   const subId = matchSubsectionIdFromPhrase(f)

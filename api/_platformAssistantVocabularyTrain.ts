@@ -91,6 +91,12 @@ function validateAction(raw: unknown): Record<string, unknown> | null {
     if (message) out.message = message
     return out
   }
+  if (type === "open_specialty_report") {
+    const out: Record<string, unknown> = { type }
+    if (o.useSelectedQuote !== false) out.useSelectedQuote = true
+    if (message) out.message = message
+    return out
+  }
   if (type === "handoff_specialist_assistant") {
     const specialist = clip(o.specialist, 48)
     const scopeText = clip(o.scopeText, 2000)
@@ -241,7 +247,7 @@ Saved training = when a **customer** later says certain words, the app does the 
 - clarifyingQuestions: 0–4 **short** tap-to-answer options (yes/no style or brief choices) that mirror what you asked — optional if everything is in reply.
 
 ## Action JSON (action field only — admin never sees this)
-navigate, find_customer, create_estimate, focus_customer_sms, open_current_customer, open_last_missed_call, explain, open_setup_guide, open_mini_wizard, open_admin, handoff_specialist_assistant (specialist, scopeText, mode, jobTypeName?).
+navigate, find_customer, create_estimate, focus_customer_sms, open_specialty_report (useSelectedQuote when estimate on screen), open_current_customer, open_last_missed_call, explain, open_setup_guide, open_mini_wizard, open_admin, handoff_specialist_assistant (specialist, scopeText, mode, jobTypeName?).
 
 Reply JSON only (no markdown):
 {

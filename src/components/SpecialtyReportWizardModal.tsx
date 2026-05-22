@@ -3,7 +3,15 @@ import { useIsMobile } from "../hooks/useIsMobile"
 import { useAuth } from "../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { theme } from "../styles/theme"
-import { supabase } from "../lib/supabase"
+import { supabase, supabaseAnonKey, supabaseUrl } from "../lib/supabase"
+import {
+  buildHomeInspectionReportDocxBlob,
+  buildHomeInspectionReportHtml,
+  buildHomeInspectionReportPlainText,
+  downloadBlob,
+  printHomeInspectionReport,
+  type HomeInspectionExportMeta,
+} from "../lib/specialtyReports/homeInspectionReportExport"
 import { DRONE_PROVIDER_CATALOG } from "../lib/specialtyReports/droneIntegrationCatalog"
 import {
   CONDITION_RATING_LABELS,
@@ -58,6 +66,8 @@ type Props = {
   propertyAddressHint?: string
   customerLabel?: string
   customerId?: string | null
+  customerEmail?: string
+  conversationId?: string | null
   varianceAssigneeOptions?: Array<{ userId: string; label: string }>
 }
 
@@ -210,10 +220,12 @@ export default function SpecialtyReportWizardModal({
   propertyAddressHint = "",
   customerLabel,
   customerId = null,
+  customerEmail = "",
+  conversationId = null,
   varianceAssigneeOptions = [],
 }: Props) {
   const isMobile = useIsMobile()
-  const { user } = useAuth()
+  const { user, session } = useAuth()
   const globalAssistant = useGlobalAssistantOptional()
   const accountDisplayName = useMemo(() => {
     const meta = user?.user_metadata as Record<string, unknown> | undefined
@@ -238,6 +250,11 @@ export default function SpecialtyReportWizardModal({
   const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
   const [voiceFieldKey, setVoiceFieldKey] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [reportEmailOpen, setReportEmailOpen] = useState(false)
+  const [reportEmailSubject, setReportEmailSubject] = useState("")
+  const [reportEmailBody, setReportEmailBody] = useState("")
+  const [reportEmailSending, setReportEmailSending] = useState(false)
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [assignedUserId, setAssignedUserId] = useState<string>("")
@@ -579,7 +596,7 @@ export default function SpecialtyReportWizardModal({
   }, [phase, enabledReportTypes.length])
 
   const setDefaultTargetForPhase = useCallback((nextPhase: WizardPhase) => {
-    if (nextPhase === "home_header") setAiTarget("header.inspectorName")
+    if (nextPhase === "home_header") setAiTarget("scopeLimitations")
     else if (nextPhase === "home_findings") {
       const firstSub = HOME_INSPECTION_MAJOR_SECTIONS[0]?.subsections[0]?.id
       if (firstSub) setAiTarget(`sub:${firstSub}` as AiTargetField)
@@ -1045,6 +1062,119 @@ export default function SpecialtyReportWizardModal({
     return fieldKey === "genericNotes" ? genericFieldMedia[fieldKey] ?? [] : home.field_media[fieldKey] ?? []
   }
 
+  const exportMeta = useMemo((): HomeInspectionExportMeta => {
+    const title =
+      reportTitle.trim() ||
+      (picked ? SPECIALTY_REPORT_TYPE_LABELS[picked] : "Inspection report")
+    return {
+      title,
+      customerLabel: customerLabel?.trim() || undefined,
+      quoteId: quoteId ?? undefined,
+    }
+  }, [reportTitle, picked, customerLabel, quoteId])
+
+  function reportExportFilename(ext: string): string {
+    const addr = home.header.propertyAddress.trim().slice(0, 40).replace(/[^\w.-]+/g, "_")
+    const base = addr || exportMeta.title?.replace(/[^\w.-]+/g, "_") || "inspection-report"
+    return `${base}.${ext}`
+  }
+
+  async function printOrPdfReport() {
+    if (picked !== "home_inspection") {
+      setAssistantNote("Print/PDF export is available for the structure & property template. Save notes and use Preview for other types.")
+      return
+    }
+    setExportBusy(true)
+    try {
+      await saveCurrentReport()
+      printHomeInspectionReport(buildHomeInspectionReportHtml(home, exportMeta))
+      setSaveNote("Print dialog opened — choose Save as PDF to download.")
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  async function downloadWordReport() {
+    if (picked !== "home_inspection") {
+      setAssistantNote("Word export is available for the structure & property template.")
+      return
+    }
+    setExportBusy(true)
+    try {
+      await saveCurrentReport()
+      const blob = await buildHomeInspectionReportDocxBlob(home, exportMeta)
+      downloadBlob(blob, reportExportFilename("docx"))
+      setSaveNote("Word document downloaded.")
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not build Word document.")
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  function openReportEmailPanel() {
+    if (picked !== "home_inspection") {
+      setAssistantNote("Email export is available for the structure & property template.")
+      return
+    }
+    const plain = buildHomeInspectionReportPlainText(home, exportMeta)
+    const addr = home.header.propertyAddress.trim()
+    setReportEmailSubject(
+      reportEmailSubject.trim() ||
+        `${exportMeta.title ?? "Inspection report"}${addr ? ` — ${addr}` : ""}`,
+    )
+    setReportEmailBody(reportEmailBody.trim() || plain)
+    setReportEmailOpen(true)
+  }
+
+  async function sendReportCustomerEmail() {
+    const email = customerEmail?.trim()
+    if (!email) {
+      alert("No customer email on file. Add an email in Customer details first.")
+      return
+    }
+    const token = session?.access_token?.trim()
+    if (!token || !userId) {
+      alert("Sign in again to send email.")
+      return
+    }
+    const subject = reportEmailSubject.trim()
+    const body = reportEmailBody.trim()
+    if (!subject || !body) {
+      alert("Enter subject and body.")
+      return
+    }
+    setReportEmailSending(true)
+    try {
+      await saveCurrentReport()
+      const res = await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          to: email,
+          subject,
+          body,
+          userId,
+          conversationId: conversationId || undefined,
+          customerId: customerId || reportCustomerId || undefined,
+          ...(supabaseUrl ? { supabaseUrl } : {}),
+          ...(supabaseAnonKey ? { supabaseAnonKey } : {}),
+        }),
+      })
+      const raw = await res.text()
+      if (!res.ok) throw new Error(raw.slice(0, 400))
+      setSaveNote("Report emailed to customer.")
+      setReportEmailOpen(false)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReportEmailSending(false)
+    }
+  }
+
   async function saveCurrentReport() {
     if (!quoteId || !userId || !picked) return
     try {
@@ -1278,8 +1408,8 @@ export default function SpecialtyReportWizardModal({
       return false
     }
 
-    const allowDefaultTarget = options?.allowDefaultTarget !== false
-    if (allowDefaultTarget && text.length <= 72) {
+    const allowDefaultTarget = options?.allowDefaultTarget !== false && !options?.explicitApply
+    if (allowDefaultTarget && text.length <= 72 && aiTarget !== "header.inspectorName") {
       appendToTarget(aiTarget, text)
       setAssistantNote(`Added text into ${labelForAiTarget(aiTarget)}.`)
       if (options?.voiceChunk) markOverallVoiceConsumed()
@@ -1716,6 +1846,14 @@ export default function SpecialtyReportWizardModal({
                 <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
                   Field photos attached: {Object.values(home.field_media).reduce((sum, items) => sum + items.length, 0)}
                 </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                  <button type="button" disabled={exportBusy} onClick={() => void printOrPdfReport()} style={secondaryBtn}>
+                    Print / PDF
+                  </button>
+                  <button type="button" disabled={exportBusy} onClick={() => void downloadWordReport()} style={secondaryBtn}>
+                    Word
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -1986,9 +2124,74 @@ export default function SpecialtyReportWizardModal({
                   />
                   <FieldTools fieldKey="summaryFindings" />
                 </label>
-                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                  Next iterations: PDF packet, photo grids pulled from entity attachments, and guided deficiency tables for customer-safe exports.
-                </p>
+                <section
+                  style={{
+                    marginTop: 4,
+                    padding: "12px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <strong style={{ fontSize: 13, color: "#0f172a" }}>Export &amp; share</strong>
+                  <p style={{ margin: "6px 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Save first, then print to PDF, download Word, or email the customer. Photo grids in the packet are coming next.
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <button type="button" disabled={exportBusy} onClick={() => void printOrPdfReport()} style={secondaryBtn}>
+                      {exportBusy ? "Preparing…" : "Print / save PDF"}
+                    </button>
+                    <button type="button" disabled={exportBusy} onClick={() => void downloadWordReport()} style={secondaryBtn}>
+                      Download Word
+                    </button>
+                    <button type="button" onClick={() => openReportEmailPanel()} style={secondaryBtn}>
+                      Email to customer
+                    </button>
+                  </div>
+                  {reportEmailOpen ? (
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      {!customerEmail?.trim() ? (
+                        <p style={{ margin: 0, fontSize: 12, color: "#b45309" }}>
+                          No email on this customer — add one under Customer details.
+                        </p>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                          To: <strong>{customerEmail}</strong>
+                        </p>
+                      )}
+                      <label style={lbl}>
+                        Subject
+                        <input
+                          value={reportEmailSubject}
+                          onChange={(e) => setReportEmailSubject(e.target.value)}
+                          style={theme.formInput}
+                        />
+                      </label>
+                      <label style={lbl}>
+                        Body
+                        <textarea
+                          rows={10}
+                          value={reportEmailBody}
+                          onChange={(e) => setReportEmailBody(e.target.value)}
+                          style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
+                        />
+                      </label>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          disabled={reportEmailSending || !customerEmail?.trim()}
+                          onClick={() => void sendReportCustomerEmail()}
+                          style={primaryBtn}
+                        >
+                          {reportEmailSending ? "Sending…" : "Send email"}
+                        </button>
+                        <button type="button" onClick={() => setReportEmailOpen(false)} style={secondaryBtn}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
               </div>
             ) : null}
           </>
@@ -2009,7 +2212,20 @@ export default function SpecialtyReportWizardModal({
           </div>
         )}
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "space-between", marginTop: 18, paddingTop: 14, borderTop: `1px solid ${theme.border}` }}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            justifyContent: "space-between",
+            marginTop: 18,
+            paddingTop: 14,
+            paddingBottom: quoteId && phase !== "pick_type" ? 12 : 0,
+            paddingRight:
+              quoteId && phase !== "pick_type" && (globalAssistant?.speechSupported ?? speechSupported) ? 8 : 0,
+            borderTop: `1px solid ${theme.border}`,
+          }}
+        >
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {phase !== "pick_type" && enabledReportTypes.length > 1 ? (
               <button
@@ -2147,8 +2363,8 @@ function SpecialtyReportVoiceFab({
         style={{
           position: "fixed",
           zIndex: 10060,
-          right: isMobile ? 20 : "calc((100vw - min(720px, 100vw - 24px)) / 2 + 14px)",
-          bottom: isMobile ? "max(20px, calc(12px + env(safe-area-inset-bottom, 0px)))" : 28,
+          left: isMobile ? 20 : "max(20px, calc(50% - min(360px, 50vw - 12px) + 14px))",
+          bottom: isMobile ? "max(88px, calc(72px + env(safe-area-inset-bottom, 0px)))" : 96,
           width: isMobile ? 56 : 52,
           height: isMobile ? 56 : 52,
           borderRadius: "50%",

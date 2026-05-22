@@ -97,6 +97,8 @@ export function describeCustomAction(a: AssistantCustomActionPayload): string {
       return a.useSelectedCustomer ? "Start estimate (customer on screen)" : `Start estimate for ${a.customerQuery ?? "named customer"}`
     case "focus_customer_sms":
       return a.useSelectedCustomer ? "Open SMS (customer on screen)" : `SMS for ${a.customerQuery ?? "customer"}`
+    case "open_specialty_report":
+      return a.useSelectedQuote !== false ? "Start specialty / variance report (estimate on screen)" : "Start specialty / variance report"
     case "handoff_specialist_assistant":
       return `Hand off → ${a.specialist.replace(/_/g, " ")}`
     case "open_mini_wizard":

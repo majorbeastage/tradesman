@@ -30,6 +30,7 @@ import {
   buildPlatformAssistantDomainTraining,
   isCreateEstimatePhrase,
   isFocusSmsPhrase,
+  isOpenSpecialtyReportPhrase,
   isOpenSelectedCustomerOnlyPhrase,
   normalizeAssistantPhrase,
   phraseHasWorkflowCue,
@@ -50,6 +51,7 @@ export type GlobalAssistantAction =
   | { type: "open_current_customer"; message: string }
   | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
   | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "open_specialty_report"; quoteId?: string; message: string }
   | { type: "explain"; message: string }
   | {
       type: "handoff_specialist_assistant"
@@ -97,13 +99,15 @@ export type GlobalAssistantParseContext = {
   /** Customers tab — row/detail currently open (Phase 3). */
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
+  /** Estimates tab — quote row open (specialty / variance report wizard). */
+  selectedQuoteId?: string | null
   /** Admin-trained phrases from platform_settings (live). */
   customVocabulary?: AssistantCustomVocabularyEntry[]
 }
 
 export function customPayloadToGlobalAction(
   payload: AssistantCustomActionPayload,
-  ctx: Pick<GlobalAssistantParseContext, "selectedCustomerId" | "selectedCustomerName">,
+  ctx: Pick<GlobalAssistantParseContext, "selectedCustomerId" | "selectedCustomerName" | "selectedQuoteId">,
 ): GlobalAssistantAction | null {
   const msg =
     payload.message?.trim() ||
@@ -144,6 +148,10 @@ export function customPayloadToGlobalAction(
         return { type: "focus_customer_sms", customerId: ctx.selectedCustomerId, message: msg }
       }
       return { type: "focus_customer_sms", message: msg }
+    }
+    case "open_specialty_report": {
+      const quoteId = payload.useSelectedQuote && ctx.selectedQuoteId ? ctx.selectedQuoteId : undefined
+      return { type: "open_specialty_report", quoteId, message: msg }
     }
     case "explain":
       return { type: "explain", message: msg }
@@ -390,6 +398,24 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
     }
   }
 
+  if (isOpenSpecialtyReportPhrase(text)) {
+    if (tabAvailable("quotes", ctx)) {
+      const qid = ctx.selectedQuoteId?.trim()
+      return {
+        confidence: qid ? 94 : 86,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: {
+          type: "open_specialty_report",
+          quoteId: qid || undefined,
+          message: qid
+            ? "Opening specialty report for this estimate."
+            : "Opening Estimates — select an estimate, then say start report again or tap Start report.",
+        },
+      }
+    }
+  }
+
   if (isCreateEstimatePhrase(text)) {
     const target = resolveCustomerTargetFromPhrase(text, ctx)
     if (target.customerId || target.customerQuery) {
@@ -606,6 +632,7 @@ export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): 
     currentPage: ctx.currentPage,
     selectedCustomerId: ctx.selectedCustomerId,
     selectedCustomerName: ctx.selectedCustomerName,
+    selectedQuoteId: ctx.selectedQuoteId,
   })
   const custom = buildCustomVocabularyCatalogSection(ctx.customVocabulary ?? [])
   const domain = buildPlatformAssistantDomainTraining(ctx)

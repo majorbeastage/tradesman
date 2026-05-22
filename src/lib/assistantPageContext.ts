@@ -3,4 +3,5 @@
 export type AssistantPageSnapshot = {
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
+  selectedQuoteId?: string | null
 }

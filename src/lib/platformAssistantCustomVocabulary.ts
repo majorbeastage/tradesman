@@ -23,6 +23,7 @@ export type AssistantCustomActionPayload =
   | { type: "open_current_customer"; message?: string }
   | { type: "create_estimate"; customerQuery?: string; useSelectedCustomer?: boolean; message?: string }
   | { type: "focus_customer_sms"; customerQuery?: string; useSelectedCustomer?: boolean; message?: string }
+  | { type: "open_specialty_report"; useSelectedQuote?: boolean; message?: string }
   | { type: "explain"; message?: string }
   | {
       type: "handoff_specialist_assistant"
@@ -106,6 +107,8 @@ function defaultMessage(action: AssistantCustomActionPayload): string {
       return "Starting estimate."
     case "focus_customer_sms":
       return "Opening SMS compose."
+    case "open_specialty_report":
+      return "Opening specialty / variance report."
     case "explain":
       return "Here is what you can do on this screen."
     case "handoff_specialist_assistant":
@@ -117,7 +120,11 @@ function defaultMessage(action: AssistantCustomActionPayload): string {
 
 export function resolveCustomVocabularyAction(
   payload: AssistantCustomActionPayload,
-  ctx: { selectedCustomerId?: string | null; selectedCustomerName?: string | null },
+  ctx: {
+    selectedCustomerId?: string | null
+    selectedCustomerName?: string | null
+    selectedQuoteId?: string | null
+  },
 ): AssistantCustomActionPayload | null {
   const msg = payload.message?.trim() || defaultMessage(payload)
   switch (payload.type) {
@@ -163,6 +170,12 @@ export function resolveCustomVocabularyAction(
       }
       return { type: "focus_customer_sms", message: msg }
     }
+    case "open_specialty_report": {
+      if (payload.useSelectedQuote !== false && ctx.selectedQuoteId) {
+        return { type: "open_specialty_report", useSelectedQuote: true, message: msg }
+      }
+      return { type: "open_specialty_report", message: msg }
+    }
     case "explain":
       return { type: "explain", message: msg }
     case "handoff_specialist_assistant": {
@@ -185,7 +198,11 @@ export function resolveCustomVocabularyAction(
 export function matchCustomVocabularyEntry(
   text: string,
   entries: AssistantCustomVocabularyEntry[],
-  ctx: { selectedCustomerId?: string | null; selectedCustomerName?: string | null },
+  ctx: {
+    selectedCustomerId?: string | null
+    selectedCustomerName?: string | null
+    selectedQuoteId?: string | null
+  },
 ): AssistantCustomActionPayload | null {
   const enabled = entries.filter((e) => e.enabled)
   const sorted = [...enabled].sort((a, b) => b.phrase.length - a.phrase.length)
@@ -258,6 +275,7 @@ export const ASSISTANT_VOCABULARY_ACTION_OPTIONS: Array<{
 }> = [
   { value: "handoff_specialist_assistant", label: "Hand off to estimate specialist (AI lines)" },
   { value: "create_estimate", label: "Start / open estimate (quote)" },
+  { value: "open_specialty_report", label: "Start specialty / variance report" },
   { value: "focus_customer_sms", label: "Open SMS compose for customer" },
   { value: "find_customer", label: "Find customer by name" },
   { value: "open_current_customer", label: "Open customer on screen" },

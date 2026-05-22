@@ -10,6 +10,7 @@ export type AssistantVocabularyContext = {
   currentPage?: string
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
+  selectedQuoteId?: string | null
 }
 
 export function normalizeAssistantPhrase(raw: string): string {
@@ -50,6 +51,21 @@ export function isCreateEstimatePhrase(text: string): boolean {
   return false
 }
 
+/** Open the specialty / variance report wizard on the current estimate (not the Reporting tab). */
+export function isOpenSpecialtyReportPhrase(text: string): boolean {
+  if (/\b(go\s+to|open)\s+(?:the\s+)?reporting\b/i.test(text) && !/\b(start|begin|create|launch|run)\b/i.test(text)) {
+    return false
+  }
+  return (
+    /\b(start|open|begin|create|launch|run)\s+(?:a\s+|the\s+)?(?:(?:variance|specialty|inspection|home)\s+)?(?:report|reports?)\b/i.test(
+      text,
+    ) ||
+    /\b(start|open)\s+(?:the\s+)?(?:variance|specialty|inspection)\b/i.test(text) ||
+    (/\bvariance\s+report\b/i.test(text) && /\b(start|open|begin|create|launch|run)\b/i.test(text)) ||
+    /\bstart\s+report\b/i.test(text)
+  )
+}
+
 export function isFocusSmsPhrase(text: string): boolean {
   return (
     /\b(text|sms|message|msg)(?:\s+them|\s+him|\s+her|\s+this\s+customer|\s+customer)?\b/i.test(text) ||
@@ -63,7 +79,7 @@ export function isFocusSmsPhrase(text: string): boolean {
 /** Open/view customer record only — not estimate or SMS workflow. */
 export function isOpenSelectedCustomerOnlyPhrase(text: string): boolean {
   if (!refersToSelectedCustomer(text)) return false
-  if (isCreateEstimatePhrase(text) || isFocusSmsPhrase(text)) return false
+  if (isCreateEstimatePhrase(text) || isFocusSmsPhrase(text) || isOpenSpecialtyReportPhrase(text)) return false
   return (
     /\b(open|show|view|expand|go\s+to|pull\s+up|focus|see)\b/i.test(text) ||
     /\b(this|current|selected)\s+(customer|client)\b/i.test(text) ||
@@ -75,6 +91,7 @@ export function isOpenSelectedCustomerOnlyPhrase(text: string): boolean {
 export function phraseHasWorkflowCue(text: string): boolean {
   return (
     isCreateEstimatePhrase(text) ||
+    isOpenSpecialtyReportPhrase(text) ||
     isFocusSmsPhrase(text) ||
     refersToSelectedCustomer(text) ||
     /\b(missed\s+call|voicemail|last\s+call)\b/i.test(text) ||
@@ -137,6 +154,9 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push("- **open_current_customer** = re-focus the customer already open on Customers — do NOT use when user wants an estimate or SMS.")
   lines.push("- **find_customer** = search by name when no record is selected; use `customerQuery` with the name fragment only.")
   lines.push("- **open_last_missed_call** = most recent missed inbound call tied to a customer record.")
+  lines.push(
+    "- **open_specialty_report** = open Estimates and launch the specialty / variance report wizard (Start report) for the estimate on screen.",
+  )
   lines.push("- **My T** / **account** = business phone, forwarding, voicemail (tab `account`).")
   lines.push("- **Leads** = inbound lead inbox; **Conversations** = message threads.")
   lines.push("- **Setup guide** / mini-wizards = in-app configuration (auto-replies, line items, scheduling alerts, etc.).")
@@ -168,6 +188,7 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push("| text them, send SMS, message customer, open SMS | focus_customer_sms |")
   lines.push("| open customer Johnson, find client Mike, pull up Smith | find_customer |")
   lines.push("| last missed call, who called, missed voicemail | open_last_missed_call |")
+  lines.push("| start report, open variance report, begin inspection report, specialty report | open_specialty_report |")
   lines.push("| what can I do here, help, explain this screen | explain |")
   lines.push("| customers, calendar, estimates tab, settings | navigate |")
   lines.push("| setup guide, get started | open_setup_guide |")
@@ -179,6 +200,15 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push('- “open estimate” with customer already on screen → create_estimate (no name needed).')
   lines.push('- “go to estimates” / estimates tab without a customer task → navigate to `quotes`.')
   lines.push('- “open this customer” without estimate/SMS words → open_current_customer.')
+  lines.push('- “start report” / “open variance report” on an estimate → open_specialty_report (not navigate to Reporting).')
+  lines.push('- “go to reporting” / reports tab → navigate to `reporting`.')
+
+  const quoteId = ctx.selectedQuoteId?.trim()
+  if (quoteId) {
+    lines.push(`### Estimate open in UI: \`${quoteId.slice(0, 8)}…\` — open_specialty_report uses this row automatically.`)
+  } else if (page === "quotes") {
+    lines.push("### Estimate open in UI: none — open_specialty_report opens Estimates; user picks a row or asks again.")
+  }
 
   return lines.join("\n")
 }

@@ -8,6 +8,7 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
+import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStatuses"
 import { theme } from "../../styles/theme"
@@ -107,7 +108,7 @@ import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContext"
-import { consumeQuotesCustomerPrefill } from "../../lib/workflowNavigation"
+import { consumeOpenSpecialtyReportWizard, consumeQuotesCustomerPrefill } from "../../lib/workflowNavigation"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
@@ -389,6 +390,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   void _props
   const isMobile = useIsMobile()
   const { userId: authUserId, session } = useAuth()
+  const globalAssistant = useGlobalAssistantOptional()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
@@ -1921,6 +1923,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (selectedQuoteId && !selectedQuote?.customer_id) void loadCustomerList()
   }, [selectedQuoteId, selectedQuote?.customer_id])
+
+  useEffect(() => {
+    globalAssistant?.setPageSnapshot({
+      selectedCustomerId: selectedQuote?.customer_id ?? null,
+      selectedCustomerName: selectedQuote?.customers?.display_name?.trim() || null,
+      selectedQuoteId: selectedQuoteId ?? null,
+    })
+  }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
+
+  useEffect(() => {
+    const req = consumeOpenSpecialtyReportWizard()
+    if (!req) return
+    if (req.quoteId) setSelectedQuoteId(req.quoteId)
+    setSpecialtyReportWizardOpen(true)
+  }, [userId])
 
   useEffect(() => {
     if (!userId || !supabase || estimateSuite !== "home") return
@@ -4689,6 +4706,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
           enabledReportTypes={specialtyReportTypesEnabled}
           customerLabel={selectedQuote?.customers?.display_name ?? undefined}
           customerId={selectedQuote?.customer_id ?? null}
+          customerEmail={
+            selectedQuote?.customers?.customer_identifiers?.find((i: { type: string }) => i.type === "email")?.value?.trim() ??
+            undefined
+          }
+          conversationId={selectedQuote?.conversation_id ?? null}
           varianceAssigneeOptions={varianceAssigneeOptions}
           propertyAddressHint={
             typeof (selectedQuote?.customers as CustomerRow | undefined)?.service_address === "string"

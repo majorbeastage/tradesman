@@ -314,6 +314,7 @@ export function buildPlatformAssistantCatalogText(ctx: {
   currentPage?: string
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
+  selectedQuoteId?: string | null
 }): string {
   const lines: string[] = []
   lines.push("## Tradesman platform assistant — allowed actions")
@@ -325,6 +326,12 @@ export function buildPlatformAssistantCatalogText(ctx: {
   const selName = ctx.selectedCustomerName?.trim()
   if (ctx.selectedCustomerId?.trim() && selName) {
     lines.push(`Customer record open in UI: **${selName}** — prefer create_estimate / focus_customer_sms without repeating the name; use open_current_customer only to re-focus the row.`)
+  }
+  const quoteId = ctx.selectedQuoteId?.trim()
+  if (quoteId) {
+    lines.push(
+      `Estimate open in UI (\`${quoteId.slice(0, 8)}…\`) — use **open_specialty_report** for "start report" / variance report (not navigate to Reporting).`,
+    )
   }
   lines.push("")
 

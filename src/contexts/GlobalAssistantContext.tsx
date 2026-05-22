@@ -7,7 +7,11 @@ import type { AssistantPageSnapshot } from "../lib/assistantPageContext"
 import { resolveCustomerIdForAssistant } from "../lib/assistantResolveCustomer"
 import { queueCustomerFocus } from "../lib/customerNavigation"
 import { queueAssistantHandoff, type AssistantHandoffPayload } from "../lib/assistantHandoff"
-import { queueCustomerAssistantSmsFocus, queueQuotesCustomerPrefill } from "../lib/workflowNavigation"
+import {
+  queueCustomerAssistantSmsFocus,
+  queueOpenSpecialtyReportWizard,
+  queueQuotesCustomerPrefill,
+} from "../lib/workflowNavigation"
 import { supabase } from "../lib/supabase"
 import {
   ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
@@ -139,6 +143,7 @@ export function GlobalAssistantProvider({
       currentPage,
       selectedCustomerId: pageSnapshot.selectedCustomerId,
       selectedCustomerName: pageSnapshot.selectedCustomerName,
+      selectedQuoteId: pageSnapshot.selectedQuoteId,
       customVocabulary,
     }),
     [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary],
@@ -361,6 +366,22 @@ export function GlobalAssistantProvider({
         })
         return
       }
+      if (action.type === "open_specialty_report") {
+        const tabs = parseContext.availableTabIds
+        if (tabs?.length && !tabs.includes("quotes")) {
+          setAssistantNote("Estimates is not enabled on your portal menu.")
+          return
+        }
+        const quoteId = action.quoteId?.trim() || pageSnapshot.selectedQuoteId?.trim() || undefined
+        queueOpenSpecialtyReportWizard({ quoteId })
+        setPage("quotes")
+        setAssistantNote(
+          quoteId
+            ? action.message
+            : "Opening Estimates. Select an estimate row, then tap Start report or say start report again.",
+        )
+        return
+      }
       if (action.type === "handoff_specialist_assistant") {
         const payload: AssistantHandoffPayload = {
           specialist: action.specialist,
@@ -434,7 +455,9 @@ export function GlobalAssistantProvider({
                         ? "Start estimate"
                         : action.type === "focus_customer_sms"
                           ? "Open SMS compose"
-                          : action.type === "explain"
+                          : action.type === "open_specialty_report"
+                            ? "Start specialty report"
+                            : action.type === "explain"
                             ? "Show help"
                             : action.type === "open_current_customer"
                               ? "Open this customer"

@@ -42,6 +42,7 @@ type LlmAction =
   | { type: "open_current_customer"; message: string }
   | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
   | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
+  | { type: "open_specialty_report"; quoteId?: string; message: string }
   | { type: "explain"; message: string }
   | {
       type: "handoff_specialist_assistant"
@@ -147,6 +148,10 @@ function validateAction(
       customerQuery: customerQuery || undefined,
       message,
     }
+  }
+  if (type === "open_specialty_report") {
+    const quoteId = clip(o.quoteId, 48)
+    return { type: "open_specialty_report", quoteId: quoteId || undefined, message }
   }
   if (type === "explain") {
     return { type: "explain", message: message.slice(0, 600) }
@@ -254,6 +259,7 @@ Allowed action shapes (use only these "type" values):
 - open_current_customer: {"type":"open_current_customer","message":"..."} — only when catalog says a customer is already selected
 - create_estimate: {"type":"create_estimate","customerQuery":"Name"} OR customerId if known — never invent UUIDs
 - focus_customer_sms: {"type":"focus_customer_sms","customerQuery":"Name"} — opens SMS compose, does not send automatically
+- open_specialty_report: {"type":"open_specialty_report","message":"..."} — opens Estimates specialty/variance report wizard (Start report); optional quoteId only if catalog shows estimate open
 - explain: {"type":"explain","message":"short helpful paragraph"}
 - handoff_specialist_assistant: {"type":"handoff_specialist_assistant","specialist":"estimate_line_items_library"|"estimate_job_types_library"|"estimate_quote_scope","scopeText":"user's full scope","jobTypeName":"optional","mode":"line_items_only"|"job_type_with_lines","message":"..."}
 - clarify: {"type":"clarify","message":"helpful suggestion"} — only if nothing fits
@@ -266,6 +272,7 @@ Hard rules:
 - For "missed call" / "who called" / "last call I missed" use open_last_missed_call.
 - For lookup by person name without estimate/SMS intent use find_customer with query = the name.
 - Deictic phrases ("this customer", "them", "for him") → create_estimate or focus_customer_sms or open_current_customer per catalog context; never find_customer query "this customer".
+- "start report", "open variance report", "begin inspection report" on an estimate → open_specialty_report (NOT navigate to reporting). "go to reporting" → navigate reporting.
 - navigate.page must be one of: ${pageList}
 - open_mini_wizard.wizardId must be one of: ${wizardList}
 - open_admin.panel must be one of: ${adminList} (only when isAdmin=true below)

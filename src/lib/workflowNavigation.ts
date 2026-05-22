@@ -4,6 +4,35 @@ const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
 const CUSTOMER_SMS_FOCUS = "tradesman_assistant_focus_customer_sms"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
+const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
+
+export type OpenSpecialtyReportWizardRequest = {
+  quoteId?: string
+}
+
+export function queueOpenSpecialtyReportWizard(req: OpenSpecialtyReportWizardRequest = {}): void {
+  if (typeof window === "undefined") return
+  try {
+    const quoteId = req.quoteId?.trim()
+    sessionStorage.setItem(OPEN_SPECIALTY_REPORT_WIZARD, JSON.stringify({ quoteId: quoteId || undefined }))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeOpenSpecialtyReportWizard(): OpenSpecialtyReportWizardRequest | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(OPEN_SPECIALTY_REPORT_WIZARD)
+    if (!raw?.trim()) return null
+    sessionStorage.removeItem(OPEN_SPECIALTY_REPORT_WIZARD)
+    const j = JSON.parse(raw) as { quoteId?: string }
+    const quoteId = typeof j.quoteId === "string" ? j.quoteId.trim() : undefined
+    return { quoteId: quoteId || undefined }
+  } catch {
+    return null
+  }
+}
 
 export type SchedulingQuotePrefill = {
   customerId: string
