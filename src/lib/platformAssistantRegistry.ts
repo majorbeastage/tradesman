@@ -384,10 +384,6 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push("- “last missed call”, “take me to the customer I missed a call for” — opens Customers and expands the most recent missed inbound call.")
 
   lines.push("")
-  lines.push("### Phase 2 (next)")
-  lines.push("- LLM router for paraphrases when rule confidence is low (same action catalog).")
-
-  lines.push("")
   lines.push("### Not yet supported here (Phase 3)")
   lines.push("- Create estimate, send SMS, explain errors without opening a customer first.")
   return lines.join("\n")

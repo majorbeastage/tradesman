@@ -32,12 +32,22 @@ export type AssistantParseResult = {
   /** 0–100; ≥80 auto-acts, 68–79 shows “Did you mean?”, below clarifies only */
   confidence: number
   alternatives?: Array<{ label: string; action: GlobalAssistantAction; confidence: number }>
+  /** Top rule pattern score (≥8 skips LLM). Fast-path intents use 100. */
+  ruleTopScore?: number
+  routedBy?: "rules" | "llm"
 }
 
 /** Auto-run without confirmation. */
 export const ASSISTANT_AUTO_CONFIDENCE = 80
 /** Show optional confirm dialog. */
 export const ASSISTANT_CONFIRM_MIN = 68
+/** Rule engine matched strongly — do not call Phase 2 LLM. */
+export const ASSISTANT_RULE_LLM_THRESHOLD = 8
+
+export function shouldFallbackToLlm(parsed: AssistantParseResult): boolean {
+  if (parsed.routedBy === "llm") return false
+  return (parsed.ruleTopScore ?? 0) < ASSISTANT_RULE_LLM_THRESHOLD
+}
 
 export type GlobalAssistantParseContext = {
   platform?: PlatformAssistantPlatform
@@ -149,6 +159,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   if (!text) {
     return {
       confidence: 0,
+      ruleTopScore: 0,
+      routedBy: "rules",
       action: {
         type: "clarify",
         message: `Tell me what you would like to do — for example “${suggestPhrasesForPlatform(platform, 3).join('”, “')}”.`,
@@ -159,6 +171,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   if (isMissedCallAssistantPhrase(text)) {
     return {
       confidence: 90,
+      ruleTopScore: 100,
+      routedBy: "rules",
       action: {
         type: "open_last_missed_call",
         message: "Looking up your most recent missed call…",
@@ -173,12 +187,19 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   ) {
     return {
       confidence: 86,
+      ruleTopScore: 100,
+      routedBy: "rules",
       action: { type: "find_customer", query: customerQ, message: `Looking up customer “${customerQ}”…` },
     }
   }
 
   if (/\bsetup\s+guide\b/i.test(text) || /\binitial\s+setup\b/i.test(text) || /\bget\s+started\b/i.test(text)) {
-    return { confidence: 95, action: { type: "open_setup_guide", message: "Opening the Setup Guide." } }
+    return {
+      confidence: 95,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: { type: "open_setup_guide", message: "Opening the Setup Guide." },
+    }
   }
 
   const scored: ScoredMatch[] = []
@@ -214,10 +235,15 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   if (top && top.score >= 8) {
     const primary = scoredToAction(top, text, ctx)
     if (!primary) {
-      return { confidence: 0, action: { type: "clarify", message: "Could not route that request." } }
+      return {
+        confidence: 0,
+        ruleTopScore: top.score,
+        routedBy: "rules",
+        action: { type: "clarify", message: "Could not route that request." },
+      }
     }
     if (primary.type === "clarify") {
-      return { confidence: 40, action: primary }
+      return { confidence: 40, ruleTopScore: top.score, routedBy: "rules", action: primary }
     }
 
     const confidence = scoreToConfidence(top.score)
@@ -237,17 +263,27 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
     if (alternatives.length > 0 && confidence < ASSISTANT_AUTO_CONFIDENCE) {
       return {
         confidence,
+        ruleTopScore: top.score,
+        routedBy: "rules",
         action: primary,
         alternatives: [{ label: describeScored(top), action: primary, confidence }, ...alternatives].slice(0, 3),
       }
     }
 
-    return { confidence, action: primary, alternatives: alternatives.length ? alternatives : undefined }
+    return {
+      confidence,
+      ruleTopScore: top.score,
+      routedBy: "rules",
+      action: primary,
+      alternatives: alternatives.length ? alternatives : undefined,
+    }
   }
 
   if (/\bschedul/i.test(text) && /\b(problem|issue|help|confus|wrong)\b/i.test(text)) {
     return {
       confidence: 78,
+      ruleTopScore: 28,
+      routedBy: "rules",
       action: {
         type: "navigate",
         page: "calendar",
@@ -264,6 +300,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
       : ""
   return {
     confidence: 0,
+    ruleTopScore: top?.score ?? 0,
+    routedBy: "rules",
     action: {
       type: "clarify",
       message: `I did not match that yet. Try ${hints}, or “setup guide”.${here}`,

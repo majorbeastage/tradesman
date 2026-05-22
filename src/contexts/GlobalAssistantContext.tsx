@@ -8,10 +8,13 @@ import {
   ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
   ASSISTANT_AUTO_CONFIDENCE,
   ASSISTANT_CONFIRM_MIN,
+  buildAssistantRoutingCatalog,
   parseAssistantCommand,
+  shouldFallbackToLlm,
   type GlobalAssistantAction,
   type GlobalAssistantParseContext,
 } from "../lib/globalAssistantNav"
+import { routePlatformAssistantWithLlm } from "../lib/platformAssistantLlm"
 import { useView } from "./ViewContext"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
@@ -200,7 +203,26 @@ export function GlobalAssistantProvider({
       setAssistantNote(null)
       setConfirmDialog(null)
       try {
-        const parsed = parseAssistantCommand(raw, parseContext)
+        let parsed = parseAssistantCommand(raw, parseContext)
+
+        if (shouldFallbackToLlm(parsed) && supabase) {
+          const { data: sessionData } = await supabase.auth.getSession()
+          const token = sessionData.session?.access_token
+          if (token) {
+            setAssistantNote("Understanding phrasing…")
+            const llmParsed = await routePlatformAssistantWithLlm(
+              token,
+              raw,
+              buildAssistantRoutingCatalog(parseContext),
+              {
+                isAdmin: parseContext.isAdmin,
+                availableTabIds: parseContext.availableTabIds,
+              },
+            )
+            if (llmParsed) parsed = llmParsed
+          }
+        }
+
         const { action, confidence, alternatives } = parsed
 
         if (action.type === "clarify" || confidence < ASSISTANT_CONFIRM_MIN) {

@@ -12,9 +12,9 @@
 
 | Phase | Intents | Where |
 |-------|---------|--------|
-| **1 (now)** | Navigate tabs, open setup wizards, setup guide, admin panels | Registry + rules |
-| **2 (next)** | Same catalog; LLM only when rules score &lt; threshold | API + `buildAssistantRoutingCatalog(ctx)` |
-| **3 (later)** | Find customer, create estimate, send SMS, explain | New action types + executors, not regex-only |
+| **1** | Navigate tabs, open setup wizards, setup guide, admin panels | Registry + rules |
+| **2 (now)** | Same catalog; LLM when `ruleTopScore` &lt; 8 | `POST /api/platform-tools?__route=platform-assistant-route` + `buildAssistantRoutingCatalog(ctx)` |
+| **3 (later)** | Create estimate, send SMS, explain | New action types + executors, not regex-only |
 
 ## When the user reports a failed phrase
 
@@ -25,12 +25,12 @@
 5. **Admin:** only `open_admin` when `isAdmin`; panel id must match `AdminApp` `adminPanel` state.
 6. Do not break voice flow: `useSpeechRecognitionInput` `onSessionEnd` auto-applies Go in dashboard/FAB.
 
-## Phase 2 LLM router (when requested)
+## Phase 2 LLM router
 
-- Constrained JSON output matching `GlobalAssistantAction` union only.
-- System prompt = `buildPlatformAssistantCatalogText(ctx)` + current page if useful.
-- Rules win when top score ≥ 8; LLM for long tail and paraphrases.
-- Reuse `api/_leadAutomation.ts` `openAiText` or new edge function; never expose API key client-side.
+- Client: `shouldFallbackToLlm(parsed)` when `ruleTopScore < 8` → `routePlatformAssistantWithLlm` in `src/lib/platformAssistantLlm.ts`.
+- Server: `api/_platformAssistantRoute.ts` via `platform-tools?__route=platform-assistant-route` (Bearer JWT). Catalog sent from client (`buildAssistantRoutingCatalog`).
+- Model output validated server-side; never allow `open_customer` with invented IDs.
+- Rules win when `ruleTopScore ≥ 8`; requires `OPENAI_API_KEY` on Vercel.
 
 ## Mini-wizards
 
