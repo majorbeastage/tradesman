@@ -31,6 +31,8 @@ export type OpenAiTextOptions = {
   maxTokens?: number
   /** Abort the OpenAI HTTP request after this many ms (default 48s; stay under typical serverless limits). */
   timeoutMs?: number
+  /** Force JSON object output (OpenAI response_format) — use for structured coach/router replies. */
+  jsonMode?: boolean
 }
 
 export async function openAiText(system: string, user: string, opts?: OpenAiTextOptions): Promise<string | null> {
@@ -52,7 +54,8 @@ export async function openAiText(system: string, user: string, opts?: OpenAiText
           { role: "user", content: user },
         ],
         max_tokens,
-        temperature: 0.4,
+        temperature: opts?.jsonMode ? 0.2 : 0.4,
+        ...(opts?.jsonMode ? { response_format: { type: "json_object" } } : {}),
       }),
     })
     const raw = await res.text()

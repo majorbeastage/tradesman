@@ -237,8 +237,6 @@ export default function SpecialtyReportWizardModal({
   const [speechSupported, setSpeechSupported] = useState(false)
   const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
   const [voiceFieldKey, setVoiceFieldKey] = useState<string | null>(null)
-  /** Live dictation overlay — avoids rewriting full report state on every speech tick. */
-  const [fieldVoicePreview, setFieldVoicePreview] = useState<{ key: string; text: string } | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [genericFieldMedia, setGenericFieldMedia] = useState<Record<string, FieldMediaItem[]>>({})
   const [saveNote, setSaveNote] = useState<string | null>(null)
@@ -267,6 +265,7 @@ export default function SpecialtyReportWizardModal({
   const voiceParserDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Last throttled transcript shown in the assistant box (preserve on stop). */
   const voiceLiveDisplayRef = useRef("")
+  const assistantInputRef = useRef<HTMLTextAreaElement | null>(null)
   const userScrollingRef = useRef(false)
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -708,11 +707,6 @@ export default function SpecialtyReportWizardModal({
     return h
   }
 
-  function displayValueForField(fieldKey: string): string {
-    if (fieldVoicePreview?.key === fieldKey) return fieldVoicePreview.text
-    return readFieldValue(fieldKey)
-  }
-
   function trackAssignmentSideEffects(
     fieldKey: string,
     meta: { sectionOpen: Record<string, boolean>; phase: WizardPhase | null },
@@ -922,6 +916,19 @@ export default function SpecialtyReportWizardModal({
     voiceLiveDisplayRef.current = ""
   }
 
+  function paintVoiceTarget(display: string) {
+    const fieldKey = activeVoiceFieldRef.current
+    if (fieldKey) {
+      const el = document.getElementById(specialtyReportFieldDomId(fieldKey))
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        el.value = display
+      }
+      return
+    }
+    const el = assistantInputRef.current
+    if (el) el.value = display
+  }
+
   function commitActiveFieldVoice() {
     const fieldKey = activeVoiceFieldRef.current
     if (!fieldKey) return
@@ -933,7 +940,17 @@ export default function SpecialtyReportWizardModal({
         interim: "",
       })
     if (display.trim()) writeFieldValue(fieldKey, display.trim())
-    setFieldVoicePreview(null)
+  }
+
+  function syncVoiceDisplayToReactState() {
+    voiceDisplayThrottleRef.current?.flushNow()
+    const fieldKey = activeVoiceFieldRef.current
+    if (fieldKey) {
+      commitActiveFieldVoice()
+      return
+    }
+    const text = (assistantInputRef.current?.value ?? voiceLiveDisplayRef.current).trim()
+    if (text) setAssistantText(text)
   }
 
   function markModalScrolling() {
@@ -963,30 +980,6 @@ export default function SpecialtyReportWizardModal({
     const full = `${voiceSessionBaseRef.current}${voiceFinalSuffixRef.current}`
     voiceConsumedLenRef.current = full.length
     voiceLastParserFinalsLenRef.current = voiceFinalSuffixRef.current.length
-  }
-
-  function maybeRunOverallVoiceParser(finals: string) {
-    if (userScrollingRef.current || assistantProcessing) return
-    if (finals.length <= voiceLastParserFinalsLenRef.current) return
-    const fullCommitted = `${voiceSessionBaseRef.current}${finals}`
-    const chunk = fullCommitted.slice(voiceConsumedLenRef.current).trim()
-    voiceLastParserFinalsLenRef.current = finals.length
-    if (chunk.length >= 3) {
-      void runAssistantCommand(chunk, { allowDefaultTarget: false, voiceChunk: true })
-    }
-  }
-
-  function scheduleOverallVoiceParser(finals: string) {
-    if (userScrollingRef.current || assistantProcessing) return
-    if (voiceParserDebounceRef.current) clearTimeout(voiceParserDebounceRef.current)
-    voiceParserDebounceRef.current = setTimeout(() => {
-      voiceParserDebounceRef.current = null
-      if (userScrollingRef.current) {
-        scheduleOverallVoiceParser(finals)
-        return
-      }
-      maybeRunOverallVoiceParser(finals)
-    }, 1400)
   }
 
   function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
@@ -1152,9 +1145,15 @@ export default function SpecialtyReportWizardModal({
     }
 
     if (picked === "home_inspection") {
-      const parsed = parseSpecialtyReportFieldAssignments(text, fillCtx, {
-        allowStructure: true,
-        readFieldValue,
+      const parsed = await new Promise<ReturnType<typeof parseSpecialtyReportFieldAssignments>>((resolve) => {
+        window.setTimeout(() => {
+          resolve(
+            parseSpecialtyReportFieldAssignments(text, fillCtx, {
+              allowStructure: true,
+              readFieldValue,
+            }),
+          )
+        }, 0)
       })
       const { applied, skipped } = applyHomeInspectionParseResult(parsed)
       if (applied > 0 || skipped > 0 || parsed.structuredSummary) {
@@ -1316,20 +1315,10 @@ export default function SpecialtyReportWizardModal({
       voiceLastParserFinalsLenRef.current = 0
       voiceDisplayThrottleRef.current?.cancel()
       voiceLiveDisplayRef.current = voiceSessionBaseRef.current
-      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay(
-        (display) => {
-          voiceLiveDisplayRef.current = display
-          const activeKey = activeVoiceFieldRef.current
-          if (activeKey) {
-            setFieldVoicePreview((prev) =>
-              prev?.key === activeKey && prev.text === display ? prev : { key: activeKey, text: display },
-            )
-          } else {
-            setAssistantText(display)
-          }
-        },
-        220,
-      )
+      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
+        voiceLiveDisplayRef.current = display
+        paintVoiceTarget(display)
+      }, 320)
       const speechOpts = speechRecognitionListenUntilStopped()
       const rec = new Ctor()
       recognitionRef.current = rec
@@ -1341,11 +1330,6 @@ export default function SpecialtyReportWizardModal({
         voiceFinalSuffixRef.current = parsed.finals
         const display = combineSpeechSessionDisplay(voiceSessionBaseRef.current, parsed)
         voiceDisplayThrottleRef.current?.schedule(display)
-        if (targetFieldKey) {
-          /* save note only on flush — avoid setState every 50ms */
-        } else if (voiceOverallAssistRef.current) {
-          scheduleOverallVoiceParser(parsed.finals)
-        }
       }
       rec.onerror = () => {
         voiceKeepListeningRef.current = false
@@ -1356,10 +1340,6 @@ export default function SpecialtyReportWizardModal({
         if (voiceParserDebounceRef.current) {
           clearTimeout(voiceParserDebounceRef.current)
           voiceParserDebounceRef.current = null
-        }
-        const fieldKey = activeVoiceFieldRef.current
-        if (!fieldKey && voiceOverallAssistRef.current) {
-          maybeRunOverallVoiceParser(voiceFinalSuffixRef.current)
         }
         const fieldKeyNow = activeVoiceFieldRef.current
         if (fieldKeyNow) {
@@ -1392,7 +1372,9 @@ export default function SpecialtyReportWizardModal({
       setAssistantListening(true)
       setVoiceFieldKey(targetFieldKey ?? null)
       setAssistantNote(
-        "Listening… Each phrase can target a different field. Examples: set inspector name to Jane · weather clear 72 · gutters deficient · roof covering satisfactory. Or “Tradesman record” + scope / summary.",
+        targetFieldKey
+          ? "Listening… text goes into this field only. Tap Stop when finished."
+          : "Listening… text appears in the box below. Tap Stop, then Apply assistant input — we do not auto-fill fields while you talk (keeps the report fast).",
       )
     } catch {
       setAssistantListening(false)
@@ -1406,7 +1388,7 @@ export default function SpecialtyReportWizardModal({
       clearTimeout(voiceParserDebounceRef.current)
       voiceParserDebounceRef.current = null
     }
-    commitActiveFieldVoice()
+    syncVoiceDisplayToReactState()
     preserveOverallVoiceTranscriptInUi()
     voiceDisplayThrottleRef.current?.cancel()
     voiceDisplayThrottleRef.current = null
@@ -1674,6 +1656,7 @@ export default function SpecialtyReportWizardModal({
                 )}
               </select>
               <textarea
+                ref={assistantInputRef}
                 rows={2}
                 value={assistantText}
                 onChange={(e) => {
@@ -1690,7 +1673,9 @@ export default function SpecialtyReportWizardModal({
                   onClick={() => {
                     stopDictation()
                     globalAssistant?.stopVoiceListening()
-                    void runAssistantCommand(assistantText, { explicitApply: true })
+                    const text = (assistantInputRef.current?.value ?? assistantText).trim()
+                    if (text !== assistantText) setAssistantText(text)
+                    void runAssistantCommand(text, { explicitApply: true })
                   }}
                   style={primaryBtn}
                   disabled={assistantProcessing}
@@ -1781,11 +1766,8 @@ export default function SpecialtyReportWizardModal({
                     Inspector name
                     <input
                       id={specialtyReportFieldDomId("header.inspectorName")}
-                      value={displayValueForField("header.inspectorName")}
-                      onChange={(e) => {
-                        setFieldVoicePreview((p) => (p?.key === "header.inspectorName" ? null : p))
-                        setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))
-                      }}
+                      value={home.header.inspectorName}
+                      onChange={(e) => setHome((h) => ({ ...h, header: { ...h.header, inspectorName: e.target.value } }))}
                       style={theme.formInput}
                     />
                     <FieldTools fieldKey="header.inspectorName" />
@@ -1858,11 +1840,8 @@ export default function SpecialtyReportWizardModal({
                   <textarea
                     id={specialtyReportFieldDomId("scopeLimitations")}
                     rows={5}
-                    value={displayValueForField("scopeLimitations")}
-                    onChange={(e) => {
-                      setFieldVoicePreview((p) => (p?.key === "scopeLimitations" ? null : p))
-                      setHome((h) => ({ ...h, scopeLimitations: e.target.value }))
-                    }}
+                    value={home.scopeLimitations}
+                    onChange={(e) => setHome((h) => ({ ...h, scopeLimitations: e.target.value }))}
                     style={{ ...theme.formInput, resize: "vertical" }}
                   />
                   <FieldTools fieldKey="scopeLimitations" />
@@ -1923,10 +1902,9 @@ export default function SpecialtyReportWizardModal({
                               id={specialtyReportFieldDomId(`sub:${sub.id}`)}
                               placeholder="Observations, locations, photos referenced…"
                               rows={2}
-                              value={displayValueForField(`sub:${sub.id}`)}
+                              value={row.notes}
                               onChange={(e) => {
                                 const notes = e.target.value
-                                setFieldVoicePreview((p) => (p?.key === `sub:${sub.id}` ? null : p))
                                 setHome((h) => ({
                                   ...h,
                                   subsections: {
@@ -2022,7 +2000,7 @@ export default function SpecialtyReportWizardModal({
             </p>
             <textarea
               rows={12}
-              value={displayValueForField("genericNotes")}
+              value={genericNotes}
               onChange={(e) => setGenericNotes(e.target.value)}
               placeholder="Findings, scope, recommendations, next steps…"
               style={{ ...theme.formInput, resize: "vertical" }}

@@ -109,6 +109,34 @@ function validateAction(raw: unknown): Record<string, unknown> | null {
   return null
 }
 
+function extractCoachJson(raw: string): Record<string, unknown> | null {
+  const t = raw.trim()
+  if (!t) return null
+  try {
+    return JSON.parse(t) as Record<string, unknown>
+  } catch {
+    /* fall through */
+  }
+  const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1].trim()) as Record<string, unknown>
+    } catch {
+      /* fall through */
+    }
+  }
+  const start = t.indexOf("{")
+  const end = t.lastIndexOf("}")
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(t.slice(start, end + 1)) as Record<string, unknown>
+    } catch {
+      /* fall through */
+    }
+  }
+  return null
+}
+
 function parseProposal(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
@@ -228,16 +256,27 @@ ${catalog}
 
 Session: platform=${platform || "user"}, tab=${currentPage || "unknown"}${selectedCustomer ? `, customer on screen: ${selectedCustomer}` : ""}${historyBlock}`
 
-  const raw =
-    (await openAiText(instructions, `Admin:\n${message}`, { maxTokens: 2800, timeoutMs: 55_000 }))?.trim() ?? "{}"
+  const raw = (await openAiText(instructions, `Admin:\n${message}`, { maxTokens: 2800, timeoutMs: 55_000, jsonMode: true }))?.trim() ?? ""
 
-  let reply = "I had trouble with that — can you say it again in your own words? What did the customer say, and what should have happened?"
+  let reply =
+    "I did not get a clear response from the coach. Try one short sentence: what the customer said, and what should have happened."
   const proposals: Record<string, unknown>[] = []
   const clarifyingQuestions: string[] = []
   let readyToSave = false
 
-  try {
-    const j = JSON.parse(raw) as Record<string, unknown>
+  if (!raw) {
+    res.status(200).json({
+      ok: false,
+      fallback: true,
+      reply: "The training coach is temporarily unavailable. Wait a moment and try again.",
+      readyToSave: false,
+      proposals: [],
+    })
+    return
+  }
+
+  const j = extractCoachJson(raw)
+  if (j) {
     if (typeof j.reply === "string" && j.reply.trim()) reply = j.reply.trim().slice(0, 2000)
     readyToSave = j.readyToSave === true
     if (readyToSave && Array.isArray(j.proposals)) {
@@ -252,8 +291,12 @@ Session: platform=${platform || "user"}, tab=${currentPage || "unknown"}${select
         if (typeof q === "string" && q.trim()) clarifyingQuestions.push(q.trim().slice(0, 200))
       }
     }
-  } catch {
+  } else if (raw.length > 12 && !raw.startsWith("{")) {
+    reply = raw.slice(0, 2000)
+  } else {
     console.warn("[platform-assistant-vocabulary-train] invalid JSON", raw.slice(0, 400))
+    reply =
+      "I had trouble reading that reply. Rephrase in one or two sentences: what did the customer say, and what should the app do?"
   }
 
   res.status(200).json({ ok: true, reply, readyToSave, proposals, clarifyingQuestions })
