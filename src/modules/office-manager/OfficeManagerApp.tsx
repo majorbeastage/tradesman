@@ -461,7 +461,7 @@ function ManagedUserBar() {
 
 function OfficeManagerAppContent() {
   const [page, setPage] = useState("dashboard")
-  const { clientId, user, portalConfig } = useAuth()
+  const { clientId, user, portalConfig, role: authRole } = useAuth()
   const isMobile = useIsMobile()
   const { t } = useLocale()
   const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
@@ -524,7 +524,7 @@ function OfficeManagerAppContent() {
       onMetadataPatch={setProfileMetadata}
       platform="office_manager"
       availableTabIds={resolvedPortalTabs.map((t) => t.tab_id)}
-      isAdmin={false}
+      isAdmin={authRole === "admin"}
       currentPage={page}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />

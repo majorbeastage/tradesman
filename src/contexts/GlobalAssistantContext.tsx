@@ -109,8 +109,8 @@ export function GlobalAssistantProvider({
   const [pageSnapshot, setPageSnapshot] = useState<AssistantPageSnapshot>({})
 
   const canTrainVocabulary = useMemo(
-    () => canTrainPlatformAssistantVocabulary({ authRole: isAdmin ? "admin" : null, profileMetadata }),
-    [isAdmin, profileMetadata],
+    () => canTrainPlatformAssistantVocabulary({ authRole: isAdmin ? "admin" : null }),
+    [isAdmin],
   )
   const [customVocabulary, setCustomVocabulary] = useState<AssistantCustomVocabularyEntry[]>([])
   const [vocabularyTrainOpen, setVocabularyTrainOpen] = useState(false)
