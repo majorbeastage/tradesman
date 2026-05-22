@@ -25,7 +25,8 @@ export function buildAssistantExplainMessage(ctx: GlobalAssistantParseContext, _
   if (page === "quotes") {
     return [
       `You are on ${pageLabel} (estimate workspace).`,
-      "Use Start quote for the guided flow, or say “estimate line items” / “job types” for library setup.",
+      "Say “create line items for roofing with shingles and material costs” from anywhere — the platform assistant hands off here with AI suggestions.",
+      "Or use Start quote, “estimate line items”, or “job types” for library setup.",
       cust ? `Linked customer context: ${cust}.` : "",
     ]
       .filter(Boolean)

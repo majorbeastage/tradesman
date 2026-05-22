@@ -65,6 +65,12 @@ import {
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
 import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistantPanel"
+import EstimateLineItemsHandoffPanel from "../../components/EstimateLineItemsHandoffPanel"
+import {
+  consumeAssistantHandoff,
+  consumeOpenEstimateLineItemsModalFlag,
+  type AssistantHandoffPayload,
+} from "../../lib/assistantHandoff"
 import EstimateStartGuideModal, { EstimateGuideStatusMarker } from "../../components/EstimateStartGuideModal"
 import SpecialtyReportWizardModal from "../../components/SpecialtyReportWizardModal"
 import {
@@ -484,6 +490,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteCancellationText, setQuoteCancellationText] = useState("")
   const [quoteLegalSignatures, setQuoteLegalSignatures] = useState(true)
   const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
+  const [lineItemsHandoff, setLineItemsHandoff] = useState<AssistantHandoffPayload | null>(null)
   const [showQuoteJobTypesModal, setShowQuoteJobTypesModal] = useState(false)
   const [quoteJobTypeEditorOpen, setQuoteJobTypeEditorOpen] = useState(false)
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
@@ -3278,6 +3285,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const lr = parseDefaultLaborRateNumber()
     setEliSimplePrice(lr > 0 ? String(lr) : "")
     setShowEstimateLineItemsModal(true)
+  }
+
+  useEffect(() => {
+    const handoff = consumeAssistantHandoff()
+    if (handoff?.specialist === "estimate_line_items_library") {
+      setLineItemsHandoff(handoff)
+      openEstimateLineItemsModal()
+      return
+    }
+    if (handoff?.specialist === "estimate_job_types_library") {
+      if (handoff.jobTypeName) setQuoteJtNewName(handoff.jobTypeName)
+      setShowQuoteJobTypesModal(true)
+      return
+    }
+    if (consumeOpenEstimateLineItemsModalFlag()) {
+      openEstimateLineItemsModal()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when Estimates tab mounts
+  }, [])
+
+  function handoffOpenJobTypesWithPresets(jobTypeName: string, presetIds: string[]) {
+    const checks: Record<string, boolean> = {}
+    for (const id of presetIds) checks[id] = true
+    setJtModalPresetChecks(checks)
+    setQuoteJtNewName(jobTypeName)
+    setQuoteJobTypeEditorOpen(true)
+    setShowQuoteJobTypesModal(true)
   }
 
   function appendEliPresetFromSimpleForm() {
@@ -7495,6 +7529,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 The same list appears under <strong>{quoteJobTypesButtonLabel}</strong> so you can insert a line while managing job types.
                 Click <strong>Save &amp; close</strong> to store your list.
               </p>
+              {lineItemsHandoff ? (
+                <EstimateLineItemsHandoffPanel
+                  handoff={lineItemsHandoff}
+                  existingLines={estimateLineDraft.map((r) => ({ description: r.description }))}
+                  onAddPresets={(rows) => {
+                    setEstimateLineDraft((prev) => [...prev, ...rows])
+                  }}
+                  onDismiss={() => setLineItemsHandoff(null)}
+                  onJobTypeFollowUp={
+                    showQuotesJobTypesPanel
+                      ? (name, presetIds) => handoffOpenJobTypesWithPresets(name, presetIds)
+                      : undefined
+                  }
+                />
+              ) : null}
               {showQuotesJobTypesPanel ? (
                 <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                   <button

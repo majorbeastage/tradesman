@@ -21,6 +21,12 @@ import {
   type AssistantCustomVocabularyEntry,
 } from "./platformAssistantCustomVocabulary"
 import {
+  buildAssistantSpecialistsCatalogSection,
+  parseEstimateLineItemsHandoffIntent,
+  type AssistantHandoffMode,
+  type SpecialistAssistantId,
+} from "./assistantHandoff"
+import {
   buildPlatformAssistantDomainTraining,
   isCreateEstimatePhrase,
   isFocusSmsPhrase,
@@ -45,6 +51,14 @@ export type GlobalAssistantAction =
   | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
   | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
   | { type: "explain"; message: string }
+  | {
+      type: "handoff_specialist_assistant"
+      specialist: SpecialistAssistantId
+      scopeText: string
+      jobTypeName?: string
+      mode: AssistantHandoffMode
+      message: string
+    }
   | { type: "clarify"; message: string }
 
 export type AssistantParseResult = {
@@ -257,6 +271,83 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
         routedBy: "rules",
         action: customAction,
       }
+    }
+  }
+
+  const lineItemsHandoff = parseEstimateLineItemsHandoffIntent(text)
+  if (lineItemsHandoff) {
+    const baseHandoff = {
+      type: "handoff_specialist_assistant" as const,
+      specialist: "estimate_line_items_library" as const,
+      scopeText: lineItemsHandoff.scopeText,
+      jobTypeName: lineItemsHandoff.jobTypeName,
+    }
+    if (lineItemsHandoff.needsClarification) {
+      return {
+        confidence: 74,
+        ruleTopScore: 100,
+        routedBy: "rules",
+        action: {
+          type: "clarify",
+          message:
+            "I can build saved line items from your description. Do you want a job type bundled with those lines, or line items only for now?",
+        },
+        alternatives: [
+          {
+            label: "Job type + line items together",
+            action: {
+              ...baseHandoff,
+              mode: "job_type_with_lines",
+              message: `Opening line items assistant for ${lineItemsHandoff.jobTypeName ?? "your job type"}…`,
+            },
+            confidence: 88,
+          },
+          {
+            label: "Line items only (job type later)",
+            action: {
+              ...baseHandoff,
+              mode: "line_items_only",
+              message: "Opening line items assistant with your scope…",
+            },
+            confidence: 86,
+          },
+          {
+            label: "Open estimate line items (no AI yet)",
+            action: {
+              type: "open_mini_wizard",
+              wizardId: "estimates_line_items",
+              message: "Opening Estimates — line item setup wizard.",
+            },
+            confidence: 70,
+          },
+        ],
+      }
+    }
+    const mode: AssistantHandoffMode = lineItemsHandoff.jobTypeName ? "job_type_with_lines" : "line_items_only"
+    return {
+      confidence: 92,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: {
+        ...baseHandoff,
+        mode,
+        message: `Handing off to the line items assistant on Estimates…`,
+      },
+    }
+  }
+
+  if (/\b(job\s*types?)\b/i.test(text) && /\b(create|build|add|new)\b/i.test(text) && !isCreateEstimatePhrase(text)) {
+    return {
+      confidence: 86,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: {
+        type: "handoff_specialist_assistant",
+        specialist: "estimate_job_types_library",
+        scopeText: text,
+        mode: "line_items_only",
+        message: "Opening job types on Estimates…",
+      },
     }
   }
 
@@ -506,7 +597,8 @@ export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): 
   })
   const custom = buildCustomVocabularyCatalogSection(ctx.customVocabulary ?? [])
   const domain = buildPlatformAssistantDomainTraining(ctx)
-  return [base, custom, domain].filter(Boolean).join("\n\n")
+  const specialists = buildAssistantSpecialistsCatalogSection()
+  return [base, custom, specialists, domain].filter(Boolean).join("\n\n")
 }
 
 export { ASSISTANT_ADMIN_PANEL_STORAGE_KEY }

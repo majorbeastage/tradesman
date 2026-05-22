@@ -18,6 +18,7 @@ const ALLOWED_TYPES = new Set([
   "create_estimate",
   "focus_customer_sms",
   "explain",
+  "handoff_specialist_assistant",
   "clarify",
 ])
 

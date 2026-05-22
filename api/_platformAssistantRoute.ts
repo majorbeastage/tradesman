@@ -43,7 +43,21 @@ type LlmAction =
   | { type: "create_estimate"; customerId?: string; customerQuery?: string; message: string }
   | { type: "focus_customer_sms"; customerId?: string; customerQuery?: string; message: string }
   | { type: "explain"; message: string }
+  | {
+      type: "handoff_specialist_assistant"
+      specialist: string
+      scopeText: string
+      jobTypeName?: string
+      mode: string
+      message: string
+    }
   | { type: "clarify"; message: string }
+
+const SPECIALIST_IDS = new Set([
+  "estimate_line_items_library",
+  "estimate_job_types_library",
+  "estimate_quote_scope",
+])
 
 export type PlatformAssistantLlmRouteResult = {
   confidence: number
@@ -136,6 +150,15 @@ function validateAction(
   }
   if (type === "explain") {
     return { type: "explain", message: message.slice(0, 600) }
+  }
+  if (type === "handoff_specialist_assistant") {
+    const specialist = clip(o.specialist, 48)
+    const scopeText = clip(o.scopeText, 2000)
+    const modeRaw = clip(o.mode, 32)
+    const mode = modeRaw === "job_type_with_lines" ? "job_type_with_lines" : "line_items_only"
+    if (!SPECIALIST_IDS.has(specialist) || scopeText.length < 4) return null
+    const jobTypeName = clip(o.jobTypeName, 80) || undefined
+    return { type: "handoff_specialist_assistant", specialist, scopeText, jobTypeName, mode, message }
   }
   if (type === "clarify") {
     return { type: "clarify", message }
@@ -232,10 +255,12 @@ Allowed action shapes (use only these "type" values):
 - create_estimate: {"type":"create_estimate","customerQuery":"Name"} OR customerId if known — never invent UUIDs
 - focus_customer_sms: {"type":"focus_customer_sms","customerQuery":"Name"} — opens SMS compose, does not send automatically
 - explain: {"type":"explain","message":"short helpful paragraph"}
+- handoff_specialist_assistant: {"type":"handoff_specialist_assistant","specialist":"estimate_line_items_library"|"estimate_job_types_library"|"estimate_quote_scope","scopeText":"user's full scope","jobTypeName":"optional","mode":"line_items_only"|"job_type_with_lines","message":"..."}
 - clarify: {"type":"clarify","message":"helpful suggestion"} — only if nothing fits
 
 Hard rules:
 - NEVER return open_customer or invent customer UUIDs. Use find_customer with query, or open_current_customer when appropriate.
+- When user describes building saved line items / job type scope (roofing, shingles, materials) → handoff_specialist_assistant with specialist estimate_line_items_library and scopeText = their request.
 - When catalog shows a customer open in UI and user wants estimate/quote/proposal → create_estimate (NOT open_current_customer, NOT navigate).
 - "create/start/open/make estimate" with a name → create_estimate with customerQuery = name only (not find_customer).
 - For "missed call" / "who called" / "last call I missed" use open_last_missed_call.

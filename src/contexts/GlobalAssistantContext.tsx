@@ -6,6 +6,7 @@ import { findLastMissedCallCustomer } from "../lib/customerAssistantMissedCall"
 import type { AssistantPageSnapshot } from "../lib/assistantPageContext"
 import { resolveCustomerIdForAssistant } from "../lib/assistantResolveCustomer"
 import { queueCustomerFocus } from "../lib/customerNavigation"
+import { queueAssistantHandoff, type AssistantHandoffPayload } from "../lib/assistantHandoff"
 import { queueCustomerAssistantSmsFocus, queueQuotesCustomerPrefill } from "../lib/workflowNavigation"
 import { supabase } from "../lib/supabase"
 import {
@@ -347,6 +348,18 @@ export function GlobalAssistantProvider({
         })
         return
       }
+      if (action.type === "handoff_specialist_assistant") {
+        const payload: AssistantHandoffPayload = {
+          specialist: action.specialist,
+          scopeText: action.scopeText,
+          jobTypeName: action.jobTypeName,
+          mode: action.mode,
+        }
+        queueAssistantHandoff(payload)
+        setPage("quotes")
+        setAssistantNote(action.message)
+        return
+      }
       if (action.type === "navigate") {
         setPage(action.page)
         setAssistantNote(action.message)
@@ -412,7 +425,9 @@ export function GlobalAssistantProvider({
                             ? "Show help"
                             : action.type === "open_current_customer"
                               ? "Open this customer"
-                              : action.message.replace(/\.$/, ""),
+                              : action.type === "handoff_specialist_assistant"
+                                ? action.message.replace(/\.$/, "") || "Open specialist assistant"
+                                : action.message.replace(/\.$/, ""),
             action,
           },
         ]

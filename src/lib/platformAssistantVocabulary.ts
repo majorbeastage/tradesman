@@ -79,7 +79,8 @@ export function phraseHasWorkflowCue(text: string): boolean {
     refersToSelectedCustomer(text) ||
     /\b(missed\s+call|voicemail|last\s+call)\b/i.test(text) ||
     /\b(find|open|show)\s+(?:customer|client)\b/i.test(text) ||
-    /\bsetup\s+guide\b/i.test(text)
+    /\bsetup\s+guide\b/i.test(text) ||
+    /\b(line\s*items?|saved\s+lines?|job\s*types?)\b/i.test(text)
   )
 }
 

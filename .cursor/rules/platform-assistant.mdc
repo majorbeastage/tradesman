@@ -5,6 +5,7 @@
 - **Registry (Phase 1):** `src/lib/platformAssistantRegistry.ts` — pages, mini-wizards, admin panels, phrases, `buildPlatformAssistantCatalogText()`.
 - **Vocabulary / training:** `src/lib/platformAssistantVocabulary.ts` — contractor domain glossary, workflow phrase banks, `buildPlatformAssistantDomainTraining()` (appended to LLM catalog).
 - **Live admin training:** `platform_settings.platform_assistant_vocabulary` + amber FAB (admins) → `AssistantVocabularyTrainPanel`; `src/lib/platformAssistantCustomVocabulary.ts`.
+- **Specialist handoffs:** `src/lib/assistantHandoff.ts` — platform assistant → `handoff_specialist_assistant` (e.g. estimate line items library + AI scope). Queued in sessionStorage; `QuotesPage` opens modal + `EstimateLineItemsHandoffPanel`.
 - **Parser:** `src/lib/globalAssistantNav.ts` — scoring, clarify, `parseAssistantCommand(text, ctx)`; workflow intents before `open_current_customer`.
 - **Execute:** `src/contexts/GlobalAssistantContext.tsx` — `runAssistantCommand`, voice, `open_admin` via `setView("admin")` + `ASSISTANT_ADMIN_PANEL_STORAGE_KEY`.
 - **UI:** `PlatformAssistantField`, `GlobalAssistantFab`, Setup Guide adjustment mode.
