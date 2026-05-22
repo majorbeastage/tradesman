@@ -59,6 +59,50 @@ import { theme } from "./styles/theme"
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
 
+/** Admin portal: amber Train FAB for vocabulary (mic hidden here — use contractor login for voice assistant). */
+function AdminPortalWithAssistantTrain({ setView }: { setView: (v: View) => void }) {
+  const { user } = useAuth()
+  const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({
+    global_assistant_mic_enabled: false,
+  })
+
+  useEffect(() => {
+    if (!user?.id || !supabase) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta = data?.metadata
+        const base =
+          meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
+        setProfileMetadata({ ...base, global_assistant_mic_enabled: false })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
+
+  return (
+    <ViewProvider setView={setView}>
+      <GlobalAssistantProvider
+        setPage={() => {}}
+        profileUserId={user?.id ?? null}
+        profileMetadata={profileMetadata}
+        onMetadataPatch={setProfileMetadata}
+        platform="admin"
+        isAdmin
+      >
+        <AdminApp />
+        <GlobalAssistantFab />
+      </GlobalAssistantProvider>
+    </ViewProvider>
+  )
+}
+
 function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ tab_id: string; label: string | null }> | undefined {
   if (!portalConfig) return undefined
   const hasTabs = (portalConfig.tabs && Object.keys(portalConfig.tabs).length > 0) || (portalConfig.customTabs?.length ?? 0) > 0
@@ -525,9 +569,7 @@ function App() {
           </div>
         }
       >
-        <ViewProvider setView={setView}>
-          <AdminApp />
-        </ViewProvider>
+        <AdminPortalWithAssistantTrain setView={setView} />
       </ErrorBoundary>
     )
   }

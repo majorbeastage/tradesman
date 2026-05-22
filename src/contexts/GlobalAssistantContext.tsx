@@ -27,7 +27,11 @@ import {
 import { routePlatformAssistantWithLlm } from "../lib/platformAssistantLlm"
 import { useView } from "./ViewContext"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
-import { isGlobalAssistantMicEnabled, mergeGlobalAssistantMic } from "../lib/setupGuideState"
+import {
+  canTrainPlatformAssistantVocabulary,
+  isGlobalAssistantMicEnabled,
+  mergeGlobalAssistantMic,
+} from "../lib/setupGuideState"
 import { useSetupWizardOptional } from "./SetupWizardContext"
 import { getSetupMiniWizardDef } from "../lib/setupGuideWizards"
 
@@ -54,8 +58,10 @@ type GlobalAssistantContextValue = {
   setPageSnapshot: (patch: AssistantPageSnapshot) => void
   openSetupGuide: () => void
   registerSetupGuideOpener: (fn: () => void) => void
-  /** True when profile role is admin — shows vocabulary train control on FAB. */
+  /** True when profile role is admin — some admin-only assistant actions. */
   isAdmin: boolean
+  /** Amber Train FAB + vocabulary panel (admin role or metadata flag). */
+  canTrainVocabulary: boolean
   vocabularyTrainOpen: boolean
   toggleVocabularyTrain: () => void
 }
@@ -101,6 +107,11 @@ export function GlobalAssistantProvider({
     options: AssistantConfirmOption[]
   } | null>(null)
   const [pageSnapshot, setPageSnapshot] = useState<AssistantPageSnapshot>({})
+
+  const canTrainVocabulary = useMemo(
+    () => canTrainPlatformAssistantVocabulary({ authRole: isAdmin ? "admin" : null, profileMetadata }),
+    [isAdmin, profileMetadata],
+  )
   const [customVocabulary, setCustomVocabulary] = useState<AssistantCustomVocabularyEntry[]>([])
   const [vocabularyTrainOpen, setVocabularyTrainOpen] = useState(false)
   const [vocabularySaveBusy, setVocabularySaveBusy] = useState(false)
@@ -545,6 +556,7 @@ export function GlobalAssistantProvider({
       openSetupGuide,
       registerSetupGuideOpener,
       isAdmin,
+      canTrainVocabulary,
       vocabularyTrainOpen,
       toggleVocabularyTrain,
     }),
@@ -565,6 +577,7 @@ export function GlobalAssistantProvider({
       registerSetupGuideOpener,
       persistMicPref,
       isAdmin,
+      canTrainVocabulary,
       vocabularyTrainOpen,
       toggleVocabularyTrain,
     ],
@@ -573,7 +586,7 @@ export function GlobalAssistantProvider({
   return (
     <GlobalAssistantContext.Provider value={value}>
       {children}
-      {isAdmin ? (
+      {canTrainVocabulary ? (
         <AssistantVocabularyTrainPanel
           open={vocabularyTrainOpen}
           onClose={() => setVocabularyTrainOpen(false)}

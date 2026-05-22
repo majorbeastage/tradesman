@@ -3,6 +3,18 @@
 export const SETUP_GUIDE_COMPLETED_AT_KEY = "setup_guide_completed_at"
 export const SETUP_GUIDE_PROGRESS_KEY = "setup_guide_progress"
 export const GLOBAL_ASSISTANT_MIC_ENABLED_KEY = "global_assistant_mic_enabled"
+/** When true, show amber “Train assistant” FAB (platform staff or delegated trainers). */
+export const PLATFORM_ASSISTANT_VOCABULARY_TRAINER_KEY = "platform_assistant_vocabulary_trainer"
+
+export function canTrainPlatformAssistantVocabulary(opts: {
+  authRole?: string | null
+  profileMetadata?: Record<string, unknown> | null
+}): boolean {
+  if (opts.authRole === "admin") return true
+  const meta = opts.profileMetadata
+  if (meta && typeof meta === "object" && meta[PLATFORM_ASSISTANT_VOCABULARY_TRAINER_KEY] === true) return true
+  return false
+}
 
 export type SetupGuideProgress = {
   initial_started_at?: string

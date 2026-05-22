@@ -20,7 +20,10 @@ function useCoarsePointer(): boolean {
 export default function GlobalAssistantFab() {
   const ga = useGlobalAssistantOptional()
   const isMobile = useCoarsePointer()
-  if (!ga?.micFabVisible || ga.reportModalOpen) return null
+  if (!ga || ga.reportModalOpen) return null
+  const showMic = ga.micFabVisible
+  const showTrain = ga.canTrainVocabulary
+  if (!showMic && !showTrain) return null
 
   const {
     voiceListening,
@@ -29,7 +32,7 @@ export default function GlobalAssistantFab() {
     submitVoiceAssistant,
     assistantText,
     assistantBusy,
-    isAdmin,
+    canTrainVocabulary,
     vocabularyTrainOpen,
     toggleVocabularyTrain,
   } = ga
@@ -69,7 +72,7 @@ export default function GlobalAssistantFab() {
           gap: 10,
         }}
       >
-        {isAdmin ? (
+        {canTrainVocabulary ? (
           <button
             type="button"
             title={vocabularyTrainOpen ? "Close assistant training" : "Train assistant phrasing (admin)"}
@@ -110,7 +113,7 @@ export default function GlobalAssistantFab() {
             </svg>
           </button>
         ) : null}
-        {voiceListening || canSend ? (
+        {showMic && (voiceListening || canSend) ? (
           <button
             type="button"
             title="Send command (Go)"
@@ -144,44 +147,46 @@ export default function GlobalAssistantFab() {
             </svg>
           </button>
         ) : null}
-        <button
-          type="button"
-          className={voiceListening ? "tradesman-global-assistant-fab--listening" : undefined}
-          title={voiceListening ? "Stop listening (runs Go when you stop)" : "Platform assistant — voice & navigation"}
-          aria-label={voiceListening ? "Stop listening" : "Start platform assistant voice"}
-          onClick={() => {
-            if (!speechSupported) return
-            toggleVoiceListening()
-          }}
-          style={{
-            width: isMobile ? 50 : 54,
-            height: isMobile ? 50 : 54,
-            borderRadius: "50%",
-            border: "2px solid #fff",
-            background: voiceListening
-              ? "linear-gradient(145deg, #4f46e5 0%, #3730a3 100%)"
-              : "linear-gradient(145deg, #6366f1 0%, #4f46e5 100%)",
-            color: "#fff",
-            cursor: speechSupported ? "pointer" : "not-allowed",
-            opacity: speechSupported ? 1 : 0.55,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 0,
-            flexShrink: 0,
-          }}
-        >
-          <svg width={isMobile ? 24 : 26} height={isMobile ? 24 : 26} viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z" fill="currentColor" />
-            <path
-              d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        {showMic ? (
+          <button
+            type="button"
+            className={voiceListening ? "tradesman-global-assistant-fab--listening" : undefined}
+            title={voiceListening ? "Stop listening (runs Go when you stop)" : "Platform assistant — voice & navigation"}
+            aria-label={voiceListening ? "Stop listening" : "Start platform assistant voice"}
+            onClick={() => {
+              if (!speechSupported) return
+              toggleVoiceListening()
+            }}
+            style={{
+              width: isMobile ? 50 : 54,
+              height: isMobile ? 50 : 54,
+              borderRadius: "50%",
+              border: "2px solid #fff",
+              background: voiceListening
+                ? "linear-gradient(145deg, #4f46e5 0%, #3730a3 100%)"
+                : "linear-gradient(145deg, #6366f1 0%, #4f46e5 100%)",
+              color: "#fff",
+              cursor: speechSupported ? "pointer" : "not-allowed",
+              opacity: speechSupported ? 1 : 0.55,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              flexShrink: 0,
+            }}
+          >
+            <svg width={isMobile ? 24 : 26} height={isMobile ? 24 : 26} viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z" fill="currentColor" />
+              <path
+                d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
       </div>
       {showPreview && previewLabel ? (
         <div
@@ -193,8 +198,8 @@ export default function GlobalAssistantFab() {
             zIndex: 10049,
             right: isMobile ? 12 : 20,
             bottom: isMobile
-              ? `max(${isAdmin ? 128 : 72}px, calc(${isAdmin ? 120 : 64}px + env(safe-area-inset-bottom, 0px)))`
-              : `max(${isAdmin ? 148 : 88}px, calc(${isAdmin ? 140 : 80}px + env(safe-area-inset-bottom, 0px)))`,
+              ? `max(${canTrainVocabulary ? 128 : 72}px, calc(${canTrainVocabulary ? 120 : 64}px + env(safe-area-inset-bottom, 0px)))`
+              : `max(${canTrainVocabulary ? 148 : 88}px, calc(${canTrainVocabulary ? 140 : 80}px + env(safe-area-inset-bottom, 0px)))`,
             maxWidth: isMobile ? "min(58vw, 210px)" : 300,
             padding: isMobile ? "6px 10px" : "8px 12px",
             borderRadius: isMobile ? 8 : 10,
