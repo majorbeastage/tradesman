@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { isDeicticCustomerReference } from "./platformAssistantVocabulary"
 
 export type CustomerSearchHit = {
   id: string
@@ -21,7 +22,7 @@ export function extractCustomerSearchQuery(raw: string): string | null {
     const m = text.match(p)
     if (m?.[1]) {
       const q = m[1].replace(/\b(please|now|up)\b/gi, "").trim()
-      if (q.length >= 2) return q.slice(0, 80)
+      if (q.length >= 2 && !isDeicticCustomerReference(q)) return q.slice(0, 80)
     }
   }
   if (/\b(customer|client)\b/i.test(text)) {

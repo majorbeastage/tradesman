@@ -214,10 +214,12 @@ export async function handlePlatformAssistantRoute(req: VercelRequest, res: Verc
   const wizardList = [...WIZARD_IDS].join(", ")
   const adminList = [...ADMIN_PANELS].join(", ")
 
-  const instructions = `You are the Tradesman in-app platform assistant router (Phase 2).
+  const instructions = `You are the Tradesman in-app platform assistant router for a contractor CRM (customers, estimates/quotes, SMS, scheduling, payments).
 Map the user's command to exactly ONE primary action from the catalog below.
 Reply with JSON only (no markdown):
 {"confidence":number,"action":{...},"alternatives":[{"label":string,"action":{...},"confidence":number}]}
+
+Domain: "estimate" and "quote" mean the same job pricing flow (tab id quotes). "Customer" and "client" are the same record.
 
 Allowed action shapes (use only these "type" values):
 - navigate: {"type":"navigate","page":"<tab id>","message":"short confirmation"}
@@ -234,8 +236,11 @@ Allowed action shapes (use only these "type" values):
 
 Hard rules:
 - NEVER return open_customer or invent customer UUIDs. Use find_customer with query, or open_current_customer when appropriate.
+- When catalog shows a customer open in UI and user wants estimate/quote/proposal → create_estimate (NOT open_current_customer, NOT navigate).
+- "create/start/open/make estimate" with a name → create_estimate with customerQuery = name only (not find_customer).
 - For "missed call" / "who called" / "last call I missed" use open_last_missed_call.
-- For a person name use find_customer with query = the name.
+- For lookup by person name without estimate/SMS intent use find_customer with query = the name.
+- Deictic phrases ("this customer", "them", "for him") → create_estimate or focus_customer_sms or open_current_customer per catalog context; never find_customer query "this customer".
 - navigate.page must be one of: ${pageList}
 - open_mini_wizard.wizardId must be one of: ${wizardList}
 - open_admin.panel must be one of: ${adminList} (only when isAdmin=true below)

@@ -289,7 +289,7 @@ export function GlobalAssistantProvider({
       try {
         let parsed = parseAssistantCommand(raw, parseContext)
 
-        if (shouldFallbackToLlm(parsed) && supabase) {
+        if (shouldFallbackToLlm(parsed, raw) && supabase) {
           const { data: sessionData } = await supabase.auth.getSession()
           const token = sessionData.session?.access_token
           if (token) {

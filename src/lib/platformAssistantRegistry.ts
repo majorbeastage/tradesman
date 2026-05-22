@@ -335,6 +335,8 @@ export function buildPlatformAssistantCatalogText(ctx: {
   availableTabIds?: string[]
   isAdmin?: boolean
   currentPage?: string
+  selectedCustomerId?: string | null
+  selectedCustomerName?: string | null
 }): string {
   const lines: string[] = []
   lines.push("## Tradesman platform assistant — allowed actions")
@@ -342,6 +344,10 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push(`Current shell: **${ctx.platform}**${ctx.isAdmin ? " (user is admin)" : ""}.`)
   if (ctx.currentPage?.trim()) {
     lines.push(`Active tab: **${TAB_ID_LABELS[ctx.currentPage] ?? ctx.currentPage}** (\`${ctx.currentPage}\`). Prefer setup wizards on this tab when the user says “open” or “expand” without naming another area.`)
+  }
+  const selName = ctx.selectedCustomerName?.trim()
+  if (ctx.selectedCustomerId?.trim() && selName) {
+    lines.push(`Customer record open in UI: **${selName}** — prefer create_estimate / focus_customer_sms without repeating the name; use open_current_customer only to re-focus the row.`)
   }
   lines.push("")
 
@@ -385,10 +391,11 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push("- “this customer” / “expand this customer” — uses the customer row you have open on Customers.")
 
   lines.push("")
-  lines.push("### Do work (Phase 3)")
-  lines.push("- “start estimate for …” / “create quote for this customer” — opens Estimates and starts or resumes their estimate.")
-  lines.push("- “text them” / “send SMS” — opens Customers, expands SMS compose for that customer (opt-in rules apply).")
-  lines.push("- “what is this” / “help me here” — explains the current tab and selection.")
+  lines.push("### Do work (customer + estimate + SMS)")
+  lines.push("- Estimates: “create an estimate”, “open quote for Mike”, “new proposal for this customer”, “price this job”, “write up a bid”.")
+  lines.push("- SMS: “text them”, “send a message”, “open SMS”, “reply by text” (opens compose; does not auto-send).")
+  lines.push("- Customer: “open customer Johnson”, “find client Smith”; with someone on screen: “this customer”, “for them”.")
+  lines.push("- Help: “what can I do here”, “help me on this screen”, “explain this”.")
 
   lines.push("")
   lines.push("### Not yet supported")
@@ -397,7 +404,14 @@ export function buildPlatformAssistantCatalogText(ctx: {
 }
 
 export function suggestPhrasesForPlatform(platform: PlatformAssistantPlatform, limit = 8): string[] {
-  const phrases: string[] = ["take me to customers", "last missed call", "start estimate", "text them", "help me here", "setup guide"]
+  const phrases: string[] = [
+    "create estimate for this customer",
+    "text them",
+    "last missed call",
+    "open customer Smith",
+    "help me here",
+    "setup guide",
+  ]
   if (platform === "user") phrases.push("settings", "payments")
   if (platform !== "user") phrases.push("scheduling alerts", "estimate line items")
   phrases.push("call forwarding", "portal builder")

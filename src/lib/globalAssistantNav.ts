@@ -14,6 +14,15 @@ import {
 import { extractCustomerSearchQuery } from "./customerAssistantSearch"
 import { isMissedCallAssistantPhrase } from "./customerAssistantMissedCall"
 import { buildAssistantExplainMessage } from "./assistantExplain"
+import {
+  buildPlatformAssistantDomainTraining,
+  isCreateEstimatePhrase,
+  isFocusSmsPhrase,
+  isOpenSelectedCustomerOnlyPhrase,
+  normalizeAssistantPhrase,
+  phraseHasWorkflowCue,
+  resolveCustomerTargetFromPhrase,
+} from "./platformAssistantVocabulary"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 import { getSetupMiniWizardDef } from "./setupGuideWizards"
 import { TAB_ID_LABELS } from "../types/portal-builder"
@@ -49,9 +58,12 @@ export const ASSISTANT_CONFIRM_MIN = 68
 /** Rule engine matched strongly — do not call Phase 2 LLM. */
 export const ASSISTANT_RULE_LLM_THRESHOLD = 8
 
-export function shouldFallbackToLlm(parsed: AssistantParseResult): boolean {
+export function shouldFallbackToLlm(parsed: AssistantParseResult, phrase?: string): boolean {
   if (parsed.routedBy === "llm") return false
-  return (parsed.ruleTopScore ?? 0) < ASSISTANT_RULE_LLM_THRESHOLD
+  if ((parsed.ruleTopScore ?? 0) < ASSISTANT_RULE_LLM_THRESHOLD) return true
+  const text = phrase?.trim()
+  if (text && parsed.action.type === "clarify" && phraseHasWorkflowCue(text)) return true
+  return false
 }
 
 export type GlobalAssistantParseContext = {
@@ -65,14 +77,6 @@ export type GlobalAssistantParseContext = {
   /** Customers tab — row/detail currently open (Phase 3). */
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
-}
-
-function normalizeCommandText(raw: string): string {
-  return raw
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[""]/g, '"')
-    .replace(/['']/g, "'")
 }
 
 function scorePatterns(text: string, patterns: RegExp[]): number {
@@ -106,43 +110,12 @@ function tabAvailable(page: string, ctx: GlobalAssistantParseContext): boolean {
   return ctx.availableTabIds.includes(page)
 }
 
-function refersToCurrentCustomer(text: string): boolean {
-  return /\b(this|current|selected)\s+customer\b/i.test(text) || /\b(customer\s+here|who\s+i(?:'m| am)\s+(?:viewing|looking\s+at))\b/i.test(text)
-}
-
 function isExplainPhrase(text: string): boolean {
   return (
     /\b(what\s+(?:is|does)\s+this|help\s+(?:me\s+)?(?:here|with\s+this)|explain\s+(?:this|where\s+i\s+am)|how\s+do\s+i\s+use\s+this)\b/i.test(
       text,
     ) || /\bwhere\s+am\s+i\b/i.test(text)
   )
-}
-
-function isCreateEstimatePhrase(text: string): boolean {
-  return /\b(start|create|new|open|begin)\s+(?:an?\s+)?(?:estimate|quote)\b/i.test(text) || /\bestimate\s+for\b/i.test(text)
-}
-
-function isFocusSmsPhrase(text: string): boolean {
-  return (
-    /\b(text|sms|message)\s+(?:them|him|her|this\s+customer|customer)\b/i.test(text) ||
-    /\bsend\s+(?:a\s+)?(?:text|sms)\b/i.test(text) ||
-    /\bopen\s+sms\b/i.test(text)
-  )
-}
-
-function resolveCustomerTarget(
-  text: string,
-  ctx: GlobalAssistantParseContext,
-): { customerId?: string; customerQuery?: string } {
-  if (refersToCurrentCustomer(text) && ctx.selectedCustomerId) {
-    return { customerId: ctx.selectedCustomerId }
-  }
-  const q = extractCustomerSearchQuery(text)
-  if (q) return { customerQuery: q }
-  if (ctx.currentPage === "customers" && ctx.selectedCustomerId) {
-    return { customerId: ctx.selectedCustomerId }
-  }
-  return {}
 }
 
 function scoreToConfidence(ruleScore: number): number {
@@ -200,7 +173,7 @@ function scoredToAction(top: ScoredMatch, text: string, ctx: GlobalAssistantPars
 }
 
 export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseContext = {}): AssistantParseResult {
-  const text = normalizeCommandText(raw)
+  const text = normalizeAssistantPhrase(raw)
   const platform = ctx.platform ?? "user"
 
   if (!text) {
@@ -224,21 +197,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
     }
   }
 
-  if (refersToCurrentCustomer(text) && ctx.selectedCustomerId) {
-    const name = ctx.selectedCustomerName?.trim() || "this customer"
-    return {
-      confidence: 92,
-      ruleTopScore: 100,
-      routedBy: "rules",
-      action: {
-        type: "open_current_customer",
-        message: `Opening ${name} on Customers.`,
-      },
-    }
-  }
-
   if (isFocusSmsPhrase(text)) {
-    const target = resolveCustomerTarget(text, ctx)
+    const target = resolveCustomerTargetFromPhrase(text, ctx)
     if (target.customerId || target.customerQuery) {
       const label = target.customerId ? ctx.selectedCustomerName ?? "customer" : target.customerQuery ?? "customer"
       return {
@@ -256,11 +216,11 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   }
 
   if (isCreateEstimatePhrase(text)) {
-    const target = resolveCustomerTarget(text, ctx)
+    const target = resolveCustomerTargetFromPhrase(text, ctx)
     if (target.customerId || target.customerQuery) {
       const label = target.customerId ? ctx.selectedCustomerName ?? "customer" : target.customerQuery ?? "customer"
       return {
-        confidence: 88,
+        confidence: 92,
         ruleTopScore: 100,
         routedBy: "rules",
         action: {
@@ -279,9 +239,22 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
         action: {
           type: "navigate",
           page: "quotes",
-          message: "Opening Estimates. Pick or link a customer in the estimate wizard.",
+          message: "Opening Estimates. Say a customer name or open their record on Customers first.",
         },
       }
+    }
+  }
+
+  if (isOpenSelectedCustomerOnlyPhrase(text) && ctx.selectedCustomerId) {
+    const name = ctx.selectedCustomerName?.trim() || "this customer"
+    return {
+      confidence: 90,
+      ruleTopScore: 100,
+      routedBy: "rules",
+      action: {
+        type: "open_current_customer",
+        message: `Opening ${name} on Customers.`,
+      },
     }
   }
 
@@ -300,6 +273,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
   const customerQ = extractCustomerSearchQuery(text)
   if (
     customerQ &&
+    !isCreateEstimatePhrase(text) &&
+    !isFocusSmsPhrase(text) &&
     (/\b(open|find|show|view|go\s+to|pull\s+up|customer|client)\b/i.test(text) || customerQ.length >= 3)
   ) {
     return {
@@ -334,7 +309,8 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
 
   for (const row of PLATFORM_PAGE_INTENTS) {
     if (!row.platforms.includes(platform) && platform !== "admin") continue
-    const s = scorePatterns(text, row.patterns)
+    let s = scorePatterns(text, row.patterns)
+    if (s > 0 && row.page === "quotes" && isCreateEstimatePhrase(text)) s = Math.max(0, s - 12)
     if (s > 0) scored.push({ kind: "page", score: s, page: row.page, label: row.label })
   }
 
@@ -448,12 +424,15 @@ function logAssistantMiss(phrase: string, platform: PlatformAssistantPlatform): 
 
 /** For Phase 2 API — full catalog of what the assistant may do in this session. */
 export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): string {
-  return buildPlatformAssistantCatalogText({
+  const base = buildPlatformAssistantCatalogText({
     platform: ctx.platform ?? "user",
     availableTabIds: ctx.availableTabIds,
     isAdmin: ctx.isAdmin,
     currentPage: ctx.currentPage,
+    selectedCustomerId: ctx.selectedCustomerId,
+    selectedCustomerName: ctx.selectedCustomerName,
   })
+  return `${base}\n\n${buildPlatformAssistantDomainTraining(ctx)}`
 }
 
 export { ASSISTANT_ADMIN_PANEL_STORAGE_KEY }

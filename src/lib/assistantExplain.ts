@@ -11,7 +11,7 @@ export function buildAssistantExplainMessage(ctx: GlobalAssistantParseContext, _
     return [
       `You are on ${pageLabel} with ${cust} open.`,
       "Use the SMS section to text them (opt-in required for manually added numbers).",
-      'Say “start estimate for this customer”, “text them”, or “open automatic replies” for setup.',
+      'Try “create estimate for this customer”, “open quote”, “text them”, or “help me here”.',
     ].join(" ")
   }
 
