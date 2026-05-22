@@ -206,6 +206,7 @@ function MainApp() {
       platform="user"
       availableTabIds={portalTabs.map((t) => t.tab_id)}
       isAdmin={authRole === "admin"}
+      currentPage={page}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal

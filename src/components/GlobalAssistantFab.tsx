@@ -1,10 +1,25 @@
+import { useEffect, useState } from "react"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 
 const GREEN_SEND = "#059669"
 
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(false)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const mq = window.matchMedia("(pointer: coarse)")
+    const apply = () => setCoarse(mq.matches)
+    apply()
+    mq.addEventListener("change", apply)
+    return () => mq.removeEventListener("change", apply)
+  }, [])
+  return coarse
+}
+
 /** Site-wide assistant mic (indigo) + green Send — distinct from the orange variance-report mic. */
 export default function GlobalAssistantFab() {
   const ga = useGlobalAssistantOptional()
+  const isMobile = useCoarsePointer()
   if (!ga?.micFabVisible || ga.reportModalOpen) return null
 
   const {
@@ -17,6 +32,9 @@ export default function GlobalAssistantFab() {
   } = ga
 
   const canSend = Boolean(assistantText.trim()) && !assistantBusy
+  const previewTrim = assistantText.trim()
+  const showPreview = voiceListening
+  const previewLabel = previewTrim || (showPreview ? "Listening…" : "")
 
   return (
     <>
@@ -28,16 +46,23 @@ export default function GlobalAssistantFab() {
         .tradesman-global-assistant-fab--listening {
           animation: tradesman-global-assistant-pulse 1.6s ease-in-out infinite;
         }
+        @keyframes tradesman-assistant-preview-dots {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 1; }
+        }
+        .tradesman-assistant-preview--waiting {
+          animation: tradesman-assistant-preview-dots 1.2s ease-in-out infinite;
+        }
       `}</style>
       <div
         style={{
           position: "fixed",
           zIndex: 10050,
-          right: 20,
+          right: isMobile ? 12 : 20,
           bottom: "max(20px, calc(12px + env(safe-area-inset-bottom, 0px)))",
           display: "flex",
           flexDirection: "row-reverse",
-          alignItems: "center",
+          alignItems: "flex-end",
           gap: 10,
         }}
       >
@@ -49,8 +74,8 @@ export default function GlobalAssistantFab() {
             disabled={!canSend}
             onClick={() => submitVoiceAssistant()}
             style={{
-              width: 48,
-              height: 48,
+              width: isMobile ? 44 : 48,
+              height: isMobile ? 44 : 48,
               borderRadius: "50%",
               border: "2px solid #fff",
               background: canSend ? GREEN_SEND : "#94a3b8",
@@ -85,8 +110,8 @@ export default function GlobalAssistantFab() {
             toggleVoiceListening()
           }}
           style={{
-            width: 54,
-            height: 54,
+            width: isMobile ? 50 : 54,
+            height: isMobile ? 50 : 54,
             borderRadius: "50%",
             border: "2px solid #fff",
             background: voiceListening
@@ -102,7 +127,7 @@ export default function GlobalAssistantFab() {
             flexShrink: 0,
           }}
         >
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <svg width={isMobile ? 24 : 26} height={isMobile ? 24 : 26} viewBox="0 0 24 24" fill="none" aria-hidden>
             <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z" fill="currentColor" />
             <path
               d="M19 11a7 7 0 01-14 0M12 18v3M8 21h8"
@@ -114,25 +139,35 @@ export default function GlobalAssistantFab() {
           </svg>
         </button>
       </div>
-      {voiceListening && assistantText.trim() ? (
+      {showPreview && previewLabel ? (
         <div
           role="status"
+          aria-live="polite"
+          className={!previewTrim ? "tradesman-assistant-preview--waiting" : undefined}
           style={{
             position: "fixed",
             zIndex: 10049,
-            right: 20,
-            bottom: "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))",
-            maxWidth: 280,
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: "rgba(15,23,42,0.92)",
+            right: isMobile ? 12 : 20,
+            bottom: isMobile
+              ? "max(72px, calc(64px + env(safe-area-inset-bottom, 0px)))"
+              : "max(88px, calc(80px + env(safe-area-inset-bottom, 0px)))",
+            maxWidth: isMobile ? "min(58vw, 210px)" : 300,
+            padding: isMobile ? "6px 10px" : "8px 12px",
+            borderRadius: isMobile ? 8 : 10,
+            background: "rgba(15,23,42,0.94)",
             color: "#f8fafc",
-            fontSize: 12,
-            lineHeight: 1.4,
-            boxShadow: "0 8px 24px rgba(15,23,42,0.25)",
+            fontSize: isMobile ? 11 : 12,
+            lineHeight: 1.35,
+            boxShadow: "0 8px 24px rgba(15,23,42,0.28)",
+            pointerEvents: "none",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "-webkit-box",
+            WebkitLineClamp: isMobile ? 3 : 4,
+            WebkitBoxOrient: "vertical",
           }}
         >
-          {assistantText.trim()}
+          {previewLabel}
         </div>
       ) : null}
     </>

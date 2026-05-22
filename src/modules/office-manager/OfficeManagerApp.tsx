@@ -519,12 +519,13 @@ function OfficeManagerAppContent() {
     >
     <GlobalAssistantProvider
       setPage={setPage}
-      profileUserId={user?.id ?? null}
+      profileUserId={scope?.selectedUserId ?? user?.id ?? null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
       platform="office_manager"
       availableTabIds={resolvedPortalTabs.map((t) => t.tab_id)}
       isAdmin={false}
+      currentPage={page}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal

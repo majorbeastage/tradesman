@@ -3,6 +3,7 @@ import {
   combineSpeechSessionDisplay,
   createThrottledSpeechDisplay,
   parseSpeechResultsList,
+  speechRecognitionListenUntilStopped,
   speechRecognitionOptionsForPlatform,
 } from "./speechRecognitionTranscript"
 
@@ -29,6 +30,8 @@ function speechCtor(): (new () => SpeechRecognitionInstance) | undefined {
 export type SpeechRecognitionInputOptions = {
   /** Fired once when a listen session ends (user stop, send, or single-phrase completion on mobile). */
   onSessionEnd?: (finalText: string) => void
+  /** Show interim words on phones (platform assistant FAB). Default false on mobile. */
+  preferLiveTranscript?: boolean
 }
 
 /** Browser speech-to-text into a string; shared by dashboard assistant and global FAB. */
@@ -89,7 +92,9 @@ export function useSpeechRecognitionInput(
         throttleRef.current = createThrottledSpeechDisplay((display) => setDisplay(display))
         const rec = new Ctor()
         recognitionRef.current = rec
-        const opts = speechRecognitionOptionsForPlatform()
+        const opts = options?.preferLiveTranscript
+          ? speechRecognitionListenUntilStopped()
+          : speechRecognitionOptionsForPlatform()
         rec.continuous = opts.continuous
         rec.interimResults = opts.interimResults
         rec.lang = "en-US"

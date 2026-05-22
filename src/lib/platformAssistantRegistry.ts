@@ -334,11 +334,15 @@ export function buildPlatformAssistantCatalogText(ctx: {
   platform: PlatformAssistantPlatform
   availableTabIds?: string[]
   isAdmin?: boolean
+  currentPage?: string
 }): string {
   const lines: string[] = []
   lines.push("## Tradesman platform assistant — allowed actions (Phase 1)")
   lines.push("")
   lines.push(`Current shell: **${ctx.platform}**${ctx.isAdmin ? " (user is admin)" : ""}.`)
+  if (ctx.currentPage?.trim()) {
+    lines.push(`Active tab: **${TAB_ID_LABELS[ctx.currentPage] ?? ctx.currentPage}** (\`${ctx.currentPage}\`). Prefer setup wizards on this tab when the user says “open” or “expand” without naming another area.`)
+  }
   lines.push("")
 
   const tabSet = ctx.availableTabIds?.length ? new Set(ctx.availableTabIds) : null
@@ -377,6 +381,11 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push("")
   lines.push("### Find customer (assistant)")
   lines.push("- “open customer Johnson”, “find client Mike”, “show customer Smith” — opens Customers and expands their record.")
+  lines.push("- “last missed call”, “take me to the customer I missed a call for” — opens Customers and expands the most recent missed inbound call.")
+
+  lines.push("")
+  lines.push("### Phase 2 (next)")
+  lines.push("- LLM router for paraphrases when rule confidence is low (same action catalog).")
 
   lines.push("")
   lines.push("### Not yet supported here (Phase 3)")
@@ -385,7 +394,7 @@ export function buildPlatformAssistantCatalogText(ctx: {
 }
 
 export function suggestPhrasesForPlatform(platform: PlatformAssistantPlatform, limit = 8): string[] {
-  const phrases: string[] = ["take me to customers", "automatic replies", "setup guide"]
+  const phrases: string[] = ["take me to customers", "last missed call", "automatic replies", "setup guide"]
   if (platform === "user") phrases.push("settings", "payments")
   if (platform !== "user") phrases.push("scheduling alerts", "estimate line items")
   phrases.push("call forwarding", "portal builder")

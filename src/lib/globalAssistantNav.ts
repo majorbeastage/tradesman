@@ -12,6 +12,7 @@ import {
   type PlatformAssistantPlatform,
 } from "./platformAssistantRegistry"
 import { extractCustomerSearchQuery } from "./customerAssistantSearch"
+import { isMissedCallAssistantPhrase } from "./customerAssistantMissedCall"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 import { getSetupMiniWizardDef } from "./setupGuideWizards"
 import { TAB_ID_LABELS } from "../types/portal-builder"
@@ -22,6 +23,7 @@ export type GlobalAssistantAction =
   | { type: "open_mini_wizard"; wizardId: SetupMiniWizardId; message: string }
   | { type: "open_admin"; panel: AdminPanelId; message: string }
   | { type: "find_customer"; query: string; message: string }
+  | { type: "open_last_missed_call"; message: string }
   | { type: "open_customer"; customerId: string; customerName: string; message: string }
   | { type: "clarify"; message: string }
 
@@ -43,6 +45,8 @@ export type GlobalAssistantParseContext = {
   availableTabIds?: string[]
   /** User has admin role — may open admin portal from app shell. */
   isAdmin?: boolean
+  /** Active portal tab (dashboard, customers, calendar, …) — biases setup wizards on this page. */
+  currentPage?: string
 }
 
 function normalizeCommandText(raw: string): string {
@@ -152,6 +156,16 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
     }
   }
 
+  if (isMissedCallAssistantPhrase(text)) {
+    return {
+      confidence: 90,
+      action: {
+        type: "open_last_missed_call",
+        message: "Looking up your most recent missed call…",
+      },
+    }
+  }
+
   const customerQ = extractCustomerSearchQuery(text)
   if (
     customerQ &&
@@ -169,9 +183,15 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
 
   const scored: ScoredMatch[] = []
 
+  const currentPage = ctx.currentPage?.trim() || ""
+
   for (const row of PLATFORM_WIZARD_INTENTS) {
     const s = scorePatterns(text, row.patterns)
-    if (s > 0) scored.push({ kind: "wizard", score: s + 5, wizardId: row.wizardId })
+    if (s > 0) {
+      const def = getSetupMiniWizardDef(row.wizardId)
+      const onCurrentTab = Boolean(currentPage && def?.page === currentPage)
+      scored.push({ kind: "wizard", score: s + 5 + (onCurrentTab ? 10 : 0), wizardId: row.wizardId })
+    }
   }
 
   for (const row of PLATFORM_PAGE_INTENTS) {
@@ -238,11 +258,15 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
 
   const hints = suggestPhrasesForPlatform(platform, 6).map((p) => `“${p}”`).join(", ")
   logAssistantMiss(text, platform)
+  const here =
+    currentPage && tabAvailable(currentPage, ctx)
+      ? ` You are on ${pageLabel(currentPage)} — try a setting on this tab or say “setup guide”.`
+      : ""
   return {
     confidence: 0,
     action: {
       type: "clarify",
-      message: `I did not match that yet. Try ${hints}, or “setup guide”.`,
+      message: `I did not match that yet. Try ${hints}, or “setup guide”.${here}`,
     },
   }
 }
@@ -273,6 +297,7 @@ export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): 
     platform: ctx.platform ?? "user",
     availableTabIds: ctx.availableTabIds,
     isAdmin: ctx.isAdmin,
+    currentPage: ctx.currentPage,
   })
 }
 

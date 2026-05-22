@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
 import AssistantConfirmDialog, { type AssistantConfirmOption } from "../components/AssistantConfirmDialog"
 import { searchCustomersByQuery } from "../lib/customerAssistantSearch"
+import { findLastMissedCallCustomer } from "../lib/customerAssistantMissedCall"
 import { queueCustomerFocus } from "../lib/customerNavigation"
 import { supabase } from "../lib/supabase"
 import {
@@ -52,6 +53,8 @@ type Props = {
   platform?: GlobalAssistantParseContext["platform"]
   availableTabIds?: string[]
   isAdmin?: boolean
+  /** Active portal tab — passed into parseContext for menu-aware routing. */
+  currentPage?: string
 }
 
 export function GlobalAssistantProvider({
@@ -63,6 +66,7 @@ export function GlobalAssistantProvider({
   platform = "user",
   availableTabIds,
   isAdmin = false,
+  currentPage,
 }: Props) {
   const { setView } = useView()
   const [assistantText, setAssistantText] = useState("")
@@ -79,8 +83,8 @@ export function GlobalAssistantProvider({
   } | null>(null)
 
   const parseContext = useMemo<GlobalAssistantParseContext>(
-    () => ({ platform, availableTabIds, isAdmin }),
-    [platform, availableTabIds, isAdmin],
+    () => ({ platform, availableTabIds, isAdmin, currentPage }),
+    [platform, availableTabIds, isAdmin, currentPage],
   )
 
   const registerSetupGuideOpener = useCallback((fn: () => void) => {
@@ -121,6 +125,31 @@ export function GlobalAssistantProvider({
         queueCustomerFocus(action.customerId)
         setPage("customers")
         setAssistantNote(action.message)
+        return
+      }
+      if (action.type === "open_last_missed_call") {
+        if (!supabase || !profileUserId) {
+          setAssistantNote("Sign in to look up missed calls.")
+          return
+        }
+        setAssistantNote(action.message)
+        try {
+          const hit = await findLastMissedCallCustomer(supabase, profileUserId)
+          if (!hit) {
+            setAssistantNote(
+              "No missed call with a customer record found yet. Check Customers after an inbound call goes to voicemail.",
+            )
+            return
+          }
+          await executeAssistantAction({
+            type: "open_customer",
+            customerId: hit.customerId,
+            customerName: hit.display_name,
+            message: `Opening ${hit.display_name} (last missed call).`,
+          })
+        } catch (e) {
+          setAssistantNote(e instanceof Error ? e.message : "Could not load missed call.")
+        }
         return
       }
       if (action.type === "find_customer") {
@@ -193,7 +222,9 @@ export function GlobalAssistantProvider({
                   ? getSetupMiniWizardDef(action.wizardId)?.label ?? "Open setup wizard"
                   : action.type === "find_customer"
                     ? `Find customer “${action.query}”`
-                    : action.message.replace(/\.$/, ""),
+                    : action.type === "open_last_missed_call"
+                      ? "Open last missed call"
+                      : action.message.replace(/\.$/, ""),
             action,
           },
         ]
@@ -231,7 +262,10 @@ export function GlobalAssistantProvider({
     listening: voiceListening,
     startListening,
     stopListening,
-  } = useSpeechRecognitionInput(setAssistantText, { onSessionEnd: onVoiceSessionEnd })
+  } = useSpeechRecognitionInput(setAssistantText, {
+    onSessionEnd: onVoiceSessionEnd,
+    preferLiveTranscript: true,
+  })
 
   const persistMicPref = useCallback(
     async (enabled: boolean) => {
