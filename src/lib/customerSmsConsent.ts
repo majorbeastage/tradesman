@@ -1,4 +1,6 @@
-import { DEFAULT_SMS_CONSENT_PAGE } from "../types/legal-pages"
+import { DEFAULT_SMS_CONSENT_PAGE, SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE } from "../types/legal-pages"
+
+export { SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE }
 
 export const CUSTOMER_SMS_CONSENT_META_KEY = "sms_consent"
 
@@ -51,10 +53,6 @@ export const EMPTY_MANUAL_SMS_CONSENT_SOURCE: ManualSmsConsentSourceInput = {
   consentUrl: "",
   consentNote: "",
 }
-
-/** TCPA / A2P — consent must not be tied to purchase. */
-export const SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE =
-  "Consent to receive SMS messages is not required as a condition of purchasing goods or services."
 
 export function buildManualSmsConsentDisclosure(businessName: string): string {
   const biz = businessName.trim() || "Your business"

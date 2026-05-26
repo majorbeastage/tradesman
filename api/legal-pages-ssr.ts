@@ -98,6 +98,10 @@ Message frequency varies. Message and data rates may apply.`
 const SMS_PLATFORM_RULES_DEFAULT =
   "Tradesman Systems does not support bulk messaging or unsolicited outreach. All messaging is intended to be one-to-one and directly related to a customer inquiry or ongoing service."
 
+/** TCPA / A2P — shown on public /sms and related compliance surfaces. */
+export const SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE =
+  "Consent to receive SMS messages is not required as a condition of purchasing goods or services."
+
 function pickSmsField(page: SmsConsentLegalPage, key: keyof SmsConsentLegalPage, fallback: string): string {
   const v = page[key]
   return typeof v === "string" && v.trim() ? v.trim() : fallback
@@ -122,6 +126,11 @@ export function resolvedSmsConsentSections(page: SmsConsentLegalPage): SmsConsen
       kind: "disclosure",
       subheading: pickSmsField(page, "cta_disclosure_heading", "Example SMS Consent Disclosure"),
       content: pickSmsField(page, "consent_statement", SMS_CTA_DISCLOSURE_DEFAULT),
+    },
+    {
+      title: "Consent and purchase",
+      kind: "paragraph",
+      content: SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE,
     },
     {
       title: "Manual Contacts",
