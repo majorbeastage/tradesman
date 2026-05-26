@@ -477,7 +477,7 @@ export default function AdminSignupRequirementsSection() {
         onToggle={() => setSmsOpen((v) => !v)}
       >
         <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
-          Public /sms page order: Intro → Consent Methods → CTA disclosure → Manual Contacts → Messaging Use Cases → STOP/HELP → Platform Rules. Clear both notice fields to hide the notice card. Legacy “details body” and sample fields are no longer shown on the public page.
+          Public /sms page order: Intro → Consent Methods → CTA disclosure → Consent and purchase → Manual Contacts → Messaging Use Cases → STOP/HELP → Platform Rules. Clear both notice fields to hide the notice card. Legacy “details body” and sample fields are no longer shown on the public page.
         </p>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Hero line (blank = “Tradesman Systems”)
