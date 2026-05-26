@@ -83,12 +83,41 @@ export function majorIdContainingSubsection(subId: string): string | null {
   return null
 }
 
+/** Short voice phrases → subsection id (checked before full label scan). */
+const SUBSECTION_SHORT_ALIASES: Record<string, string> = {
+  gutters: "gutters_downspouts",
+  gutter: "gutters_downspouts",
+  downspouts: "gutters_downspouts",
+  roof: "roof_cover",
+  "roof covering": "roof_cover",
+  foundation: "foundation_visible",
+  electrical: "service_equipment",
+  electric: "service_equipment",
+  panel: "panel_breakers",
+  plumbing: "supply_visible",
+  hvac: "heating_equipment",
+  heating: "heating_equipment",
+  cooling: "cooling_equipment",
+  attic: "crawl_attic_access",
+  insulation: "attic_insulation",
+  siding: "siding_trim",
+  windows: "windows_exterior",
+  deck: "decks_balconies",
+  driveway: "walkways_drive",
+  grading: "grading_drainage",
+  water: "water_heater",
+  "water heater": "water_heater",
+}
+
 export function matchSubsectionIdFromPhrase(rest: string): string | null {
-  const cleaned = normAssistantPhrase(rest)
+  const cleaned = normAssistantPhrase(rest).replace(/^the\s+/, "").trim()
+  if (!cleaned) return null
+  if (SUBSECTION_SHORT_ALIASES[cleaned]) return SUBSECTION_SHORT_ALIASES[cleaned]
   const words = cleaned.split(/\s+/).filter(Boolean)
-  for (let take = Math.min(8, words.length); take >= 1; take -= 1) {
+  for (let take = Math.min(6, words.length); take >= 1; take -= 1) {
     const phrase = words.slice(0, take).join(" ")
     if (phrase.length < 3) continue
+    if (SUBSECTION_SHORT_ALIASES[phrase]) return SUBSECTION_SHORT_ALIASES[phrase]
     for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
       for (const sub of sec.subsections) {
         const L = normAssistantPhrase(sub.label)
@@ -120,8 +149,12 @@ function fieldPhraseMatchesHint(fieldNorm: string, hint: string): boolean {
   return re.test(fieldNorm)
 }
 
-export function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
+export function matchHeaderOrSubFieldKey(fieldPhrase: string, preferFindings = false): string | null {
   const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
+  if (preferFindings) {
+    const subFirst = matchSubsectionIdFromPhrase(f)
+    if (subFirst) return `sub:${subFirst}`
+  }
   const headerPairs: Array<[string[], string]> = [
     [["inspector name", "inspectors name", "inspector's name", "inspector"], "header.inspectorName"],
     [
@@ -265,6 +298,7 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
 function parseLineToAssignment(
   line: string,
   ctx: SpecialtyReportFillContext,
+  preferFindings = false,
 ): SpecialtyReportFieldAssignment | null {
   const colon = line.indexOf(":")
   let left = ""
@@ -284,7 +318,7 @@ function parseLineToAssignment(
       valueRaw = md[2].trim()
     }
   }
-  const fieldKey = matchHeaderOrSubFieldKey(left)
+  const fieldKey = matchHeaderOrSubFieldKey(left, preferFindings)
   if (!fieldKey) return null
   const rating = parseConditionRating(valueRaw)
   if (fieldKey.startsWith("sub:") && rating) {
@@ -429,6 +463,8 @@ export function parseSpecialtyReportFieldAssignments(
     readFieldValue: (fieldKey: string) => string
     /** When true (Apply / Stop), overwrite fields that already have different text. */
     replaceExisting?: boolean
+    /** Prefer findings subsection labels over header aliases (e.g. “scope” on findings page). */
+    preferFindings?: boolean
   },
 ): SpecialtyReportParseResult {
   const assignments: SpecialtyReportFieldAssignment[] = []
@@ -465,7 +501,7 @@ export function parseSpecialtyReportFieldAssignments(
       summaries.push(structuredSeg.summary)
       continue
     }
-    const lineAssignment = parseLineToAssignment(segment, ctx)
+    const lineAssignment = parseLineToAssignment(segment, ctx, opts.preferFindings === true)
     if (lineAssignment) {
       const cur = opts.readFieldValue(lineAssignment.fieldKey).trim()
       if (cur && cur !== lineAssignment.value && !opts.replaceExisting) {
