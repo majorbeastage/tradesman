@@ -107,12 +107,149 @@ const SUBSECTION_SHORT_ALIASES: Record<string, string> = {
   grading: "grading_drainage",
   water: "water_heater",
   "water heater": "water_heater",
+  "crawl space": "crawl_attic_access",
+  crawlspace: "crawl_attic_access",
+  "under the house": "crawl_attic_access",
+  underneath: "crawl_attic_access",
+  basement: "foundation_visible",
+  "electrical panel": "panel_breakers",
+  breaker: "panel_breakers",
+  breakers: "panel_breakers",
+  chimney: "chimney_exterior",
+  flashing: "flashing_penetrations",
+  skylight: "flashing_penetrations",
+}
+
+/** Phrases that may appear anywhere in spoken findings narrative (longest match wins). */
+const SUBSECTION_NARRATIVE_HINTS: Array<{ re: RegExp; subId: string; weight: number }> = [
+  { re: /\bcrawl\s*space|\bcrawlspace|under(?:neath)?\s+(?:the\s+)?house|under\s+the\s+floor\b/i, subId: "crawl_attic_access", weight: 14 },
+  { re: /\bcrawl\s*space\s+moisture|vapor\s+retard|ground\s+moisture\s+barrier/i, subId: "crawlspace_moisture", weight: 16 },
+  { re: /\bfoundation|underpinning|slab|footing|stem\s+wall/i, subId: "foundation_visible", weight: 12 },
+  { re: /\broof\s+cover|shingle|roofing\b/i, subId: "roof_cover", weight: 12 },
+  { re: /\bgutter|downspout/i, subId: "gutters_downspouts", weight: 12 },
+  { re: /\belectrical\s+panel|breaker\s+panel|main\s+panel/i, subId: "panel_breakers", weight: 11 },
+  { re: /\bwater\s+heater|hot\s+water\s+tank/i, subId: "water_heater", weight: 11 },
+  { re: /\bhvac|furnace|air\s+handler|condenser/i, subId: "heating_equipment", weight: 10 },
+  { re: /\battic\s+insulation|blown\s+in\s+insulation/i, subId: "attic_insulation", weight: 11 },
+  { re: /\battic\s+vent|soffit\s+vent|ridge\s+vent/i, subId: "attic_ventilation", weight: 11 },
+]
+
+function subsectionLabel(subId: string): string {
+  return HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId
+}
+
+function inferConditionFromNarrative(text: string): ConditionRating | null {
+  const t = text.toLowerCase()
+  if (
+    /\b(deficient|repair|replace|hazard|unsafe|failing|failed|serious|significant|major)\b/.test(t) ||
+    /\b(problems?|issues?|damage|damaged|leak|leaking|leaks|mold|moisture|rot|crack|cracks|broken)\b/.test(t) ||
+    /\b(needs?\s+to\s+be\s+(?:re)?placed|needs?\s+(?:more|repair|attention|work))\b/.test(t) ||
+    /\b(curled|curling|missing\s+shingles?|recommend(?:ed)?\s+(?:repair|evaluation|contractor))\b/.test(t)
+  ) {
+    return "deficient"
+  }
+  if (/\b(monitor|marginal|fair|aging|worn)\b/.test(t)) return "marginal"
+  if (/\b(satisfactory|good|ok|fine|no\s+(?:major\s+)?issues|acceptable)\b/.test(t)) return "satisfactory"
+  return null
+}
+
+/** Match a findings subsection mentioned anywhere in free-form dictation. */
+export function matchSubsectionIdInText(text: string): string | null {
+  const norm = normAssistantPhrase(text)
+  if (!norm) return null
+
+  let best: { subId: string; weight: number } | null = null
+  for (const hint of SUBSECTION_NARRATIVE_HINTS) {
+    if (hint.re.test(text) || hint.re.test(norm)) {
+      if (!best || hint.weight > best.weight) best = { subId: hint.subId, weight: hint.weight }
+    }
+  }
+
+  const aliasEntries = Object.entries(SUBSECTION_SHORT_ALIASES).sort((a, b) => b[0].length - a[0].length)
+  for (const [phrase, subId] of aliasEntries) {
+    if (phrase.includes(" ")) {
+      if (norm.includes(phrase) && (!best || phrase.length >= 6)) {
+        best = { subId, weight: 8 + phrase.length }
+      }
+    } else {
+      const re = new RegExp(`\\b${escapeRegex(phrase)}\\b`, "i")
+      if (re.test(norm)) {
+        const w = 7 + phrase.length
+        if (!best || w > best.weight) best = { subId, weight: w }
+      }
+    }
+  }
+
+  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
+    for (const sub of sec.subsections) {
+      const L = normAssistantPhrase(sub.label)
+      const tokens = L.split(/[\s/&]+/).filter((w) => w.length >= 5)
+      const hits = tokens.filter((w) => norm.includes(w))
+      if (hits.length >= 2 || (tokens.length === 1 && hits.length === 1 && tokens[0]!.length >= 7)) {
+        const w = 6 + hits.length
+        if (!best || w > best.weight) best = { subId: sub.id, weight: w }
+      }
+    }
+  }
+
+  return best?.subId ?? null
+}
+
+function tryParseNarrativeFindings(
+  segment: string,
+  opts: { readFieldValue: (fieldKey: string) => string; replaceExisting?: boolean },
+): { assignments: SpecialtyReportFieldAssignment[]; summary: string } | null {
+  const text = segment.trim()
+  if (text.length < 12) return null
+  if (/^(?:set|fill|put|change|mark)\s+/i.test(text)) return null
+
+  const subId = matchSubsectionIdInText(text)
+  if (!subId) return null
+
+  const fieldKey = `sub:${subId}`
+  let notes = text
+  const cur = opts.readFieldValue(fieldKey).trim()
+  if (cur && !opts.replaceExisting) {
+    notes = `${cur}\n${text}`
+  } else if (cur && opts.replaceExisting) {
+    notes = text
+  }
+
+  const assignments: SpecialtyReportFieldAssignment[] = [{ fieldKey, value: notes }]
+  const rating = inferConditionFromNarrative(text)
+  if (rating) {
+    assignments.unshift({ fieldKey: `cond:sub:${subId}`, value: rating })
+  }
+
+  const label = subsectionLabel(subId)
+  const summary = rating
+    ? `Recorded ${CONDITION_RATING_LABELS[rating]} and notes for ${label}.`
+    : `Recorded findings notes for ${label}.`
+  return { assignments, summary }
 }
 
 export function matchSubsectionIdFromPhrase(rest: string): string | null {
   const cleaned = normAssistantPhrase(rest).replace(/^the\s+/, "").trim()
   if (!cleaned) return null
   if (SUBSECTION_SHORT_ALIASES[cleaned]) return SUBSECTION_SHORT_ALIASES[cleaned]
+
+  const labelEntries = HOME_INSPECTION_MAJOR_SECTIONS.flatMap((sec) =>
+    sec.subsections.map((sub) => ({ L: normAssistantPhrase(sub.label), id: sub.id })),
+  ).sort((a, b) => b.L.length - a.L.length)
+  for (const { L, id } of labelEntries) {
+    if (cleaned === L || cleaned.includes(L) || (cleaned.length >= 8 && L.includes(cleaned))) return id
+  }
+
+  const aliasEntries = Object.entries(SUBSECTION_SHORT_ALIASES).sort((a, b) => b[0].length - a[0].length)
+  for (const [phrase, subId] of aliasEntries) {
+    if (phrase.includes(" ")) {
+      if (cleaned.includes(phrase)) return subId
+    } else {
+      const re = new RegExp(`\\b${escapeRegex(phrase)}\\b`, "i")
+      if (re.test(cleaned)) return subId
+    }
+  }
+
   const words = cleaned.split(/\s+/).filter(Boolean)
   for (let take = Math.min(6, words.length); take >= 1; take -= 1) {
     const phrase = words.slice(0, take).join(" ")
@@ -180,13 +317,36 @@ export function matchHeaderOrSubFieldKey(fieldPhrase: string, preferFindings = f
   return subId ? `sub:${subId}` : null
 }
 
+function normalizeIsFormLeft(leftRaw: string): string {
+  return normAssistantPhrase(leftRaw).replace(/^(the|a|an)\s+/, "").trim()
+}
+
+/** Reject "the inspector is … and weather is …" style false positives on long left phrases. */
+function isFormLeftLooksLikeFieldLabel(leftRaw: string, preferFindings = false): boolean {
+  const f = normalizeIsFormLeft(leftRaw)
+  if (!f || f.length > 42) return false
+  const words = f.split(/\s+/).filter(Boolean)
+  if (words.length > 5) return false
+  return Boolean(matchHeaderOrSubFieldKey(f, preferFindings))
+}
+
 /** Voice-friendly: "set X to Y", "X is Y", "put Y in X", "for X use Y". */
-export function tryImplicitFieldKeyValue(line: string): { left: string; valueRaw: string } | null {
+export function tryImplicitFieldKeyValue(
+  line: string,
+  preferFindings = false,
+): { left: string; valueRaw: string } | null {
   const t = line.trim()
   if (!t) return null
 
   const setTo = t.match(/^(?:please\s+)?(?:set|change)\s+(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
-  if (setTo?.[1]?.trim() && setTo[2]?.trim()) return { left: setTo[1].trim(), valueRaw: setTo[2].trim() }
+  if (setTo?.[1]?.trim() && setTo[2]?.trim()) {
+    let valueRaw = setTo[2].trim()
+    const valueTail = valueRaw.split(
+      /\s+and\s+(?=(?:the\s+)?(?:weather|license(?:\s+number|\s+id)?|inspector(?:'s)?\s+name|inspector|property\s+address|parties(?:\s+present)?|scope|summary)\s+is\s+)/i,
+    )
+    if (valueTail.length > 1) valueRaw = valueTail[0]!.trim()
+    return { left: setTo[1].trim(), valueRaw }
+  }
 
   const fillWith = t.match(/^(?:please\s+)?(?:fill|put)\s+(?:the\s+)?(.+?)\s+(?:with|as)\s+(.+)$/is)
   if (fillWith?.[1]?.trim() && fillWith[2]?.trim()) return { left: fillWith[1].trim(), valueRaw: fillWith[2].trim() }
@@ -203,7 +363,14 @@ export function tryImplicitFieldKeyValue(line: string): { left: string; valueRaw
   const isForm = t.match(/^(.+?)\s+is\s+(.+)$/is)
   if (isForm?.[1]?.trim() && isForm[2]?.trim()) {
     const left = isForm[1].trim()
-    if (matchHeaderOrSubFieldKey(left)) return { left, valueRaw: isForm[2].trim() }
+    if (!isFormLeftLooksLikeFieldLabel(left, preferFindings)) return null
+    if (!matchHeaderOrSubFieldKey(normalizeIsFormLeft(left), preferFindings)) return null
+    let valueRaw = isForm[2].trim()
+    const valueTail = valueRaw.split(
+      /\s+and\s+(?=(?:the\s+)?(?:weather|license(?:\s+number|\s+id)?|inspector(?:'s)?\s+name|inspector|property\s+address|parties(?:\s+present)?|scope|summary)\s+is\s+)/i,
+    )
+    if (valueTail.length > 1) valueRaw = valueTail[0]!.trim()
+    if (valueRaw) return { left, valueRaw }
   }
 
   const eq = t.match(/^(.+?)\s*=\s*(.+)$/)
@@ -274,8 +441,18 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
     .filter(Boolean)
   if (byNewline.length > 1) return byNewline
 
+  const headerIsChain = text.split(
+    /\s+and\s+(?=(?:the\s+)?(?:inspector(?:'s)?\s+name|inspector|license(?:\s+number|\s+id)?|weather|property\s+address|parties(?:\s+present)?|scope|summary)\s+is\s+)/i,
+  )
+  if (headerIsChain.length > 1) return headerIsChain.map((s) => s.trim()).filter(Boolean)
+
+  const headerFieldAnd = text.split(
+    /\s+and\s+(?=(?:the\s+)?(?:weather|license(?:\s+number|\s+id)?|inspector(?:'s)?\s+name|inspector|property\s+address|parties(?:\s+present)?|scope|summary)\b)/i,
+  )
+  if (headerFieldAnd.length > 1) return headerFieldAnd.map((s) => s.trim()).filter(Boolean)
+
   const andSplit = text.split(
-    /\s+(?:and|also|then)\s+(?=(?:please\s+)?(?:set|fill|put|use|change|mark|weather\b|inspector\b|license\b|gutters\b|roof\b|condition\b))/i,
+    /\s+(?:and|also|then)\s+(?=(?:please\s+)?(?:set|fill|put|use|change|mark|gutters\b|roof\b|condition\b))/i,
   )
   if (andSplit.length > 1) return andSplit.map((s) => s.trim()).filter(Boolean)
 
@@ -299,7 +476,7 @@ function parseLineToAssignment(
   line: string,
   ctx: SpecialtyReportFillContext,
   preferFindings = false,
-): SpecialtyReportFieldAssignment | null {
+): SpecialtyReportFieldAssignment[] {
   const colon = line.indexOf(":")
   let left = ""
   let valueRaw = ""
@@ -307,26 +484,63 @@ function parseLineToAssignment(
     left = line.slice(0, colon).trim()
     valueRaw = line.slice(colon + 1).trim()
   } else {
-    const implicit = tryImplicitFieldKeyValue(line)
+    const implicit = tryImplicitFieldKeyValue(line, preferFindings)
     if (implicit) {
       left = implicit.left
       valueRaw = implicit.valueRaw
     } else {
       const md = line.match(/^(.+?)\s*[–—]\s*(.+)$/)
-      if (!md?.[1] || !md[2]) return null
+      if (!md?.[1] || !md[2]) return []
       left = md[1].trim()
       valueRaw = md[2].trim()
     }
   }
+  const partiesTail = line.match(/^parties present\s+(.+)$/i)
+  if (partiesTail?.[1]?.trim()) {
+    return [{ fieldKey: "header.partiesPresent", value: partiesTail[1].trim() }]
+  }
+
+  const licenseTail = line.match(/^license(?:\s+number|\s+id)?\s+is\s+(.+)$/i)
+  if (licenseTail?.[1]?.trim()) {
+    let v = licenseTail[1].trim()
+    const chop = v.split(/\s+and\s+parties\s+present\b/i)
+    if (chop.length > 1) v = chop[0]!.trim()
+    return [{ fieldKey: "header.licenseId", value: v }]
+  }
+
   const fieldKey = matchHeaderOrSubFieldKey(left, preferFindings)
-  if (!fieldKey) return null
+  if (!fieldKey) return []
   const rating = parseConditionRating(valueRaw)
   if (fieldKey.startsWith("sub:") && rating) {
-    return { fieldKey: `cond:${fieldKey}`, value: rating }
+    return [{ fieldKey: `cond:${fieldKey}`, value: rating }]
   }
   const value = (resolveFillLiteral(valueRaw, ctx) || valueRaw).trim()
-  if (!value) return null
-  return { fieldKey, value }
+  if (!value) return []
+  return [{ fieldKey, value }]
+}
+
+function parseLineToAssignmentOrRatingTail(
+  line: string,
+  ctx: SpecialtyReportFillContext,
+  preferFindings = false,
+): SpecialtyReportFieldAssignment[] {
+  const ratingOnly = line.match(/^(satisfactory|marginal|deficient|not\s+inspected|n\/a|na)$/i)
+  if (ratingOnly?.[1]) return []
+  const base = parseLineToAssignment(line, ctx, preferFindings)
+  if (base.length === 0) return base
+  const tail = line.match(/^(.+?):\s*(.+?)\.\s*(satisfactory|marginal|deficient|not\s+inspected|n\/a|na)\s*\.?$/i)
+  if (tail?.[1] && tail[2] && tail[3]) {
+    const subId = matchHeaderOrSubFieldKey(tail[1].trim(), preferFindings)
+    const rating = parseConditionRating(tail[3].trim())
+    if (subId?.startsWith("sub:") && rating) {
+      const notes = tail[2].trim()
+      return [
+        { fieldKey: subId, value: notes },
+        { fieldKey: `cond:${subId}`, value: rating },
+      ]
+    }
+  }
+  return base
 }
 
 export function parseStructuredFillAndNavCommands(
@@ -366,7 +580,7 @@ export function parseStructuredFillAndNavCommands(
     }
   }
 
-  let fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|set\s+|put\s+)(?:the\s+)?(.+?)\s+(?:with)\s+(.+)$/is)
+  let fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|put\s+)(?:the\s+)?(.+?)\s+(?:with)\s+(.+)$/is)
   if (!fillM) {
     fillM = text.match(/^(?:please\s+)?(?:fill\s+in\s+|fill\s+|put\s+)(?:the\s+)?(.+?)\s+to\s+(.+)$/is)
   }
@@ -397,7 +611,12 @@ export function parseStructuredFillAndNavCommands(
     /^(?:please\s+)?(?:mark\s+)?(.+?)\s+(?:as\s+|to\s+|rated\s+)?(satisfactory|marginal|deficient|not\s+inspected|n\/a|na|unchecked)\.?$/i,
   )
   if (subRated?.[1] && subRated[2]) {
-    const subId = matchSubsectionIdFromPhrase(subRated[1].trim())
+    const left = subRated[1].trim()
+    const looksLikeNarrativeTail =
+      left.includes(":") ||
+      (!/\bmark\b/i.test(text) && (/\.\s/.test(left) || left.length > 56 || left.split(/\s+/).length > 10))
+    if (!looksLikeNarrativeTail) {
+    const subId = matchSubsectionIdFromPhrase(left)
     const rating = parseConditionRating(subRated[2].trim())
     if (subId && rating) {
       return {
@@ -405,9 +624,10 @@ export function parseStructuredFillAndNavCommands(
         patch: { setCondition: { subId, condition: rating } },
       }
     }
+    }
   }
 
-  const condM = text.match(/\b(?:set|change)\s+condition\s+(?:for|on)?\s*(.+?)\s+to\s+(.+)$/i)
+  const condM = text.match(/\b(?:set|change)\s+condition\s+(?:for|on)\s+(.+)\s+to\s+(.+)$/i)
   if (condM?.[1] && condM[2]) {
     const subId = matchSubsectionIdFromPhrase(condM[1].trim())
     const rating = parseConditionRating(condM[2].trim())
@@ -456,6 +676,36 @@ export function parseStructuredFillAndNavCommands(
   return null
 }
 
+/** Voice dump: "inspector name Joe license 123 weather clear …" without set/colon/is. */
+function tryParseHeaderRapidFire(text: string): SpecialtyReportFieldAssignment[] | null {
+  const t = text.trim()
+  if (t.length < 24 || /^(?:set|fill|put|change|mark)\s+/i.test(t)) return null
+  const markers: Array<{ re: RegExp; key: string }> = [
+    { re: /\binspector(?:'s)?\s+name\b/i, key: "header.inspectorName" },
+    { re: /\blicense(?:\s+number|\s+id)?\b/i, key: "header.licenseId" },
+    { re: /\bweather\b/i, key: "header.weather" },
+    { re: /\bproperty\s+address\b/i, key: "header.propertyAddress" },
+    { re: /\bparties\s+present\b/i, key: "header.partiesPresent" },
+  ]
+  type Hit = { index: number; key: string; len: number }
+  const hits: Hit[] = []
+  for (const m of markers) {
+    const match = m.re.exec(t)
+    if (match?.index != null) hits.push({ index: match.index, key: m.key, len: match[0].length })
+  }
+  if (hits.length < 2) return null
+  hits.sort((a, b) => a.index - b.index)
+
+  const out: SpecialtyReportFieldAssignment[] = []
+  for (let i = 0; i < hits.length; i++) {
+    const start = hits[i]!.index + hits[i]!.len
+    const end = i + 1 < hits.length ? hits[i + 1]!.index : t.length
+    const value = t.slice(start, end).trim().replace(/^(?:is|:)\s*/i, "").trim()
+    if (value) out.push({ fieldKey: hits[i]!.key, value })
+  }
+  return out.length >= 2 ? out : null
+}
+
 export function parseSpecialtyReportFieldAssignments(
   raw: string,
   ctx: SpecialtyReportFillContext,
@@ -502,19 +752,67 @@ export function parseSpecialtyReportFieldAssignments(
       summaries.push(structuredSeg.summary)
       continue
     }
-    const lineAssignment = parseLineToAssignment(segment, ctx, opts.preferFindings === true)
-    if (lineAssignment) {
-      const cur = opts.readFieldValue(lineAssignment.fieldKey).trim()
-      if (cur && cur !== lineAssignment.value && !opts.replaceExisting) {
-        skippedExisting += 1
+    if (opts.preferFindings !== true) {
+      const rapid = tryParseHeaderRapidFire(segment)
+      if (rapid) {
+        for (const a of rapid) {
+          if (seen.has(a.fieldKey)) continue
+          const cur = opts.readFieldValue(a.fieldKey).trim()
+          if (cur && cur !== a.value && !opts.replaceExisting) {
+            skippedExisting += 1
+            continue
+          }
+          seen.add(a.fieldKey)
+          assignments.push(a)
+        }
+        summaries.push(`Filled ${rapid.length} header field(s) from spoken labels.`)
         continue
       }
-      if (!seen.has(lineAssignment.fieldKey)) {
-        seen.add(lineAssignment.fieldKey)
-        assignments.push(lineAssignment)
+    }
+
+    const lineAssignments = parseLineToAssignmentOrRatingTail(segment, ctx, opts.preferFindings === true)
+    if (lineAssignments.length > 0) {
+      for (const lineAssignment of lineAssignments) {
+        const cur = opts.readFieldValue(lineAssignment.fieldKey).trim()
+        if (cur && cur !== lineAssignment.value && !opts.replaceExisting) {
+          skippedExisting += 1
+          continue
+        }
+        if (!seen.has(lineAssignment.fieldKey)) {
+          seen.add(lineAssignment.fieldKey)
+          assignments.push(lineAssignment)
+        }
       }
       continue
     }
+
+    if (opts.allowStructure && opts.preferFindings === true) {
+      const narrative = tryParseNarrativeFindings(segment, {
+        readFieldValue: opts.readFieldValue,
+        replaceExisting: opts.replaceExisting,
+      })
+      if (narrative) {
+        for (const a of narrative.assignments) {
+          if (seen.has(a.fieldKey)) continue
+          const cur = opts.readFieldValue(a.fieldKey).trim()
+          if (cur && cur !== a.value && !opts.replaceExisting) {
+            skippedExisting += 1
+            continue
+          }
+          seen.add(a.fieldKey)
+          assignments.push(a)
+        }
+        const maj = narrative.assignments.find((a) => a.fieldKey.startsWith("sub:") || a.fieldKey.startsWith("cond:sub:"))
+        if (maj) {
+          const subId = maj.fieldKey.replace(/^cond:sub:/, "").replace(/^sub:/, "")
+          const mid = majorIdContainingSubsection(subId)
+          if (mid) structuredPatches.push({ openMajorSection: mid, focusSubId: subId })
+        }
+        summaries.push(narrative.summary)
+        continue
+      }
+    }
+
     unmatched.push(segment)
   }
 

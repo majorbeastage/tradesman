@@ -261,7 +261,7 @@ export default function SpecialtyReportWizardModal({
   const [assistantProcessing, setAssistantProcessing] = useState(false)
   const [assistantListening, setAssistantListening] = useState(false)
   const [speechSupported, setSpeechSupported] = useState(false)
-  const [aiTarget, setAiTarget] = useState<AiTargetField>("scopeLimitations")
+  const [aiTarget, setAiTarget] = useState<AiTargetField>("header.inspectorName")
   const [voiceFieldKey, setVoiceFieldKey] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
@@ -292,7 +292,6 @@ export default function SpecialtyReportWizardModal({
   const voiceKeepListeningRef = useRef(false)
   const voiceOverallAssistRef = useRef(false)
   const activeVoiceFieldRef = useRef<string | null>(null)
-  const voiceParserDebounceRef = useRef<number | null>(null)
   const voiceDisplayThrottleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
   const applyInFlightRef = useRef(false)
   const homeRef = useRef(home)
@@ -1082,29 +1081,6 @@ export default function SpecialtyReportWizardModal({
     return { applied, skipped, appliedLabels }
   }
 
-  function scheduleVoiceFieldPreview() {
-    if (!voiceOverallAssistRef.current || activeVoiceFieldRef.current) return
-    if (applyInFlightRef.current) return
-    if (voiceParserDebounceRef.current) clearTimeout(voiceParserDebounceRef.current)
-    voiceParserDebounceRef.current = window.setTimeout(() => {
-      voiceParserDebounceRef.current = null
-      const delta = voiceLiveDisplayRef.current.trim().slice(voiceConsumedLenRef.current).trim()
-      if (delta.length < 3) return
-      void runAssistantCommand(delta, { voiceChunk: true, allowDefaultTarget: false })
-    }, 420)
-  }
-
-  function flushVoiceFieldPreview() {
-    if (voiceParserDebounceRef.current) {
-      clearTimeout(voiceParserDebounceRef.current)
-      voiceParserDebounceRef.current = null
-    }
-    if (!voiceOverallAssistRef.current || activeVoiceFieldRef.current) return
-    const delta = voiceLiveDisplayRef.current.trim().slice(voiceConsumedLenRef.current).trim()
-    if (delta.length < 3) return
-    void runAssistantCommand(delta, { voiceChunk: true, allowDefaultTarget: false })
-  }
-
   async function attachFieldImage(fieldKey: string, file: File | null): Promise<boolean> {
     if (!file) return false
     if (!isReportImageFile(file)) {
@@ -1590,14 +1566,6 @@ export default function SpecialtyReportWizardModal({
       return false
     }
 
-    const allowDefaultTarget = options?.allowDefaultTarget !== false && !options?.explicitApply
-    if (allowDefaultTarget && text.length <= 72 && aiTarget !== "header.inspectorName") {
-      appendToTarget(aiTarget, text)
-      setAssistantNote(`Added text into ${labelForAiTarget(aiTarget)}.`)
-      if (options?.voiceChunk) markOverallVoiceConsumed()
-      return true
-    }
-
     setAssistantNote(
       'Long note not auto-placed. Pick a target field above, use "Tradesman record summary …", or say "set [field] to [value]".',
     )
@@ -1650,19 +1618,13 @@ export default function SpecialtyReportWizardModal({
         const display = combineSpeechSessionDisplay(voiceSessionBaseRef.current, parsed)
         voiceLiveDisplayRef.current = display
         voiceDisplayThrottleRef.current?.schedule(display)
-        if (voiceOverallAssistRef.current && parsed.finals.length > voiceLastParserFinalsLenRef.current) {
-          scheduleVoiceFieldPreview()
-        }
+        /* Overall assist: transcript only while listening — parse on Stop / Apply (avoids partial mis-maps). */
       }
       rec.onerror = () => {
         voiceKeepListeningRef.current = false
         setAssistantNote("Voice input failed. Check mic permissions and retry.")
       }
       rec.onend = () => {
-        if (voiceParserDebounceRef.current) {
-          clearTimeout(voiceParserDebounceRef.current)
-          voiceParserDebounceRef.current = null
-        }
         const fieldKeyNow = activeVoiceFieldRef.current
         if (fieldKeyNow) {
           commitActiveFieldVoice()
@@ -1696,7 +1658,7 @@ export default function SpecialtyReportWizardModal({
       setAssistantNote(
         targetFieldKey
           ? "Listening… text goes into this field only. Tap Stop when finished."
-          : "Listening… your words appear below as you speak. Tap Stop to map them into report fields (or Apply to run again).",
+          : "Listening… your words appear below. Tap Stop (or Apply) to map them into the correct header fields.",
       )
     } catch {
       setAssistantListening(false)
@@ -1709,11 +1671,12 @@ export default function SpecialtyReportWizardModal({
     voiceDisplayThrottleRef.current?.flushNow()
     voiceDisplayThrottleRef.current?.cancel()
     voiceDisplayThrottleRef.current = null
-    flushVoiceFieldPreview()
-    if (voiceParserDebounceRef.current) {
-      clearTimeout(voiceParserDebounceRef.current)
-      voiceParserDebounceRef.current = null
-    }
+    const overallAssist = voiceOverallAssistRef.current && !activeVoiceFieldRef.current
+    const transcriptBeforeReset = (
+      voiceLiveDisplayRef.current.trim() ||
+      assistantInputRef.current?.value.trim() ||
+      assistantText.trim()
+    )
     syncVoiceDisplayToReactState()
     preserveOverallVoiceTranscriptInUi()
     recognitionRef.current?.stop()
@@ -1723,6 +1686,10 @@ export default function SpecialtyReportWizardModal({
     setVoiceFieldKey(null)
     activeVoiceFieldRef.current = null
     voiceOverallAssistRef.current = false
+    if (overallAssist && transcriptBeforeReset && picked === "home_inspection") {
+      if (transcriptBeforeReset !== assistantText) setAssistantText(transcriptBeforeReset)
+      void runAssistantCommand(transcriptBeforeReset, { explicitApply: true })
+    }
   }
 
   function FieldTools({ fieldKey }: { fieldKey: string }) {
