@@ -115,7 +115,7 @@ function fieldPhraseMatchesHint(fieldNorm: string, hint: string): boolean {
     if (h.length >= 14 && fieldNorm.length <= 72 && h.includes(fieldNorm)) return true
     return false
   }
-  if (fieldNorm.length > 72) return false
+  if (fieldNorm.length > 96) return false
   const re = new RegExp(`\\b${escapeRegex(h)}\\b`, "i")
   return re.test(fieldNorm)
 }
@@ -123,18 +123,18 @@ function fieldPhraseMatchesHint(fieldNorm: string, hint: string): boolean {
 export function matchHeaderOrSubFieldKey(fieldPhrase: string): string | null {
   const f = normAssistantPhrase(fieldPhrase).replace(/^the\s+/, "").trim()
   const headerPairs: Array<[string[], string]> = [
-    [["inspector name", "inspectors name", "inspector's name"], "header.inspectorName"],
+    [["inspector name", "inspectors name", "inspector's name", "inspector"], "header.inspectorName"],
     [
       ["inspection id", "inspection number", "file id", "report id", "file number", "reference number", "trec id"],
       "header.inspectionReference",
     ],
-    [["license id", "license number", "cert id", "certification"], "header.licenseId"],
+    [["license id", "license number", "license", "cert id", "certification"], "header.licenseId"],
     [["inspection date", "report date", "date of inspection"], "header.inspectionDate"],
     [["weather", "site conditions", "site condition", "weather conditions"], "header.weather"],
-    [["property address", "job address", "site address", "address of property"], "header.propertyAddress"],
+    [["property address", "job address", "site address", "address of property", "address"], "header.propertyAddress"],
     [["parties present", "parties", "attendees", "people present"], "header.partiesPresent"],
-    [["scope and limitations", "scope limitations", "limitations"], "scopeLimitations"],
-    [["executive summary", "summary findings"], "summaryFindings"],
+    [["scope and limitations", "scope limitations", "limitations", "scope"], "scopeLimitations"],
+    [["executive summary", "summary findings", "summary"], "summaryFindings"],
     [["media notes", "workflow notes", "media workflow"], "mediaWorkflowNotes"],
     [["drone notes", "drone integration"], "droneIntegrationNotes"],
   ]
@@ -266,6 +266,16 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
 
   const multiSet = text.split(/(?=\b(?:please\s+)?set\s+(?:the\s+)?)/i).map((s) => s.trim()).filter(Boolean)
   if (multiSet.length > 1) return multiSet
+
+  const periodSplit = text.split(
+    /\.\s+(?=(?:please\s+)?(?:set|fill|put|weather|inspector|license|scope|summary|address|gutters|roof|condition|mark)\b)/i,
+  )
+  if (periodSplit.length > 1) return periodSplit.map((s) => s.trim()).filter(Boolean)
+
+  const colonChunks = text.match(/(?:^|[.;]\s*)(?:[a-z][\w\s,'-]{1,48}):\s*[^.;]+/gi)
+  if (colonChunks && colonChunks.length > 1) {
+    return colonChunks.map((s) => s.replace(/^[.;]\s*/, "").trim()).filter(Boolean)
+  }
 
   return [text]
 }
@@ -432,7 +442,12 @@ export function parseStructuredFillAndNavCommands(
 export function parseSpecialtyReportFieldAssignments(
   raw: string,
   ctx: SpecialtyReportFillContext,
-  opts: { allowStructure: boolean; readFieldValue: (fieldKey: string) => string },
+  opts: {
+    allowStructure: boolean
+    readFieldValue: (fieldKey: string) => string
+    /** When true (Apply / Stop), overwrite fields that already have different text. */
+    replaceExisting?: boolean
+  },
 ): SpecialtyReportParseResult {
   const assignments: SpecialtyReportFieldAssignment[] = []
   const structuredPatches: SpecialtyReportStructuredPatch[] = []
@@ -471,7 +486,7 @@ export function parseSpecialtyReportFieldAssignments(
     const lineAssignment = parseLineToAssignment(segment, ctx)
     if (lineAssignment) {
       const cur = opts.readFieldValue(lineAssignment.fieldKey).trim()
-      if (cur && cur !== lineAssignment.value) {
+      if (cur && cur !== lineAssignment.value && !opts.replaceExisting) {
         skippedExisting += 1
         continue
       }
