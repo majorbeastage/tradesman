@@ -7,6 +7,10 @@ import { PDFDocument, type PDFFont, StandardFonts, rgb } from "pdf-lib"
 /** Same text as `DEFAULT_SMS_CONSENT_PAGE.consent_statement` in src/types/legal-pages.ts */
 const SMS_CTA_DISCLOSURE_DEFAULT = `“By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”`
 
+/** Mirror `SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE` in src/lib/customerSmsConsent.ts */
+const SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE =
+  "Consent to receive SMS messages is not required as a condition of purchasing goods or services."
+
 function buildManualSmsConsentDisclosure(businessName: string): string {
   const biz = businessName.trim() || "Your business"
   return SMS_CTA_DISCLOSURE_DEFAULT.replace(/\[Business Name\]/g, biz)
@@ -223,7 +227,9 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
     page.drawText(line, { x: left + boxSize + 8, y: agreeY, size: 9.5, font, color: rgb(0.15, 0.15, 0.15) })
     agreeY -= 12
   }
-  y = Math.min(checkY - boxSize - 6, agreeY) - 10
+  y = Math.min(checkY - boxSize - 6, agreeY) - 6
+  drawWrapped(SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE, 9, 0.4)
+  y -= 6
 
   const electronicAt = params.electronicConsentAt?.trim() ?? ""
   const consentDateLabel = electronicAt

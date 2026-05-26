@@ -52,6 +52,10 @@ export const EMPTY_MANUAL_SMS_CONSENT_SOURCE: ManualSmsConsentSourceInput = {
   consentNote: "",
 }
 
+/** TCPA / A2P — consent must not be tied to purchase. */
+export const SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE =
+  "Consent to receive SMS messages is not required as a condition of purchasing goods or services."
+
 export function buildManualSmsConsentDisclosure(businessName: string): string {
   const biz = businessName.trim() || "Your business"
   return DEFAULT_SMS_CONSENT_PAGE.consent_statement.replace(/\[Business Name\]/g, biz)

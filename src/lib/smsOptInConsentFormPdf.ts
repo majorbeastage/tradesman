@@ -1,5 +1,5 @@
 import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib"
-import { buildManualSmsConsentDisclosure } from "./customerSmsConsent"
+import { buildManualSmsConsentDisclosure, SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE } from "./customerSmsConsent"
 import { downloadPdfBlob } from "./documentPdf"
 
 export type SmsOptInConsentFormPdfParams = {
@@ -218,7 +218,9 @@ export async function buildSmsOptInConsentFormPdfBytes(params: SmsOptInConsentFo
     page.drawText(line, { x: left + boxSize + 8, y: agreeY, size: 9.5, font, color: rgb(0.15, 0.15, 0.15) })
     agreeY -= 12
   }
-  y = Math.min(checkY - boxSize - 6, agreeY) - 10
+  y = Math.min(checkY - boxSize - 6, agreeY) - 6
+  drawWrapped(SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE, 9, 0.4)
+  y -= 6
 
   const electronicAt = params.electronicConsentAt?.trim() ?? ""
   const consentDateLabel = electronicAt

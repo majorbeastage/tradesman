@@ -2,6 +2,7 @@ import { theme } from "../styles/theme"
 import {
   formatCustomerSmsConsentDetail,
   canSubmitManualSmsOptIn,
+  SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE,
   type CustomerSmsConsentRecord,
   type ManualSmsConsentSourceInput,
 } from "../lib/customerSmsConsent"
@@ -102,8 +103,7 @@ export default function CustomerSmsOptInSection({
               lineHeight: 1.45,
             }}
           >
-            You cannot send SMS/text messages to this customer until opt-in consent is completed below (checkbox +
-            consent source).
+            SMS consent is required before sending text messages to this customer. {SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE}
           </p>
         ) : null}
 
