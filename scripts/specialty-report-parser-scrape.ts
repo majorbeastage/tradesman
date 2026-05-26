@@ -331,6 +331,39 @@ function findingsCases(): Case[] {
       },
     },
     {
+      id: "find-multi-narrative-three",
+      group: "findings-multi-narrative",
+      preferFindings: true,
+      utterance:
+        "The gutters were full of debris and discharging near the foundation. The roof covering has curled shingles at the south slope. In the crawl space we observed moisture on the vapor barrier.",
+      expect: {
+        keys: ["sub:gutters_downspouts", "sub:roof_cover", "sub:crawl_attic_access"],
+        minAssignments: 3,
+      },
+    },
+    {
+      id: "find-multi-narrative-and-chain",
+      group: "findings-multi-narrative",
+      preferFindings: true,
+      utterance:
+        "gutters are deficient with debris at the downspouts and the roof covering has missing shingles and the electrical panel has double tapped neutrals",
+      expect: {
+        keys: ["sub:gutters_downspouts", "sub:roof_cover", "sub:panel_breakers"],
+        minAssignments: 3,
+      },
+    },
+    {
+      id: "find-multi-narrative-foundation-water",
+      group: "findings-multi-narrative",
+      preferFindings: true,
+      utterance:
+        "Foundation cracks were noted at the southeast corner. The water heater is past its typical service life and showed corrosion at the connections.",
+      expect: {
+        keys: ["sub:foundation_visible", "sub:water_heater"],
+        minAssignments: 2,
+      },
+    },
+    {
       id: "find-narrative-crawl",
       group: "findings-narrative",
       preferFindings: true,

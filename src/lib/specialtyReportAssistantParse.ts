@@ -132,7 +132,85 @@ const SUBSECTION_NARRATIVE_HINTS: Array<{ re: RegExp; subId: string; weight: num
   { re: /\bhvac|furnace|air\s+handler|condenser/i, subId: "heating_equipment", weight: 10 },
   { re: /\battic\s+insulation|blown\s+in\s+insulation/i, subId: "attic_insulation", weight: 11 },
   { re: /\battic\s+vent|soffit\s+vent|ridge\s+vent/i, subId: "attic_ventilation", weight: 11 },
+  { re: /\bgrading|surface\s+drainage|drainage\s+away/i, subId: "grading_drainage", weight: 10 },
+  { re: /\bsiding|exterior\s+trim/i, subId: "siding_trim", weight: 10 },
+  { re: /\bwindows?\s+(?:and\s+)?exterior\s+doors?/i, subId: "windows_exterior", weight: 10 },
+  { re: /\bdeck|balcony|handrail/i, subId: "decks_balconies", weight: 10 },
+  { re: /\bsmoke\s+(?:detector|alarm)|carbon\s+monoxide|\bco\s+alarm/i, subId: "smoke_co", weight: 10 },
+  { re: /\bsupply\s+piping|water\s+supply/i, subId: "supply_visible", weight: 10 },
+  { re: /\bdrain|waste\s+vent|dwv/i, subId: "dwv_visible", weight: 10 },
 ]
+
+type SubsectionMention = { subId: string; index: number; end: number; weight: number }
+
+function isIncidentalSubsectionMention(text: string, m: SubsectionMention): boolean {
+  const slice = text.slice(Math.max(0, m.index - 28), Math.min(text.length, m.end + 16)).toLowerCase()
+  if (m.subId === "foundation_visible" && /\b(?:near|to|at|toward|from|against)\s+the\s+foundation\b/.test(slice)) {
+    return true
+  }
+  return false
+}
+
+function pickNonOverlappingMentions(text: string, mentions: SubsectionMention[]): SubsectionMention[] {
+  const sorted = [...mentions]
+    .filter((m) => !isIncidentalSubsectionMention(text, m))
+    .sort((a, b) => b.weight - a.weight)
+  const kept: SubsectionMention[] = []
+  for (const m of sorted) {
+    if (kept.some((k) => m.index < k.end && m.end > k.index)) continue
+    kept.push(m)
+  }
+  return kept.sort((a, b) => a.index - b.index)
+}
+
+/** Every findings subsection referenced in free-form dictation (not just the strongest). */
+export function findAllSubsectionMentionsInText(text: string): SubsectionMention[] {
+  const norm = normAssistantPhrase(text)
+  if (!norm) return []
+  const all: SubsectionMention[] = []
+  const lower = text.toLowerCase()
+
+  for (const hint of SUBSECTION_NARRATIVE_HINTS) {
+    const flags = hint.re.flags.includes("g") ? hint.re.flags : `${hint.re.flags}g`
+    const re = new RegExp(hint.re.source, flags)
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      all.push({ subId: hint.subId, index: m.index, end: m.index + m[0].length, weight: hint.weight })
+    }
+  }
+
+  const aliasEntries = Object.entries(SUBSECTION_SHORT_ALIASES).sort((a, b) => b[0].length - a[0].length)
+  for (const [phrase, subId] of aliasEntries) {
+    if (phrase.length < 3) continue
+    if (phrase.includes(" ")) {
+      let idx = 0
+      while ((idx = lower.indexOf(phrase, idx)) !== -1) {
+        all.push({ subId, index: idx, end: idx + phrase.length, weight: 8 + phrase.length })
+        idx += 1
+      }
+    } else {
+      const re = new RegExp(`\\b${escapeRegex(phrase)}\\b`, "gi")
+      let m: RegExpExecArray | null
+      while ((m = re.exec(text)) !== null) {
+        all.push({ subId, index: m.index, end: m.index + m[0].length, weight: 7 + phrase.length })
+      }
+    }
+  }
+
+  const labelEntries = HOME_INSPECTION_MAJOR_SECTIONS.flatMap((sec) =>
+    sec.subsections.map((sub) => ({ L: normAssistantPhrase(sub.label), id: sub.id })),
+  ).sort((a, b) => b.L.length - a.L.length)
+  for (const { L, id } of labelEntries) {
+    if (L.length < 6) continue
+    let idx = 0
+    while ((idx = lower.indexOf(L, idx)) !== -1) {
+      all.push({ subId: id, index: idx, end: idx + L.length, weight: 9 + L.length })
+      idx += 1
+    }
+  }
+
+  return pickNonOverlappingMentions(text, all)
+}
 
 function subsectionLabel(subId: string): string {
   return HOME_INSPECTION_MAJOR_SECTIONS.flatMap((s) => s.subsections).find((s) => s.id === subId)?.label ?? subId
@@ -155,57 +233,16 @@ function inferConditionFromNarrative(text: string): ConditionRating | null {
 
 /** Match a findings subsection mentioned anywhere in free-form dictation. */
 export function matchSubsectionIdInText(text: string): string | null {
-  const norm = normAssistantPhrase(text)
-  if (!norm) return null
-
-  let best: { subId: string; weight: number } | null = null
-  for (const hint of SUBSECTION_NARRATIVE_HINTS) {
-    if (hint.re.test(text) || hint.re.test(norm)) {
-      if (!best || hint.weight > best.weight) best = { subId: hint.subId, weight: hint.weight }
-    }
-  }
-
-  const aliasEntries = Object.entries(SUBSECTION_SHORT_ALIASES).sort((a, b) => b[0].length - a[0].length)
-  for (const [phrase, subId] of aliasEntries) {
-    if (phrase.includes(" ")) {
-      if (norm.includes(phrase) && (!best || phrase.length >= 6)) {
-        best = { subId, weight: 8 + phrase.length }
-      }
-    } else {
-      const re = new RegExp(`\\b${escapeRegex(phrase)}\\b`, "i")
-      if (re.test(norm)) {
-        const w = 7 + phrase.length
-        if (!best || w > best.weight) best = { subId, weight: w }
-      }
-    }
-  }
-
-  for (const sec of HOME_INSPECTION_MAJOR_SECTIONS) {
-    for (const sub of sec.subsections) {
-      const L = normAssistantPhrase(sub.label)
-      const tokens = L.split(/[\s/&]+/).filter((w) => w.length >= 5)
-      const hits = tokens.filter((w) => norm.includes(w))
-      if (hits.length >= 2 || (tokens.length === 1 && hits.length === 1 && tokens[0]!.length >= 7)) {
-        const w = 6 + hits.length
-        if (!best || w > best.weight) best = { subId: sub.id, weight: w }
-      }
-    }
-  }
-
-  return best?.subId ?? null
+  const mentions = findAllSubsectionMentionsInText(text)
+  if (mentions.length === 0) return null
+  return mentions.sort((a, b) => b.weight - a.weight)[0]!.subId
 }
 
-function tryParseNarrativeFindings(
-  segment: string,
+function buildNarrativeAssignmentsForSubsection(
+  subId: string,
+  text: string,
   opts: { readFieldValue: (fieldKey: string) => string; replaceExisting?: boolean },
-): { assignments: SpecialtyReportFieldAssignment[]; summary: string } | null {
-  const text = segment.trim()
-  if (text.length < 12) return null
-  if (/^(?:set|fill|put|change|mark)\s+/i.test(text)) return null
-
-  const subId = matchSubsectionIdInText(text)
-  if (!subId) return null
-
+): SpecialtyReportFieldAssignment[] {
   const fieldKey = `sub:${subId}`
   let notes = text
   const cur = opts.readFieldValue(fieldKey).trim()
@@ -220,7 +257,59 @@ function tryParseNarrativeFindings(
   if (rating) {
     assignments.unshift({ fieldKey: `cond:sub:${subId}`, value: rating })
   }
+  return assignments
+}
 
+function tryParseMultiNarrativeFindings(
+  segment: string,
+  opts: { readFieldValue: (fieldKey: string) => string; replaceExisting?: boolean },
+): { assignments: SpecialtyReportFieldAssignment[]; summary: string } | null {
+  const text = segment.trim()
+  if (text.length < 20) return null
+  if (/^(?:set|fill|put|change|mark)\s+/i.test(text)) return null
+
+  const mentions = findAllSubsectionMentionsInText(text)
+  if (mentions.length < 2) return null
+
+  const assignments: SpecialtyReportFieldAssignment[] = []
+  const labels: string[] = []
+
+  for (let i = 0; i < mentions.length; i++) {
+    const start = mentions[i]!.index
+    const end = i + 1 < mentions.length ? mentions[i + 1]!.index : text.length
+    const chunk = text.slice(start, end).trim()
+    if (chunk.length < 8) continue
+    const subId = mentions[i]!.subId
+    assignments.push(...buildNarrativeAssignmentsForSubsection(subId, chunk, opts))
+    const label = subsectionLabel(subId)
+    if (!labels.includes(label)) labels.push(label)
+  }
+
+  if (assignments.length === 0) return null
+
+  const summary =
+    labels.length > 1
+      ? `Recorded findings for ${labels.length} sections: ${labels.join("; ")}.`
+      : `Recorded findings for ${labels[0]}.`
+  return { assignments, summary }
+}
+
+function tryParseNarrativeFindings(
+  segment: string,
+  opts: { readFieldValue: (fieldKey: string) => string; replaceExisting?: boolean },
+): { assignments: SpecialtyReportFieldAssignment[]; summary: string } | null {
+  const text = segment.trim()
+  if (text.length < 12) return null
+  if (/^(?:set|fill|put|change|mark)\s+/i.test(text)) return null
+
+  const multi = tryParseMultiNarrativeFindings(text, opts)
+  if (multi) return multi
+
+  const subId = matchSubsectionIdInText(text)
+  if (!subId) return null
+
+  const assignments = buildNarrativeAssignmentsForSubsection(subId, text, opts)
+  const rating = assignments.find((a) => a.fieldKey.startsWith("cond:sub:"))?.value as ConditionRating | undefined
   const label = subsectionLabel(subId)
   const summary = rating
     ? `Recorded ${CONDITION_RATING_LABELS[rating]} and notes for ${label}.`
@@ -431,8 +520,24 @@ export function resolveFillLiteral(valueRaw: string, ctx: SpecialtyReportFillCon
   return v
 }
 
+function splitFindingsNarrativeClauses(text: string): string[] | null {
+  const mentions = findAllSubsectionMentionsInText(text)
+  if (mentions.length < 2) return null
+  const parts: string[] = []
+  for (let i = 0; i < mentions.length; i++) {
+    const start = mentions[i]!.index
+    const end = i + 1 < mentions.length ? mentions[i + 1]!.index : text.length
+    const chunk = text.slice(start, end).trim()
+    if (chunk.length >= 8) parts.push(chunk)
+  }
+  return parts.length >= 2 ? parts : null
+}
+
 /** Split compound voice commands: "set A to X and set B to Y". */
-export function splitCompoundAssistantUtterance(raw: string): string[] {
+export function splitCompoundAssistantUtterance(
+  raw: string,
+  opts?: { preferFindings?: boolean },
+): string[] {
   const text = raw.trim()
   if (!text) return []
   const byNewline = text
@@ -440,6 +545,21 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean)
   if (byNewline.length > 1) return byNewline
+
+  if (opts?.preferFindings) {
+    const narrativeClauses = splitFindingsNarrativeClauses(text)
+    if (narrativeClauses) return narrativeClauses
+
+    const findingsAnd = text.split(
+      /\s+and\s+(?=(?:the\s+)?(?:gutters?|downspouts?|roof|foundation|crawl\s*space|crawlspace|electrical|panel|plumbing|hvac|furnace|attic|insulation|siding|grading|water\s+heater|windows?|deck|smoke)\b)/i,
+    )
+    if (findingsAnd.length > 1) return findingsAnd.map((s) => s.trim()).filter(Boolean)
+
+    const findingsPeriod = text.split(
+      /\.\s+(?=(?:the\s+)?(?:gutters?|downspouts?|roof|foundation|crawl|electrical|plumbing|hvac|attic|panel|water\s+heater|grading|siding|windows?|insulation|furnace|shingles?)\b)/i,
+    )
+    if (findingsPeriod.length > 1) return findingsPeriod.map((s) => s.trim()).filter(Boolean)
+  }
 
   const headerIsChain = text.split(
     /\s+and\s+(?=(?:the\s+)?(?:inspector(?:'s)?\s+name|inspector|license(?:\s+number|\s+id)?|weather|property\s+address|parties(?:\s+present)?|scope|summary)\s+is\s+)/i,
@@ -725,7 +845,7 @@ export function parseSpecialtyReportFieldAssignments(
   const seen = new Set<string>()
   const summaries: string[] = []
 
-  const segments = splitCompoundAssistantUtterance(raw)
+  const segments = splitCompoundAssistantUtterance(raw, { preferFindings: opts.preferFindings === true })
   for (const segment of segments) {
     const structuredSeg = parseStructuredFillAndNavCommands(segment, ctx, opts.allowStructure, opts.preferFindings === true)
     if (structuredSeg?.patch.setCondition) {
