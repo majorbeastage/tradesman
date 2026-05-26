@@ -253,5 +253,8 @@ export function parseHomeInspectionReport(raw: unknown): HomeInspectionReportV1 
   if (!o.subsections || typeof o.subsections !== "object") return null
   const hdr = o.header as Record<string, unknown>
   if (hdr.inspectionReference === undefined) hdr.inspectionReference = ""
+  if (!o.field_media || typeof o.field_media !== "object" || Array.isArray(o.field_media)) {
+    o.field_media = {}
+  }
   return o as HomeInspectionReportV1
 }

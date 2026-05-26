@@ -333,6 +333,7 @@ export function parseStructuredFillAndNavCommands(
   raw: string,
   ctx: SpecialtyReportFillContext,
   allowStructure: boolean,
+  preferFindings = false,
 ): { summary: string; patch: SpecialtyReportStructuredPatch } | null {
   const text = raw.trim()
   if (!text || !allowStructure) return null
@@ -356,7 +357,7 @@ export function parseStructuredFillAndNavCommands(
 
   const useMyNameFor = text.match(/\b(?:use|put|apply)\s+my\s+name\s+(?:for|on|in|as)\s+(.+)$/i)
   if (useMyNameFor?.[1] && ctx.accountDisplayName.trim()) {
-    const fieldKey = matchHeaderOrSubFieldKey(useMyNameFor[1].trim())
+    const fieldKey = matchHeaderOrSubFieldKey(useMyNameFor[1].trim(), preferFindings)
     if (fieldKey?.startsWith("header.")) {
       return {
         summary: `Set ${fieldKey.replace("header.", "").replaceAll(".", " ")} to your account name.`,
@@ -373,7 +374,7 @@ export function parseStructuredFillAndNavCommands(
   if (m?.[1] && m[2]) {
     const left = normAssistantPhrase(m[1])
     if (!left.includes("condition") && !/^condition\b/.test(left)) {
-      const fieldKey = matchHeaderOrSubFieldKey(m[1])
+      const fieldKey = matchHeaderOrSubFieldKey(m[1], preferFindings)
       const rating = parseConditionRating(m[2].trim())
       if (fieldKey?.startsWith("sub:") && rating) {
         const subId = fieldKey.slice(4)
@@ -476,7 +477,7 @@ export function parseSpecialtyReportFieldAssignments(
 
   const segments = splitCompoundAssistantUtterance(raw)
   for (const segment of segments) {
-    const structuredSeg = parseStructuredFillAndNavCommands(segment, ctx, opts.allowStructure)
+    const structuredSeg = parseStructuredFillAndNavCommands(segment, ctx, opts.allowStructure, opts.preferFindings === true)
     if (structuredSeg?.patch.setCondition) {
       const { subId, condition } = structuredSeg.patch.setCondition
       const key = `cond:sub:${subId}`

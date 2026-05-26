@@ -110,7 +110,20 @@ const MAX_ASSISTANT_TAIL_DEPTH = 8
 const META_KEY_HOME = "specialty_report_home_inspection"
 const META_KEY_GENERIC_PREFIX = "specialty_report_notes_"
 const META_KEY_GENERIC_MEDIA_PREFIX = "specialty_report_media_"
+/** Primary bucket when provisioned; falls back to comm-attachments (always provisioned). */
 const REPORT_MEDIA_BUCKET = "specialty-report-media"
+const REPORT_MEDIA_FALLBACK_BUCKET = "comm-attachments"
+
+function isReportImageFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true
+  return /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name)
+}
+
+function reportFieldMediaStoragePath(userId: string, quoteId: string, entryId: string, safeName: string, useFallback: boolean): string {
+  const filePart = `${entryId}-${safeName}`
+  if (useFallback) return `${userId}/specialty-reports/${quoteId}/${filePart}`
+  return `${userId}/${quoteId}/${filePart}`
+}
 type FieldMediaItem = { id: string; name: string; mime: string; size: number; url: string; uploaded_at: string }
 
 function labelForAiTarget(t: AiTargetField): string {
@@ -307,12 +320,18 @@ export default function SpecialtyReportWizardModal({
           const parsed = parseHomeInspectionReport(meta[META_KEY_HOME])
           const base = emptyHomeInspectionReport(propertyAddressHint)
           if (parsed) {
-            setHome({
+            const merged = {
               ...base,
               ...parsed,
               header: { ...base.header, ...parsed.header },
               subsections: { ...base.subsections, ...parsed.subsections },
-            })
+              field_media: {
+                ...base.field_media,
+                ...(parsed.field_media && typeof parsed.field_media === "object" ? parsed.field_media : {}),
+              },
+            }
+            homeRef.current = merged
+            setHome(merged)
           } else {
             setHome(base)
           }
@@ -623,7 +642,7 @@ export default function SpecialtyReportWizardModal({
   }, [phase, enabledReportTypes.length])
 
   const setDefaultTargetForPhase = useCallback((nextPhase: WizardPhase) => {
-    if (nextPhase === "home_header") setAiTarget("scopeLimitations")
+    if (nextPhase === "home_header") setAiTarget("header.inspectorName")
     else if (nextPhase === "home_findings") {
       const firstSub = HOME_INSPECTION_MAJOR_SECTIONS[0]?.subsections[0]?.id
       if (firstSub) setAiTarget(`sub:${firstSub}` as AiTargetField)
@@ -1086,37 +1105,59 @@ export default function SpecialtyReportWizardModal({
     void runAssistantCommand(delta, { voiceChunk: true, allowDefaultTarget: false })
   }
 
-  async function attachFieldImage(fieldKey: string, file: File | null) {
-    if (!file) return
-    if (!file.type.startsWith("image/")) {
+  async function attachFieldImage(fieldKey: string, file: File | null): Promise<boolean> {
+    if (!file) return false
+    if (!isReportImageFile(file)) {
       setSaveError("Only image files can be attached to report fields.")
-      return
+      return false
     }
     if (file.size > 2_000_000) {
       setSaveError("Image is too large. Use files under 2MB for field-level attachments.")
-      return
+      return false
     }
     if (!supabase || !quoteId || !userId) {
-      setSaveError("Select a saved estimate before uploading field photos.")
-      return
+      setSaveError("Select a saved estimate row before uploading field photos.")
+      return false
     }
     const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-    const storagePath = `${userId}/${quoteId}/${entryId}-${safeName}`
-    const { error: uploadErr } = await supabase.storage.from(REPORT_MEDIA_BUCKET).upload(storagePath, file, {
-      upsert: true,
-      contentType: file.type || "application/octet-stream",
-    })
-    if (uploadErr) {
-      setSaveError(uploadErr.message || "Could not upload image.")
-      return
+    const contentType = file.type || "application/octet-stream"
+
+    let bucket = REPORT_MEDIA_BUCKET
+    let storagePath = reportFieldMediaStoragePath(userId, quoteId, entryId, safeName, false)
+    let uploadErr = (
+      await supabase.storage.from(bucket).upload(storagePath, file, {
+        upsert: true,
+        contentType,
+      })
+    ).error
+
+    const bucketMissing =
+      uploadErr &&
+      /bucket not found|does not exist|invalid bucket|404/i.test(uploadErr.message ?? "")
+    if (bucketMissing) {
+      bucket = REPORT_MEDIA_FALLBACK_BUCKET
+      storagePath = reportFieldMediaStoragePath(userId, quoteId, entryId, safeName, true)
+      uploadErr = (
+        await supabase.storage.from(bucket).upload(storagePath, file, {
+          upsert: true,
+          contentType,
+        })
+      ).error
     }
-    const { data } = supabase.storage.from(REPORT_MEDIA_BUCKET).getPublicUrl(storagePath)
+
+    if (uploadErr) {
+      setSaveError(uploadErr.message || "Could not upload image. Sign in again or try a smaller file.")
+      return false
+    }
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(storagePath)
     const url = data?.publicUrl?.trim() ?? ""
     if (!url) {
       setSaveError("Could not resolve uploaded image URL.")
-      return
+      return false
     }
+
     const entry = {
       id: entryId,
       name: file.name,
@@ -1127,9 +1168,20 @@ export default function SpecialtyReportWizardModal({
     }
     if (fieldKey === "genericNotes") {
       setGenericFieldMedia((prev) => ({ ...prev, [fieldKey]: [...(prev[fieldKey] ?? []), entry] }))
-      return
+      setSaveNote(`Photo attached (${file.name}).`)
+      return true
     }
-    setHome((h) => ({ ...h, field_media: { ...h.field_media, [fieldKey]: [...(h.field_media[fieldKey] ?? []), entry] } }))
+    setHome((h) => {
+      const next = {
+        ...h,
+        field_media: { ...h.field_media, [fieldKey]: [...(h.field_media[fieldKey] ?? []), entry] },
+      }
+      homeRef.current = next
+      return next
+    })
+    setSaveError(null)
+    setSaveNote(`Photo attached to ${labelForFieldKey(fieldKey)}.`)
+    return true
   }
 
   function removeFieldImage(fieldKey: string, imageId: string) {
@@ -1421,7 +1473,8 @@ export default function SpecialtyReportWizardModal({
           setAssistantNote(`${note} Some phrases were not applied — try shorter commands or Apply again.`)
         }
         if (options?.voiceChunk && applied > 0) markOverallVoiceConsumed()
-        return applied > 0
+        else if (!options?.voiceChunk && (applied > 0 || parsed.structuredSummary)) setAssistantText("")
+        return applied > 0 || Boolean(parsed.structuredSummary)
       }
     } else {
       const structured = parseStructuredFillAndNavCommands(text, fillCtx, false)
@@ -1515,18 +1568,24 @@ export default function SpecialtyReportWizardModal({
       }
     }
 
-    if (explicitApply && !options?.nestedApply && picked === "home_inspection") {
-      writeFieldValue(aiTarget, text)
-      setAssistantNote(`Applied to ${labelForAiTarget(aiTarget)} (recording target).`)
-      setAssistantText("")
-      return true
-    }
-
     if (utteranceLooksLikeFieldCommands(text) || rulesOnly) {
+      const tailHint =
+        picked === "home_inspection"
+          ? (() => {
+              const p = parseSpecialtyReportFieldAssignments(text, fillCtx, {
+                allowStructure: true,
+                readFieldValue,
+                replaceExisting: forceReplace,
+                preferFindings: phase === "home_findings",
+              })
+              const u = p.unmatched.join(" ").trim()
+              return u ? ` Unparsed: “${u.slice(0, 80)}${u.length > 80 ? "…" : ""}”` : ""
+            })()
+          : ""
       const hint =
         phase === "home_findings"
-          ? 'Could not match fields. Try: "gutters: deficient" · "set condition for gutters to satisfactory" · "roof covering: worn shingles" · or pick a target above.'
-          : 'Could not match fields. Try: "set inspector name to Joseph Snyder" · "weather: clear, 72°F" · or Label: value per line.'
+          ? `Could not match fields.${tailHint} Try: "gutters: deficient" · "set condition for gutters to satisfactory" · "roof covering: worn shingles".`
+          : `Could not match fields.${tailHint} Try: "set inspector name to Joseph Snyder" · "weather: clear, 72°F" · or Label: value per line.`
       setAssistantNote(hint)
       return false
     }
@@ -1668,6 +1727,8 @@ export default function SpecialtyReportWizardModal({
 
   function FieldTools({ fieldKey }: { fieldKey: string }) {
     const media = fieldMediaList(fieldKey)
+    const photoInputRef = useRef<HTMLInputElement | null>(null)
+    const [photoUploading, setPhotoUploading] = useState(false)
     return (
       <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1687,19 +1748,36 @@ export default function SpecialtyReportWizardModal({
           >
             {assistantListening && voiceFieldKey === fieldKey ? "Stop voice" : "Voice"}
           </button>
-          <label style={{ ...secondaryBtn, display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
-            Upload photo
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const file = e.target.files?.[0] ?? null
-                void attachFieldImage(fieldKey, file)
-                e.currentTarget.value = ""
-              }}
-            />
-          </label>
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*,.heic,.heif"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null
+              e.currentTarget.value = ""
+              if (!file) return
+              setPhotoUploading(true)
+              void attachFieldImage(fieldKey, file).finally(() => setPhotoUploading(false))
+            }}
+          />
+          <button
+            type="button"
+            style={secondaryBtn}
+            disabled={photoUploading || !quoteId}
+            title={!quoteId ? "Save the estimate first" : "Attach a photo to this field"}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (!quoteId) {
+                setSaveError("Select a saved estimate row before uploading field photos.")
+                return
+              }
+              photoInputRef.current?.click()
+            }}
+          >
+            {photoUploading ? "Uploading…" : "Upload photo"}
+          </button>
         </div>
         {media.length > 0 ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
