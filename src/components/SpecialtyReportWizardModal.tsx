@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useIsMobile } from "../hooks/useIsMobile"
 import { useAuth } from "../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
@@ -44,7 +44,6 @@ import {
 import { fetchSpecialtyReportFieldFills, getPlatformToolsAccessToken } from "../lib/specialtyReportAssistantApi"
 import {
   combineSpeechSessionDisplay,
-  createThrottledSpeechDisplay,
   parseSpeechResultsList,
   speechRecognitionListenUntilStopped,
 } from "../lib/speechRecognitionTranscript"
@@ -278,8 +277,8 @@ export default function SpecialtyReportWizardModal({
   const voiceKeepListeningRef = useRef(false)
   const voiceOverallAssistRef = useRef(false)
   const activeVoiceFieldRef = useRef<string | null>(null)
-  const voiceDisplayThrottleRef = useRef<ReturnType<typeof createThrottledSpeechDisplay> | null>(null)
   const voiceParserDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const applyInFlightRef = useRef(false)
   /** Last throttled transcript shown in the assistant box (preserve on stop). */
   const voiceLiveDisplayRef = useRef("")
   const assistantInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -809,7 +808,10 @@ export default function SpecialtyReportWizardModal({
     }
   }
 
-  function applyParsedFieldAssignments(assignments: Array<{ fieldKey: string; value: string }>): { applied: number; skipped: number } {
+  function applyParsedFieldAssignments(
+    assignments: Array<{ fieldKey: string; value: string }>,
+    opts?: { forceReplace?: boolean },
+  ): { applied: number; skipped: number } {
     let applied = 0
     let skipped = 0
     const meta = { sectionOpen: {} as Record<string, boolean>, phase: null as WizardPhase | null }
@@ -862,13 +864,9 @@ export default function SpecialtyReportWizardModal({
             applied += 1
             continue
           }
-          if (phase !== "home_findings" && phase !== "home_review") {
-            skipped += 1
-            continue
-          }
         }
         const cur = readFieldValueFromHome(next, fieldKey, genericPatch ?? genericNotes).trim()
-        if (cur && cur !== value) {
+        if (cur && cur !== value && !opts?.forceReplace) {
           skipped += 1
           continue
         }
@@ -953,14 +951,12 @@ export default function SpecialtyReportWizardModal({
       }
       return
     }
-    const el = assistantInputRef.current
-    if (el) el.value = display
+    setAssistantText(display)
   }
 
   function commitActiveFieldVoice() {
     const fieldKey = activeVoiceFieldRef.current
     if (!fieldKey) return
-    voiceDisplayThrottleRef.current?.flushNow()
     const display =
       voiceLiveDisplayRef.current.trim() ||
       combineSpeechSessionDisplay(voiceSessionBaseRef.current, {
@@ -971,7 +967,6 @@ export default function SpecialtyReportWizardModal({
   }
 
   function syncVoiceDisplayToReactState() {
-    voiceDisplayThrottleRef.current?.flushNow()
     const fieldKey = activeVoiceFieldRef.current
     if (fieldKey) {
       commitActiveFieldVoice()
@@ -991,7 +986,6 @@ export default function SpecialtyReportWizardModal({
   }
 
   function preserveOverallVoiceTranscriptInUi() {
-    voiceDisplayThrottleRef.current?.flushNow()
     if (!activeVoiceFieldRef.current) {
       const display =
         voiceLiveDisplayRef.current.trim() ||
@@ -1010,9 +1004,16 @@ export default function SpecialtyReportWizardModal({
     voiceLastParserFinalsLenRef.current = voiceFinalSuffixRef.current.length
   }
 
-  function applyHomeInspectionParseResult(parsed: SpecialtyReportParseResult): { applied: number; skipped: number } {
-    if (parsed.structuredPatches.length > 0) applyNavigationPatches(parsed.structuredPatches)
-    return applyParsedFieldAssignments(parsed.assignments)
+  function applyHomeInspectionParseResult(
+    parsed: SpecialtyReportParseResult,
+    opts?: { forceReplace?: boolean },
+  ): { applied: number; skipped: number } {
+    let result = { applied: 0, skipped: 0 }
+    startTransition(() => {
+      if (parsed.structuredPatches.length > 0) applyNavigationPatches(parsed.structuredPatches)
+      result = applyParsedFieldAssignments(parsed.assignments, opts)
+    })
+    return result
   }
 
   async function attachFieldImage(fieldKey: string, file: File | null) {
@@ -1207,17 +1208,28 @@ export default function SpecialtyReportWizardModal({
 
   async function runAssistantCommand(
     raw: string,
-    options?: { allowDefaultTarget?: boolean; voiceChunk?: boolean; explicitApply?: boolean },
+    options?: {
+      allowDefaultTarget?: boolean
+      voiceChunk?: boolean
+      explicitApply?: boolean
+      /** Nested tail parse during an explicit Apply — do not re-enter the busy guard. */
+      nestedApply?: boolean
+    },
   ): Promise<boolean> {
     const text = raw.trim()
-    if (!text || assistantProcessing) return false
+    if (!text) return false
     const explicitApply = options?.explicitApply === true && options?.voiceChunk !== true
-    if (explicitApply) {
+    const forceReplace = explicitApply || options?.nestedApply === true
+    if (explicitApply && !options?.nestedApply) {
+      if (applyInFlightRef.current || assistantProcessing) return false
+      applyInFlightRef.current = true
       setAssistantProcessing(true)
       setAssistantNote("Applying to report fields…")
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
       })
+    } else if (!options?.voiceChunk && assistantProcessing) {
+      return false
     }
     try {
     const fillCtx: SpecialtyReportFillContext = {
@@ -1281,12 +1293,17 @@ export default function SpecialtyReportWizardModal({
             parseSpecialtyReportFieldAssignments(text, fillCtx, {
               allowStructure: true,
               readFieldValue,
+              replaceExisting: forceReplace,
             }),
           )
         }, 0)
       })
-      const { applied, skipped } = applyHomeInspectionParseResult(parsed)
-      if (applied > 0 || skipped > 0 || parsed.structuredSummary) {
+      const { applied, skipped } = applyHomeInspectionParseResult(parsed, { forceReplace })
+      const ruleHandled =
+        applied > 0 ||
+        parsed.structuredSummary ||
+        (skipped > 0 && !explicitApply && parsed.unmatched.length === 0)
+      if (ruleHandled) {
         let note = parsed.structuredSummary ?? ""
         if (!note) {
           if (applied > 0 && skipped > 0) {
@@ -1305,7 +1322,11 @@ export default function SpecialtyReportWizardModal({
           return true
         }
         if (tail) {
-          const more = await runAssistantCommand(tail, options)
+          const more = await runAssistantCommand(tail, {
+            ...options,
+            explicitApply: false,
+            nestedApply: forceReplace,
+          })
           if (options?.voiceChunk && (applied > 0 || more)) markOverallVoiceConsumed()
           return applied > 0 || more
         }
@@ -1374,14 +1395,17 @@ export default function SpecialtyReportWizardModal({
         }
         const { fills, note } = await fetchSpecialtyReportFieldFills(text, tok)
         if (fills.length > 0) {
-          const { applied, skipped } = applyHomeInspectionParseResult({
-            assignments: fills,
-            skippedExisting: 0,
-            unmatched: [],
-            structuredPatches: [],
-            structured: null,
-            structuredSummary: null,
-          })
+          const { applied, skipped } = applyHomeInspectionParseResult(
+            {
+              assignments: fills,
+              skippedExisting: 0,
+              unmatched: [],
+              structuredPatches: [],
+              structured: null,
+              structuredSummary: null,
+            },
+            { forceReplace },
+          )
           setAssistantNote(
             applied > 0
               ? `AI updated ${applied} field(s) or rating(s)${skipped ? ` (${skipped} skipped — already had text).` : "."}`
@@ -1397,7 +1421,7 @@ export default function SpecialtyReportWizardModal({
         )
         return false
       } finally {
-        if (!explicitApply) setAssistantProcessing(false)
+        if (!explicitApply && !options?.nestedApply) setAssistantProcessing(false)
       }
     }
 
@@ -1421,7 +1445,10 @@ export default function SpecialtyReportWizardModal({
     )
     return false
     } finally {
-      if (explicitApply) setAssistantProcessing(false)
+      if (explicitApply && !options?.nestedApply) {
+        applyInFlightRef.current = false
+        setAssistantProcessing(false)
+      }
     }
   }
 
@@ -1443,12 +1470,8 @@ export default function SpecialtyReportWizardModal({
       voiceFinalSuffixRef.current = ""
       voiceConsumedLenRef.current = targetFieldKey ? 0 : assistantText.length
       voiceLastParserFinalsLenRef.current = 0
-      voiceDisplayThrottleRef.current?.cancel()
       voiceLiveDisplayRef.current = voiceSessionBaseRef.current
-      voiceDisplayThrottleRef.current = createThrottledSpeechDisplay((display) => {
-        voiceLiveDisplayRef.current = display
-        paintVoiceTarget(display)
-      }, 320)
+      paintVoiceTarget(voiceLiveDisplayRef.current)
       const speechOpts = speechRecognitionListenUntilStopped()
       const rec = new Ctor()
       recognitionRef.current = rec
@@ -1459,14 +1482,14 @@ export default function SpecialtyReportWizardModal({
         const parsed = parseSpeechResultsList(ev.results)
         voiceFinalSuffixRef.current = parsed.finals
         const display = combineSpeechSessionDisplay(voiceSessionBaseRef.current, parsed)
-        voiceDisplayThrottleRef.current?.schedule(display)
+        voiceLiveDisplayRef.current = display
+        paintVoiceTarget(display)
       }
       rec.onerror = () => {
         voiceKeepListeningRef.current = false
         setAssistantNote("Voice input failed. Check mic permissions and retry.")
       }
       rec.onend = () => {
-        voiceDisplayThrottleRef.current?.flushNow()
         if (voiceParserDebounceRef.current) {
           clearTimeout(voiceParserDebounceRef.current)
           voiceParserDebounceRef.current = null
@@ -1504,7 +1527,7 @@ export default function SpecialtyReportWizardModal({
       setAssistantNote(
         targetFieldKey
           ? "Listening… text goes into this field only. Tap Stop when finished."
-          : "Listening… text appears in the box below. Tap Stop, then Apply assistant input — we do not auto-fill fields while you talk (keeps the report fast).",
+          : "Listening… your words appear below as you speak. Tap Stop to map them into report fields (or Apply to run again).",
       )
     } catch {
       setAssistantListening(false)
@@ -1520,8 +1543,6 @@ export default function SpecialtyReportWizardModal({
     }
     syncVoiceDisplayToReactState()
     preserveOverallVoiceTranscriptInUi()
-    voiceDisplayThrottleRef.current?.cancel()
-    voiceDisplayThrottleRef.current = null
     recognitionRef.current?.stop()
     recognitionRef.current = null
     resetOverallVoiceSessionRefs()
@@ -1791,19 +1812,32 @@ export default function SpecialtyReportWizardModal({
                 value={assistantText}
                 onChange={(e) => {
                   const v = e.target.value
+                  voiceLiveDisplayRef.current = v
                   setAssistantText(v)
                   globalAssistant?.setAssistantText(v)
                 }}
-                placeholder='Example: set inspector name to Joseph Snyder · weather: clear, 72°F · set condition for gutters to satisfactory'
-                style={{ ...theme.formInput, resize: "vertical" }}
+                placeholder={
+                  assistantListening
+                    ? "Listening… your words appear here as you speak."
+                    : 'Example: set inspector name to Joseph Snyder · weather: clear, 72°F · set condition for gutters to satisfactory'
+                }
+                style={{
+                  ...theme.formInput,
+                  resize: "vertical",
+                  ...(assistantListening ? { borderColor: "#ea580c", boxShadow: "0 0 0 2px rgba(234, 88, 12, 0.2)" } : {}),
+                }}
               />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
                   type="button"
                   onClick={() => {
-                    stopDictation()
+                    if (assistantListening) stopDictation()
                     globalAssistant?.stopVoiceListening()
-                    const text = (assistantInputRef.current?.value ?? assistantText).trim()
+                    const text = (voiceLiveDisplayRef.current || assistantInputRef.current?.value || assistantText).trim()
+                    if (!text) {
+                      setAssistantNote("Add voice or text above, then tap Apply.")
+                      return
+                    }
                     if (text !== assistantText) setAssistantText(text)
                     void runAssistantCommand(text, { explicitApply: true })
                   }}
