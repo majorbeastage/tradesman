@@ -241,24 +241,6 @@ export function splitCompoundAssistantUtterance(raw: string): string[] {
     .filter(Boolean)
   if (byNewline.length > 1) return byNewline
 
-  const commandStarts =
-    /(?:^|[.;])\s*(?=(?:please\s+)?(?:set|fill|put|use|change|copy|open|go\s+to|weather\s+is|inspector\b|license\b|property\s+address)\b)/gi
-  const chunks: string[] = []
-  let last = 0
-  let m: RegExpExecArray | null
-  const re = new RegExp(commandStarts.source, "gi")
-  while ((m = re.exec(text)) !== null) {
-    const start = m.index + m[0].length - m[0].trimStart().length
-    if (start > last) {
-      const piece = text.slice(last, start).trim()
-      if (piece) chunks.push(piece)
-    }
-    last = start
-  }
-  const tail = text.slice(last).trim()
-  if (tail) chunks.push(tail)
-  if (chunks.length > 1) return chunks
-
   const andSplit = text.split(
     /\s+(?:and|also|then)\s+(?=(?:please\s+)?(?:set|fill|put|use|change|mark|weather\b|inspector\b|license\b|gutters\b|roof\b|condition\b))/i,
   )
