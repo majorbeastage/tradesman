@@ -714,7 +714,7 @@ export async function logCommunicationEvent(
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
   if (payload.direction === "inbound" && payload.customer_id) {
-    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline")
+    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline.js")
     await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
   }
 }
@@ -755,7 +755,7 @@ export async function insertCommunicationEventReturningId(
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
   if (payload.direction === "inbound" && payload.customer_id) {
-    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline")
+    const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline.js")
     await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
   }
   return data?.id ? String(data.id) : null
