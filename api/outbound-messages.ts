@@ -207,6 +207,32 @@ function filenameFromUrl(u: string, index: number): string {
   return `attachment-${index + 1}`
 }
 
+function parseTwilioMessageResponse(text: string): {
+  sid?: string
+  status?: string
+  errorMessage?: string
+  errorCode?: string
+} {
+  const trimmed = text.trim()
+  if (!trimmed) return {}
+  try {
+    const j = JSON.parse(trimmed) as Record<string, unknown>
+    const sid = typeof j.sid === "string" ? j.sid : undefined
+    const status = typeof j.status === "string" ? j.status : undefined
+    const errorMessage =
+      typeof j.message === "string"
+        ? j.message
+        : typeof j.error_message === "string"
+          ? j.error_message
+          : undefined
+    const errorCode =
+      typeof j.code === "string" || typeof j.code === "number" ? String(j.code) : undefined
+    return { sid, status, errorMessage, errorCode }
+  } catch {
+    return {}
+  }
+}
+
 async function fetchUrlsAsResendAttachments(urls: string[]): Promise<Array<{ filename: string; content: string }>> {
   const out: Array<{ filename: string; content: string }> = []
   const maxBytes = 15 * 1024 * 1024

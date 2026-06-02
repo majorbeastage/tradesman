@@ -47,6 +47,8 @@ import {
   queueSchedulingQuotePrefill,
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
+import { formatAppError } from "../../lib/formatAppError"
+import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
 import {
@@ -83,14 +85,40 @@ function formatFetchApiError(response: Response, raw: string): string {
   const trimmed = raw.trim()
   if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
     return (
-      "The server function crashed or timed out. Check deployment logs for /api/outbound-messages or /api/send-sms. " +
-      "Common causes: missing env keys, Resend/Twilio errors."
+      "The server function crashed or timed out. Open Vercel → your deployment → Logs, filter by /api/outbound-messages (or /api/send-sms), and check the stack trace. " +
+      "Common causes: missing SUPABASE_SERVICE_ROLE_KEY, TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN, or no SMS number in Admin → Communications."
     )
   }
   if (trimmed.startsWith("{")) {
     try {
       const j = JSON.parse(trimmed) as Record<string, unknown>
-      const parts = [j.error, j.message, j.hint, j.logWarning].filter((x) => typeof x === "string" && String(x).trim()) as string[]
+      const parts: string[] = []
+      const push = (v: unknown) => {
+        if (typeof v === "string" && v.trim()) parts.push(v.trim())
+        else if (Array.isArray(v)) {
+          const lines = v.map((x) => (typeof x === "string" ? x.trim() : "")).filter(Boolean)
+          if (lines.length) parts.push(lines.join("\n"))
+        }
+      }
+      push(j.error)
+      push(j.message)
+      push(j.hint)
+      push(j.logWarning)
+      push(j.fixEither)
+      push(j.deliveryHint)
+      if (typeof j.twilioErrorCode === "string" || typeof j.twilioErrorCode === "number") {
+        parts.push(`Twilio error code: ${j.twilioErrorCode}`)
+      }
+      if (j.serverSeesSupabaseEnv != null) {
+        try {
+          parts.push(`Server Supabase env: ${JSON.stringify(j.serverSeesSupabaseEnv)}`)
+        } catch {
+          /* ignore */
+        }
+      }
+      if (typeof j.supabaseClientInitError === "string" && j.supabaseClientInitError.trim()) {
+        parts.push(`Supabase init: ${j.supabaseClientInitError.trim()}`)
+      }
       if (parts.length) return parts.join("\n\n")
     } catch {
       /* ignore */
@@ -491,7 +519,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setDetailConsentSource(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
       setDetailConsentSourceTouched(false)
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      alert(formatAppError(e))
     } finally {
       setDetailSmsConsentSaving(false)
     }
@@ -1147,7 +1175,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       }
       setDetailForm((p) => ({ ...p, serviceLat: String(coords.lat), serviceLng: String(coords.lng) }))
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      alert(formatAppError(e))
     } finally {
       setServiceGeocodeBusy(false)
     }
@@ -1251,7 +1279,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (nextSel) setSelectedCustomer(nextSel)
       setDetailEditMode(false)
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      alert(formatAppError(e))
     } finally {
       setDetailSaving(false)
     }
@@ -1275,10 +1303,17 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     setCustomerSmsSending(true)
     try {
+      let token = session?.access_token ?? null
+      if (supabase && session) {
+        token = (await getFreshAccessToken(supabase, session)) ?? token
+      }
       const response = await fetch("/api/send-sms", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: outboundMessagesJsonBody({
           to,
           body: trimmed,
           userId,
@@ -1293,7 +1328,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      alert(formatAppError(err))
     } finally {
       setCustomerSmsSending(false)
     }
@@ -1337,7 +1372,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      alert(formatAppError(err))
     } finally {
       setCustomerEmailSending(false)
     }
@@ -1368,7 +1403,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!tried.error && tried.data) setSelectedCustomer(tried.data as CustomerRow)
       setSection("archived")
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      alert(formatAppError(e))
     } finally {
       setCompleteBusy(false)
     }
