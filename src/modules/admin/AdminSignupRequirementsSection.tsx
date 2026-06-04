@@ -7,6 +7,7 @@ import {
   DEFAULT_SMS_CONSENT_PAGE,
   DEFAULT_TERMS_PAGE,
   PRIVACY_SETTINGS_KEY,
+  SMS_CONSENT_METHODS_LEAD,
   SMS_CONSENT_SETTINGS_KEY,
   TERMS_SETTINGS_KEY,
   parseSimpleLegalPage,
@@ -477,7 +478,7 @@ export default function AdminSignupRequirementsSection() {
         onToggle={() => setSmsOpen((v) => !v)}
       >
         <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
-          Public /sms page order: Intro → Consent Methods → CTA disclosure → Consent and purchase → Manual Contacts → Messaging Use Cases → STOP/HELP → Platform Rules. Clear both notice fields to hide the notice card. Legacy “details body” and sample fields are no longer shown on the public page.
+          These fields match the live public /sms page (served from <code style={{ fontSize: 12 }}>tradesman_sms_consent</code> in platform settings). Order on the page: Intro → Consent Methods → CTA disclosure → Consent and purchase (fixed) → Manual Contacts → Messaging Use Cases → STOP/HELP → Platform Rules. Clear both notice fields to hide the notice card.
         </p>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
           Hero line (blank = “Tradesman Systems”)
@@ -520,48 +521,79 @@ export default function AdminSignupRequirementsSection() {
           />
         </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Details section title (blank = “Details”)
-          <input
-            value={sms.details_section_title ?? ""}
-            onChange={(e) => setSms((p) => ({ ...p, details_section_title: e.target.value }))}
-            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
-          />
-        </label>
-        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Details body (main narrative; pre-wrap)
-          <textarea value={sms.body} onChange={(e) => setSms((p) => ({ ...p, body: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 220, display: "block" }} />
-        </label>
-        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Consent section title (blank = default consent heading)
-          <input
-            value={sms.consent_section_title ?? ""}
-            onChange={(e) => setSms((p) => ({ ...p, consent_section_title: e.target.value }))}
-            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
-          />
-        </label>
-        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Consent language (highlighted block)
-          <textarea value={sms.consent_statement} onChange={(e) => setSms((p) => ({ ...p, consent_statement: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 100, display: "block" }} />
-        </label>
-        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Sample section title (blank = default)
-          <input
-            value={sms.sample_section_title ?? ""}
-            onChange={(e) => setSms((p) => ({ ...p, sample_section_title: e.target.value }))}
-            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
-          />
-        </label>
-        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Sample section intro (line above sample block)
+          Intro (section: Intro)
           <textarea
-            value={sms.sample_section_intro ?? ""}
-            onChange={(e) => setSms((p) => ({ ...p, sample_section_intro: e.target.value }))}
-            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 48, display: "block" }}
+            value={sms.intro ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, intro: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.intro}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }}
           />
         </label>
         <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
-          Sample messages (examples; pre-wrap)
-          <textarea value={sms.sample_message} onChange={(e) => setSms((p) => ({ ...p, sample_message: e.target.value }))} style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 120, display: "block" }} />
+          Consent methods (section: Consent Methods)
+          <span style={{ display: "block", fontWeight: 400, fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+            Lead line on the public page is fixed: “{SMS_CONSENT_METHODS_LEAD}” — edit the bullet list below (one per line, optional • prefix).
+          </span>
+          <textarea
+            value={sms.consent_methods ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, consent_methods: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.consent_methods}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 160, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          CTA disclosure subheading (section: CTA Disclosure Example)
+          <input
+            value={sms.cta_disclosure_heading ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, cta_disclosure_heading: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.cta_disclosure_heading}
+            style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Example CTA disclosure text
+          <textarea
+            value={sms.consent_statement}
+            onChange={(e) => setSms((p) => ({ ...p, consent_statement: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.consent_statement}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 100, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Manual contacts (section: Manual Contacts)
+          <textarea
+            value={sms.manual_contacts ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, manual_contacts: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.manual_contacts}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Messaging use cases (section: Messaging Use Cases — one bullet per line)
+          <textarea
+            value={sms.messaging_use_cases ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, messaging_use_cases: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.messaging_use_cases}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 120, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          STOP / HELP (section: STOP / HELP)
+          <textarea
+            value={sms.stop_help ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, stop_help: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.stop_help}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 80, display: "block" }}
+          />
+        </label>
+        <label style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+          Platform rules (section: Platform Rules)
+          <textarea
+            value={sms.platform_rules ?? ""}
+            onChange={(e) => setSms((p) => ({ ...p, platform_rules: e.target.value }))}
+            placeholder={DEFAULT_SMS_CONSENT_PAGE.platform_rules}
+            style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 72, display: "block" }}
+          />
         </label>
         <label style={{ display: "block", fontWeight: 600, color: theme.text }}>
           Footer note under nav (plain text; blank = default Privacy/Terms links line)

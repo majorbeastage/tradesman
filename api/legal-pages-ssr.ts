@@ -69,14 +69,13 @@ export type SmsConsentResolvedSection = {
 const SMS_INTRO_DEFAULT =
   "Tradesman Systems facilitates one-to-one messaging between businesses and their customers for customer support, scheduling, estimates, appointment coordination, job updates, and related service communication."
 
-const SMS_CONSENT_METHODS_LEAD = "Customers may consent to receive SMS messages by:"
+export const SMS_CONSENT_METHODS_LEAD = "Customers may consent to receive SMS messages by:"
 
-const SMS_CONSENT_METHODS_DEFAULT = `• Contacting a business directly through a publicly advertised phone number
-• Submitting a website contact form or service request
-• Sending an SMS inquiry
-• Requesting service in person
-• Providing their phone number directly to a business and agreeing to receive communication
-• Through direct referral`
+const SMS_CONSENT_METHODS_DEFAULT = `• Completing a website contact form, estimate request form, appointment request form, or service request form that includes SMS consent language
+• Contacting a business directly through a publicly advertised phone number and agreeing to continue communications by SMS
+• Sending an SMS inquiry to a business phone number
+• Providing verbal consent during a phone call or in-person interaction before SMS communications are initiated
+• Being referred to a business and subsequently providing consent to receive SMS communications`
 
 const SMS_CTA_DISCLOSURE_DEFAULT = `“By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”`
 
