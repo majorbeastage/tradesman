@@ -24,6 +24,7 @@
     "api/privacy.ts": { "maxDuration": 30 },
     "api/terms.ts": { "maxDuration": 30 },
     "api/sms.ts": { "maxDuration": 30 },
+    "api/sms-cta-guidance.ts": { "maxDuration": 30 },
     "api/legal-health.ts": { "maxDuration": 10 },
     "api/robots.ts": { "maxDuration": 10 },
     "api/sitemap.ts": { "maxDuration": 10 },
@@ -115,19 +116,19 @@
     },
     {
       "source": "/sms-cta",
-      "destination": "/sms-cta.html"
+      "destination": "/api/sms-cta-guidance"
     },
     {
       "source": "/sms-cta/",
-      "destination": "/sms-cta.html"
+      "destination": "/api/sms-cta-guidance"
     },
     {
       "source": "/sms-cts",
-      "destination": "/sms-cta.html"
+      "destination": "/api/sms-cta-guidance"
     },
     {
       "source": "/sms-cts/",
-      "destination": "/sms-cta.html"
+      "destination": "/api/sms-cta-guidance"
     },
     {
       "source": "/account-deletion",

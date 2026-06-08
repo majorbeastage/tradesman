@@ -5,15 +5,19 @@ import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import {
   DEFAULT_PRIVACY_PAGE,
   DEFAULT_SMS_CONSENT_PAGE,
+  DEFAULT_SMS_CTA_GUIDANCE_PAGE,
   DEFAULT_TERMS_PAGE,
   PRIVACY_SETTINGS_KEY,
   SMS_CONSENT_METHODS_LEAD,
   SMS_CONSENT_SETTINGS_KEY,
+  SMS_CTA_GUIDANCE_SETTINGS_KEY,
   TERMS_SETTINGS_KEY,
   parseSimpleLegalPage,
   parseSmsConsentLegalPage,
+  parseSmsCtaGuidancePage,
   type SimpleLegalPage,
   type SmsConsentLegalPage,
+  type SmsCtaGuidancePage,
 } from "../../types/legal-pages"
 import {
   DEFAULT_SIGNUP_REQUIREMENTS,
@@ -102,6 +106,7 @@ export default function AdminSignupRequirementsSection() {
   const [privacy, setPrivacy] = useState<SimpleLegalPage>({ ...DEFAULT_PRIVACY_PAGE })
   const [terms, setTerms] = useState<SimpleLegalPage>({ ...DEFAULT_TERMS_PAGE })
   const [sms, setSms] = useState<SmsConsentLegalPage>({ ...DEFAULT_SMS_CONSENT_PAGE })
+  const [smsCta, setSmsCta] = useState<SmsCtaGuidancePage>({ ...DEFAULT_SMS_CTA_GUIDANCE_PAGE })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
@@ -109,6 +114,7 @@ export default function AdminSignupRequirementsSection() {
   const [privacyOpen, setPrivacyOpen] = useState(true)
   const [termsOpen, setTermsOpen] = useState(true)
   const [smsOpen, setSmsOpen] = useState(true)
+  const [smsCtaOpen, setSmsCtaOpen] = useState(true)
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -121,13 +127,14 @@ export default function AdminSignupRequirementsSection() {
       const { data, error: err } = await supabase
         .from("platform_settings")
         .select("key, value")
-        .in("key", [SIGNUP_REQUIREMENTS_KEY, PRIVACY_SETTINGS_KEY, TERMS_SETTINGS_KEY, SMS_CONSENT_SETTINGS_KEY])
+        .in("key", [SIGNUP_REQUIREMENTS_KEY, PRIVACY_SETTINGS_KEY, TERMS_SETTINGS_KEY, SMS_CONSENT_SETTINGS_KEY, SMS_CTA_GUIDANCE_SETTINGS_KEY])
       if (err) throw err
       const byKey = new Map((data ?? []).map((r: { key: string; value: unknown }) => [r.key, r.value]))
       setSignup(parseSignupRequirements(byKey.get(SIGNUP_REQUIREMENTS_KEY)))
       setPrivacy(parseSimpleLegalPage(byKey.get(PRIVACY_SETTINGS_KEY), DEFAULT_PRIVACY_PAGE))
       setTerms(parseSimpleLegalPage(byKey.get(TERMS_SETTINGS_KEY), DEFAULT_TERMS_PAGE))
       setSms(parseSmsConsentLegalPage(byKey.get(SMS_CONSENT_SETTINGS_KEY), DEFAULT_SMS_CONSENT_PAGE))
+      setSmsCta(parseSmsCtaGuidancePage(byKey.get(SMS_CTA_GUIDANCE_SETTINGS_KEY), DEFAULT_SMS_CTA_GUIDANCE_PAGE))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -151,6 +158,7 @@ export default function AdminSignupRequirementsSection() {
         { key: PRIVACY_SETTINGS_KEY, value: privacy, updated_at: now },
         { key: TERMS_SETTINGS_KEY, value: terms, updated_at: now },
         { key: SMS_CONSENT_SETTINGS_KEY, value: sms, updated_at: now },
+        { key: SMS_CTA_GUIDANCE_SETTINGS_KEY, value: smsCta, updated_at: now },
       ]
       const { error: err } = await supabase.from("platform_settings").upsert(rows, { onConflict: "key" })
       if (err) throw err
@@ -193,9 +201,8 @@ export default function AdminSignupRequirementsSection() {
             <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>Sign up requirements</h1>
             <p style={{ color: theme.text, opacity: 0.85, margin: 0, lineHeight: 1.55, fontSize: 14 }}>
               Control which fields are required on the public sign-up form, add custom questions (saved on the profile as{" "}
-              <code style={{ fontSize: 12 }}>signup_extras</code>), and edit Privacy, Terms, and SMS consent copy. Public pages{" "}
-              <code style={{ fontSize: 12 }}>/privacy</code>, <code style={{ fontSize: 12 }}>/terms</code>, and{" "}
-              <code style={{ fontSize: 12 }}>/sms</code> read from the same saved JSON (including crawlable HTML from the API). Saving
+              <code style={{ fontSize: 12 }}>signup_extras</code>), and edit Privacy, Terms, SMS consent (<code style={{ fontSize: 12 }}>/sms</code>), and SMS CTA guidance (<code style={{ fontSize: 12 }}>/sms-cta</code>). Public pages{" "}
+              <code style={{ fontSize: 12 }}>/privacy</code>, <code style={{ fontSize: 12 }}>/terms</code>, <code style={{ fontSize: 12 }}>/sms</code>, and <code style={{ fontSize: 12 }}>/sms-cta</code> read from the same saved JSON (including crawlable HTML from the API). Saving
               requires an admin account (<code style={{ fontSize: 12 }}>is_admin()</code> on <code style={{ fontSize: 12 }}>platform_settings</code>). Run{" "}
               <code style={{ fontSize: 12 }}>supabase-public-legal-signup.sql</code> once so anon users can read these keys and{" "}
               <code style={{ fontSize: 12 }}>signup_extras</code> exists on <code style={{ fontSize: 12 }}>profiles</code>.
@@ -603,6 +610,58 @@ export default function AdminSignupRequirementsSection() {
             style={{ ...theme.formInput, width: "100%", marginTop: 6, minHeight: 56, display: "block" }}
           />
         </label>
+      </CollapsibleLegalBlock>
+
+      <CollapsibleLegalBlock
+        sectionId="admin:signup:sms-cta"
+        title="SMS CTA guidance (/sms-cta)"
+        open={smsCtaOpen}
+        onToggle={() => setSmsCtaOpen((v) => !v)}
+      >
+        <p style={{ fontSize: 13, color: theme.text, opacity: 0.8, margin: "0 0 12px", lineHeight: 1.5 }}>
+          Edits the public <code style={{ fontSize: 12 }}>/sms-cta</code> page (printable PDF section, screenshots, and recommended disclosure). Stored in{" "}
+          <code style={{ fontSize: 12 }}>tradesman_sms_cta</code>. PDF download and platform screenshot images are unchanged.
+        </p>
+        {(
+          [
+            ["hero_kicker", "Hero kicker", "input", DEFAULT_SMS_CTA_GUIDANCE_PAGE.hero_kicker],
+            ["title", "Page title", "input", DEFAULT_SMS_CTA_GUIDANCE_PAGE.title],
+            ["lead", "Hero lead paragraph", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.lead],
+            ["notice_body", "Notice box (yellow callout)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.notice_body],
+            ["printable_intro", "Printable PDF intro", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.printable_intro],
+            ["online_submit_blurb", "Online submit blurb (/sms-cta/submit)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.online_submit_blurb],
+            ["screenshots_intro", "Screenshots section intro", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.screenshots_intro],
+            ["disclosure_title", "Disclosure section heading", "input", DEFAULT_SMS_CTA_GUIDANCE_PAGE.disclosure_title],
+            ["disclosure_placement_note", "Text above disclosure blockquote", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.disclosure_placement_note],
+            ["disclosure_text", "Recommended disclosure (blockquote)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.disclosure_text],
+            ["closing_paragraph", "Closing paragraph", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.closing_paragraph],
+          ] as const
+        ).map(([key, label, kind, placeholder]) => (
+          <label key={key} style={{ display: "block", fontWeight: 600, marginBottom: 10, color: theme.text }}>
+            {label}
+            {kind === "input" ? (
+              <input
+                value={smsCta[key]}
+                onChange={(e) => setSmsCta((p) => ({ ...p, [key]: e.target.value }))}
+                placeholder={placeholder}
+                style={{ ...theme.formInput, width: "100%", maxWidth: 560, marginTop: 6, display: "block" }}
+              />
+            ) : (
+              <textarea
+                value={smsCta[key]}
+                onChange={(e) => setSmsCta((p) => ({ ...p, [key]: e.target.value }))}
+                placeholder={placeholder}
+                style={{
+                  ...theme.formInput,
+                  width: "100%",
+                  marginTop: 6,
+                  minHeight: key === "disclosure_text" ? 100 : key === "lead" ? 64 : 72,
+                  display: "block",
+                }}
+              />
+            )}
+          </label>
+        ))}
       </CollapsibleLegalBlock>
     </div>
   )

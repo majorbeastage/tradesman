@@ -31,7 +31,7 @@ function absolutizePublicLinks(html: string, origin: string | undefined): string
   return html.replace(/href="\//g, `href="${origin}/`)
 }
 
-async function fetchPlatformSettingValue(key: string): Promise<unknown> {
+export async function fetchPlatformSettingValue(key: string): Promise<unknown> {
   try {
     const supabaseUrl = pickSupabaseUrlForServer().trim()
     const anonKey = pickSupabaseAnonKeyForServer().trim()

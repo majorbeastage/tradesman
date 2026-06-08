@@ -388,3 +388,66 @@ export function resolvedSmsSampleSectionTitle(page: SmsConsentLegalPage): string
 export function smsNoticeCardVisible(page: SmsConsentLegalPage): boolean {
   return Boolean((page.notice_title ?? "").trim() || (page.notice_body ?? "").trim())
 }
+
+/** Stored in platform_settings — public /sms-cta guidance page (A2P / printable PDF / screenshots). */
+export const SMS_CTA_GUIDANCE_SETTINGS_KEY = "tradesman_sms_cta"
+
+export type SmsCtaGuidancePage = {
+  hero_kicker?: string
+  title: string
+  /** Hero paragraph (plain text; template adds link to /sms-cta/submit). */
+  lead: string
+  notice_body: string
+  printable_intro: string
+  online_submit_blurb: string
+  screenshots_intro: string
+  disclosure_title: string
+  disclosure_placement_note: string
+  /** Recommended disclosure blockquote (same default as /sms CTA example). */
+  disclosure_text: string
+  closing_paragraph: string
+}
+
+export const DEFAULT_SMS_CTA_GUIDANCE_PAGE: SmsCtaGuidancePage = {
+  hero_kicker: "Tradesman Systems · Compliance guidance",
+  title: "SMS Consent CTA Guidance",
+  lead:
+    "Sample disclosure language, a printable in-person opt-in PDF, an optional online consent submission form, and platform screenshots for carriers and reviewers.",
+  notice_body:
+    "For reviewers and business owners: Use the disclosure on your website and intake forms. Manually entered mobile numbers in Tradesman require documented consent before texting. Customers who contact your business line first (call or voicemail) follow a different path—see screenshots below.",
+  printable_intro:
+    "One-page form for in-person signatures (service call, counter, paper estimate). Keep the signed copy, then record the same consent in Tradesman under Customers → SMS opt-in.",
+  online_submit_blurb:
+    "Online submission (A2P): /sms-cta/submit — requires business and customer information plus an unchecked-by-default opt-in checkbox. Submissions email a PDF to admin@tradesman-us.com (override with SMS_OPT_IN_NOTIFY_EMAIL on Vercel).",
+  screenshots_intro:
+    "How Tradesman handles SMS opt-in for manually entered contacts versus customers who already reached the business on your Tradesman line.",
+  disclosure_title: "Recommended SMS Consent Disclosure",
+  disclosure_placement_note:
+    "Place this disclosure near website contact forms, estimate requests, service requests, online listings, and other intake points:",
+  disclosure_text: SMS_CTA_DISCLOSURE_DEFAULT,
+  closing_paragraph:
+    "Customers may also opt in by calling or texting your business, or by signing the printable PDF above. SMS must be one-to-one and tied to a service relationship. Tradesman does not support bulk or unsolicited messaging.",
+}
+
+export function parseSmsCtaGuidancePage(raw: unknown, fallback: SmsCtaGuidancePage): SmsCtaGuidancePage {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...fallback }
+  const o = raw as Record<string, unknown>
+  const pick = (key: keyof SmsCtaGuidancePage): string => {
+    const v = o[key]
+    const fb = fallback[key]
+    return typeof v === "string" ? v : typeof fb === "string" ? fb : ""
+  }
+  return {
+    hero_kicker: pick("hero_kicker"),
+    title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : fallback.title,
+    lead: pick("lead"),
+    notice_body: pick("notice_body"),
+    printable_intro: pick("printable_intro"),
+    online_submit_blurb: pick("online_submit_blurb"),
+    screenshots_intro: pick("screenshots_intro"),
+    disclosure_title: pick("disclosure_title"),
+    disclosure_placement_note: pick("disclosure_placement_note"),
+    disclosure_text: pick("disclosure_text"),
+    closing_paragraph: pick("closing_paragraph"),
+  }
+}
