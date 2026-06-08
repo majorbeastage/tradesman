@@ -628,6 +628,9 @@ export default function AdminSignupRequirementsSection() {
             ["title", "Page title", "input", DEFAULT_SMS_CTA_GUIDANCE_PAGE.title],
             ["lead", "Hero lead paragraph", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.lead],
             ["notice_body", "Notice box (yellow callout)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.notice_body],
+            ["process_flow_body", "SMS Opt-In Process (section body — numbered lines 1. 2. … become a list)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.process_flow_body],
+            ["definitions_body", "Definitions (use **Term** for bold labels)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.definitions_body],
+            ["figure_3_caption", "Figure 3 caption (shown as “Figure 3 — …”)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.figure_3_caption],
             ["printable_intro", "Printable PDF intro", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.printable_intro],
             ["online_submit_blurb", "Online submit blurb (/sms-cta/submit)", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.online_submit_blurb],
             ["screenshots_intro", "Screenshots section intro", "textarea", DEFAULT_SMS_CTA_GUIDANCE_PAGE.screenshots_intro],
@@ -655,7 +658,16 @@ export default function AdminSignupRequirementsSection() {
                   ...theme.formInput,
                   width: "100%",
                   marginTop: 6,
-                  minHeight: key === "disclosure_text" ? 100 : key === "lead" ? 64 : 72,
+                  minHeight:
+                    key === "disclosure_text"
+                      ? 100
+                      : key === "process_flow_body"
+                        ? 280
+                        : key === "definitions_body"
+                          ? 140
+                          : key === "lead"
+                            ? 64
+                            : 72,
                   display: "block",
                 }}
               />

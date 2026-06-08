@@ -398,6 +398,12 @@ export type SmsCtaGuidancePage = {
   /** Hero paragraph (plain text; template adds link to /sms-cta/submit). */
   lead: string
   notice_body: string
+  /** SMS Opt-In Process section (below notice, above PDF). Plain text; numbered lines render as a list. */
+  process_flow_body: string
+  /** Definitions section (below process flow). Use **term** for bold labels. */
+  definitions_body: string
+  /** Figure 3 screenshot caption (after the “Figure 3 — …” bold prefix). */
+  figure_3_caption: string
   printable_intro: string
   online_submit_blurb: string
   screenshots_intro: string
@@ -408,13 +414,45 @@ export type SmsCtaGuidancePage = {
   closing_paragraph: string
 }
 
+const DEFAULT_SMS_CTA_PROCESS_FLOW = `Tradesman Systems supports one-to-one messaging between businesses ("Subscribers") and their customers.
+
+This SMS Consent & CTA Guidance is provided to all Subscribers during onboarding and remains available throughout their use of the Tradesman Systems platform.
+
+Customer SMS consent may be obtained through one of the following methods:
+
+1. The customer contacts a business through a publicly advertised phone number, website contact form, SMS inquiry, referral, online business listing, or direct service request.
+
+2. The customer is presented with an SMS disclosure at the point of contact or within the business's intake process. Example disclosures and recommended language are provided throughout this SMS-CTA guidance page and are included in onboarding materials provided to Subscribers.
+
+3. The business responds through the Tradesman Systems platform regarding the customer's inquiry, scheduling request, estimate, appointment, job update, account notification, or customer support request.
+
+4. Customers may reply STOP at any time to opt out of SMS messages and HELP for assistance.
+
+5. Consent to receive SMS messages is not required as a condition of purchasing goods or services.
+
+For manually entered contacts, Subscribers must obtain and document customer consent before sending SMS messages through the Tradesman Systems platform.
+
+Tradesman Systems supports one-to-one customer communication only and does not support unsolicited marketing, promotional campaigns, or bulk messaging.`
+
+const DEFAULT_SMS_CTA_DEFINITIONS = `For purposes of this SMS Consent & CTA Guidance:
+
+**Tradesman Systems** – Tradesman Systems LLC, the software platform that facilitates communication between Subscribers and their Customers.
+
+**Subscriber** – A business, contractor, organization, or user account utilizing the Tradesman Systems platform.
+
+**Customer** – An end user, contact, lead, SMS recipient, or person communicating with a Subscriber through the Tradesman Systems platform.`
+
 export const DEFAULT_SMS_CTA_GUIDANCE_PAGE: SmsCtaGuidancePage = {
   hero_kicker: "Tradesman Systems · Compliance guidance",
   title: "SMS Consent CTA Guidance",
   lead:
     "Sample disclosure language, a printable in-person opt-in PDF, an optional online consent submission form, and platform screenshots for carriers and reviewers.",
   notice_body:
-    "For reviewers and business owners: Use the disclosure on your website and intake forms. Manually entered mobile numbers in Tradesman require documented consent before texting. Customers who contact your business line first (call or voicemail) follow a different path—see screenshots below.",
+    "For reviewers and business owners: Use the disclosure at the bottom of this page on your website and intake forms. Manually entered mobile numbers in Tradesman require documented consent before texting. Customers who contact your business line first (call or voicemail) follow a different path—see screenshots below.",
+  process_flow_body: DEFAULT_SMS_CTA_PROCESS_FLOW,
+  definitions_body: DEFAULT_SMS_CTA_DEFINITIONS,
+  figure_3_caption:
+    "SMS Consent/Opt-In dialogue following successful entry of Opt In details by business.",
   printable_intro:
     "One-page form for in-person signatures (service call, counter, paper estimate). Keep the signed copy, then record the same consent in Tradesman under Customers → SMS opt-in.",
   online_submit_blurb:
@@ -442,6 +480,9 @@ export function parseSmsCtaGuidancePage(raw: unknown, fallback: SmsCtaGuidancePa
     title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : fallback.title,
     lead: pick("lead"),
     notice_body: pick("notice_body"),
+    process_flow_body: pick("process_flow_body"),
+    definitions_body: pick("definitions_body"),
+    figure_3_caption: pick("figure_3_caption"),
     printable_intro: pick("printable_intro"),
     online_submit_blurb: pick("online_submit_blurb"),
     screenshots_intro: pick("screenshots_intro"),
