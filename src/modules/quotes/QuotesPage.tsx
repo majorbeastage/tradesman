@@ -43,8 +43,10 @@ import {
   buildQuotePdfBytes,
   downloadPdfBlob,
   printPdfBlob,
+  uint8ArrayToBase64,
   type QuotePdfCustomerCopyAttachment,
 } from "../../lib/documentPdf"
+import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { fetchQuoteLogoForExport } from "../../lib/quoteLogoImage"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "../../lib/defaultEstimateLegal"
@@ -4033,25 +4035,28 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const desc = p.includeNote && p.note.trim() ? p.note.trim() : ""
         return desc ? `${title}\n${desc}` : title
       })
-      bodyForSend = `${body.trim()}\n\n---\nCustomer copy (attachments below):\n${noteBlocks.join("\n\n")}`
+      bodyForSend = `${body.trim()}\n\n---\nCustomer copy (additional attachments below):\n${noteBlocks.join("\n\n")}`
     }
     setQuoteEmailSending(true)
     try {
+      const pdfPayload = await buildCurrentEstimatePdfPayload()
+      if (!pdfPayload) throw new Error("Could not build estimate document.")
+      const pdfBytes = await buildQuotePdfBytes(pdfPayload)
+      const shortId = selectedQuote.id.slice(0, 8)
       const res = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
+        body: outboundMessagesJsonBody({
           to: email,
           subject,
           body: bodyForSend,
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
-          ...(supabaseUrl ? { supabaseUrl } : {}),
-          ...(supabaseAnonKey ? { supabaseAnonKey } : {}),
+          attachments: [{ filename: `estimate-${shortId}.pdf`, content: uint8ArrayToBase64(pdfBytes) }],
           ...(attachmentPublicUrls?.length ? { attachmentPublicUrls } : {}),
         }),
       })
@@ -7164,6 +7169,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       placeholder="Message"
                       style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
                     />
+                    <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                      The estimate PDF (same as Preview / Download) is always attached to this email.
+                    </p>
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#0f172a" }}>
                       <input
                         type="checkbox"
@@ -7172,7 +7180,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         onChange={(e) => setQuoteEmailAttachEntity(e.target.checked)}
                       />
                       <span>
-                        Attach files flagged for <strong>customer copy</strong> ({entityAttachmentsForCustomerCopy(quoteEntityRows).length}{" "}
+                        Also attach files flagged for <strong>customer copy</strong> ({entityAttachmentsForCustomerCopy(quoteEntityRows).length}{" "}
                         on this estimate; descriptions are added to the message body)
                       </span>
                     </label>

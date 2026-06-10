@@ -40,6 +40,8 @@ type OutboundPayload = {
   customerId?: string
   /** Public HTTPS URLs (e.g. Supabase storage); fetched server-side and attached for Resend. */
   attachmentPublicUrls?: unknown
+  /** Inline base64 attachments for Resend ({ filename, content }). Prefer for generated PDFs. */
+  attachments?: unknown
   /** Twilio MMS: public URLs of images/files (max ~10). */
   mediaPublicUrls?: unknown
   /** Optional override for policy URL in long first-SMS footer (https). */
@@ -180,6 +182,23 @@ function pickFirstString(...values: unknown[]): string {
   return ""
 }
 
+function coerceInlineAttachments(raw: unknown): Array<{ filename: string; content: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ filename: string; content: string }> = []
+  for (let i = 0; i < raw.length && out.length < 10; i++) {
+    const row = raw[i]
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue
+    const o = row as { filename?: unknown; content?: unknown }
+    const content = typeof o.content === "string" ? o.content.trim() : ""
+    if (!content || content.length > 20_000_000) continue
+    const filenameRaw = typeof o.filename === "string" ? o.filename.trim() : ""
+    const filename =
+      filenameRaw.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || `attachment-${out.length + 1}.bin`
+    out.push({ filename, content })
+  }
+  return out
+}
+
 function coercePublicUrlList(raw: unknown): string[] {
   if (!raw) return []
   if (Array.isArray(raw)) {
@@ -278,6 +297,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : ""
   const customerId = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
   const attachUrls = coercePublicUrlList(payload.attachmentPublicUrls).slice(0, 15)
+  const inlineAttachments = coerceInlineAttachments(payload.attachments)
 
   if (toList.length === 0 || !subject || !body || !userId) {
     return res.status(400).json({
@@ -349,10 +369,16 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   if (ccList.length) resendPayload.cc = ccList
   if (bccMerged.length) resendPayload.bcc = bccMerged
 
+  const resendAttachments: Array<{ filename: string; content: string }> = [...inlineAttachments]
   if (attachUrls.length > 0) {
-    const attachments = await fetchUrlsAsResendAttachments(attachUrls)
-    if (attachments.length > 0) resendPayload.attachments = attachments
+    const fetched = await fetchUrlsAsResendAttachments(attachUrls)
+    resendAttachments.push(...fetched)
+    if (fetched.length === 0 && attachUrls.length > 0) {
+      console.warn("[outbound-messages/email] attachmentPublicUrls provided but none could be fetched:", attachUrls.length)
+    }
   }
+  if (resendAttachments.length > 0) resendAttachments.splice(0, 15)
+  if (resendAttachments.length > 0) resendPayload.attachments = resendAttachments
 
   let resendResponse: Response
   try {
@@ -504,20 +530,25 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
 
   const envFallbackFrom = toTwilioE164(firstEnv("TWILIO_FROM_NUMBER", "SMS_DEFAULT_FROM_NUMBER"))
   const dbChannel = supabase && userId ? await getPrimarySmsChannelForUser(supabase, userId) : null
+  const channelProviderSid = (dbChannel?.provider_sid ?? "").trim()
+  /** A2P 10DLC: send via Messaging Service (MG…) linked to your verified campaign — avoids error 30034 when the From long code is in that service's sender pool. */
+  const messagingServiceSid =
+    firstEnv("TWILIO_MESSAGING_SERVICE_SID").trim() ||
+    (channelProviderSid.startsWith("MG") ? channelProviderSid : "")
   /** Prefer this user's Communications public number when Supabase is configured. */
   let fromNumber =
     userId && supabase
       ? toTwilioE164(dbChannel?.public_address ?? "")
       : envFallbackFrom
 
-  if (userId && supabase && !fromNumber) {
+  if (userId && supabase && !fromNumber && !messagingServiceSid) {
     return res.status(400).json({
       error: "No Twilio SMS number on file for this user.",
       hint: "Add an active channel with SMS enabled and set Public number to that Twilio phone (Admin → Communications). Inbound SMS must use the same number.",
     })
   }
-  /** No service role on Vercel: cannot read communication_channels; allow send if a default From is set. */
-  if (userId && !supabase && !fromNumber) {
+  /** No service role on Vercel: cannot read communication_channels; allow send if a default From or Messaging Service is set. */
+  if (userId && !supabase && !fromNumber && !messagingServiceSid) {
     const envSeen = describeServerSupabaseEnvForDiagnostics()
     return res.status(503).json({
       error: "Cannot load your Twilio SMS number.",
@@ -525,7 +556,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
         "The server needs Supabase credentials to read Admin → Communications, or a default outbound number.",
       fixEither: [
         "Vercel → Project → Settings → Environment Variables: add SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY (service role, not anon). Apply to Production, save, then Redeploy.",
-        "Or set TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) so replies can send from that number until Supabase is configured (logging to communication_events will be skipped).",
+        "Or set TWILIO_FROM_NUMBER (or SMS_DEFAULT_FROM_NUMBER) and/or TWILIO_MESSAGING_SERVICE_SID (MG…) for A2P 10DLC until Supabase is configured (logging to communication_events will be skipped).",
       ],
       /** Booleans only — shows what this serverless invocation actually sees (misnamed vars, wrong environment, etc.). */
       serverSeesSupabaseEnv: envSeen,
@@ -533,9 +564,11 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
     })
   }
 
-  if (accountSid && authToken && fromNumber) {
+  if (accountSid && authToken && (fromNumber || messagingServiceSid)) {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`
-    const params = new URLSearchParams({ To: to, From: fromNumber, Body: body })
+    const params = new URLSearchParams({ To: to, Body: body })
+    if (messagingServiceSid) params.set("MessagingServiceSid", messagingServiceSid)
+    if (fromNumber) params.set("From", fromNumber)
     for (const u of mediaUrls) {
       params.append("MediaUrl", u)
     }
@@ -566,7 +599,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       twilioSid: twilioParsed.sid,
       twilioStatus: twilioParsed.status,
       deliveryHint:
-        "If the phone never receives the text: (1) Twilio trial accounts can only SMS verified numbers—add the destination in Twilio Console → Phone Numbers → Verified Caller IDs. (2) US long codes need A2P 10DLC registration for many carriers. (3) Check Twilio Monitor → Logs → Errors for this Message SID.",
+        "If the phone never receives the text: (1) Twilio error 30034 = your From long code is not in the A2P 10DLC campaign sender pool—Twilio Console → Messaging → Services → add the number to the service linked to campaign CM… (VERIFIED), or set TWILIO_MESSAGING_SERVICE_SID. (2) Trial accounts can only SMS verified numbers. (3) After adding a number, wait up to 24h for REGISTERED status (error 30035 while pending). (4) Check Twilio Monitor → Logs for this Message SID.",
     }
     if (userId && supabase) {
       try {

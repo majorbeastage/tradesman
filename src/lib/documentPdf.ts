@@ -301,12 +301,20 @@ export async function buildQuotePdfBytes(params: {
 export async function buildReceiptPdfBytes(params: {
   businessLabel: string
   customerName: string
+  /** Optional contact lines shown under customer name (phone, email, address). */
+  customerContactLines?: string[]
   jobTitle: string
   completedAtLabel: string
   amountLabel?: string | null
   templateFooter?: string | null
   /** Plain text below the title (from receipt template intro). */
   templateHeader?: string | null
+  /** Override default "Receipt / job complete". */
+  documentTitle?: string | null
+  /** Override default "Job:" label. */
+  jobLabel?: string | null
+  /** Override default "Completed:" label. */
+  completedLabel?: string | null
   /** Optional logo above the title (PNG or JPEG). */
   logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
   /** Calendar block duration (start → end). */
@@ -380,7 +388,7 @@ export async function buildReceiptPdfBytes(params: {
     flush()
   }
 
-  draw("Receipt / job complete", 18, true, 0.12)
+  draw((params.documentTitle?.trim() || "Receipt / job complete").slice(0, 120), 18, true, 0.12)
   draw(params.businessLabel, 11, false, 0.35)
   y -= 8
   if (params.templateHeader?.trim()) {
@@ -391,8 +399,11 @@ export async function buildReceiptPdfBytes(params: {
     y -= 4
   }
   draw(`Customer: ${params.customerName}`, 12, true, 0.2)
-  draw(`Job: ${params.jobTitle}`, 11, false, 0.25)
-  draw(`Completed: ${params.completedAtLabel}`, 11, false, 0.25)
+  for (const line of params.customerContactLines?.filter((s) => s.trim()) ?? []) {
+    draw(line.trim().slice(0, 200), 10, false, 0.28)
+  }
+  draw(`${params.jobLabel?.trim() || "Job"}: ${params.jobTitle}`, 11, false, 0.25)
+  draw(`${params.completedLabel?.trim() || "Completed"}: ${params.completedAtLabel}`, 11, false, 0.25)
   if (params.scheduledDurationLabel?.trim()) draw(params.scheduledDurationLabel.trim(), 11, false, 0.24)
   if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
   if (params.amountLabel) draw(params.amountLabel, 12, true, 0.15)
@@ -437,6 +448,16 @@ export async function buildReceiptPdfBytes(params: {
   }
 
   return doc.save()
+}
+
+/** Base64-encode PDF bytes for Resend email attachments (browser-safe). */
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = ""
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
 }
 
 export function downloadPdfBlob(bytes: Uint8Array, filename: string) {
