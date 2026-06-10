@@ -4,6 +4,7 @@ const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
 const CUSTOMER_SMS_FOCUS = "tradesman_assistant_focus_customer_sms"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
+const CUSTOM_RECEIPT_PREFILL = "tradesman_custom_receipt_prefill_customer_id"
 const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
 
 export type OpenSpecialtyReportWizardRequest = {
@@ -117,6 +118,29 @@ export function consumeSchedulingCustomerPrefill(): string | null {
     const id = (sessionStorage.getItem(SCHEDULING_PREFILL) ?? "").trim()
     if (id) {
       sessionStorage.removeItem(SCHEDULING_PREFILL)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export function queueCustomReceiptCustomerPrefill(customerId: string): void {
+  if (!customerId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(CUSTOM_RECEIPT_PREFILL, customerId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeCustomReceiptCustomerPrefill(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(CUSTOM_RECEIPT_PREFILL) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(CUSTOM_RECEIPT_PREFILL)
       return id
     }
   } catch {

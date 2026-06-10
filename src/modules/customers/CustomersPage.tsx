@@ -44,6 +44,7 @@ import {
 import {
   queueQuotesCustomerPrefill,
   queueSchedulingCustomerPrefill,
+  queueCustomReceiptCustomerPrefill,
   queueSchedulingQuotePrefill,
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
@@ -3108,6 +3109,26 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                           }}
                                         >
                                           Scheduling
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            queueCustomReceiptCustomerPrefill(c.id)
+                                            queueCustomerFocus(c.id)
+                                            setPage("calendar")
+                                          }}
+                                          style={{
+                                            padding: "8px 14px",
+                                            borderRadius: 6,
+                                            border: `1px solid ${theme.border}`,
+                                            background: "#fff",
+                                            color: theme.text,
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          Custom Receipt
                                         </button>
                                         <button
                                           type="button"

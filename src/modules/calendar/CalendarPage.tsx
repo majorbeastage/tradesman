@@ -12,6 +12,7 @@ import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId 
 import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import CustomReceiptModal from "../../components/CustomReceiptModal"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
 import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
@@ -49,6 +50,7 @@ import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomation
 import { queueCustomerFocus } from "../../lib/customerNavigation"
 import {
   consumeCalendarSuiteNavigation,
+  consumeCustomReceiptCustomerPrefill,
   consumeSchedulingCustomerPrefill,
   consumeSchedulingQuotePrefill,
 } from "../../lib/workflowNavigation"
@@ -304,6 +306,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
   const [showAutoResponse, setShowAutoResponse] = useState(false)
   const [showReceiptTemplateModal, setShowReceiptTemplateModal] = useState(false)
+  const [showCustomReceiptModal, setShowCustomReceiptModal] = useState(false)
+  const [customReceiptPrefillCustomerId, setCustomReceiptPrefillCustomerId] = useState<string | null>(null)
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
   const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
   const managedByOfficeManager = useManagedByOfficeManager()
@@ -478,8 +482,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
   const showCalReceiptTemplate =
     getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
+  const showCalCustomReceipt =
+    getPageActionVisible(portalConfig, "calendar", "custom_receipt") && getOmPageActionVisible(portalConfig, "calendar", "custom_receipt")
   const showCalCompletionSettings = false
   const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
+  const customReceiptButtonLabel = portalConfig?.controlLabels?.custom_receipt ?? "Custom Receipt"
   const completionSettingsButtonLabel = portalConfig?.controlLabels?.completion_settings ?? "Job completion"
   const showCalendarCustomerPayment =
     getPageActionVisible(portalConfig, "calendar", "customer_payment") &&
@@ -1920,6 +1927,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   useEffect(() => {
+    if (!userId) return
+    const cid = consumeCustomReceiptCustomerPrefill()
+    if (cid) {
+      setCustomReceiptPrefillCustomerId(cid)
+      setShowCustomReceiptModal(true)
+    }
+  }, [userId])
+
+  useEffect(() => {
     if (!userId || !supabase) return
     const quotePrefill = consumeSchedulingQuotePrefill()
     if (quotePrefill?.customerId && quotePrefill.quoteId) {
@@ -2217,6 +2233,18 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   {receiptTemplateButtonLabel}
                 </button>
               </>
+            ) : null}
+            {showCalCustomReceipt ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomReceiptPrefillCustomerId(null)
+                  setShowCustomReceiptModal(true)
+                }}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
+              >
+                {customReceiptButtonLabel}
+              </button>
             ) : null}
             {showManagedJobTypesEntry ? (
               <button
@@ -4245,6 +4273,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           calendarEventId={selectedEvent.id}
         />
       ) : null}
+      <CustomReceiptModal
+        open={showCustomReceiptModal}
+        onClose={() => {
+          setShowCustomReceiptModal(false)
+          setCustomReceiptPrefillCustomerId(null)
+        }}
+        supabase={supabase}
+        userId={userId}
+        initialCustomerId={customReceiptPrefillCustomerId}
+      />
     </div>
   )
 }
