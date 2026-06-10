@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Sidebar from "../components/Sidebar"
 import { CopyrightVersionFooter } from "../components/CopyrightVersionFooter"
 import mytIcon from "../assets/MyT.png"
@@ -7,6 +7,8 @@ import { useView } from "../contexts/ViewContext"
 import { theme } from "../styles/theme"
 import { useIsMobile } from "../hooks/useIsMobile"
 import { useLocale } from "../i18n/LocaleContext"
+import { supabase } from "../lib/supabase"
+import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -18,10 +20,33 @@ type AppLayoutProps = {
 
 export default function AppLayout({ children, setPage, portalTabs, currentPage }: AppLayoutProps) {
   const [showMobileNav, setShowMobileNav] = useState(false)
-  const { signOut, profilePhotoUrl } = useAuth()
+  const { signOut, profilePhotoUrl, user } = useAuth()
   const { setView } = useView()
   const isMobile = useIsMobile()
   const { t } = useLocale()
+  const [headerBusinessName, setHeaderBusinessName] = useState("")
+  const [headerPublicLine, setHeaderPublicLine] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isMobile || !supabase || !user?.id) {
+      setHeaderBusinessName("")
+      setHeaderPublicLine(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const [{ data }, line] = await Promise.all([
+        supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        fetchUserPublicTwilioNumber(supabase, user.id),
+      ])
+      if (cancelled) return
+      setHeaderBusinessName(typeof data?.display_name === "string" ? data.display_name.trim() : "")
+      setHeaderPublicLine(line)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isMobile, user?.id])
 
   const handleLogout = () => {
     signOut()
@@ -96,18 +121,52 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
                 cursor: "pointer",
                 display: "inline-flex",
                 alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
+                justifyContent: "flex-end",
+                gap: 8,
+                maxWidth: "52vw",
               }}
             >
-              <img src={mytIcon} alt="" width={30} height={22} style={{ objectFit: "contain", display: "block" }} />
+              {(headerBusinessName || headerPublicLine) ? (
+                <span style={{ display: "grid", gap: 2, minWidth: 0, textAlign: "right" }}>
+                  {headerBusinessName ? (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 800,
+                        lineHeight: 1.2,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {headerBusinessName}
+                    </span>
+                  ) : null}
+                  {headerPublicLine ? (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        lineHeight: 1.2,
+                        color: "#fcd34d",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {headerPublicLine}
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
+              <img src={mytIcon} alt="" width={30} height={22} style={{ objectFit: "contain", display: "block", flexShrink: 0 }} />
               {profilePhotoUrl ? (
                 <img
                   src={profilePhotoUrl}
                   alt=""
                   width={32}
                   height={32}
-                  style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.4)", display: "block" }}
+                  style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.4)", display: "block", flexShrink: 0 }}
                 />
               ) : null}
             </button>

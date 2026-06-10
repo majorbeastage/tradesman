@@ -87,3 +87,22 @@ button:focus-visible {
 .portal-charcoal main.app-main-safe a:hover {
   color: #1e3a8a;
 }
+
+/* Date/time fields: force light picker chrome and a darker calendar icon on white inputs. */
+.portal-charcoal main.app-main-safe input[type="date"],
+.portal-charcoal main.app-main-safe input[type="datetime-local"],
+.portal-charcoal main.app-main-safe input[type="time"],
+.portal-charcoal main.app-main-safe input[type="month"],
+.portal-charcoal main.app-main-safe input[type="week"] {
+  color-scheme: light;
+}
+
+.portal-charcoal main.app-main-safe input[type="date"]::-webkit-calendar-picker-indicator,
+.portal-charcoal main.app-main-safe input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.portal-charcoal main.app-main-safe input[type="time"]::-webkit-calendar-picker-indicator,
+.portal-charcoal main.app-main-safe input[type="month"]::-webkit-calendar-picker-indicator,
+.portal-charcoal main.app-main-safe input[type="week"]::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  cursor: pointer;
+  filter: invert(0.45) brightness(0.55);
+}

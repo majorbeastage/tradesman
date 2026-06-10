@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
+import { fetchUserPublicTwilioNumber } from "../../lib/userPublicBusinessLine"
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { theme } from "../../styles/theme"
@@ -265,6 +266,7 @@ export function AccountProfilePanel({
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
+  const [publicBusinessLine, setPublicBusinessLine] = useState<string | null>(null)
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -376,8 +378,11 @@ export function AccountProfilePanel({
           ai_assistant_visible: (data as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false,
           ui_language: uiLang,
         })
+        const line = await fetchUserPublicTwilioNumber(supabase, profileUserId)
+        setPublicBusinessLine(line)
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
+        setPublicBusinessLine(null)
       } finally {
         setLoading(false)
       }
@@ -701,25 +706,38 @@ export function AccountProfilePanel({
               onToggle={toggleFold("profile")}
             >
               {!adminContext && user?.id === profileUserId ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
-                  <div
-                    style={{
-                      width: 72,
-                      height: 72,
-                      borderRadius: "50%",
-                      border: `2px solid ${theme.border}`,
-                      overflow: "hidden",
-                      background: "#f1f5f9",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {profilePhotoUrl ? (
-                      <img src={profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                    ) : (
-                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 6 }}>
-                        No photo
+                <div style={{ display: "grid", gap: 12, marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap", justifyContent: "space-between" }}>
+                    <div
+                      style={{
+                        width: 72,
+                        height: 72,
+                        borderRadius: "50%",
+                        border: `2px solid ${theme.border}`,
+                        overflow: "hidden",
+                        background: "#f1f5f9",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {profilePhotoUrl ? (
+                        <img src={profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      ) : (
+                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 6 }}>
+                          No photo
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 180, textAlign: "right" }}>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: theme.text, lineHeight: 1.25 }}>
+                        {form.display_name.trim() || "Your business name"}
                       </div>
-                    )}
+                      <div style={{ fontSize: 14, fontWeight: 700, color: publicBusinessLine ? "#0f766e" : "#64748b", marginTop: 6, lineHeight: 1.35 }}>
+                        {publicBusinessLine ?? "Public business line not assigned yet"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, lineHeight: 1.35 }}>
+                        Shown on your Tradesman business line (Admin → Communications)
+                      </div>
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
