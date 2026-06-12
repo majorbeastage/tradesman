@@ -38,7 +38,7 @@ import {
   parseQuoteAttachmentMeta,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
-import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
+import { uploadBytesForOutbound, uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import {
   buildQuotePdfBytes,
   downloadPdfBlob,
@@ -209,6 +209,23 @@ function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
 
 function dropdownToExportFormat(label: string): "pdf" | "docx" {
   return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
+}
+
+/** Merge comma/semicolon-separated email fields; dedupe case-insensitively. */
+function mergeCommaEmails(...parts: (string | undefined)[]): string {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of parts) {
+    if (!part?.trim()) continue
+    for (const raw of part.split(/[,;]+/)) {
+      const e = raw.trim().toLowerCase()
+      if (e && e.includes("@") && !seen.has(e)) {
+        seen.add(e)
+        out.push(e)
+      }
+    }
+  }
+  return out.join(", ")
 }
 
 const ELI_LINE_KINDS = ["labor", "material", "travel", "misc"] as const
@@ -540,6 +557,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
   const [quoteEmailSending, setQuoteEmailSending] = useState(false)
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
+  const [quoteEmailCopySelf, setQuoteEmailCopySelf] = useState(true)
+  const [quoteEmailAdditionalTo, setQuoteEmailAdditionalTo] = useState("")
+  const [quoteEmailCc, setQuoteEmailCc] = useState("")
+  const [quoteEmailBcc, setQuoteEmailBcc] = useState("")
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
   const [quoteThreadMessages, setQuoteThreadMessages] = useState<any[]>([])
@@ -548,11 +569,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [customerList, setCustomerList] = useState<any[]>([])
-  const [addExistingId, setAddExistingId] = useState<string>("")
   const [addNewName, setAddNewName] = useState("")
   const [addNewPhone, setAddNewPhone] = useState("")
   const [addNewEmail, setAddNewEmail] = useState("")
-  const [addUseNew, setAddUseNew] = useState(false)
   const [addLoading, setAddLoading] = useState(false)
   // Add line item (quote_items)
   const [newItemDescription, setNewItemDescription] = useState("")
@@ -1984,47 +2003,37 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!supabase) return
     setAddLoading(true)
     try {
-      let customerId: string
-      if (addUseNew) {
-        if (!addNewName?.trim() && !addNewPhone?.trim()) {
-          alert("Enter at least a name or phone for the new customer.")
-          setAddLoading(false)
-          return
-        }
-        const { data: newCustomer, error: custErr } = await supabase
-          .from("customers")
-          .insert({ user_id: userId, display_name: addNewName.trim() || null, notes: null })
-          .select("id")
-          .single()
-        if (custErr) throw custErr
-        customerId = newCustomer.id
-        if (addNewPhone.trim()) {
-          await supabase.from("customer_identifiers").insert({
-            user_id: userId,
-            customer_id: customerId,
-            type: "phone",
-            value: addNewPhone.trim(),
-            is_primary: true,
-            verified: false,
-          })
-        }
-        if (addNewEmail.trim()) {
-          await supabase.from("customer_identifiers").insert({
-            user_id: userId,
-            customer_id: customerId,
-            type: "email",
-            value: addNewEmail.trim(),
-            is_primary: false,
-            verified: false,
-          })
-        }
-      } else {
-        if (!addExistingId) {
-          alert("Select an existing customer.")
-          setAddLoading(false)
-          return
-        }
-        customerId = addExistingId
+      if (!addNewName?.trim() && !addNewPhone?.trim()) {
+        alert("Enter at least a name or phone for the new customer.")
+        setAddLoading(false)
+        return
+      }
+      const { data: newCustomer, error: custErr } = await supabase
+        .from("customers")
+        .insert({ user_id: userId, display_name: addNewName.trim() || null, notes: null })
+        .select("id")
+        .single()
+      if (custErr) throw custErr
+      const customerId = newCustomer.id
+      if (addNewPhone.trim()) {
+        await supabase.from("customer_identifiers").insert({
+          user_id: userId,
+          customer_id: customerId,
+          type: "phone",
+          value: addNewPhone.trim(),
+          is_primary: true,
+          verified: false,
+        })
+      }
+      if (addNewEmail.trim()) {
+        await supabase.from("customer_identifiers").insert({
+          user_id: userId,
+          customer_id: customerId,
+          type: "email",
+          value: addNewEmail.trim(),
+          is_primary: false,
+          verified: false,
+        })
       }
       const { error: quoteErr } = await supabase
         .from("quotes")
@@ -2036,11 +2045,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
         })
       if (quoteErr) throw quoteErr
       setShowAddCustomer(false)
-      setAddExistingId("")
       setAddNewName("")
       setAddNewPhone("")
       setAddNewEmail("")
-      setAddUseNew(false)
       await loadQuotes()
     } catch (err: any) {
       console.error(err)
@@ -4026,9 +4033,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
     let bodyForSend = body
-    let attachmentPublicUrls: string[] | undefined
     if (quoteEmailAttachEntity && copyRows.length > 0) {
-      attachmentPublicUrls = copyRows.map((r) => r.public_url)
       const noteBlocks = copyRows.map((r) => {
         const p = parseQuoteAttachmentMeta(r.metadata)
         const title = (r.file_name || "Attachment").trim()
@@ -4042,7 +4047,36 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const pdfPayload = await buildCurrentEstimatePdfPayload()
       if (!pdfPayload) throw new Error("Could not build estimate document.")
       const pdfBytes = await buildQuotePdfBytes(pdfPayload)
+      if (!pdfBytes.length) throw new Error("Estimate PDF is empty.")
       const shortId = selectedQuote.id.slice(0, 8)
+      const pdfFilename = `estimate-${shortId}.pdf`
+      const signedInEmail = session?.user?.email?.trim().toLowerCase() ?? ""
+      const ccMerged = mergeCommaEmails(
+        quoteEmailCopySelf ? signedInEmail : undefined,
+        quoteEmailCc,
+      )
+      const bccMerged = mergeCommaEmails(quoteEmailBcc)
+      const attachmentPublicUrls: string[] = []
+      const pdfUrl = await uploadBytesForOutbound(
+        userId,
+        pdfBytes,
+        pdfFilename,
+        `quotes/${selectedQuote.id}/email`,
+        "application/pdf",
+      )
+      if (pdfUrl) {
+        attachmentPublicUrls.push(pdfUrl)
+      }
+      if (quoteEmailAttachEntity && copyRows.length > 0) {
+        attachmentPublicUrls.push(...copyRows.map((r) => r.public_url))
+      }
+      const inlineAttachments =
+        !pdfUrl && pdfBytes.length <= 2_500_000
+          ? [{ filename: pdfFilename, content: uint8ArrayToBase64(pdfBytes) }]
+          : undefined
+      if (!pdfUrl && !inlineAttachments) {
+        throw new Error("Could not upload the estimate PDF for email. Try Download, then attach manually.")
+      }
       const res = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
         headers: {
@@ -4051,18 +4085,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
         },
         body: outboundMessagesJsonBody({
           to: email,
+          toAdditional: quoteEmailAdditionalTo.trim() || undefined,
+          cc: ccMerged || undefined,
+          bcc: bccMerged || undefined,
           subject,
           body: bodyForSend,
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
-          attachments: [{ filename: `estimate-${shortId}.pdf`, content: uint8ArrayToBase64(pdfBytes) }],
-          ...(attachmentPublicUrls?.length ? { attachmentPublicUrls } : {}),
+          requireAttachments: true,
+          ...(inlineAttachments ? { attachments: inlineAttachments } : {}),
+          ...(attachmentPublicUrls.length ? { attachmentPublicUrls } : {}),
         }),
       })
       const raw = await res.text()
       if (!res.ok) throw new Error(raw.slice(0, 400))
-      alert("Email sent.")
+      let attachmentCount = 0
+      try {
+        const parsed = JSON.parse(raw) as { attachmentCount?: number; logWarning?: string }
+        if (typeof parsed.attachmentCount === "number") attachmentCount = parsed.attachmentCount
+        if (parsed.logWarning) console.warn("[quote-email]", parsed.logWarning)
+      } catch {
+        /* ignore */
+      }
+      if (attachmentCount < 1) {
+        throw new Error("Email was sent but the estimate PDF could not be attached. Try again or use Download.")
+      }
+      alert("Email sent with estimate PDF attached.")
       setBottomActionEmailOpen(false)
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
@@ -5528,8 +5577,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   <button
                                     type="button"
                                     onClick={() => {
+                                      setAddNewName("")
+                                      setAddNewPhone("")
+                                      setAddNewEmail("")
                                       setShowAddCustomer(true)
-                                      loadCustomerList()
                                     }}
                                     style={{
                                       alignSelf: "flex-start",
@@ -7156,6 +7207,53 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       gap: 10,
                     }}
                   >
+                    {(() => {
+                      const contact = resolveCustomerContactByTarget(
+                        selectedQuote?.customers?.customer_identifiers ?? [],
+                        quoteContactTarget,
+                      )
+                      const toEmail = contact.email?.trim() ?? ""
+                      return toEmail ? (
+                        <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                          <strong style={{ color: theme.text }}>To:</strong> {toEmail}{" "}
+                          <span style={{ color: "#94a3b8" }}>({contactTargetLabel(quoteContactTarget)})</span>
+                        </p>
+                      ) : null
+                    })()}
+                    <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Additional recipients (To)</label>
+                    <input
+                      value={quoteEmailAdditionalTo}
+                      onChange={(e) => setQuoteEmailAdditionalTo(e.target.value)}
+                      placeholder="Comma-separated extra To addresses"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>CC</label>
+                    <input
+                      value={quoteEmailCc}
+                      onChange={(e) => setQuoteEmailCc(e.target.value)}
+                      placeholder="Optional, comma-separated"
+                      style={theme.formInput}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>BCC</label>
+                    <input
+                      value={quoteEmailBcc}
+                      onChange={(e) => setQuoteEmailBcc(e.target.value)}
+                      placeholder="Optional, comma-separated"
+                      style={theme.formInput}
+                    />
+                    {session?.user?.email ? (
+                      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#0f172a" }}>
+                        <input
+                          type="checkbox"
+                          style={{ marginTop: 3 }}
+                          checked={quoteEmailCopySelf}
+                          onChange={(e) => setQuoteEmailCopySelf(e.target.checked)}
+                        />
+                        <span>
+                          Copy me on this email <span style={{ color: "#64748b" }}>({session.user.email})</span>
+                        </span>
+                      </label>
+                    ) : null}
                     <input
                       value={quoteEmailSubject}
                       onChange={(e) => setQuoteEmailSubject(e.target.value)}
@@ -8443,38 +8541,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
             <div onClick={() => setShowAddCustomer(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
             <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "480px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <h3 style={{ margin: 0, color: theme.text }}>Add Customer to quotes</h3>
+                <h3 style={{ margin: 0, color: theme.text }}>Create new customer</h3>
                 <button onClick={() => setShowAddCustomer(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>✕</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: theme.text }}>
-                  <input type="radio" checked={!addUseNew} onChange={() => { setAddUseNew(false); setAddExistingId(customerList[0]?.id ?? ""); loadCustomerList() }} />
-                  Select existing customer
-                </label>
-                {!addUseNew && (
-                  <select
-                    value={addExistingId}
-                    onFocus={loadCustomerList}
-                    onChange={(e) => setAddExistingId(e.target.value)}
-                    style={{ ...theme.formInput }}
-                  >
-                    <option value="">— Select customer —</option>
-                    {customerList.map((c) => (
-                      <option key={c.id} value={c.id}>{c.display_name || "Unnamed"}</option>
-                    ))}
-                  </select>
-                )}
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: theme.text }}>
-                  <input type="radio" checked={addUseNew} onChange={() => setAddUseNew(true)} />
-                  Create new customer
-                </label>
-                {addUseNew && (
-                  <>
-                    <input placeholder="Customer name" value={addNewName} onChange={(e) => setAddNewName(e.target.value)} style={{ ...theme.formInput }} />
-                    <input placeholder="Phone" value={addNewPhone} onChange={(e) => setAddNewPhone(e.target.value)} style={{ ...theme.formInput }} />
-                    <input placeholder="Email" value={addNewEmail} onChange={(e) => setAddNewEmail(e.target.value)} style={{ ...theme.formInput }} />
-                  </>
-                )}
+                <input placeholder="Customer name" value={addNewName} onChange={(e) => setAddNewName(e.target.value)} style={{ ...theme.formInput }} />
+                <input placeholder="Phone" value={addNewPhone} onChange={(e) => setAddNewPhone(e.target.value)} style={{ ...theme.formInput }} />
+                <input placeholder="Email" value={addNewEmail} onChange={(e) => setAddNewEmail(e.target.value)} style={{ ...theme.formInput }} />
                 {quoteAddCustomerPortalItems.length > 0 && (
                   <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
                     <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>

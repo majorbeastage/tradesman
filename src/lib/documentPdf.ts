@@ -453,9 +453,10 @@ export async function buildReceiptPdfBytes(params: {
 /** Base64-encode PDF bytes for Resend email attachments (browser-safe). */
 export function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = ""
-  const chunkSize = 0x8000
+  const chunkSize = 8192
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[])
   }
   return btoa(binary)
 }

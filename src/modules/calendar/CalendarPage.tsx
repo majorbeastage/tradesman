@@ -371,6 +371,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [jobSiteDraft, setJobSiteDraft] = useState({ address: "", lat: "", lng: "" })
   const [jobSiteSaving, setJobSiteSaving] = useState(false)
   const [jobGeocodeBusy, setJobGeocodeBusy] = useState(false)
+  const [eventEditStartDate, setEventEditStartDate] = useState("")
+  const [eventEditStartTime, setEventEditStartTime] = useState("")
+  const [eventEditDurationStr, setEventEditDurationStr] = useState("60")
+  const [eventScheduleSaving, setEventScheduleSaving] = useState(false)
   const [addMileage, setAddMileage] = useState("")
   const [jtTrackMileage, setJtTrackMileage] = useState(false)
   const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
@@ -1363,6 +1367,43 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     loadEvents()
   }
 
+  async function saveEventSchedule() {
+    if (!supabase || !selectedEvent?.id) return
+    const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
+    if (Number.isNaN(start.getTime())) {
+      alert("Enter a valid date and time.")
+      return
+    }
+    const addMinRaw = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+    if (addMinRaw == null) {
+      alert("Enter a valid duration.")
+      return
+    }
+    const working = readCalendarWorkingHoursFromStorage()
+    const addMin = clampAppointmentDurationMinutes(addMinRaw, {
+      start,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
+    const end = new Date(start.getTime() + addMin * 60 * 1000)
+    setEventScheduleSaving(true)
+    const startIso = start.toISOString()
+    const endIso = end.toISOString()
+    const { error } = await supabase
+      .from("calendar_events")
+      .update({ start_at: startIso, end_at: endIso })
+      .eq("id", selectedEvent.id)
+    setEventScheduleSaving(false)
+    if (error) {
+      alert(error.message ?? String(error))
+      return
+    }
+    setSelectedEvent((prev) =>
+      prev && prev.id === selectedEvent.id ? { ...prev, start_at: startIso, end_at: endIso } : prev,
+    )
+    loadEvents()
+  }
+
   async function saveEventJobSite() {
     if (!supabase || !selectedEvent?.id) return
     setJobSiteSaving(true)
@@ -1616,6 +1657,29 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (m != null && Number.isFinite(Number(m))) setEventMileageDraft(String(Number(m)))
     else setEventMileageDraft("")
   }, [selectedEvent?.id, selectedEvent?.mileage_miles])
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setEventEditStartDate("")
+      setEventEditStartTime("")
+      setEventEditDurationStr("60")
+      return
+    }
+    const start = new Date(selectedEvent.start_at)
+    if (Number.isNaN(start.getTime())) return
+    const y = start.getFullYear()
+    const mo = String(start.getMonth() + 1).padStart(2, "0")
+    const d = String(start.getDate()).padStart(2, "0")
+    setEventEditStartDate(`${y}-${mo}-${d}`)
+    const snapped = snapMinutesToIncrement(start.getHours() * 60 + start.getMinutes(), timeIncrement)
+    const sh = Math.floor(snapped / 60) % 24
+    const sm = snapped % 60
+    setEventEditStartTime(`${String(sh).padStart(2, "0")}:${String(sm).padStart(2, "0")}`)
+    const end = new Date(selectedEvent.end_at)
+    const durMs = end.getTime() - start.getTime()
+    const mins = Math.max(timeIncrement, Math.round(durMs / 60000))
+    setEventEditDurationStr(formatDurationFieldFromMinutes(snapMinutesToIncrement(mins, timeIncrement), timeIncrement))
+  }, [selectedEvent?.id, selectedEvent?.start_at, selectedEvent?.end_at, timeIncrement])
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -3425,15 +3489,72 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             }}
           >
             <h3 style={{ margin: "0 0 12px", color: theme.text }}>{selectedEvent.title}</h3>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Date</label>
+                  <input
+                    type="date"
+                    value={eventEditStartDate}
+                    onChange={(e) => setEventEditStartDate(e.target.value)}
+                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Time</label>
+                  <select
+                    value={eventEditStartTime}
+                    onChange={(e) => setEventEditStartTime(e.target.value)}
+                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                  >
+                    {timeOptions.map((t) => (
+                      <option key={t} value={t}>
+                        {(() => {
+                          const [h, m] = t.split(":").map(Number)
+                          if (h === 0) return `12:${String(m).padStart(2, "0")} AM`
+                          if (h < 12) return `${h}:${String(m).padStart(2, "0")} AM`
+                          if (h === 12) return `12:${String(m).padStart(2, "0")} PM`
+                          return `${h - 12}:${String(m).padStart(2, "0")} PM`
+                        })()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>
+                {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+              </label>
+              <input
+                type="number"
+                min={timeIncrement === 60 ? 1 : timeIncrement}
+                step={timeIncrement === 60 ? 1 : timeIncrement}
+                value={eventEditDurationStr}
+                onChange={(e) => setEventEditDurationStr(e.target.value)}
+                onBlur={() => {
+                  const m = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+                  if (m != null) setEventEditDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
+                }}
+                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13, marginBottom: 8 }}
+              />
+              <button
+                type="button"
+                disabled={eventScheduleSaving || !supabase}
+                onClick={() => void saveEventSchedule()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: eventScheduleSaving ? "wait" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {eventScheduleSaving ? "Saving…" : "Save date & time"}
+              </button>
+            </div>
             <div style={{ fontSize: "13px", color: "#4b5563", display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-              <p style={{ margin: 0, color: theme.text, fontSize: "14px" }}>
-                <strong>When:</strong>{" "}
-                {new Date(selectedEvent.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} –{" "}
-                {new Date(selectedEvent.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-              </p>
-              <p style={{ margin: 0 }}>
-                <strong>Duration:</strong> {formatEventDurationMinutes(selectedEvent.start_at, selectedEvent.end_at)}
-              </p>
               {(() => {
                 const jt = selectedEvent.job_types ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
                 if (!jt?.name) return null
@@ -3555,57 +3676,84 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
               </p>
             )}
-            <div style={{ marginBottom: 14 }}>
-              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Job site (maps &amp; team map)</p>
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                Saved on this calendar event. Fills from the customer&apos;s service address when empty; override here for a one-off site.
-                Set latitude/longitude (manually or via lookup) so this job can appear as a <strong>next job</strong> pin on the team map.
-              </p>
-              <label style={{ display: "block", marginBottom: 6, fontSize: 12, color: theme.text, fontWeight: 600 }}>Address</label>
-              <textarea
-                value={jobSiteDraft.address}
-                onChange={(e) => setJobSiteDraft((p) => ({ ...p, address: e.target.value }))}
-                rows={2}
-                placeholder="Street, city, state"
-                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13, marginBottom: 8 }}
-              />
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-                <label style={{ flex: "1 1 120px", fontSize: 12 }}>
-                  <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lat</span>
-                  <input
-                    value={jobSiteDraft.lat}
-                    onChange={(e) => setJobSiteDraft((p) => ({ ...p, lat: e.target.value }))}
-                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
-                    placeholder="e.g. 40.7128"
-                  />
-                </label>
-                <label style={{ flex: "1 1 120px", fontSize: 12 }}>
-                  <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lng</span>
-                  <input
-                    value={jobSiteDraft.lng}
-                    onChange={(e) => setJobSiteDraft((p) => ({ ...p, lng: e.target.value }))}
-                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
-                    placeholder="e.g. -74.0060"
-                  />
-                </label>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  disabled={jobGeocodeBusy}
-                  onClick={() => void geocodeJobSiteDraft()}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    cursor: jobGeocodeBusy ? "wait" : "pointer",
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  {jobGeocodeBusy ? "Looking up…" : "Look up coordinates"}
-                </button>
+            <details
+              style={{
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                padding: "8px 10px",
+                marginBottom: 14,
+              }}
+            >
+              <summary
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                Job site
+                {jobSiteDraft.address.trim() ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
+                    — {jobSiteDraft.address.trim().length > 36
+                      ? `${jobSiteDraft.address.trim().slice(0, 36)}…`
+                      : jobSiteDraft.address.trim()}
+                  </span>
+                ) : null}
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: "block", marginBottom: 6, fontSize: 12, color: theme.text, fontWeight: 600 }}>Address</label>
+                <textarea
+                  value={jobSiteDraft.address}
+                  onChange={(e) => setJobSiteDraft((p) => ({ ...p, address: e.target.value }))}
+                  rows={2}
+                  placeholder="Street, city, state"
+                  style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13, marginBottom: 8 }}
+                />
+                <details style={{ marginBottom: 8 }}>
+                  <summary style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", cursor: "pointer", listStyle: "none" }}>
+                    Coordinates (optional)
+                  </summary>
+                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lat</span>
+                      <input
+                        value={jobSiteDraft.lat}
+                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lat: e.target.value }))}
+                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                        placeholder="e.g. 40.7128"
+                      />
+                    </label>
+                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lng</span>
+                      <input
+                        value={jobSiteDraft.lng}
+                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lng: e.target.value }))}
+                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                        placeholder="e.g. -74.0060"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={jobGeocodeBusy}
+                    onClick={() => void geocodeJobSiteDraft()}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      cursor: jobGeocodeBusy ? "wait" : "pointer",
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {jobGeocodeBusy ? "Looking up…" : "Look up coordinates"}
+                  </button>
+                </details>
                 <button
                   type="button"
                   disabled={jobSiteSaving || !supabase}
@@ -3624,44 +3772,86 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   {jobSiteSaving ? "Saving…" : "Save job site"}
                 </button>
               </div>
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Materials</p>
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                Filled from the job type and linked quote material lines when you add to calendar or open this event. Edit below for this date only.
-              </p>
-              <textarea
-                value={eventMaterialsDraft}
-                onChange={(e) => setEventMaterialsDraft(e.target.value)}
-                rows={5}
-                placeholder="One line per item"
-                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
-              />
-              <button
-                type="button"
-                disabled={eventMaterialsSaving || !supabase}
-                onClick={() => void saveEventMaterialsList()}
+            </details>
+            <details
+              style={{
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                padding: "8px 10px",
+                marginBottom: 14,
+              }}
+            >
+              <summary
                 style={{
-                  marginTop: 8,
-                  padding: "8px 14px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: theme.primary,
-                  color: "#fff",
-                  fontWeight: 600,
-                  cursor: eventMaterialsSaving ? "wait" : "pointer",
                   fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
                 }}
               >
-                {eventMaterialsSaving ? "Saving…" : "Save materials"}
-              </button>
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Receipt line items</p>
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                Edit how quote lines appear on the PDF, hide a line, or add extra charges for this visit. Receipt template →{" "}
-                <strong>Itemize receipt</strong> adds the materials checklist block (event / job type / quote materials).
-              </p>
+                Materials
+                {eventMaterialsDraft.trim() ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
+                    ({eventMaterialsDraft.split("\n").filter((l) => l.trim()).length} lines)
+                  </span>
+                ) : null}
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                <textarea
+                  value={eventMaterialsDraft}
+                  onChange={(e) => setEventMaterialsDraft(e.target.value)}
+                  rows={5}
+                  placeholder="One line per item"
+                  style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+                />
+                <button
+                  type="button"
+                  disabled={eventMaterialsSaving || !supabase}
+                  onClick={() => void saveEventMaterialsList()}
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: eventMaterialsSaving ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  {eventMaterialsSaving ? "Saving…" : "Save materials"}
+                </button>
+              </div>
+            </details>
+            <details
+              style={{
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                padding: "8px 10px",
+                marginBottom: 14,
+              }}
+            >
+              <summary
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                Receipt line items
+                {quoteItemsForReceipt.length + receiptAdditionalDraft.length > 0 ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
+                    ({quoteItemsForReceipt.length + receiptAdditionalDraft.length})
+                  </span>
+                ) : null}
+              </summary>
+              <div style={{ marginTop: 10 }}>
               <div
                 style={{
                   maxHeight: 240,
@@ -3928,7 +4118,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 {receiptLinesSaving ? "Saving…" : "Save receipt lines"}
               </button>
-            </div>
+              </div>
+            </details>
             {(() => {
               const jt =
                 selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null
@@ -3971,8 +4162,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </div>
               )
             })()}
-            <div style={{ marginBottom: 12 }}>
-              <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Event files</p>
+            <details
+              style={{
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                padding: "8px 10px",
+                marginBottom: 12,
+              }}
+            >
+              <summary
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                Event files
+                {calendarEventEntityRows.length > 0 ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>({calendarEventEntityRows.length})</span>
+                ) : null}
+              </summary>
+              <div style={{ marginTop: 10 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
                 Upload
                 <input
@@ -4043,7 +4256,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               ) : (
                 <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>No files attached to this event yet.</p>
               )}
-            </div>
+              </div>
+            </details>
             <div style={{ marginBottom: 12 }}>
               <button
                 type="button"

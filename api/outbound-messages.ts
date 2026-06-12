@@ -42,6 +42,8 @@ type OutboundPayload = {
   attachmentPublicUrls?: unknown
   /** Inline base64 attachments for Resend ({ filename, content }). Prefer for generated PDFs. */
   attachments?: unknown
+  /** When true, return 502 if no attachments could be prepared (e.g. estimate PDF email). */
+  requireAttachments?: boolean
   /** Twilio MMS: public URLs of images/files (max ~10). */
   mediaPublicUrls?: unknown
   /** Optional override for policy URL in long first-SMS footer (https). */
@@ -252,30 +254,6 @@ function parseTwilioMessageResponse(text: string): {
   }
 }
 
-async function fetchUrlsAsResendAttachments(urls: string[]): Promise<Array<{ filename: string; content: string }>> {
-  const out: Array<{ filename: string; content: string }> = []
-  const maxBytes = 15 * 1024 * 1024
-  for (let i = 0; i < urls.length; i++) {
-    const u = urls[i]
-    try {
-      const ac = new AbortController()
-      const t = setTimeout(() => ac.abort(), 20_000)
-      const res = await fetch(u, { signal: ac.signal })
-      clearTimeout(t)
-      if (!res.ok) continue
-      const buf = Buffer.from(await res.arrayBuffer())
-      if (buf.length === 0 || buf.length > maxBytes) continue
-      out.push({
-        filename: filenameFromUrl(u, i),
-        content: buf.toString("base64"),
-      })
-    } catch {
-      /* skip */
-    }
-  }
-  return out
-}
-
 function resolveChannel(req: VercelRequest, payload: OutboundPayload): "email" | "sms" {
   const q = pickFirstString(req.query?.__channel, req.query?.channel).toLowerCase()
   if (q === "email" || q === "sms") return q
@@ -369,15 +347,28 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   if (ccList.length) resendPayload.cc = ccList
   if (bccMerged.length) resendPayload.bcc = bccMerged
 
-  const resendAttachments: Array<{ filename: string; content: string }> = [...inlineAttachments]
+  type ResendAttachmentRow = { filename: string; content?: string; path?: string }
+  const resendAttachments: ResendAttachmentRow[] = inlineAttachments.map((row) => ({
+    filename: row.filename,
+    content: row.content,
+  }))
   if (attachUrls.length > 0) {
-    const fetched = await fetchUrlsAsResendAttachments(attachUrls)
-    resendAttachments.push(...fetched)
-    if (fetched.length === 0 && attachUrls.length > 0) {
-      console.warn("[outbound-messages/email] attachmentPublicUrls provided but none could be fetched:", attachUrls.length)
+    for (let i = 0; i < attachUrls.length; i++) {
+      const u = attachUrls[i]
+      resendAttachments.push({
+        filename: filenameFromUrl(u, i),
+        path: u,
+      })
     }
   }
-  if (resendAttachments.length > 0) resendAttachments.splice(0, 15)
+  if (resendAttachments.length > 15) resendAttachments.splice(15)
+  const requireAttachments = payload.requireAttachments === true
+  if (requireAttachments && resendAttachments.length === 0) {
+    return res.status(502).json({
+      error: "Email attachments could not be prepared.",
+      hint: "The estimate PDF or file URLs could not be attached. Try again, or download the PDF and attach it manually.",
+    })
+  }
   if (resendAttachments.length > 0) resendPayload.attachments = resendAttachments
 
   let resendResponse: Response
@@ -450,6 +441,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       cc: ccList.length ? ccList : null,
       bcc: bccMerged.length ? bccMerged : null,
       detail,
+      attachmentCount: resendAttachments.length,
       logWarning: "Email was sent but the conversation log could not be saved. Check communication_events table and Vercel logs.",
     })
   }
@@ -461,6 +453,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     from: resendFrom,
     cc: ccList.length ? ccList : null,
     bcc: bccMerged.length ? bccMerged : null,
+    attachmentCount: resendAttachments.length,
     detail,
   })
 }
