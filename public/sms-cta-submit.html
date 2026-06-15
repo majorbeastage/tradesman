@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Submit SMS opt-in consent with business and customer information. Unchecked opt-in checkbox for A2P compliance — Tradesman Systems."
+      content="Submit SMS opt-in consent with business and customer information. Optional unchecked-by-default SMS opt-in checkbox for A2P compliance — Tradesman Systems."
     />
     <title>SMS Opt-In Consent Submission | Tradesman Systems</title>
     <meta name="robots" content="index,follow" />
@@ -117,6 +117,12 @@
         font-size: 14px;
         color: #1e293b;
       }
+      .disclosure-quote strong.section-title {
+        display: block;
+        margin-bottom: 8px;
+        color: #0f172a;
+        font-size: 15px;
+      }
       .btn {
         padding: 11px 18px;
         border-radius: 8px;
@@ -176,7 +182,8 @@
         <h1>SMS opt-in consent submission</h1>
         <p class="lead">
           For businesses documenting customer SMS consent (A2P / carrier review). Required fields include business and
-          customer contact information. The opt-in checkbox is <strong>not</strong> pre-selected.
+          customer contact information. The SMS opt-in checkbox is <strong>optional</strong> and is <strong>not</strong>
+          pre-selected.
         </p>
       </header>
 
@@ -224,19 +231,23 @@
             </div>
           </fieldset>
 
-          <p class="disclosure-quote" id="disclosure-text">
-            “By submitting a service request or contacting [Business Name], you agree to receive SMS messages related to
-            your inquiry, scheduling, estimates, job updates, and customer support from [Business Name]. Message frequency
-            varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”
-          </p>
+          <div class="disclosure-quote" id="disclosure-text">
+            <strong class="section-title">SMS Disclosure</strong>
+            By submitting a service request or contacting the business named above, you agree to receive SMS messages
+            related to your inquiry, scheduling, estimates, job updates, and customer support from the business named
+            above. <strong>Consent to receive SMS messages is optional and is not required to purchase any goods or services.</strong>
+            Message frequency varies. Message and data rates may apply. Reply STOP to opt out at any time or HELP for
+            assistance.
+          </div>
 
           <label class="consent-box" id="consent-label">
             <input type="checkbox" name="smsConsentAgreed" id="sms-consent" value="yes" />
             <span id="consent-checkbox-text">
-              <strong style="display: block; margin-bottom: 6px; color: #0f172a">SMS opt-in (required)</strong>
-              The customer agrees to receive text messages from the business named above about quotes, appointments, job
-              updates, and customer service. Message frequency varies. Message and data rates may apply. Reply STOP to opt
-              out or HELP for help.
+              <strong style="display: block; margin-bottom: 6px; color: #0f172a">SMS Opt-In (Optional)</strong>
+              I agree to receive SMS messages from the business named above regarding quotes, appointments, job updates,
+              and customer support. <strong>Providing SMS consent is optional and is not required to purchase any goods or services.</strong>
+              Message frequency varies. Message and data rates may apply. Reply STOP to opt out at any time or HELP for
+              assistance.
             </span>
           </label>
 
@@ -260,37 +271,7 @@
       (function () {
         var form = document.getElementById("consent-form")
         var statusEl = document.getElementById("status")
-        var bizName = form && form.querySelector('[name="businessName"]')
-        var disclosure = document.getElementById("disclosure-text")
-        var consentText = document.getElementById("consent-checkbox-text")
         if (!form) return
-
-        function bizLabel() {
-          var n = bizName && bizName.value ? bizName.value.trim() : ""
-          return n || "the business named above"
-        }
-
-        function refreshDisclosure() {
-          var b = bizLabel()
-          if (disclosure) {
-            disclosure.textContent =
-              '“By submitting a service request or contacting ' +
-              b +
-              ", you agree to receive SMS messages related to your inquiry, scheduling, estimates, job updates, and customer support from " +
-              b +
-              ". Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Reply HELP for help.”"
-          }
-          if (consentText) {
-            consentText.innerHTML =
-              '<strong style="display:block;margin-bottom:6px;color:#0f172a">SMS opt-in (required)</strong>' +
-              "The customer agrees to receive text messages from <strong>" +
-              b +
-              "</strong> about quotes, appointments, job updates, and customer service. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help."
-          }
-        }
-
-        if (bizName) bizName.addEventListener("input", refreshDisclosure)
-        refreshDisclosure()
 
         form.addEventListener("submit", function (e) {
           e.preventDefault()
@@ -298,12 +279,6 @@
           statusEl.textContent = ""
 
           var consent = document.getElementById("sms-consent")
-          if (!consent || !consent.checked) {
-            statusEl.className = "status err"
-            statusEl.textContent = "Check the SMS opt-in box to continue. The box starts unchecked by design."
-            return
-          }
-
           var btn = document.getElementById("btn-submit")
           if (btn) btn.disabled = true
 
@@ -315,7 +290,7 @@
             customerName: String(fd.get("customerName") || "").trim(),
             customerPhone: String(fd.get("customerPhone") || "").trim(),
             customerEmail: String(fd.get("customerEmail") || "").trim(),
-            smsConsentAgreed: true,
+            smsConsentAgreed: !!(consent && consent.checked),
             website: String(fd.get("website") || "").trim(),
           }
 
@@ -332,10 +307,10 @@
             .then(function (r) {
               if (r.ok && r.data && r.data.ok) {
                 statusEl.className = "status ok"
-                statusEl.textContent =
-                  "Submitted. A PDF record was emailed to Tradesman. Record the same consent in your Tradesman customer profile before texting."
+                statusEl.textContent = payload.smsConsentAgreed
+                  ? "Submitted. A PDF record was emailed to Tradesman. Record the same consent in your Tradesman customer profile before texting."
+                  : "Submitted without SMS opt-in. A PDF record was emailed to Tradesman for your files."
                 form.reset()
-                refreshDisclosure()
                 return
               }
               var msg =

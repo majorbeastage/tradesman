@@ -1,6 +1,6 @@
 /**
  * POST /api/sms-opt-in-consent-submit
- * Public web form: business + customer info, explicit unchecked-by-default opt-in checkbox.
+ * Public web form: business + customer info, optional unchecked-by-default SMS opt-in checkbox.
  * Emails summary + filled PDF to ops (default admin@tradesman-us.com).
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
@@ -69,13 +69,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (!businessPhone || !isValidPhone(businessPhone)) missing.push("businessPhone")
   if (!customerName) missing.push("customerName")
   if (!customerPhone || !isValidPhone(customerPhone)) missing.push("customerPhone")
-  if (!smsConsentAgreed) missing.push("smsConsentAgreed")
 
   if (missing.length > 0) {
     res.status(400).json({
       error: "Missing or invalid required fields",
       fields: missing,
-      hint: "smsConsentAgreed must be true after the customer checks the opt-in box (not pre-selected).",
     })
     return
   }
@@ -102,7 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       customerName,
       customerPhone,
       customerEmail: customerEmail || undefined,
-      electronicConsentAt: submittedAt,
+      electronicConsentAt: smsConsentAgreed ? submittedAt : undefined,
       consentMethodNote,
     })
   } catch (e) {
@@ -116,7 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const to = parseNotifyRecipients()
 
   const text = [
-    "SMS opt-in consent submitted via Tradesman public form.",
+    "SMS consent form submitted via Tradesman public form.",
     "",
     `Submitted (UTC): ${submittedAt}`,
     `Form URL: https://www.tradesman-us.com/sms-cta/submit`,
@@ -132,10 +130,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     `Email: ${customerEmail || "(none)"}`,
     "",
     "— Consent —",
-    "Checkbox: customer explicitly checked opt-in (not pre-selected on form).",
+    smsConsentAgreed
+      ? "SMS opt-in: customer checked the optional opt-in box (not pre-selected on form)."
+      : "SMS opt-in: customer did not opt in (optional box left unchecked).",
     `Method: ${consentMethodNote}`,
     "",
-    "PDF attachment contains the same fields with checkbox marked.",
+    smsConsentAgreed
+      ? "PDF attachment contains the same fields with the opt-in checkbox marked."
+      : "PDF attachment contains the same fields with the optional opt-in checkbox unchecked.",
   ].join("\n")
 
   let sendRes: Response
@@ -146,7 +148,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       body: JSON.stringify({
         from,
         to,
-        subject: `SMS opt-in consent — ${businessName} / ${customerName}`,
+        subject: smsConsentAgreed
+          ? `SMS opt-in consent — ${businessName} / ${customerName}`
+          : `SMS consent form (no opt-in) — ${businessName} / ${customerName}`,
         text,
         attachments: [{ filename, content: pdfBase64 }],
       }),
