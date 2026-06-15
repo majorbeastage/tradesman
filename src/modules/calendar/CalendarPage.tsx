@@ -47,7 +47,7 @@ import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
-import { queueCustomerFocus } from "../../lib/customerNavigation"
+import { queueCustomerProfile } from "../../lib/customerNavigation"
 import {
   consumeCalendarSuiteNavigation,
   consumeCustomReceiptCustomerPrefill,
@@ -96,6 +96,21 @@ type JobType = {
   color_hex: string | null
   materials_list?: string | null
   track_mileage?: boolean | null
+}
+
+const JOB_TYPE_CREATE_NEW_VALUE = "__create_new_job_type__"
+
+function formatJobTypeSelectLabel(jt: JobType): string {
+  const mins = Math.max(15, jt.duration_minutes)
+  if (mins % 60 === 0 && mins >= 60) {
+    const hours = mins / 60
+    return `${jt.name} · ${hours === 1 ? "1 hr" : `${hours} hr`}`
+  }
+  return `${jt.name} · ${mins} min`
+}
+
+function sortJobTypesByName(rows: JobType[]): JobType[] {
+  return [...rows].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
 }
 
 type CalendarEvent = {
@@ -374,7 +389,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [eventEditStartDate, setEventEditStartDate] = useState("")
   const [eventEditStartTime, setEventEditStartTime] = useState("")
   const [eventEditDurationStr, setEventEditDurationStr] = useState("60")
+  const [eventEditJobTypeId, setEventEditJobTypeId] = useState("")
+  const [eventJobTypeSaving, setEventJobTypeSaving] = useState(false)
   const [eventScheduleSaving, setEventScheduleSaving] = useState(false)
+  const [inlineJtCreateFor, setInlineJtCreateFor] = useState<"add" | "event" | null>(null)
+  const [inlineJtName, setInlineJtName] = useState("")
+  const [inlineJtDurationStr, setInlineJtDurationStr] = useState("1")
+  const [inlineJtSaving, setInlineJtSaving] = useState(false)
   const [addMileage, setAddMileage] = useState("")
   const [jtTrackMileage, setJtTrackMileage] = useState(false)
   const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
@@ -385,8 +406,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [receiptNewQty, setReceiptNewQty] = useState("1")
   const [receiptNewUnit, setReceiptNewUnit] = useState("0")
   const [receiptNewKind, setReceiptNewKind] = useState("misc")
+  const [eventWantsLineItems, setEventWantsLineItems] = useState(false)
+  const [eventWantsLineItemsSaving, setEventWantsLineItemsSaving] = useState(false)
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
+
+  const sortedJobTypes = useMemo(() => sortJobTypesByName(jobTypes), [jobTypes])
 
   const linkedQuoteLiveTotal = useMemo(() => {
     if (!selectedEvent?.quote_id) return null
@@ -1376,6 +1401,103 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     loadEvents()
   }
 
+  function applyJobTypeToAddForm(jobTypeId: string) {
+    const jt = jobTypes.find((j) => j.id === jobTypeId)
+    if (!jt) {
+      setAddMileage("")
+      return
+    }
+    const start = parseLocalDateTime(addStartDate, addStartTime)
+    const working = readCalendarWorkingHoursFromStorage()
+    const mins = durationMinutesFromJobType(jt.duration_minutes, timeIncrement, {
+      start: Number.isNaN(start.getTime()) ? undefined : start,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
+    setAddDurationStr(formatDurationFieldFromMinutes(mins, timeIncrement))
+    if (!jt.track_mileage) setAddMileage("")
+  }
+
+  async function saveEventJobType(jobTypeId: string | null, jtOverride?: JobType | null) {
+    if (!supabase || !selectedEvent?.id) return
+    setEventJobTypeSaving(true)
+    const jt =
+      jtOverride !== undefined
+        ? jtOverride
+        : jobTypeId
+          ? (jobTypes.find((j) => j.id === jobTypeId) ?? null)
+          : null
+    const { error } = await supabase
+      .from("calendar_events")
+      .update({ job_type_id: jobTypeId })
+      .eq("id", selectedEvent.id)
+    setEventJobTypeSaving(false)
+    if (error) {
+      alert(error.message ?? String(error))
+      return
+    }
+    setSelectedEvent((prev) =>
+      prev && prev.id === selectedEvent.id ? { ...prev, job_type_id: jobTypeId, job_types: jt } : prev,
+    )
+    loadEvents()
+  }
+
+  async function saveInlineJobType() {
+    if (!inlineJtCreateFor) return
+    if (!inlineJtName.trim()) {
+      alert("Please enter a name for the job type.")
+      return
+    }
+    const parsed =
+      timeIncrement === 60
+        ? parseDurationFieldToMinutes(inlineJtDurationStr, 60)
+        : parseJobTypeDurationMinutes(inlineJtDurationStr)
+    if (parsed == null) {
+      alert(`Enter duration in ${timeIncrement === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
+      return
+    }
+    if (!supabase || !userId) {
+      alert("You must be signed in to add job types.")
+      return
+    }
+    setInlineJtSaving(true)
+    const insertBase = {
+      user_id: userId,
+      name: inlineJtName.trim(),
+      description: null as string | null,
+      duration_minutes: parsed,
+      color_hex: "#F97316",
+    }
+    let r = await supabase.from("job_types").insert(insertBase).select("id").single()
+    setInlineJtSaving(false)
+    if (r.error) {
+      alert("Could not save job type: " + (r.error.message || String(r.error)))
+      return
+    }
+    const newId = String((r.data as { id?: string } | null)?.id ?? "").trim()
+    const newJt: JobType = {
+      id: newId,
+      name: inlineJtName.trim(),
+      description: null,
+      duration_minutes: parsed,
+      color_hex: "#F97316",
+    }
+    void loadJobTypes()
+    if (newId) {
+      if (inlineJtCreateFor === "add") {
+        setAddJobTypeId(newId)
+        setAddDurationStr(formatDurationFieldFromMinutes(parsed, timeIncrement))
+        setAddMileage("")
+      } else {
+        setEventEditJobTypeId(newId)
+        await saveEventJobType(newId, newJt)
+      }
+    }
+    setInlineJtCreateFor(null)
+    setInlineJtName("")
+    setInlineJtDurationStr(timeIncrement === 60 ? "1" : "60")
+  }
+
   async function saveEventSchedule() {
     if (!supabase || !selectedEvent?.id) return
     const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
@@ -1461,6 +1583,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const nextMeta = serializeCalendarReceiptMeta(selectedEvent.metadata, {
       receipt_quote_overrides: receiptOverridesDraft,
       receipt_additional_lines: receiptAdditionalDraft,
+      receipt_wants_line_items: true,
     })
     const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", selectedEvent.id)
     setReceiptLinesSaving(false)
@@ -1476,7 +1599,28 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
+    setEventWantsLineItems(true)
     loadEvents()
+  }
+
+  async function saveEventWantsLineItems(wants: boolean) {
+    if (!supabase || !selectedEvent?.id) return
+    setEventWantsLineItemsSaving(true)
+    const parsed = parseCalendarEventReceiptMeta(selectedEvent.metadata)
+    const nextMeta = serializeCalendarReceiptMeta(selectedEvent.metadata, {
+      ...parsed,
+      receipt_quote_overrides: receiptOverridesDraft,
+      receipt_additional_lines: receiptAdditionalDraft,
+      receipt_wants_line_items: wants,
+    })
+    const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", selectedEvent.id)
+    setEventWantsLineItemsSaving(false)
+    if (error) {
+      alert(error.message ?? String(error))
+      return
+    }
+    setEventWantsLineItems(wants)
+    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
   }
 
   async function handleCalendarEntityFileChange(files: FileList | null) {
@@ -1672,6 +1816,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setEventEditStartDate("")
       setEventEditStartTime("")
       setEventEditDurationStr("60")
+      setEventEditJobTypeId("")
+      setInlineJtCreateFor(null)
       return
     }
     const start = new Date(selectedEvent.start_at)
@@ -1688,7 +1834,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const durMs = end.getTime() - start.getTime()
     const mins = Math.max(timeIncrement, Math.round(durMs / 60000))
     setEventEditDurationStr(formatDurationFieldFromMinutes(snapMinutesToIncrement(mins, timeIncrement), timeIncrement))
-  }, [selectedEvent?.id, selectedEvent?.start_at, selectedEvent?.end_at, timeIncrement])
+    setEventEditJobTypeId(selectedEvent.job_type_id ?? "")
+  }, [selectedEvent?.id, selectedEvent?.start_at, selectedEvent?.end_at, selectedEvent?.job_type_id, timeIncrement])
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -1722,12 +1869,18 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setReceiptNewDesc("")
       setReceiptNewQty("1")
       setReceiptNewUnit("0")
+      setEventWantsLineItems(false)
       return
     }
     const p = parseCalendarEventReceiptMeta(selectedEvent.metadata)
     setReceiptOverridesDraft(p.receipt_quote_overrides)
     setReceiptAdditionalDraft(p.receipt_additional_lines)
-  }, [selectedEvent?.id, selectedEvent?.metadata])
+    const hasSavedLineEdits =
+      p.receipt_wants_line_items ||
+      p.receipt_additional_lines.length > 0 ||
+      Object.keys(p.receipt_quote_overrides).length > 0
+    setEventWantsLineItems(hasSavedLineEdits || Boolean(selectedEvent.quote_id))
+  }, [selectedEvent?.id, selectedEvent?.metadata, selectedEvent?.quote_id])
 
   useEffect(() => {
     if (!supabase || !selectedEvent?.quote_id) {
@@ -2211,6 +2364,141 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   )
   const addInputStyle: React.CSSProperties = {
     ...theme.formInput,
+  }
+
+  const jobTypeSelectStyle: React.CSSProperties = {
+    ...theme.formInput,
+    width: "100%",
+    boxSizing: "border-box",
+    fontSize: 13,
+    color: theme.text,
+    background: "#fff",
+  }
+
+  function renderInlineJobTypeCreate(context: "add" | "event") {
+    if (inlineJtCreateFor !== context) return null
+    return (
+      <div
+        style={{
+          marginTop: 8,
+          padding: 10,
+          borderRadius: 8,
+          border: `1px solid ${theme.border}`,
+          background: "#f8fafc",
+          display: "grid",
+          gap: 8,
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: theme.text }}>New job type</p>
+        <input
+          placeholder="Name"
+          value={inlineJtName}
+          onChange={(e) => setInlineJtName(e.target.value)}
+          style={{ ...theme.formInput, fontSize: 13 }}
+          autoFocus
+        />
+        <label style={{ fontSize: 12, color: theme.text }}>
+          {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+          <input
+            type="number"
+            min={timeIncrement === 60 ? 1 : 15}
+            step={timeIncrement === 60 ? 1 : 15}
+            value={inlineJtDurationStr}
+            onChange={(e) => setInlineJtDurationStr(e.target.value)}
+            style={{ ...theme.formInput, display: "block", marginTop: 4, fontSize: 13 }}
+          />
+        </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            disabled={inlineJtSaving}
+            onClick={() => void saveInlineJobType()}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 12,
+              cursor: inlineJtSaving ? "wait" : "pointer",
+            }}
+          >
+            {inlineJtSaving ? "Saving…" : "Save job type"}
+          </button>
+          <button
+            type="button"
+            disabled={inlineJtSaving}
+            onClick={() => {
+              setInlineJtCreateFor(null)
+              setInlineJtName("")
+            }}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              color: theme.text,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderJobTypeSelect(
+    value: string,
+    context: "add" | "event",
+    selectStyle: React.CSSProperties,
+    onSelect: (id: string) => void,
+  ) {
+    return (
+      <div>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>
+          Job type
+        </label>
+        <select
+          value={value}
+          disabled={context === "event" && eventJobTypeSaving}
+          onChange={(e) => {
+            const id = e.target.value
+            if (id === JOB_TYPE_CREATE_NEW_VALUE) {
+              setInlineJtCreateFor(context)
+              setInlineJtName("")
+              setInlineJtDurationStr(timeIncrement === 60 ? "1" : "60")
+              return
+            }
+            setInlineJtCreateFor((prev) => (prev === context ? null : prev))
+            onSelect(id)
+          }}
+          style={selectStyle}
+        >
+          <option value="">No job type</option>
+          {sortedJobTypes.map((jt) => (
+            <option key={jt.id} value={jt.id}>
+              {formatJobTypeSelectLabel(jt)}
+            </option>
+          ))}
+          <option value={JOB_TYPE_CREATE_NEW_VALUE} style={{ fontWeight: 700 }}>
+            + Create new job type…
+          </option>
+        </select>
+        {jobTypes.length === 0 ? (
+          <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            No job types yet — choose <strong>Create new job type</strong> or open <strong>Job Types</strong> in the menu.
+          </p>
+        ) : null}
+        {context === "event" && eventJobTypeSaving ? (
+          <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>Saving job type…</p>
+        ) : null}
+        {renderInlineJobTypeCreate(context)}
+      </div>
+    )
   }
 
   return (
@@ -3059,34 +3347,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Job type</label>
-                <select
-                  value={addJobTypeId}
-                  onChange={(e) => {
-                    const id = e.target.value
-                    setAddJobTypeId(id)
-                    const jt = jobTypes.find((j) => j.id === id)
-                    if (jt) {
-                      const start = parseLocalDateTime(addStartDate, addStartTime)
-                      const working = readCalendarWorkingHoursFromStorage()
-                      const mins = durationMinutesFromJobType(jt.duration_minutes, timeIncrement, {
-                        start: Number.isNaN(start.getTime()) ? undefined : start,
-                        workingStart: working.enabled ? working.start : undefined,
-                        workingEnd: working.enabled ? working.end : undefined,
-                      })
-                      setAddDurationStr(formatDurationFieldFromMinutes(mins, timeIncrement))
-                      if (!jt.track_mileage) setAddMileage("")
-                    } else {
-                      setAddMileage("")
-                    }
-                  }}
-                  style={addInputStyle}
-                >
-                  <option value="">— None —</option>
-                  {jobTypes.map((jt) => (
-                    <option key={jt.id} value={jt.id}>{jt.name} ({jt.duration_minutes} min)</option>
-                  ))}
-                </select>
+                {renderJobTypeSelect(addJobTypeId, "add", addInputStyle, (id) => {
+                  setAddJobTypeId(id)
+                  if (id) applyJobTypeToAddForm(id)
+                  else setAddMileage("")
+                })}
               </div>
               {addJobTypeId && jobTypes.find((j) => j.id === addJobTypeId)?.track_mileage ? (
                 <div>
@@ -3562,17 +3827,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 {eventScheduleSaving ? "Saving…" : "Save date & time"}
               </button>
+              <div style={{ marginTop: 12 }}>
+                {renderJobTypeSelect(eventEditJobTypeId, "event", jobTypeSelectStyle, (id) => {
+                  setEventEditJobTypeId(id)
+                  void saveEventJobType(id || null)
+                })}
+              </div>
             </div>
             <div style={{ fontSize: "13px", color: "#4b5563", display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-              {(() => {
-                const jt = selectedEvent.job_types ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
-                if (!jt?.name) return null
-                return (
-                  <p style={{ margin: 0 }}>
-                    <strong>Job type:</strong> {jt.name}
-                  </p>
-                )
-              })()}
               {selectedEvent.customers?.display_name && (
                 <p style={{ margin: 0 }}>
                   <strong>Customer:</strong> {selectedEvent.customers.display_name}
@@ -3596,9 +3858,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                         alert("No customer is linked to this calendar event yet.")
                         return
                       }
-                      queueCustomerFocus(customerId)
+                      queueCustomerProfile(customerId)
                       setSelectedEvent(null)
-                      setPage("customers")
+                      setPage("customer-profile")
                     }}
                     style={{
                       padding: "6px 10px",
@@ -3611,7 +3873,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       cursor: "pointer",
                     }}
                   >
-                    Open customer contact card
+                    Open customer profile
                   </button>
                 ) : null}
                 {selectedEvent.customer_id && showCalendarCustomerPayment ? (
@@ -3835,31 +4097,44 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </button>
               </div>
             </details>
-            <details
+            <div
               style={{
                 borderRadius: 6,
                 border: `1px solid ${theme.border}`,
                 background: "#fff",
-                padding: "8px 10px",
+                padding: "10px 12px",
                 marginBottom: 14,
               }}
             >
-              <summary
+              <label
                 style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
                   fontSize: 13,
-                  fontWeight: 700,
-                  color: "#111827",
-                  cursor: "pointer",
-                  listStyle: "none",
+                  fontWeight: 600,
+                  color: theme.text,
+                  cursor: eventWantsLineItemsSaving ? "wait" : "pointer",
                 }}
               >
-                Receipt line items
-                {quoteItemsForReceipt.length + receiptAdditionalDraft.length > 0 ? (
-                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
-                    ({quoteItemsForReceipt.length + receiptAdditionalDraft.length})
-                  </span>
-                ) : null}
-              </summary>
+                <input
+                  type="checkbox"
+                  checked={eventWantsLineItems}
+                  disabled={eventWantsLineItemsSaving}
+                  onChange={(e) => void saveEventWantsLineItems(e.target.checked)}
+                  style={{ marginTop: 2, flexShrink: 0 }}
+                />
+                <span>
+                  Would you like to add Line Items?
+                  {quoteItemsForReceipt.length + receiptAdditionalDraft.length > 0 ? (
+                    <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
+                      ({quoteItemsForReceipt.length + receiptAdditionalDraft.length} line
+                      {quoteItemsForReceipt.length + receiptAdditionalDraft.length === 1 ? "" : "s"})
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+              {eventWantsLineItems ? (
               <div style={{ marginTop: 10 }}>
               <div
                 style={{
@@ -4128,7 +4403,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 {receiptLinesSaving ? "Saving…" : "Save receipt lines"}
               </button>
               </div>
-            </details>
+              ) : (
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  Check the box to edit receipt line items for this job — from a linked estimate or lines added just for this visit.
+                </p>
+              )}
+            </div>
             {(() => {
               const jt =
                 selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null

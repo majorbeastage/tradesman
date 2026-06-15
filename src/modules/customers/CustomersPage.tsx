@@ -35,7 +35,7 @@ import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../compone
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
-import { consumeQueuedCustomerFocus, queueCustomerFocus } from "../../lib/customerNavigation"
+import { consumeQueuedCustomerFocus, queueCustomerFocus, queueCustomerProfile } from "../../lib/customerNavigation"
 import { consumeCustomerAssistantSmsFocus } from "../../lib/workflowNavigation"
 import {
   loadCustomerCalendarEvents,
@@ -271,6 +271,9 @@ function isCompletedJobStatus(status: string | null | undefined): boolean {
   return String(status ?? "").trim().toLowerCase() === "completed"
 }
 
+/** List row = quick SMS/call/email; full history lives on CustomerProfilePage. */
+const CUSTOMER_LIST_COMPACT_DETAIL = true
+
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
   const { session } = useAuth()
@@ -289,7 +292,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const [filterPhone, setFilterPhone] = useState("")
   const [filterUrgency, setFilterUrgency] = useState<string>("")
   const [sortField, setSortField] = useState<string>("name")
   const [sortAsc, setSortAsc] = useState(true)
@@ -1113,15 +1115,16 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const currentList = section === "active" ? activeCustomers : section === "in_process" ? inProcessCustomers : archivedCustomers
   const filtered = currentList.filter((c) => {
     const name = (c.display_name || "").toLowerCase()
-    const phone = c.customer_identifiers?.find((i) => i.type === "phone")?.value || ""
-    const email = customerEmailFromIdentifiers(c.customer_identifiers).toLowerCase()
+    const contactValues = (c.customer_identifiers ?? [])
+      .filter((i) => i.type === "phone" || i.type === "email")
+      .map((i) => String(i.value ?? "").toLowerCase())
+      .join(" ")
     const searchLower = search.toLowerCase().trim()
-    const phoneFilter = filterPhone.trim()
     const urg = normalizeCommunicationUrgency(c.communication_urgency)
     const urgOk = !filterUrgency.trim() || urg === filterUrgency
     const searchOk =
-      !searchLower || name.includes(searchLower) || phone.includes(searchLower) || email.includes(searchLower)
-    return searchOk && (!phoneFilter || phone.includes(phoneFilter) || email.includes(phoneFilter)) && urgOk
+      !searchLower || name.includes(searchLower) || contactValues.includes(searchLower)
+    return searchOk && urgOk
   })
   const sorted = [...filtered].sort((a, b) => {
     let aVal = ""
@@ -1159,6 +1162,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setSelectedCustomer(c)
       setDetailEditMode(false)
     }
+  }
+
+  function openFullCustomerProfile(customerId: string) {
+    if (!setPage) return
+    queueCustomerProfile(customerId)
+    setPage("customer-profile")
   }
 
   async function geocodeCustomerServiceAddress() {
@@ -1866,14 +1875,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
               placeholder="By name, phone, or email..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
-            />
-            <input
-              type="text"
-              placeholder="By phone or email..."
-              value={filterPhone}
-              onChange={(e) => setFilterPhone(e.target.value)}
-              style={{ padding: "6px 10px", width: isMobile ? "100%" : "160px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
+              style={{ padding: "6px 10px", width: isMobile ? "100%" : "220px", border: "1px solid #d1d5db", borderRadius: "6px", background: "white", color: theme.text }}
             />
             <select
               value={filterUrgency}
@@ -2053,7 +2055,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>{c.display_name || "Customer"}</h3>
                                 <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
-                                  Edit contact, pipeline, and site details. Use Notes and call actions like Conversations. Click the same row again to close.
+                                  {CUSTOMER_LIST_COMPACT_DETAIL
+                                    ? "Quick communications — text, call, and email. Open Full profile for history, estimates, receipts, and notes."
+                                    : "Edit contact, pipeline, and site details. Use Notes and call actions like Conversations. Click the same row again to close."}
                                 </p>
                               </div>
                               <button
@@ -2080,6 +2084,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                                 {setPage ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openFullCustomerProfile(c.id)}
+                                    style={{
+                                      padding: "10px 16px",
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: theme.primary,
+                                      color: "white",
+                                      cursor: "pointer",
+                                      fontWeight: 700,
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    Full profile
+                                  </button>
+                                ) : null}
+                                {!CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -2138,6 +2160,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    if (CUSTOMER_LIST_COMPACT_DETAIL && setPage) {
+                                      openFullCustomerProfile(c.id)
+                                      return
+                                    }
                                     setNotesCustomerId(c.id)
                                     setNotesCustomerName(c.display_name ?? "")
                                   }}
@@ -2152,7 +2178,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     fontSize: 13,
                                   }}
                                 >
-                                  Notes
+                                  {CUSTOMER_LIST_COMPACT_DETAIL ? "Notes in profile" : "Notes"}
                                 </button>
                                 {showCustomersCustomerPayment ? (
                                   <button
@@ -2193,6 +2219,42 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </div>
                             ) : null}
 
+                            {CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  marginBottom: 12,
+                                  padding: "10px 14px",
+                                  borderRadius: 10,
+                                  border: `1px solid ${theme.border}`,
+                                  background: "#fffbeb",
+                                  fontSize: 13,
+                                  color: "#78350f",
+                                  lineHeight: 1.45,
+                                }}
+                              >
+                                Estimates, receipts, reports, scheduled jobs, and contact edits live on the{" "}
+                                <button
+                                  type="button"
+                                  onClick={() => openFullCustomerProfile(c.id)}
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    padding: 0,
+                                    color: theme.primary,
+                                    fontWeight: 800,
+                                    cursor: "pointer",
+                                    textDecoration: "underline",
+                                  }}
+                                >
+                                  full customer profile
+                                </button>
+                                .
+                              </div>
+                            ) : null}
+
+                            {!CUSTOMER_LIST_COMPACT_DETAIL ? (
+                            <>
                             <div
                               onClick={(e) => e.stopPropagation()}
                               style={{
@@ -2610,17 +2672,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 </div>
                               ) : null}
                             </div>
+                            </>
+                            ) : null}
 
                                 <div
                                   style={{
-                                    borderTop: `1px solid ${theme.border}`,
-                                    paddingTop: 16,
-                                    marginTop: 12,
+                                    borderTop: CUSTOMER_LIST_COMPACT_DETAIL ? "none" : `1px solid ${theme.border}`,
+                                    paddingTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 16,
+                                    marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 12,
                                     display: "flex",
                                     flexDirection: "column",
                                     gap: 14,
                                   }}
                                 >
+                                  {!CUSTOMER_LIST_COMPACT_DETAIL ? (
+                                  <>
                                   <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Scheduled jobs</div>
                                   {customerActivityLoading ? (
                                     <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Loading schedule…</p>
@@ -2708,7 +2774,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     </div>
                                   )}
 
-                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: 8 }}>Communications</div>
+                                  </>
+                                  ) : null}
+
+                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>Communications</div>
                                   <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                                     Preferred: <strong>{displayBestContact(c)}</strong>
                                     {selectedCustomerPhoneOnFile ? ` · Phone ${selectedCustomerPhoneOnFile}` : ""}
@@ -3074,7 +3143,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       </div>
                                     </div>
                                   ) : null}
-                                  {setPage ? (
+                                  {!CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
                                     <div
                                       style={{
                                         marginTop: 14,

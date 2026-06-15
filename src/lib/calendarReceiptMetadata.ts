@@ -18,6 +18,8 @@ export type ReceiptAdditionalLine = {
 export type ParsedCalendarReceiptMeta = {
   receipt_quote_overrides: Record<string, ReceiptQuoteOverride>
   receipt_additional_lines: ReceiptAdditionalLine[]
+  /** User opted in to edit receipt / line items on this event. */
+  receipt_wants_line_items: boolean
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -25,7 +27,7 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 }
 
 export function parseCalendarEventReceiptMeta(raw: unknown): ParsedCalendarReceiptMeta {
-  if (!isRecord(raw)) return { receipt_quote_overrides: {}, receipt_additional_lines: [] }
+  if (!isRecord(raw)) return { receipt_quote_overrides: {}, receipt_additional_lines: [], receipt_wants_line_items: false }
 
   const overridesRaw = raw.receipt_quote_overrides
   const receipt_quote_overrides: Record<string, ReceiptQuoteOverride> = {}
@@ -56,7 +58,11 @@ export function parseCalendarEventReceiptMeta(raw: unknown): ParsedCalendarRecei
     }
   }
 
-  return { receipt_quote_overrides, receipt_additional_lines }
+  return {
+    receipt_quote_overrides,
+    receipt_additional_lines,
+    receipt_wants_line_items: raw.receipt_wants_line_items === true,
+  }
 }
 
 export function serializeCalendarReceiptMeta(
@@ -66,5 +72,7 @@ export function serializeCalendarReceiptMeta(
   const base = isRecord(existingMetadata) ? { ...existingMetadata } : {}
   base.receipt_quote_overrides = patch.receipt_quote_overrides
   base.receipt_additional_lines = patch.receipt_additional_lines
+  if (patch.receipt_wants_line_items) base.receipt_wants_line_items = true
+  else delete base.receipt_wants_line_items
   return base
 }

@@ -47,6 +47,7 @@ import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
+import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
@@ -402,6 +403,7 @@ function MainApp() {
       )}
 
       {page === "customers" && <CustomersPage setPage={setPage} />}
+      {page === "customer-profile" && <CustomerProfilePage setPage={setPage} />}
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
       {page === "quotes" && <QuotesPage setPage={setPage} />}
@@ -413,7 +415,7 @@ function MainApp() {
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
       {page === "account" && <AccountPage />}
-      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
+      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "customer-profile", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
           <p style={{ color: "var(--text, #6b7280)", margin: "0 0 8px" }}>{t("app.customTab.title")}</p>

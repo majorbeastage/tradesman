@@ -34,6 +34,7 @@ import {
 import BillingDueDashboardBanner from "../../components/BillingDueDashboardBanner"
 import DashboardQuickActions from "../../components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "../../components/DashboardTodayWorkPreview"
+import CustomerProfilePage from "../customers/CustomerProfilePage"
 import SetupGuideModal from "../../components/SetupGuideModal"
 import GlobalAssistantFab from "../../components/GlobalAssistantFab"
 import { GlobalAssistantProvider } from "../../contexts/GlobalAssistantContext"
@@ -631,6 +632,7 @@ function OfficeManagerAppContent() {
         </>
       )}
       {hasClients && page === "customers" && <CustomersPage setPage={setPage} />}
+      {hasClients && page === "customer-profile" && <CustomerProfilePage setPage={setPage} />}
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}
       {hasClients && page === "quotes" && <QuotesPage setPage={setPage} />}
