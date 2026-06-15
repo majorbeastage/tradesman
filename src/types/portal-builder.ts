@@ -723,6 +723,21 @@ function mergeMissingRecurrencePortalItems(
   return out
 }
 
+/** Keep admin visibility overrides; sync labels, order, and fields from current receipt defaults. */
+function syncReceiptTemplatePortalItems(
+  stored: PortalSettingItem[],
+  defaults: PortalSettingItem[],
+): PortalSettingItem[] {
+  const storedById = new Map(
+    stored.filter((i) => i.id !== "receipt_template_use_ai").map((i) => [i.id, i]),
+  )
+  return defaults.map((def) => {
+    const prev = storedById.get(def.id)
+    if (!prev) return { ...def }
+    return { ...def, visibleToUser: prev.visibleToUser }
+  })
+}
+
 /** Strip portal items that belong on the event card, not the Add to calendar form. */
 export function isRemoveRecurrencePortalItem(item: PortalSettingItem): boolean {
   const t = `${item.id} ${item.label}`.toLowerCase()
@@ -768,6 +783,9 @@ export function getControlItemsForUser(
     } else {
       raw = [...defaults]
     }
+  }
+  if (key === "calendar:receipt_template" && Array.isArray(raw) && raw.length > 0) {
+    raw = syncReceiptTemplatePortalItems(raw, defaults)
   }
   const visible = (Array.isArray(raw) ? raw : []).filter((item) => item.visibleToUser !== false)
   const aiOn = opts?.aiAutomationsEnabled !== false
@@ -1222,53 +1240,52 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "receipt_template_carry_from_estimate",
     type: "checkbox",
-    label: "When saving, copy logo from Quotes → Estimate into receipt fields (optional; receipts already use the estimate logo if receipt URL is empty)",
+    label: "Attach Logo to Receipt",
     defaultChecked: false,
-  },
-  {
-    id: "receipt_template_intro",
-    type: "custom_field",
-    label: "Intro / header on receipt PDF (plain text, below title)",
-    customFieldSubtype: "textarea",
   },
   {
     id: "receipt_template_show_logo",
     type: "checkbox",
-    label: "Show company logo on receipt PDF",
+    label: "Upload new photo for receipt",
     defaultChecked: false,
   },
   {
     id: "receipt_template_logo_url",
     type: "custom_field",
-    label: "Logo URL (HTTPS), optional — leave blank to use the same upload as Quotes → Estimate template",
+    label: "Photo URL (HTTPS)",
     customFieldSubtype: "text",
     dependency: { dependsOnItemId: "receipt_template_show_logo", showWhenValue: "checked" },
   },
   {
-    id: "receipt_template_notes",
+    id: "receipt_template_intro",
     type: "custom_field",
-    label: "Footer note on receipt PDF (plain text)",
+    label: "Intro / header on receipt PDF",
     customFieldSubtype: "textarea",
   },
   {
-    id: "receipt_template_use_ai",
-    type: "checkbox",
-    label: "Use AI assistant to help refine receipt wording when generating PDFs",
-    defaultChecked: false,
+    id: "receipt_template_notes",
+    type: "custom_field",
+    label: "Footer note on receipt PDF",
+    customFieldSubtype: "textarea",
   },
   {
     id: "receipt_template_itemize",
     type: "checkbox",
-    label:
-      "Itemize receipt PDF — list all cost lines (labor, materials, fees, etc. from the quote), mileage reimbursement (if miles + rate below), plus a supplies checklist from the event / job type",
+    label: "Itemize receipt",
+    defaultChecked: false,
+  },
+  {
+    id: "receipt_template_include_mileage",
+    type: "checkbox",
+    label: "Calculate and include mileage costs",
     defaultChecked: false,
   },
   {
     id: "receipt_template_mileage_rate",
     type: "custom_field",
-    label: "Mileage reimbursement ($ per mile, optional — multiplied by miles on the calendar event when itemizing)",
+    label: "Cost per mile ($)",
     customFieldSubtype: "text",
-    dependency: { dependsOnItemId: "receipt_template_itemize", showWhenValue: "checked" },
+    dependency: { dependsOnItemId: "receipt_template_include_mileage", showWhenValue: "checked" },
   },
 ]
 

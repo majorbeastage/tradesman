@@ -151,7 +151,7 @@ export async function buildCalendarReceiptPdfSections(
     params.mileageRatePerMile != null && Number.isFinite(Number(params.mileageRatePerMile))
       ? Number(params.mileageRatePerMile)
       : 0
-  if (params.itemizeMaterials && miles > 0 && rate > 0) {
+  if (miles > 0 && rate > 0) {
     const mileageCost = miles * rate
     subtotal += mileageCost
     quoteLines.push(`[Mileage] ${miles} mi × $${rate.toFixed(2)}/mi = $${mileageCost.toFixed(2)}`)

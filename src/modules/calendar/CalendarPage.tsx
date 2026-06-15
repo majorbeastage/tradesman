@@ -802,7 +802,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
           ? (data.metadata as Record<string, unknown>)
           : {}
-      const useAi = meta.receipt_template_use_ai === true
       const itemize = meta.receipt_template_itemize === true
       const rateRaw = meta.receipt_mileage_rate_per_mile
       const rateStr =
@@ -811,6 +810,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           : typeof rateRaw === "string"
             ? rateRaw
             : ""
+      const rateNum = rateStr ? Number.parseFloat(rateStr.replace(/[^0-9.]/g, "")) : Number.NaN
+      const includeMileageExplicit = meta.receipt_template_include_mileage
+      const includeMileage =
+        includeMileageExplicit === true ||
+        (includeMileageExplicit !== false && itemize && Number.isFinite(rateNum) && rateNum > 0)
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
       const intro = typeof meta.receipt_template_intro === "string" ? meta.receipt_template_intro : ""
       const showRecLogo = meta.receipt_template_show_logo === true
@@ -822,8 +826,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
       for (const item of items) {
         if (item.id === "receipt_template_notes") next[item.id] = notes
-        else if (item.id === "receipt_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.id === "receipt_template_itemize") next[item.id] = itemize ? "checked" : "unchecked"
+        else if (item.id === "receipt_template_include_mileage") next[item.id] = includeMileage ? "checked" : "unchecked"
         else if (item.id === "receipt_template_mileage_rate") next[item.id] = rateStr
         else if (item.id === "receipt_template_intro") next[item.id] = intro
         else if (item.id === "receipt_template_show_logo") next[item.id] = showRecLogo ? "checked" : "unchecked"
@@ -846,8 +850,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     const notes = (receiptTemplateFormValues.receipt_template_notes ?? "").trim()
-    const useAi = receiptTemplateFormValues.receipt_template_use_ai === "checked"
     const itemize = receiptTemplateFormValues.receipt_template_itemize === "checked"
+    const includeMileage = receiptTemplateFormValues.receipt_template_include_mileage === "checked"
     const rateField = (receiptTemplateFormValues.receipt_template_mileage_rate ?? "").trim().replace(/[^0-9.]/g, "")
     const rateNum = rateField ? Number.parseFloat(rateField) : Number.NaN
     const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
@@ -859,9 +863,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
         ? { ...(data.metadata as Record<string, unknown>) }
         : {}
-    prevMeta.receipt_template_use_ai = useAi
     prevMeta.receipt_template_itemize = itemize
-    if (Number.isFinite(rateNum) && rateNum >= 0) prevMeta.receipt_mileage_rate_per_mile = rateNum
+    prevMeta.receipt_template_include_mileage = includeMileage
+    if (includeMileage && Number.isFinite(rateNum) && rateNum >= 0) prevMeta.receipt_mileage_rate_per_mile = rateNum
     else delete prevMeta.receipt_mileage_rate_per_mile
     const carry = receiptTemplateFormValues.receipt_template_carry_from_estimate === "checked"
     prevMeta.receipt_template_carry_from_estimate = carry
@@ -1238,6 +1242,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     try {
       const profileUserId = ev.user_id ?? userId
       let itemize = false
+      let includeMileage = false
       let mileageRatePerMile = 0
       let templateHeader: string | null = null
       let templateFooter: string | null = null
@@ -1264,6 +1269,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           const p = Number.parseFloat(rr.replace(/[^0-9.]/g, ""))
           if (Number.isFinite(p) && p >= 0) mileageRatePerMile = p
         }
+        const includeMileageExplicit = meta.receipt_template_include_mileage
+        includeMileage =
+          includeMileageExplicit === true ||
+          (includeMileageExplicit !== false && itemize && mileageRatePerMile > 0)
         const introRaw = meta.receipt_template_intro
         templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
         if (meta.receipt_template_show_logo === true) {
@@ -1285,9 +1294,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         receiptMeta,
         itemizeMaterials: itemize,
         mileageMiles: miles > 0 ? miles : null,
-        mileageRatePerMile: itemize && mileageRatePerMile > 0 ? mileageRatePerMile : null,
+        mileageRatePerMile: includeMileage && mileageRatePerMile > 0 ? mileageRatePerMile : null,
       })
-      const mileageCostInItemized = itemize && miles > 0 && mileageRatePerMile > 0
+      const mileageCostInItemized = includeMileage && miles > 0 && mileageRatePerMile > 0
       const mileageLabel =
         miles > 0 && !mileageCostInItemized ? `Mileage: ${miles} mi` : null
       const customerName = ev.customers?.display_name ?? "Customer"
