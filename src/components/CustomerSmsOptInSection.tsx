@@ -2,7 +2,6 @@ import { theme } from "../styles/theme"
 import {
   formatCustomerSmsConsentDetail,
   canSubmitManualSmsOptIn,
-  SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE,
   type CustomerSmsConsentRecord,
   type ManualSmsConsentSourceInput,
 } from "../lib/customerSmsConsent"
@@ -56,7 +55,7 @@ export default function CustomerSmsOptInSection({
     >
       <div style={{ padding: compact ? "10px 12px" : "12px 14px" }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>SMS opt-in consent</div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>SMS Opt-In Consent</div>
           {smsBlocked ? (
             <span
               style={{
@@ -103,7 +102,8 @@ export default function CustomerSmsOptInSection({
               lineHeight: 1.45,
             }}
           >
-            SMS consent is required before sending text messages to this customer. {SMS_CONSENT_NOT_REQUIRED_FOR_PURCHASE}
+            SMS consent is required before text messages can be sent to this customer. Consent to receive SMS
+            messages is optional and is not required as a condition of purchasing any goods or services.
           </p>
         ) : null}
 

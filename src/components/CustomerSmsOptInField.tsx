@@ -50,21 +50,21 @@ export default function CustomerSmsOptInField({
           style={{ marginTop: 4, flexShrink: 0, width: 18, height: 18 }}
         />
         <span>
-          <strong style={{ display: "block", marginBottom: 6, color: "#0f172a" }}>SMS opt-in (required for texting)</strong>
+          <strong style={{ display: "block", marginBottom: 6, color: "#0f172a" }}>SMS Opt-In</strong>
           {label}{" "}
           {origin ? (
             <>
               See{" "}
               <a href={`${origin}${LEGAL_LINKS.privacy}`} target="_blank" rel="noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
-                Privacy
+                Privacy Policy
               </a>
               ,{" "}
               <a href={`${origin}${LEGAL_LINKS.terms}`} target="_blank" rel="noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
-                Terms
+                Terms &amp; Conditions
               </a>
               , and{" "}
               <a href={`${origin}${LEGAL_LINKS.smsConsent}`} target="_blank" rel="noreferrer" style={{ color: theme.primary, fontWeight: 600 }}>
-                SMS terms
+                SMS Terms
               </a>
               .
             </>

@@ -59,9 +59,8 @@ export function buildManualSmsConsentDisclosure(businessName: string): string {
   return DEFAULT_SMS_CONSENT_PAGE.consent_statement.replace(/\[Business Name\]/g, biz)
 }
 
-export function customerSmsConsentCheckboxLabel(businessName: string): string {
-  const biz = businessName.trim() || "your business"
-  return `The customer agrees to receive text messages from ${biz} about quotes, appointments, job updates, and customer service. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help.`
+export function customerSmsConsentCheckboxLabel(_businessName?: string): string {
+  return "The customer agrees to receive text messages from the business named above regarding quotes, appointments, scheduling, job updates, and customer support. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help."
 }
 
 function isManualSmsConsentMethod(v: string): v is ManualSmsConsentMethod {
