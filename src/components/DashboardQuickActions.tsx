@@ -428,13 +428,11 @@ export default function DashboardQuickActions(props: Props) {
     showPaymentsShortcut,
     profileUserId,
     dashboardDataUserId,
-    authRole,
     onOpenSetupGuide,
   } = props
   const ga = useGlobalAssistantOptional()
   const fourth = resolveFourthCalendarState(props, labels)
   const tileScheme: DashboardTileScheme = "paper"
-  const reportingAllowed = authRole === "office_manager" || authRole === "admin"
 
   const go = (page: string, calendarSuite?: QueuedCalendarSuite) => {
     if (calendarSuite) queueCalendarSuiteNavigation(calendarSuite)
@@ -537,18 +535,21 @@ export default function DashboardQuickActions(props: Props) {
       { id: "payments", show: Boolean(showPaymentsShortcut) },
       { id: "insurance", show: true },
       { id: "customer_payments_soon", show: true },
-      { id: "reporting", show: reportingAllowed },
       { id: "job_types", show: true },
       { id: "today_todo", show: true },
     ]
     const visSet = new Set(vis.filter((x) => x.show).map((x) => x.id))
     return optionalOrder.filter((id) => visSet.has(id))
-  }, [optionalOrder, showSettingsShortcut, showPaymentsShortcut, reportingAllowed])
+  }, [optionalOrder, showSettingsShortcut, showPaymentsShortcut])
 
   const paletteAvailable = useMemo(() => {
     const onBar = new Set(optionalTiles)
-    return DASHBOARD_PALETTE_ONLY_IDS.filter((id) => !onBar.has(id))
-  }, [optionalTiles])
+    return DASHBOARD_PALETTE_ONLY_IDS.filter((id) => {
+      if (onBar.has(id)) return false
+      if (id === "payments" && !showPaymentsShortcut) return false
+      return true
+    })
+  }, [optionalTiles, showPaymentsShortcut])
 
   const onOptionalDragStart = useCallback((id: DashboardOptionalQuickLinkId) => {
     setDragId(id)
@@ -930,7 +931,7 @@ export default function DashboardQuickActions(props: Props) {
                     color: "#0f172a",
                   }}
                 >
-                  + {id === "job_types" ? labels.jobTypes : labels.todayTodo}
+                  + {optionalQuickLinkLabel(id, labels)}
                 </button>
               ))}
             </div>
@@ -943,4 +944,27 @@ export default function DashboardQuickActions(props: Props) {
 
 function compactFont(isMobile: boolean) {
   return isMobile ? 13 : 14
+}
+
+function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props["labels"]): string {
+  switch (id) {
+    case "settings":
+      return labels.settings
+    case "payments":
+      return labels.payments
+    case "insurance":
+      return labels.insurance
+    case "customer_payments_soon":
+      return labels.customerPaymentsSoon
+    case "reporting":
+      return labels.reporting
+    case "job_types":
+      return labels.jobTypes
+    case "today_todo":
+      return labels.todayTodo
+    case "setup_guide":
+      return labels.setupGuide
+    default:
+      return id
+  }
 }

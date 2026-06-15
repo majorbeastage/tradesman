@@ -35,6 +35,7 @@ import {
   runLeadCaptureSideEffects,
 } from "./_leadAutomation.js"
 import { handleNotifyAdminVerifiedSignup } from "./_notifyAdminVerifiedSignup.js"
+import { handleNotifyAdminSupportTicket } from "./_notifyAdminSupportTicket.js"
 import { handleNotifyClientSmsDisclosure } from "./_clientPostVerifySmsDisclosureEmail.js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
@@ -1829,6 +1830,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "notify-admin-verified-signup") {
       await handleNotifyAdminVerifiedSignup(req, res)
+      return
+    }
+    if (route === "notify-admin-support-ticket") {
+      await handleNotifyAdminSupportTicket(req, res)
       return
     }
     if (route === "notify-client-sms-disclosure") {

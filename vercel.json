@@ -41,6 +41,10 @@
       "destination": "/api/platform-tools?__route=notify-admin-verified-signup"
     },
     {
+      "source": "/api/notify-admin-support-ticket",
+      "destination": "/api/platform-tools?__route=notify-admin-support-ticket"
+    },
+    {
       "source": "/api/notify-client-sms-disclosure",
       "destination": "/api/platform-tools?__route=notify-client-sms-disclosure"
     },

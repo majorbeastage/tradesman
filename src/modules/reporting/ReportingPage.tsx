@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { normalizeCommunicationUrgency } from "../../lib/customerUrgency"
+import { loadTodayWorkSnapshot, type TodayWorkSnapshot } from "../../lib/todayWorkReport"
 import { theme } from "../../styles/theme"
 
 type Period = "30d" | "90d" | "365d"
@@ -53,6 +54,7 @@ export default function ReportingPage() {
   const [events, setEvents] = useState<{ event_type: string | null; created_at: string | null }[]>([])
   const [customers, setCustomers] = useState<{ communication_urgency?: string | null }[]>([])
   const [quotesByStatus, setQuotesByStatus] = useState<Record<string, number>>({})
+  const [todayWork, setTodayWork] = useState<TodayWorkSnapshot | null>(null)
 
   const load = useCallback(async () => {
     if (!allowed || !supabase || !reportingUserId) return
@@ -60,7 +62,7 @@ export default function ReportingPage() {
     setErr("")
     const since = periodStartIso(period)
     try {
-      const [evRes, custRes, quoteRes] = await Promise.all([
+      const [evRes, custRes, quoteRes, todayRes] = await Promise.all([
         supabase
           .from("communication_events")
           .select("event_type, created_at")
@@ -70,6 +72,7 @@ export default function ReportingPage() {
           .limit(8000),
         supabase.from("customers").select("communication_urgency").eq("user_id", reportingUserId).limit(5000),
         supabase.from("quotes").select("status").eq("user_id", reportingUserId).is("removed_at", null).limit(8000),
+        loadTodayWorkSnapshot(supabase, reportingUserId),
       ])
       if (evRes.error) throw evRes.error
       if (custRes.error) throw custRes.error
@@ -83,6 +86,7 @@ export default function ReportingPage() {
         tally[s] = (tally[s] ?? 0) + 1
       }
       setQuotesByStatus(tally)
+      setTodayWork(todayRes)
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -208,6 +212,43 @@ export default function ReportingPage() {
         <p style={{ color: "#b91c1c" }}>{err}</p>
       ) : (
         <>
+          {todayWork ? (
+            <section style={{ marginBottom: 28 }}>
+              <h2 style={{ margin: "0 0 6px", fontSize: 17, color: "#64748b", fontWeight: 700 }}>Today's work</h2>
+              <p style={{ margin: "0 0 12px", fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>
+                {todayWork.todayEvents.length} job(s) today · {todayWork.weekEventCount} this week · {todayWork.priorityCustomers.length} priority alert(s) ·{" "}
+                {todayWork.recentCustomers.length} recently added
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+                <ReportDetailTable
+                  title="Neglected customers"
+                  empty="No neglected customers."
+                  rows={todayWork.neglectedCustomers.map((c) => [c.display_name?.trim() || "Customer", c.communication_urgency])}
+                />
+                <ReportDetailTable
+                  title="Recently added"
+                  empty="No recently added customers."
+                  rows={todayWork.recentCustomers.map((c) => [
+                    c.display_name?.trim() || "Customer",
+                    c.updated_at ? new Date(c.updated_at).toLocaleDateString(undefined, { dateStyle: "medium" }) : "—",
+                  ])}
+                />
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <ReportDetailTable
+                  title="Jobs scheduled today"
+                  empty="Nothing on the calendar for today."
+                  rows={todayWork.todayEvents.map((ev) => [
+                    ev.title?.trim() || "Untitled",
+                    ev.start_at ? new Date(ev.start_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—",
+                  ])}
+                />
+              </div>
+            </section>
+          ) : null}
+
+          <h2 style={{ margin: "0 0 12px", fontSize: 17, color: "#64748b", fontWeight: 700 }}>More reports</h2>
+
           <section style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, fontSize: 17, color: "#64748b", fontWeight: 700 }}>Customer contacts by channel</h2>
@@ -363,6 +404,28 @@ export default function ReportingPage() {
             </div>
           </section>
         </>
+      )}
+    </div>
+  )
+}
+
+function ReportDetailTable({ title, empty, rows }: { title: string; empty: string; rows: string[][] }) {
+  return (
+    <div style={{ padding: 14, borderRadius: 12, border: `1px solid ${theme.border}`, background: "#fff" }}>
+      <h3 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 700, color: "#475569" }}>{title}</h3>
+      {rows.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>{empty}</p>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={`${title}-${i}`}>
+                <td style={{ padding: "6px 0", borderTop: i ? `1px solid ${theme.border}` : undefined, fontWeight: 600 }}>{row[0]}</td>
+                <td style={{ padding: "6px 0", borderTop: i ? `1px solid ${theme.border}` : undefined, color: "#64748b", textAlign: "right" }}>{row[1]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   )

@@ -3,6 +3,7 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { hintForSupportTicketsError } from "../../lib/supabaseTicketErrors"
+import { notifyAdminSupportTicket } from "../../lib/notifyAdminSupportTicket"
 
 type DemoPageProps = {
   onBack: () => void
@@ -79,6 +80,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
     }
     setTicketNumber(data?.ticket_number ?? null)
     setSubmitted(true)
+    if (data?.id) void notifyAdminSupportTicket(data.id)
   }
 
   const inputStyle: React.CSSProperties = {

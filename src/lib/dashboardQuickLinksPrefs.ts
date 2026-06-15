@@ -21,14 +21,19 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
   "today_todo",
 ])
 
-/** Extra shortcuts offered in customize mode (not on the bar until added). */
-export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = ["job_types", "today_todo"]
+/** Shortcuts users can add from customize mode when not already on the bar. */
+export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
+  "customer_payments_soon",
+  "payments",
+  "insurance",
+  "job_types",
+  "today_todo",
+]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [
   "setup_guide",
   "insurance",
   "customer_payments_soon",
-  "reporting",
   "settings",
   "payments",
 ]
@@ -68,6 +73,7 @@ export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLin
   const seen = new Set<DashboardOptionalQuickLinkId>()
   const out: DashboardOptionalQuickLinkId[] = []
   for (const id of base) {
+    if (id === "reporting") continue
     if (!ALL_DASHBOARD_OPTIONAL_IDS.has(id) || seen.has(id)) continue
     seen.add(id)
     out.push(id)

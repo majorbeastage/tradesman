@@ -10,6 +10,7 @@ import { SETUP_MINI_WIZARDS, type SetupMiniWizardDef, type SetupMiniWizardId } f
 export type PlatformAssistantPlatform = "user" | "office_manager" | "admin"
 
 export type AdminPanelId =
+  | "ops"
   | "signup"
   | "communications"
   | "users"
@@ -46,6 +47,7 @@ export type PlatformAdminIntent = {
 }
 
 export const ADMIN_PANEL_LABELS: Record<AdminPanelId, string> = {
+  ops: "Ops inbox & reporting",
   signup: "Sign up requirements",
   communications: "Routing & Access",
   users: "Users & office managers",

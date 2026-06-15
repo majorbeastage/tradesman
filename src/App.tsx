@@ -46,6 +46,7 @@ import {
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
+import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
@@ -326,6 +327,7 @@ function MainApp() {
             copy={dashboardHeroCopy}
           />
           {!estimateToolsOnlyPackage ? (
+          <>
           <DashboardQuickActions
             isMobile={isMobile}
             setPage={setPage}
@@ -368,6 +370,33 @@ function MainApp() {
             }}
             onOpenSetupGuide={() => setSetupGuideOpen(true)}
           />
+          <DashboardTodayWorkPreview
+            isMobile={isMobile}
+            dataUserId={user?.id ?? null}
+            reportingAllowed={authRole === "office_manager" || authRole === "admin"}
+            onOpenReporting={() => setPage("reporting")}
+            onOpenCustomers={() => setPage("customers")}
+            onOpenCalendar={() => setPage("calendar")}
+            labels={{
+              title: t("dashboard.todayWorkTitle"),
+              subtitle: t("dashboard.todayWorkSubtitle"),
+              viewAllReports: t("dashboard.todayWorkViewReports"),
+              loading: t("dashboard.todayWorkLoading"),
+              noUser: t("dashboard.todayWorkNoUser"),
+              todayJobs: t("dashboard.todayWorkTodayJobs"),
+              weekJobs: t("dashboard.todayWorkWeekJobs"),
+              priorityAlerts: t("dashboard.todayWorkPriority"),
+              neglected: t("dashboard.todayWorkNeglected"),
+              recentlyAdded: t("dashboard.todayWorkRecent"),
+              nothingToday: t("dashboard.todayWorkNothingToday"),
+              noPriority: t("dashboard.todayWorkNoPriority"),
+              noNeglected: t("dashboard.todayWorkNoNeglected"),
+              noRecent: t("dashboard.todayWorkNoRecent"),
+              openCustomers: t("dashboard.todayWorkOpenCustomers"),
+              openCalendar: t("dashboard.todayWorkOpenCalendar"),
+            }}
+          />
+          </>
           ) : null}
         </>
       )}

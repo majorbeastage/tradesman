@@ -3,6 +3,7 @@ import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { hintForSupportTicketsError } from "../lib/supabaseTicketErrors"
 import { TRADESMAN_TECH_SUPPORT_EMAIL } from "../constants/supportLinks"
+import { notifyAdminSupportTicket } from "../lib/notifyAdminSupportTicket"
 
 type TicketType = "web" | "tech"
 
@@ -77,6 +78,7 @@ export function SupportTicketForm({ type, title }: Props) {
     const num = data?.ticket_number ?? null
     setTicketNumber(num)
     setTicketId(data?.id ?? null)
+    if (data?.id) void notifyAdminSupportTicket(data.id)
   }
 
   function openMailto() {
