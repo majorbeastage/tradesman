@@ -25,6 +25,8 @@ import {
 } from "../../types/portal-builder"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
+import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { QuoteLineItemsMobileCards } from "./QuoteLineItemsMobileCards"
@@ -38,7 +40,8 @@ import {
   parseQuoteAttachmentMeta,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
-import { uploadBytesForOutbound, uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
+import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
+import { appendEmailSignature, loadStoredEmailSignature, saveStoredEmailSignature } from "../../lib/emailSignature"
 import {
   buildQuotePdfBytes,
   downloadPdfBlob,
@@ -540,6 +543,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
   const [quoteEmailSubject, setQuoteEmailSubject] = useState("")
   const [quoteEmailBody, setQuoteEmailBody] = useState("")
+  const [quoteEmailSignature, setQuoteEmailSignature] = useState("")
   const [quoteEmailSending, setQuoteEmailSending] = useState(false)
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
   const [quoteEmailCopySelf, setQuoteEmailCopySelf] = useState(true)
@@ -1139,6 +1143,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
       cancelled = true
     }
   }, [userId])
+
+  useEffect(() => {
+    setQuoteEmailSignature(loadStoredEmailSignature())
+  }, [])
 
   useEffect(() => {
     if (!selectedQuote?.id) return
@@ -3733,7 +3741,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (!proceed) return
     }
     const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
-    let bodyForSend = body
+    let bodyForSend = appendEmailSignature(body, quoteEmailSignature)
     if (quoteEmailAttachEntity && copyRows.length > 0) {
       const noteBlocks = copyRows.map((r) => {
         const p = parseQuoteAttachmentMeta(r.metadata)
@@ -3758,25 +3766,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
       )
       const bccMerged = mergeCommaEmails(quoteEmailBcc)
       const attachmentPublicUrls: string[] = []
-      const pdfUrl = await uploadBytesForOutbound(
-        userId,
-        pdfBytes,
-        pdfFilename,
-        `quotes/${selectedQuote.id}/email`,
-        "application/pdf",
-      )
-      if (pdfUrl) {
-        attachmentPublicUrls.push(pdfUrl)
-      }
       if (quoteEmailAttachEntity && copyRows.length > 0) {
         attachmentPublicUrls.push(...copyRows.map((r) => r.public_url))
       }
       const inlineAttachments =
-        !pdfUrl && pdfBytes.length <= 2_500_000
+        pdfBytes.length <= 2_500_000
           ? [{ filename: pdfFilename, content: uint8ArrayToBase64(pdfBytes) }]
           : undefined
-      if (!pdfUrl && !inlineAttachments) {
-        throw new Error("Could not upload the estimate PDF for email. Try Download, then attach manually.")
+      if (!inlineAttachments) {
+        throw new Error("Estimate PDF is too large to attach by email. Try Download and send manually.")
       }
       const res = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
@@ -5813,6 +5811,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     )
                                   }
                                   const ev = item.payload
+                                  const fromAddr = ev.event_type === "email" ? formatCommEventEmailFromLabel(ev) : null
                                   const label =
                                     ev.event_type === "email"
                                       ? "Email"
@@ -5827,6 +5826,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       <div key={item.key} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
                                       <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", marginBottom: 4 }}>
                                         {label}
+                                        {fromAddr ? ` · ${fromAddr}` : ""}
                                         {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
                                         {ev.created_at ? (
                                           <span style={{ fontWeight: 500, color: "#475569", marginLeft: 8 }}>
@@ -5848,6 +5848,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         </>
                                       ) : ev.event_type === "email" ? (
                                         <>
+                                          <EmailEventAddressLine event={ev} style={{ color: "#475569" }} />
                                           {ev.subject?.trim() ? (
                                             <p style={{ margin: "0 0 6px", fontWeight: 700, color: "#0f172a" }}>{ev.subject.trim()}</p>
                                           ) : null}
@@ -6966,6 +6967,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       onChange={(e) => setQuoteEmailBody(e.target.value)}
                       rows={4}
                       placeholder="Message"
+                      style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
+                    />
+                    <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
+                      Email signature (appended automatically with --)
+                    </label>
+                    <textarea
+                      value={quoteEmailSignature}
+                      onChange={(e) => setQuoteEmailSignature(e.target.value)}
+                      onBlur={() => saveStoredEmailSignature(quoteEmailSignature)}
+                      rows={3}
+                      placeholder="Your name, business, phone…"
                       style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
                     />
                     <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>

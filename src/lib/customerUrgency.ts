@@ -1,5 +1,7 @@
 /** Workflow urgency for the Customers hub (distinct from job pipeline stage). */
 
+import { formatDisplayText } from "./formatDisplayText"
+
 export const COMMUNICATION_URGENCY_LEVELS = [
   "Good Standing",
   "Needs Attention",
@@ -19,7 +21,12 @@ const RANK: Record<string, number> = {
 }
 
 export function normalizeCommunicationUrgency(raw: string | null | undefined): CommunicationUrgency {
-  const t = String(raw ?? "").trim()
+  const t =
+    typeof raw === "string"
+      ? raw.trim()
+      : raw != null && typeof raw === "object"
+        ? formatDisplayText(raw, "").trim()
+        : String(raw ?? "").trim()
   const legacy = t === "Priority" ? "Critical" : t === "In Process" ? "Good Standing" : t
   if ((COMMUNICATION_URGENCY_LEVELS as readonly string[]).includes(legacy)) return legacy as CommunicationUrgency
   return "Good Standing"

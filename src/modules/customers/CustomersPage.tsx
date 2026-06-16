@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { supabase } from "../../lib/supabase"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
@@ -32,6 +32,8 @@ import {
   validateManualSmsConsentSourceInput,
 } from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
+import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
@@ -60,7 +62,15 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
-import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
+import { customerEmailFromIdentifiers, customerEmailsFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
+import {
+  collapseOrgGroupedCustomers,
+  remapEventsToCanonicalCustomers,
+  resolveCanonicalCustomerId,
+  resolveOrgSiblingCustomerIds,
+  type CustomerOrgGroupingMaps,
+} from "../../lib/customerOrgGrouping"
+import { orgGroupSummaryLabel, parseCustomerHubKind, parseCustomerOrgGroupKey } from "../../lib/customerContactKind"
 import {
   SPECIALTY_REPORT_REGISTRY_KEY,
   parseSpecialtyReportRegistry,
@@ -239,7 +249,12 @@ function activityRowLabel(item: { kind: "msg" | "ev"; payload: any }): string {
     return item.payload?.sender === "customer" ? "Inbound text" : "Message"
   }
   const ev = item.payload
-  return `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
+  const base = `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
+  if (ev?.event_type === "email") {
+    const from = formatCommEventEmailFromLabel(ev)
+    if (from) return `${base} · ${from}`
+  }
+  return base
 }
 
 function activityPreviewSnippet(item: { kind: "msg" | "ev"; payload: any }): string {
@@ -368,6 +383,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
   const [customerReports, setCustomerReports] = useState<SpecialtyReportRegistryItem[]>([])
   const [customerCalendarEvents, setCustomerCalendarEvents] = useState<CustomerCalendarEventRow[]>([])
+  const orgGroupingRef = useRef<CustomerOrgGroupingMaps>({
+    siblingIdsByCustomerId: new Map(),
+    canonicalIdByCustomerId: new Map(),
+  })
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -802,6 +821,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
     let list = (customers || []) as CustomerRow[]
 
+    const { customers: groupedList, maps: orgMaps } = collapseOrgGroupedCustomers(list)
+    orgGroupingRef.current = orgMaps
+    list = groupedList
+
     const { data: recentComm } = await supabase
       .from("communication_events")
       .select("customer_id, created_at")
@@ -810,7 +833,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       .order("created_at", { ascending: false })
       .limit(5000)
 
-    const latestMsByCustomer = buildLatestEventMsByCustomer(recentComm)
+    const latestMsByCustomer = buildLatestEventMsByCustomer(
+      remapEventsToCanonicalCustomers(recentComm, orgMaps.canonicalIdByCustomerId),
+    )
     list = mergeLastActivityFromRecentEvents(list, latestMsByCustomer)
 
     async function escalateList(rows: CustomerRow[], prefs: CustomersUrgencyAutomationPrefs | null): Promise<CustomerRow[]> {
@@ -857,11 +882,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!supabase || !userId) return
       setCustomerActivityLoading(true)
       try {
+        const siblingIds = resolveOrgSiblingCustomerIds(customerId, orgGroupingRef.current)
+
         const { data: convos } = await supabase
           .from("conversations")
           .select("id")
           .eq("user_id", userId)
-          .eq("customer_id", customerId)
+          .in("customer_id", siblingIds)
           .is("removed_at", null)
           .order("created_at", { ascending: false })
         const convoIds = (convos ?? []).map((c: { id: string }) => c.id)
@@ -882,7 +909,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           .from("communication_events")
           .select(evSelect)
           .eq("user_id", userId)
-          .eq("customer_id", customerId)
+          .in("customer_id", siblingIds)
           .order("created_at", { ascending: true })
           .limit(400)
         for (const row of evCust ?? []) {
@@ -1034,21 +1061,22 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   useEffect(() => {
     if (!pendingFocusCustomerId) return
-    const activeMatch = activeCustomers.find((c) => c.id === pendingFocusCustomerId)
+    const focusId = resolveCanonicalCustomerId(pendingFocusCustomerId, orgGroupingRef.current)
+    const activeMatch = activeCustomers.find((c) => c.id === focusId)
     if (activeMatch) {
       setSection("active")
       setSelectedCustomer(activeMatch)
       setPendingFocusCustomerId(null)
       return
     }
-    const inProcessMatch = inProcessCustomers.find((c) => c.id === pendingFocusCustomerId)
+    const inProcessMatch = inProcessCustomers.find((c) => c.id === focusId)
     if (inProcessMatch) {
       setSection("in_process")
       setSelectedCustomer(inProcessMatch)
       setPendingFocusCustomerId(null)
       return
     }
-    const archivedMatch = archivedCustomers.find((c) => c.id === pendingFocusCustomerId)
+    const archivedMatch = archivedCustomers.find((c) => c.id === focusId)
     if (archivedMatch) {
       setSection("archived")
       setSelectedCustomer(archivedMatch)
@@ -2219,40 +2247,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </div>
                             ) : null}
 
-                            {CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
-                              <div
-                                onClick={(e) => e.stopPropagation()}
-                                style={{
-                                  marginBottom: 12,
-                                  padding: "10px 14px",
-                                  borderRadius: 10,
-                                  border: `1px solid ${theme.border}`,
-                                  background: "#fffbeb",
-                                  fontSize: 13,
-                                  color: "#78350f",
-                                  lineHeight: 1.45,
-                                }}
-                              >
-                                Estimates, receipts, reports, scheduled jobs, and contact edits live on the{" "}
-                                <button
-                                  type="button"
-                                  onClick={() => openFullCustomerProfile(c.id)}
-                                  style={{
-                                    border: "none",
-                                    background: "transparent",
-                                    padding: 0,
-                                    color: theme.primary,
-                                    fontWeight: 800,
-                                    cursor: "pointer",
-                                    textDecoration: "underline",
-                                  }}
-                                >
-                                  full customer profile
-                                </button>
-                                .
-                              </div>
-                            ) : null}
-
                             {!CUSTOMER_LIST_COMPACT_DETAIL ? (
                             <>
                             <div
@@ -2778,6 +2772,28 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   ) : null}
 
                                   <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>Communications</div>
+                                  {(() => {
+                                    const groupedEmails = customerEmailsFromIdentifiers(c.customer_identifiers ?? null)
+                                    const orgLabel = orgGroupSummaryLabel(
+                                      parseCustomerOrgGroupKey(c.metadata),
+                                      parseCustomerHubKind(c.metadata),
+                                    )
+                                    if (!orgLabel && groupedEmails.length <= 1) return null
+                                    return (
+                                      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                        {orgLabel ? (
+                                          <>
+                                            <strong>{orgLabel}</strong>
+                                            {groupedEmails.length > 1
+                                              ? ` — activity from ${groupedEmails.length} addresses on this domain (${groupedEmails.join(", ")})`
+                                              : ""}
+                                          </>
+                                        ) : groupedEmails.length > 1 ? (
+                                          <>Combined activity from {groupedEmails.join(", ")}</>
+                                        ) : null}
+                                      </p>
+                                    )
+                                  })()}
                                   <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                                     Preferred: <strong>{displayBestContact(c)}</strong>
                                     {selectedCustomerPhoneOnFile ? ` · Phone ${selectedCustomerPhoneOnFile}` : ""}
@@ -3090,6 +3106,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                         {ev?.body ? (
                                                           <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
                                                         ) : null}
+                                                      </>
+                                                    ) : ev?.event_type === "email" ? (
+                                                      <>
+                                                        <EmailEventAddressLine event={ev} />
+                                                        {ev?.subject?.trim() ? (
+                                                          <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
+                                                        ) : null}
+                                                        <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
                                                       </>
                                                     ) : (
                                                       <>

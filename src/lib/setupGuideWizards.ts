@@ -8,6 +8,7 @@ export type SetupMiniWizardId =
   | "estimates_line_items"
   | "estimates_job_types"
   | "scheduling_alerts"
+  | "scheduling_add_to_calendar"
   | "scheduling_receipt_template"
   | "myt_call_forwarding"
   | "myt_voicemail_greeting"
@@ -60,6 +61,13 @@ export const SETUP_MINI_WIZARDS: SetupMiniWizardDef[] = [
     page: "calendar",
     locationHint: "Scheduling → Alerts",
     summary: "Push, email, SMS, and on-the-way customer messages.",
+  },
+  {
+    id: "scheduling_add_to_calendar",
+    label: "Add to calendar",
+    page: "calendar",
+    locationHint: "Scheduling → Add item to calendar → Guide",
+    summary: "Walk through customer, job type, date, and duration before scheduling.",
   },
   {
     id: "scheduling_receipt_template",

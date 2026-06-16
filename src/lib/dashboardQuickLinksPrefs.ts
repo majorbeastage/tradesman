@@ -9,6 +9,8 @@ export type DashboardOptionalQuickLinkId =
   | "reporting"
   | "job_types"
   | "today_todo"
+  | "time_clock"
+  | "custom_receipt"
 
 export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>([
   "setup_guide",
@@ -19,6 +21,8 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
   "reporting",
   "job_types",
   "today_todo",
+  "time_clock",
+  "custom_receipt",
 ])
 
 /** Shortcuts users can add from customize mode when not already on the bar. */
@@ -28,6 +32,8 @@ export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
   "insurance",
   "job_types",
   "today_todo",
+  "time_clock",
+  "custom_receipt",
 ]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [

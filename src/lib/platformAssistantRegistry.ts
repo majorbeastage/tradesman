@@ -222,6 +222,14 @@ function wizardPatternsForId(id: SetupMiniWizardId): RegExp[] {
         /\bon[\s-]?the[\s-]?way\b/i,
         /\bpush\s+notifications?\b/i,
       ]
+    case "scheduling_add_to_calendar":
+      return [
+        /\badd\s+to\s+calendar\b/i,
+        /\bschedul\w*\s+a\s+job\b/i,
+        /\bschedule\s+wizard\b/i,
+        /\bbook\s+a\s+job\b/i,
+        /\bnew\s+calendar\s+event\b/i,
+      ]
     case "scheduling_receipt_template":
       return [
         /\breceipt\s+template\b/i,

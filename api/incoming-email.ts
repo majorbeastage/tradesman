@@ -18,6 +18,7 @@ import {
   resolveInboundEmailChannel,
   touchCustomerLastActivityAt,
 } from "./_communications.js"
+import { classifyInboundEmailContact } from "./_customerContactKind.js"
 import { uploadBytesToCommAttachments } from "./_commStorage.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import {
@@ -371,10 +372,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const customer = await getOrCreateCustomerByEmail(supabase, channel.user_id, fromEmail)
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
+    const inboundContact = classifyInboundEmailContact(fromEmail)
+    const isPromotionalContact = inboundContact.hubKind === "promotional"
     const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customerId)
     if (inConversations) {
       conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
-    } else {
+    } else if (!isPromotionalContact) {
       const title = subject && subject !== "(no subject)" ? `Email: ${subject.slice(0, 80)}` : `Inbound email from ${fromEmail}`
       leadId = await ensureOpenLeadForInbound(
         supabase,

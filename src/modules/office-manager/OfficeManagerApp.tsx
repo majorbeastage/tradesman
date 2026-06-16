@@ -25,6 +25,8 @@ import { supabase } from "../../lib/supabase"
 import {
   filterPortalTabsForV2,
   getOfficePortalTabListForConfig,
+  getOmPageActionVisible,
+  getPageActionVisible,
   getPortalTabListForConfig,
   isPortalTabVisibleInV2,
   USER_PORTAL_TAB_IDS,
@@ -34,15 +36,16 @@ import {
 import BillingDueDashboardBanner from "../../components/BillingDueDashboardBanner"
 import DashboardQuickActions from "../../components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "../../components/DashboardTodayWorkPreview"
+import DashboardReportsPreview from "../../components/DashboardReportsPreview"
 import CustomerProfilePage from "../customers/CustomerProfilePage"
 import SetupGuideModal from "../../components/SetupGuideModal"
 import GlobalAssistantFab from "../../components/GlobalAssistantFab"
+import HelpDeskChatPanel from "../../components/HelpDeskChatPanel"
 import { GlobalAssistantProvider } from "../../contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "../../contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "../../components/RegisterSetupGuideOpener"
 import { AppNavigationProvider, useAppNavigation } from "../../contexts/AppNavigationContext"
 import { JobTypesModalProvider } from "../../contexts/JobTypesModalContext"
-
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
   { id: "auto_response", label: "Auto Response Options" },
@@ -485,6 +488,14 @@ function OfficeManagerAppContent() {
     Boolean(scope?.selectedUserId) && (selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
   const omPaymentsTabAvailable = hasClients && resolvedPortalTabs.some((t) => t.tab_id === "payments")
   const omSettingsTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "settings")
+  const scopedPortalCfg = scope?.scopedPortalConfig ?? portalConfig
+  const calendarTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "calendar")
+  const showTimeClockShortcut = calendarTabAvailable && hasClients
+  const showCustomReceiptShortcut =
+    calendarTabAvailable &&
+    getPageActionVisible(scopedPortalCfg, "calendar", "custom_receipt") &&
+    getOmPageActionVisible(scopedPortalCfg, "calendar", "custom_receipt")
+  const customReceiptQuickLabel = scopedPortalCfg?.controlLabels?.custom_receipt?.trim() || null
 
   useEffect(() => {
     if (page === "web-support") setPage("tech-support")
@@ -493,7 +504,7 @@ function OfficeManagerAppContent() {
   useEffect(() => {
     const cfg = scope?.scopedPortalConfig ?? portalConfig
     if (!isPortalTabVisibleInV2(page, cfg)) {
-      if (page === "leads" || page === "conversations" || page === "settings" || page === "web-support") {
+      if (page === "leads" || page === "conversations" || page === "web-support") {
         setPage("dashboard")
       }
     }
@@ -551,6 +562,7 @@ function OfficeManagerAppContent() {
       setPage={setPage}
     />
     <GlobalAssistantFab />
+    <HelpDeskChatPanel />
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
       <ManagedUserBar />
 
@@ -573,6 +585,8 @@ function OfficeManagerAppContent() {
             managedSchedulingToolsEnabled={false}
             showSettingsShortcut={omSettingsTabAvailable}
             showPaymentsShortcut={omPaymentsTabAvailable}
+            showTimeClockShortcut={showTimeClockShortcut}
+            showCustomReceiptShortcut={showCustomReceiptShortcut}
             profileUserId={user?.id ?? null}
             dashboardDataUserId={scope?.selectedUserId ?? user?.id ?? null}
             labels={{
@@ -588,6 +602,8 @@ function OfficeManagerAppContent() {
               reporting: t("dashboard.quickReporting"),
               jobTypes: t("dashboard.quickJobTypes"),
               todayTodo: t("dashboard.quickTodayTodo"),
+              timeClock: t("dashboard.quickTimeClock"),
+              customReceipt: customReceiptQuickLabel || t("dashboard.quickCustomReceipt"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -630,6 +646,19 @@ function OfficeManagerAppContent() {
               noRecent: t("dashboard.todayWorkNoRecent"),
               openCustomers: t("dashboard.todayWorkOpenCustomers"),
               openCalendar: t("dashboard.todayWorkOpenCalendar"),
+            }}
+          />
+          <DashboardReportsPreview
+            isMobile={isMobile}
+            dataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            onOpenReporting={() => setPage("reporting")}
+            labels={{
+              title: t("dashboard.reportsPreviewTitle"),
+              subtitle: t("dashboard.reportsPreviewSubtitle"),
+              viewAll: t("dashboard.reportsPreviewViewAll"),
+              loading: t("dashboard.reportsPreviewLoading"),
+              noUser: t("dashboard.reportsPreviewNoUser"),
+              openReport: t("dashboard.reportsPreviewOpen"),
             }}
           />
         </>

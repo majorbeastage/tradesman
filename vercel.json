@@ -21,6 +21,7 @@
     "api/outbound-messages.ts": { "maxDuration": 30 },
     "api/twilio-recording.ts": { "maxDuration": 60 },
     "api/platform-tools.ts": { "maxDuration": 60 },
+    "api/payment-requests.ts": { "maxDuration": 60 },
     "api/privacy.ts": { "maxDuration": 30 },
     "api/terms.ts": { "maxDuration": 30 },
     "api/sms.ts": { "maxDuration": 30 },
@@ -51,6 +52,10 @@
     {
       "source": "/api/billing-portal-config",
       "destination": "/api/platform-tools?__route=billing-portal-config"
+    },
+    {
+      "source": "/api/payment-collection-webhook",
+      "destination": "/api/payment-requests?__action=webhook"
     },
     { "source": "/api/help-desk-voice", "destination": "/api/help-desk?__route=voice" },
     { "source": "/api/help-desk-greeting-save", "destination": "/api/help-desk?__route=greeting-save" },

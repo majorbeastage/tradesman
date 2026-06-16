@@ -126,6 +126,46 @@ export function consumeSchedulingCustomerPrefill(): string | null {
   return null
 }
 
+const SCHEDULING_ADD_WIZARD_PREFILL = "tradesman_scheduling_add_wizard_prefill_v1"
+export const SCHEDULING_ADD_WIZARD_PREFILL_EVENT = "tradesman-scheduling-add-wizard-prefill"
+
+export type SchedulingAddWizardPrefill = {
+  customerId?: string | null
+  title?: string
+  startDate?: string
+  startTime?: string
+  durationMinutes?: number
+  jobTypeId?: string | null
+  notes?: string
+}
+
+export function queueSchedulingAddWizardPrefill(prefill: SchedulingAddWizardPrefill): void {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(SCHEDULING_ADD_WIZARD_PREFILL, JSON.stringify(prefill))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeSchedulingAddWizardPrefill(): SchedulingAddWizardPrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(SCHEDULING_ADD_WIZARD_PREFILL)
+    if (!raw) return null
+    sessionStorage.removeItem(SCHEDULING_ADD_WIZARD_PREFILL)
+    const parsed = JSON.parse(raw) as SchedulingAddWizardPrefill
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export function notifySchedulingAddWizardPrefill(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(SCHEDULING_ADD_WIZARD_PREFILL_EVENT))
+}
+
 export function queueCustomReceiptCustomerPrefill(customerId: string): void {
   if (!customerId?.trim() || typeof window === "undefined") return
   try {
@@ -147,6 +187,31 @@ export function consumeCustomReceiptCustomerPrefill(): string | null {
     /* ignore */
   }
   return null
+}
+
+const OPEN_CUSTOM_RECEIPT_MODAL = "tradesman_open_custom_receipt_modal_v1"
+
+/** Open the calendar custom-receipt composer (no customer pre-selected). */
+export function queueOpenCustomReceiptModal(): void {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(OPEN_CUSTOM_RECEIPT_MODAL, "1")
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeOpenCustomReceiptModal(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    if (sessionStorage.getItem(OPEN_CUSTOM_RECEIPT_MODAL)) {
+      sessionStorage.removeItem(OPEN_CUSTOM_RECEIPT_MODAL)
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
 }
 
 export function queueSchedulingQuotePrefill(prefill: SchedulingQuotePrefill): void {
@@ -183,7 +248,7 @@ const CALENDAR_SUITE_NAV = "tradesman_calendar_suite_nav"
 export type QueuedCalendarSuite =
   | { id: "calendar" }
   | { id: "time_clock" }
-  | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" }
+  | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" | "scheduling_settings" }
   | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
   | { id: "managed_job_types" }
 
@@ -239,7 +304,12 @@ export function consumeCalendarSuiteNavigation(): QueuedCalendarSuite | null {
     if (id === "managed_job_types") return { id: "managed_job_types" }
     if (id === "team_management") {
       const panel = o.panel
-      if (panel === "team_members" || panel === "job_types" || panel === "team_map") {
+      if (
+        panel === "team_members" ||
+        panel === "job_types" ||
+        panel === "team_map" ||
+        panel === "scheduling_settings"
+      ) {
         return { id: "team_management", panel }
       }
       return { id: "team_management", panel: "team_members" }

@@ -21,6 +21,47 @@ type Props = {
   saving: boolean
   showSourceValidation?: boolean
   compact?: boolean
+  /** When false, on-file consent omits the disclosure blockquote (e.g. list panel — see full profile). */
+  showDisclosureSnapshot?: boolean
+}
+
+export function CustomerSmsConsentOnFileDisplay({
+  consent,
+  showDisclosureSnapshot = true,
+}: {
+  consent: CustomerSmsConsentRecord
+  showDisclosureSnapshot?: boolean
+}) {
+  return (
+    <div style={{ fontSize: 13, lineHeight: 1.5, color: "#065f46" }}>
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>Express consent on file</div>
+      <div>
+        Recorded {new Date(consent.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} ·{" "}
+        {formatCustomerSmsConsentDetail(consent)}
+      </div>
+      {consent.consent_url ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#047857", wordBreak: "break-all" }}>URL: {consent.consent_url}</div>
+      ) : null}
+      {consent.consent_note ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#047857" }}>{consent.consent_note}</div>
+      ) : null}
+      {showDisclosureSnapshot && consent.disclosure_snapshot ? (
+        <blockquote
+          style={{
+            margin: "10px 0 0",
+            padding: "10px 12px",
+            borderLeft: "3px solid #34d399",
+            background: "#fff",
+            color: "#334155",
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          {consent.disclosure_snapshot}
+        </blockquote>
+      ) : null}
+    </div>
+  )
 }
 
 /** SMS opt-in status + record flow for customer detail (A2P / compliance). */
@@ -37,6 +78,7 @@ export default function CustomerSmsOptInSection({
   saving,
   showSourceValidation = false,
   compact = false,
+  showDisclosureSnapshot = true,
 }: Props) {
   const hasPhone = Boolean(phoneOnFile.trim() || draftPhone.trim())
   const smsBlocked = hasPhone && !consent
@@ -108,37 +150,7 @@ export default function CustomerSmsOptInSection({
         ) : null}
 
         {consent ? (
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: "#065f46" }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>Express consent on file</div>
-            <div>
-              Recorded{" "}
-              {new Date(consent.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}{" "}
-              · {formatCustomerSmsConsentDetail(consent)}
-            </div>
-            {consent.consent_url ? (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#047857", wordBreak: "break-all" }}>
-                URL: {consent.consent_url}
-              </div>
-            ) : null}
-            {consent.consent_note ? (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#047857" }}>{consent.consent_note}</div>
-            ) : null}
-            {consent.disclosure_snapshot ? (
-              <blockquote
-                style={{
-                  margin: "10px 0 0",
-                  padding: "10px 12px",
-                  borderLeft: "3px solid #34d399",
-                  background: "#fff",
-                  color: "#334155",
-                  fontSize: 12,
-                  lineHeight: 1.45,
-                }}
-              >
-                {consent.disclosure_snapshot}
-              </blockquote>
-            ) : null}
-          </div>
+          <CustomerSmsConsentOnFileDisplay consent={consent} showDisclosureSnapshot={showDisclosureSnapshot} />
         ) : hasPhone ? (
           <div style={{ display: "grid", gap: 12 }}>
             <CustomerSmsOptInField

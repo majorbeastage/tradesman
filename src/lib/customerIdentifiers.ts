@@ -1,17 +1,39 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { formatDisplayText } from "./formatDisplayText"
 
 export type CustomerIdentifierRow = { type: string; value: string; is_primary?: boolean }
+
+function identifierValueString(value: unknown): string {
+  return formatDisplayText(value, "")
+}
 
 export function customerPhoneFromIdentifiers(
   identifiers: CustomerIdentifierRow[] | null | undefined,
 ): string {
-  return identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
+  const row = identifiers?.find((i) => i.type === "phone")
+  return identifierValueString(row?.value)
 }
 
 export function customerEmailFromIdentifiers(
   identifiers: CustomerIdentifierRow[] | null | undefined,
 ): string {
-  return identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
+  const row = identifiers?.find((i) => i.type === "email")
+  return identifierValueString(row?.value)
+}
+
+export function customerEmailsFromIdentifiers(
+  identifiers: CustomerIdentifierRow[] | null | undefined,
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const row of identifiers ?? []) {
+    if (row.type !== "email") continue
+    const v = identifierValueString(row.value)
+    if (!v || seen.has(v)) continue
+    seen.add(v)
+    out.push(v)
+  }
+  return out
 }
 
 /** Phone and email for list cells and search (not the “Phone call” / “Email” preference label). */

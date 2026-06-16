@@ -1,4 +1,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
+import {
+  classifyInboundEmailContact,
+  customerEmailMatchesHubKind,
+  deriveOrgGroupKeyFromEmail,
+  mergeCustomerHubMetadata,
+  normalizeCustomerEmail,
+  orgGroupKeysForEmail,
+  parseSplitOrgEmails,
+} from "./_customerContactKind.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -825,12 +834,136 @@ export async function getOrCreateCustomerByPhone(
   return { customerId, previousCustomer: false }
 }
 
+async function findCustomerIdByOrgGroupKeys(
+  supabase: SupabaseClient,
+  userId: string,
+  orgGroupKeys: string[],
+  hubKind: "customer" | "promotional",
+): Promise<string | null> {
+  for (const orgGroupKey of orgGroupKeys) {
+    const { data, error } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("user_id", userId)
+      .filter("metadata->>org_group_key", "eq", orgGroupKey)
+      .filter("metadata->>customer_hub_kind", "eq", hubKind)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw error
+    if (data?.id) return String(data.id)
+  }
+  return null
+}
+
+async function findCustomerIdByOrgEmailSibling(
+  supabase: SupabaseClient,
+  userId: string,
+  normalizedEmail: string,
+  hubKind: "customer" | "promotional",
+): Promise<string | null> {
+  const orgRoot = deriveOrgGroupKeyFromEmail(normalizedEmail)
+  if (!orgRoot) return null
+
+  const { data, error } = await supabase
+    .from("customer_identifiers")
+    .select("customer_id, value, customers!inner(id, metadata, created_at)")
+    .eq("user_id", userId)
+    .eq("type", "email")
+
+  if (error) throw error
+  if (!data?.length) return null
+
+  type Row = {
+    customer_id: string
+    value: string
+    customers: { id: string; metadata: unknown; created_at: string } | Array<{ id: string; metadata: unknown; created_at: string }>
+  }
+
+  let best: { id: string; created_at: string } | null = null
+  for (const row of data as Row[]) {
+    const email = normalizeCustomerEmail(row.value)
+    if (!email || email === normalizedEmail) continue
+    if (deriveOrgGroupKeyFromEmail(email) !== orgRoot) continue
+    const cust = Array.isArray(row.customers) ? row.customers[0] : row.customers
+    if (!cust) continue
+    if (!customerEmailMatchesHubKind(email, cust.metadata, hubKind)) continue
+    if (parseSplitOrgEmails(cust.metadata).includes(normalizedEmail)) continue
+    const created = typeof cust.created_at === "string" ? cust.created_at : ""
+    if (!best || created.localeCompare(best.created_at) < 0) {
+      best = { id: String(row.customer_id), created_at: created }
+    }
+  }
+  return best?.id ?? null
+}
+
+async function ensureCanonicalOrgMetadata(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  classification: ReturnType<typeof classifyInboundEmailContact>,
+): Promise<void> {
+  if (!classification.orgGroupKey) return
+  const { data, error } = await supabase
+    .from("customers")
+    .select("metadata")
+    .eq("id", customerId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error || !data) return
+  const nextMeta = mergeCustomerHubMetadata(data.metadata, {
+    hubKind: classification.hubKind,
+    orgGroupKey: classification.orgGroupKey,
+  })
+  await supabase.from("customers").update({ metadata: nextMeta }).eq("id", customerId).eq("user_id", userId)
+}
+
+async function attachEmailIdentifierToCustomer(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  normalizedEmail: string
+): Promise<void> {
+  const { data: existing, error: lookupErr } = await supabase
+    .from("customer_identifiers")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+    .eq("type", "email")
+    .eq("value", normalizedEmail)
+    .limit(1)
+    .maybeSingle()
+  if (lookupErr) throw lookupErr
+  if (existing?.id) return
+
+  const { data: primaryRow, error: primaryErr } = await supabase
+    .from("customer_identifiers")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+    .eq("type", "email")
+    .eq("is_primary", true)
+    .limit(1)
+    .maybeSingle()
+  if (primaryErr) throw primaryErr
+
+  const { error: insertIdentifierErr } = await supabase.from("customer_identifiers").insert({
+    user_id: userId,
+    customer_id: customerId,
+    type: "email",
+    value: normalizedEmail,
+    is_primary: !primaryRow?.id,
+    verified: false,
+  })
+  if (insertIdentifierErr) throw insertIdentifierErr
+}
+
 export async function getOrCreateCustomerByEmail(
   supabase: SupabaseClient,
   userId: string,
   email: string
 ): Promise<{ customerId: string; previousCustomer: boolean }> {
-  const normalizedEmail = String(email || "").trim().toLowerCase()
+  const normalizedEmail = normalizeCustomerEmail(email)
   if (!normalizedEmail) throw new Error("Email is required")
   const { data: existingIdentifier, error: identifierErr } = await supabase
     .from("customer_identifiers")
@@ -845,9 +978,32 @@ export async function getOrCreateCustomerByEmail(
     return { customerId: String(existingIdentifier.customer_id), previousCustomer: true }
   }
 
+  const classification = classifyInboundEmailContact(normalizedEmail)
+  if (classification.orgGroupKey) {
+    const keys = orgGroupKeysForEmail(normalizedEmail)
+    const orgCustomerId =
+      (await findCustomerIdByOrgGroupKeys(supabase, userId, keys, classification.hubKind)) ??
+      (await findCustomerIdByOrgEmailSibling(supabase, userId, normalizedEmail, classification.hubKind))
+    if (orgCustomerId) {
+      await attachEmailIdentifierToCustomer(supabase, userId, orgCustomerId, normalizedEmail)
+      await ensureCanonicalOrgMetadata(supabase, userId, orgCustomerId, classification)
+      return { customerId: orgCustomerId, previousCustomer: true }
+    }
+  }
+
+  const metadata = mergeCustomerHubMetadata(null, {
+    hubKind: classification.hubKind,
+    orgGroupKey: classification.orgGroupKey,
+  })
+
   const { data: customer, error: customerErr } = await supabase
     .from("customers")
-    .insert({ user_id: userId, display_name: normalizedEmail, notes: null })
+    .insert({
+      user_id: userId,
+      display_name: classification.displayName,
+      notes: null,
+      metadata,
+    })
     .select("id")
     .single()
   if (customerErr) throw customerErr

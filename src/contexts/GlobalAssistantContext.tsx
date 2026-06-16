@@ -40,6 +40,12 @@ import { useSetupWizardOptional } from "./SetupWizardContext"
 import { getSetupMiniWizardDef } from "../lib/setupGuideWizards"
 
 
+export type HelpDeskChatMessage = {
+  id: string
+  role: "user" | "assistant"
+  text: string
+}
+
 type GlobalAssistantContextValue = {
   assistantText: string
   setAssistantText: (v: string) => void
@@ -68,6 +74,12 @@ type GlobalAssistantContextValue = {
   canTrainVocabulary: boolean
   vocabularyTrainOpen: boolean
   toggleVocabularyTrain: () => void
+  /** Persistent help-desk chat panel (Help Desk page → AI Chat). */
+  helpDeskChatOpen: boolean
+  helpDeskChatMessages: HelpDeskChatMessage[]
+  openHelpDeskChat: () => void
+  closeHelpDeskChat: () => void
+  sendHelpDeskChatMessage: (text: string) => Promise<void>
 }
 
 const GlobalAssistantContext = createContext<GlobalAssistantContextValue | null>(null)
@@ -100,6 +112,20 @@ export function GlobalAssistantProvider({
   const { setView } = useView()
   const [assistantText, setAssistantText] = useState("")
   const [assistantNote, setAssistantNote] = useState<string | null>(null)
+  const assistantNoteRef = useRef<string | null>(null)
+  const setNote = useCallback((msg: string | null) => {
+    assistantNoteRef.current = msg
+    setAssistantNote(msg)
+  }, [])
+  const appendHelpDeskAssistantReply = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setHelpDeskChatMessages((prev) => {
+      const last = prev[prev.length - 1]
+      if (last?.role === "assistant" && last.text === trimmed) return prev
+      return [...prev, { id: crypto.randomUUID(), role: "assistant", text: trimmed }]
+    })
+  }, [])
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [micFabVisible, setMicFabVisible] = useState(() => isGlobalAssistantMicEnabled(profileMetadata))
   const [reportModalOpen, setReportModalOpen] = useState(false)
@@ -120,6 +146,26 @@ export function GlobalAssistantProvider({
   const [vocabularyTrainOpen, setVocabularyTrainOpen] = useState(false)
   const [vocabularySaveBusy, setVocabularySaveBusy] = useState(false)
   const [vocabularySaveError, setVocabularySaveError] = useState<string | null>(null)
+  const [helpDeskChatOpen, setHelpDeskChatOpen] = useState(false)
+  const [helpDeskChatMessages, setHelpDeskChatMessages] = useState<HelpDeskChatMessage[]>([])
+
+  const openHelpDeskChat = useCallback(() => {
+    setHelpDeskChatOpen(true)
+    setHelpDeskChatMessages((prev) => {
+      if (prev.length > 0) return prev
+      return [
+        {
+          id: "welcome",
+          role: "assistant",
+          text: "Hi! I can help you find settings, open tabs, locate customers, and walk through setup. Try “take me to calendar”, “how do I set up payments?”, or “open setup guide”.",
+        },
+      ]
+    })
+  }, [])
+
+  const closeHelpDeskChat = useCallback(() => {
+    setHelpDeskChatOpen(false)
+  }, [])
 
   const reloadCustomVocabulary = useCallback(async () => {
     if (!supabase) return
@@ -184,7 +230,7 @@ export function GlobalAssistantProvider({
         createdBy: profileUserId ?? undefined,
       }
       await persistVocabularyEntries([entry, ...customVocabulary])
-      setAssistantNote(`Saved training for “${entry.phrase}”.`)
+      setNote(`Saved training for “${entry.phrase}”.`)
     },
     [customVocabulary, persistVocabularyEntries, profileUserId],
   )
@@ -207,17 +253,17 @@ export function GlobalAssistantProvider({
   const executeAssistantAction = useCallback(
     async (action: GlobalAssistantAction) => {
       if (action.type === "clarify") {
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "open_setup_guide") {
-        setAssistantNote(action.message)
+        setNote(action.message)
         openSetupGuide()
         return
       }
       if (action.type === "open_mini_wizard") {
         setupWizard?.launchWizard(action.wizardId)
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "open_admin") {
@@ -227,37 +273,37 @@ export function GlobalAssistantProvider({
           /* ignore */
         }
         setView("admin")
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "explain") {
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "open_current_customer") {
         const id = pageSnapshot.selectedCustomerId?.trim()
         if (!id) {
-          setAssistantNote("Open a customer on the Customers tab first, then try again.")
+          setNote("Open a customer on the Customers tab first, then try again.")
           return
         }
         queueCustomerFocus(id)
         setPage("customers")
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "create_estimate" || action.type === "focus_customer_sms") {
         if (!supabase || !profileUserId) {
-          setAssistantNote("Sign in to use customer actions.")
+          setNote("Sign in to use customer actions.")
           return
         }
-        setAssistantNote(action.message)
+        setNote(action.message)
         try {
           const resolved = await resolveCustomerIdForAssistant(supabase, profileUserId, {
             customerId: action.customerId,
             customerQuery: action.customerQuery,
           })
           if (!resolved) {
-            setAssistantNote("Name a customer or open their record on Customers first.")
+            setNote("Name a customer or open their record on Customers first.")
             return
           }
           if ("picks" in resolved) {
@@ -279,44 +325,45 @@ export function GlobalAssistantProvider({
                       },
               })),
             })
+            setNote("Several customers match. Pick one in the dialog.")
             return
           }
           if (action.type === "create_estimate") {
             const tabs = parseContext.availableTabIds
             if (tabs?.length && !tabs.includes("quotes")) {
-              setAssistantNote("Estimates is not enabled on your portal menu.")
+              setNote("Estimates is not enabled on your portal menu.")
               return
             }
             queueQuotesCustomerPrefill(resolved.id)
             setPage("quotes")
-            setAssistantNote(`Opening estimate for ${resolved.name}.`)
+            setNote(`Opening estimate for ${resolved.name}.`)
             return
           }
           queueCustomerFocus(resolved.id)
           queueCustomerAssistantSmsFocus(resolved.id)
           setPage("customers")
-          setAssistantNote(`Opening ${resolved.name} — SMS compose is below (complete opt-in if required).`)
+          setNote(`Opening ${resolved.name} — SMS compose is below (complete opt-in if required).`)
         } catch (e) {
-          setAssistantNote(e instanceof Error ? e.message : "Could not resolve customer.")
+          setNote(e instanceof Error ? e.message : "Could not resolve customer.")
         }
         return
       }
       if (action.type === "open_customer") {
         queueCustomerFocus(action.customerId)
         setPage("customers")
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "open_last_missed_call") {
         if (!supabase || !profileUserId) {
-          setAssistantNote("Sign in to look up missed calls.")
+          setNote("Sign in to look up missed calls.")
           return
         }
-        setAssistantNote(action.message)
+        setNote(action.message)
         try {
           const hit = await findLastMissedCallCustomer(supabase, profileUserId)
           if (!hit) {
-            setAssistantNote(
+            setNote(
               "No missed call with a customer record found yet. Check Customers after an inbound call goes to voicemail.",
             )
             return
@@ -328,19 +375,19 @@ export function GlobalAssistantProvider({
             message: `Opening ${hit.display_name} (last missed call).`,
           })
         } catch (e) {
-          setAssistantNote(e instanceof Error ? e.message : "Could not load missed call.")
+          setNote(e instanceof Error ? e.message : "Could not load missed call.")
         }
         return
       }
       if (action.type === "find_customer") {
         if (!supabase || !profileUserId) {
-          setAssistantNote("Sign in to look up customers.")
+          setNote("Sign in to look up customers.")
           return
         }
-        setAssistantNote(action.message)
+        setNote(action.message)
         const hits = await searchCustomersByQuery(supabase, profileUserId, action.query)
         if (hits.length === 0) {
-          setAssistantNote(`No customer matched “${action.query}”. Try their full name from your customer list.`)
+          setNote(`No customer matched “${action.query}”. Try their full name from your customer list.`)
           return
         }
         if (hits.length === 1) {
@@ -364,18 +411,19 @@ export function GlobalAssistantProvider({
             },
           })),
         })
+        setNote("Several customers match. Pick one in the dialog.")
         return
       }
       if (action.type === "open_specialty_report") {
         const tabs = parseContext.availableTabIds
         if (tabs?.length && !tabs.includes("quotes")) {
-          setAssistantNote("Estimates is not enabled on your portal menu.")
+          setNote("Estimates is not enabled on your portal menu.")
           return
         }
         const quoteId = action.quoteId?.trim() || pageSnapshot.selectedQuoteId?.trim() || undefined
         queueOpenSpecialtyReportWizard({ quoteId })
         setPage("quotes")
-        setAssistantNote(
+        setNote(
           quoteId
             ? action.message
             : "Opening Estimates. Select an estimate row, then tap Start report or say start report again.",
@@ -391,12 +439,12 @@ export function GlobalAssistantProvider({
         }
         queueAssistantHandoff(payload)
         setPage("quotes")
-        setAssistantNote(action.message)
+        setNote(action.message)
         return
       }
       if (action.type === "navigate") {
         setPage(action.page)
-        setAssistantNote(action.message)
+        setNote(action.message)
       }
     },
     [openSetupGuide, pageSnapshot.selectedCustomerId, parseContext.availableTabIds, profileUserId, setPage, setView, setupWizard],
@@ -405,7 +453,7 @@ export function GlobalAssistantProvider({
   const runAssistantCommand = useCallback(
     async (raw: string) => {
       setAssistantBusy(true)
-      setAssistantNote(null)
+      setNote(null)
       setConfirmDialog(null)
       try {
         let parsed = parseAssistantCommand(raw, parseContext)
@@ -414,7 +462,7 @@ export function GlobalAssistantProvider({
           const { data: sessionData } = await supabase.auth.getSession()
           const token = sessionData.session?.access_token
           if (token) {
-            setAssistantNote("Understanding phrasing…")
+            setNote("Understanding phrasing…")
             const llmParsed = await routePlatformAssistantWithLlm(
               token,
               raw,
@@ -431,7 +479,7 @@ export function GlobalAssistantProvider({
         const { action, confidence, alternatives } = parsed
 
         if (action.type === "clarify" || confidence < ASSISTANT_CONFIRM_MIN) {
-          setAssistantNote(action.message)
+          setNote(action.message)
           return
         }
 
@@ -475,11 +523,26 @@ export function GlobalAssistantProvider({
           message: `I'm about ${Math.round(confidence)}% sure. Confirm what you meant:`,
           options,
         })
+        setNote(`I'm about ${Math.round(confidence)}% sure. Pick an option in the dialog.`)
       } finally {
         setAssistantBusy(false)
       }
     },
     [executeAssistantAction, parseContext],
+  )
+
+  const sendHelpDeskChatMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed || assistantBusy) return
+      setHelpDeskChatMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: trimmed }])
+      await runAssistantCommand(trimmed)
+      const reply = assistantNoteRef.current?.trim()
+      if (reply && reply !== "Understanding phrasing…") {
+        appendHelpDeskAssistantReply(reply)
+      }
+    },
+    [appendHelpDeskAssistantReply, assistantBusy, runAssistantCommand],
   )
 
   const onVoiceSessionEnd = useCallback(
@@ -524,8 +587,8 @@ export function GlobalAssistantProvider({
       void runAssistantCommand(t)
       setAssistantText("")
     }
-    setAssistantNote(null)
-  }, [assistantText, runAssistantCommand, stopListening])
+    setNote(null)
+  }, [assistantText, runAssistantCommand, stopListening, setNote])
 
   const toggleVoiceListening = useCallback(
     (seedText?: string) => {
@@ -537,13 +600,13 @@ export function GlobalAssistantProvider({
       const base = fresh ? "" : seedText
       if (fresh) {
         setAssistantText("")
-        setAssistantNote(null)
+        setNote(null)
       } else if (base.trim()) {
         setAssistantText(base)
       }
       const started = startListening(base.trim() ? base : "")
       if (started) {
-        setAssistantNote(
+        setNote(
           fresh
             ? "Listening… say a tab or task, then stop or tap Send. Example: take me to customers."
             : "Listening… speak your update, then stop or tap Send.",
@@ -584,6 +647,11 @@ export function GlobalAssistantProvider({
       canTrainVocabulary,
       vocabularyTrainOpen,
       toggleVocabularyTrain,
+      helpDeskChatOpen,
+      helpDeskChatMessages,
+      openHelpDeskChat,
+      closeHelpDeskChat,
+      sendHelpDeskChatMessage,
     }),
     [
       assistantText,
@@ -605,6 +673,11 @@ export function GlobalAssistantProvider({
       canTrainVocabulary,
       vocabularyTrainOpen,
       toggleVocabularyTrain,
+      helpDeskChatOpen,
+      helpDeskChatMessages,
+      openHelpDeskChat,
+      closeHelpDeskChat,
+      sendHelpDeskChatMessage,
     ],
   )
 
@@ -632,7 +705,10 @@ export function GlobalAssistantProvider({
         options={confirmDialog?.options ?? []}
         onPick={(action) => {
           setConfirmDialog(null)
-          void executeAssistantAction(action)
+          void executeAssistantAction(action).then(() => {
+            const reply = assistantNoteRef.current?.trim()
+            if (reply) appendHelpDeskAssistantReply(reply)
+          })
         }}
         onCancel={() => setConfirmDialog(null)}
       />

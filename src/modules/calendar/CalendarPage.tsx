@@ -12,6 +12,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
+import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
 import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
@@ -51,9 +52,15 @@ import { useJobTypesModalOptional } from "../../contexts/JobTypesModalContext"
 import {
   consumeCalendarSuiteNavigation,
   consumeCustomReceiptCustomerPrefill,
+  consumeOpenCustomReceiptModal,
+  consumeSchedulingAddWizardPrefill,
   consumeSchedulingCustomerPrefill,
   consumeSchedulingQuotePrefill,
+  queueQuotesCustomerPrefill,
+  SCHEDULING_ADD_WIZARD_PREFILL_EVENT,
+  type SchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
+import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -61,8 +68,12 @@ import {
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
 import { uploadEntityAttachmentFile } from "../../lib/uploadCommAttachment"
-import { buildReceiptPdfBytes, downloadPdfBlob } from "../../lib/documentPdf"
-import { buildCalendarReceiptPdfSections } from "../../lib/receiptItemizedLines"
+import { buildReceiptPdfBytes, downloadPdfBlob, uint8ArrayToBase64 } from "../../lib/documentPdf"
+import { buildCalendarReceiptBodyText, buildCalendarReceiptPdfSections } from "../../lib/receiptItemizedLines"
+import {
+  buildCalendarEventLineItemRows,
+  calendarEventLineItemSummary,
+} from "../../lib/calendarEventLineItems"
 import {
   parseCalendarEventReceiptMeta,
   serializeCalendarReceiptMeta,
@@ -101,6 +112,12 @@ function formatJobTypeSelectLabel(jt: JobType): string {
     return `${jt.name} · ${hours === 1 ? "1 hr" : `${hours} hr`}`
   }
   return `${jt.name} · ${mins} min`
+}
+
+function formatAddCustomerPickerLabel(c: CustomerReceiptPickerRow): string {
+  const name = (c.display_name ?? "").trim() || c.id
+  const contact = c.phone?.trim() || c.email?.trim() || c.service_address?.trim()
+  return contact ? `${name} · ${contact}` : name
 }
 
 function sortJobTypesByName(rows: JobType[]): JobType[] {
@@ -195,20 +212,6 @@ function isToday(d: Date): boolean {
   return isSameDay(d, new Date())
 }
 
-function buildCalendarReceiptBody(ev: CalendarEvent): string {
-  const lines = [
-    `Job: ${ev.title}`,
-    `When: ${new Date(ev.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – ${new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
-    `Scheduled: ${formatEventDurationMinutes(ev.start_at, ev.end_at)}`,
-  ]
-  if (ev.quote_total != null && ev.quote_total > 0) lines.push(`Total: $${Number(ev.quote_total).toFixed(2)}`)
-  if (ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0) {
-    lines.push(`Mileage: ${Number(ev.mileage_miles)} mi`)
-  }
-  if (ev.notes?.trim()) lines.push(`Notes: ${ev.notes.trim()}`)
-  return lines.join("\n")
-}
-
 function getTimeOptions(incrementMinutes: 15 | 60): string[] {
   const options: string[] = []
   for (let h = 0; h < 24; h++) {
@@ -217,15 +220,6 @@ function getTimeOptions(incrementMinutes: 15 | 60): string[] {
     }
   }
   return options
-}
-
-function formatEventDurationMinutes(startIso: string, endIso: string): string {
-  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
-  const m = Math.max(0, Math.round(ms / 60000))
-  if (m < 60) return `${m} min`
-  const h = Math.floor(m / 60)
-  const r = m % 60
-  return r ? `${h} h ${r} min` : `${h} h`
 }
 
 /** Readable message from /api/outbound-messages JSON error body. */
@@ -245,7 +239,7 @@ function formatOutboundError(raw: string): string {
 type CalendarSuiteState =
   | { id: "calendar" }
   | { id: "time_clock" }
-  | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" }
+  | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" | "scheduling_settings" }
   | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
   | { id: "managed_job_types" }
 
@@ -309,7 +303,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [expanded, setExpanded] = useState(false)
   const [showAddItem, setShowAddItem] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [openCustomButtonId, setOpenCustomButtonId] = useState<string | null>(null)
   const [customButtonFormValues, setCustomButtonFormValues] = useState<Record<string, string>>({})
@@ -356,6 +349,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addNotes, setAddNotes] = useState("")
   const [addQuoteId, setAddQuoteId] = useState<string | null>(null)
   const [addCustomerId, setAddCustomerId] = useState<string | null>(null)
+  const [addCustomerOptions, setAddCustomerOptions] = useState<CustomerReceiptPickerRow[]>([])
+  const [addCustomerSearch, setAddCustomerSearch] = useState("")
   const [addSaving, setAddSaving] = useState(false)
 
   // Job type form (managed in shared JobTypesManagerModal)
@@ -381,8 +376,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [receiptNewQty, setReceiptNewQty] = useState("1")
   const [receiptNewUnit, setReceiptNewUnit] = useState("0")
   const [receiptNewKind, setReceiptNewKind] = useState("misc")
-  const [eventWantsLineItems, setEventWantsLineItems] = useState(false)
-  const [eventWantsLineItemsSaving, setEventWantsLineItemsSaving] = useState(false)
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
 
@@ -403,6 +396,23 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const v = fromLines ?? qTot
     return v != null && Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : null
   }, [linkedQuoteLiveTotal, selectedEvent?.quote_total])
+
+  const eventLineItemRows = useMemo(() => {
+    if (!selectedEvent) return []
+    const jt =
+      selectedEvent.job_types && !Array.isArray(selectedEvent.job_types)
+        ? selectedEvent.job_types
+        : jobTypes.find((j) => j.id === selectedEvent.job_type_id)
+    return buildCalendarEventLineItemRows({
+      jobTypeMaterials: jt?.materials_list,
+      eventMaterials: selectedEvent.materials_list,
+      quoteItems: quoteItemsForReceipt,
+      receiptOverrides: receiptOverridesDraft,
+      receiptAdditional: receiptAdditionalDraft,
+    })
+  }, [selectedEvent, jobTypes, quoteItemsForReceipt, receiptOverridesDraft, receiptAdditionalDraft])
+
+  const eventLineItemSummaryHint = useMemo(() => calendarEventLineItemSummary(eventLineItemRows), [eventLineItemRows])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -483,7 +493,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const showCalAddItem = getPageActionVisible(portalConfig, "calendar", "add_item_to_calendar") && getOmPageActionVisible(portalConfig, "calendar", "add_item")
   const showCalAutoResponse = false
   const showCalJobTypes = getOmPageActionVisible(portalConfig, "calendar", "job_types")
-  const showCalSettings = getOmPageActionVisible(portalConfig, "calendar", "settings")
+  const showCalSettings =
+    getPageActionVisible(portalConfig, "calendar", "working_hours") && getOmPageActionVisible(portalConfig, "calendar", "settings")
   const showCalReceiptTemplate =
     getPageActionVisible(portalConfig, "calendar", "receipt_template") && getOmPageActionVisible(portalConfig, "calendar", "receipt_template")
   const showCalCustomReceipt =
@@ -492,6 +503,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const receiptTemplateButtonLabel = portalConfig?.controlLabels?.receipt_template ?? "Receipt template"
   const customReceiptButtonLabel = portalConfig?.controlLabels?.custom_receipt ?? "Custom Receipt"
   const completionSettingsButtonLabel = portalConfig?.controlLabels?.completion_settings ?? "Job completion"
+  const calendarSettingsButtonLabel = portalConfig?.controlLabels?.working_hours ?? "Settings"
   const showCalendarCustomerPayment =
     getPageActionVisible(portalConfig, "calendar", "customer_payment") &&
     getOmPageActionVisible(portalConfig, "calendar", "customer_payment")
@@ -506,8 +518,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const arReminderMinsRef = useRef(arReminderMins)
   arReminderMinsRef.current = arReminderMins
 
+  const schedulingSettingsPanelOpen =
+    calendarSuite.id === "team_management" && calendarSuite.panel === "scheduling_settings"
+
   useEffect(() => {
-    if (!showSettings || calendarSettingsItemsWithOrg.length === 0) return
+    if (!schedulingSettingsPanelOpen || calendarSettingsItemsWithOrg.length === 0) return
     const next: Record<string, string> = {}
     calendarSettingsItemsWithOrg.forEach((item) => {
       if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
@@ -515,7 +530,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       else next[item.id] = ""
     })
     setSettingsFormValues((prev) => (Object.keys(next).length ? next : prev))
-  }, [showSettings, calendarSettingsItemsWithOrg])
+  }, [schedulingSettingsPanelOpen, calendarSettingsItemsWithOrg])
 
   function isCalendarSettingItemVisible(item: PortalSettingItem): boolean {
     return isPortalSettingDependencyVisible(item, calendarSettingsItems, settingsFormValues)
@@ -567,6 +582,29 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     setAddItemPortalValues(next)
   }, [showAddItem, addItemPortalItems])
+
+  useEffect(() => {
+    if (!selectedEvent || !showRecurringRemoveChoices || addItemPortalItems.length === 0) {
+      setSeriesRecurrenceValues({})
+      return
+    }
+    const next: Record<string, string> = {}
+    for (const item of addItemPortalItems) {
+      if (
+        item.type === "checkbox" &&
+        (item.id === "make_event_recurring" || /recurring/i.test(item.id) || /recurring/i.test(item.label))
+      ) {
+        next[item.id] = "checked"
+      } else if (item.type === "dropdown" && item.options?.length) {
+        next[item.id] = item.options[0]
+      } else if (item.type === "checkbox") {
+        next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      } else {
+        next[item.id] = ""
+      }
+    }
+    setSeriesRecurrenceValues(next)
+  }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems])
 
   const isOfficeManagerOrAdmin = authRole === "office_manager" || authRole === "admin"
   const showTeamManagementEntry = isOfficeManagerOrAdmin
@@ -712,6 +750,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [calendarEventEntityUploadBusy, setCalendarEventEntityUploadBusy] = useState(false)
   const [receiptPdfBusy, setReceiptPdfBusy] = useState(false)
   const [addItemPortalValues, setAddItemPortalValues] = useState<Record<string, string>>({})
+  const [seriesRecurrenceValues, setSeriesRecurrenceValues] = useState<Record<string, string>>({})
+  const [seriesRecurrenceSaving, setSeriesRecurrenceSaving] = useState(false)
   const [autoResponsePortalValues, setAutoResponsePortalValues] = useState<Record<string, string>>({})
   const [jobTypesPortalValues, setJobTypesPortalValues] = useState<Record<string, string>>({})
 
@@ -1101,9 +1141,125 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!supabase || !completeFlowEvent?.id) return
     const sb = supabase
     const ownerUserId = completeFlowEvent.user_id ?? userId
-    const bodyBase = buildCalendarReceiptBody(completeFlowEvent)
+    let itemize = false
+    let includeMileage = false
+    let mileageRatePerMile = 0
+    if (ownerUserId) {
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("metadata")
+        .eq("id", ownerUserId)
+        .maybeSingle()
+      const meta =
+        prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+          ? (prof.metadata as Record<string, unknown>)
+          : {}
+      itemize = meta.receipt_template_itemize === true
+      const rr = meta.receipt_mileage_rate_per_mile
+      if (typeof rr === "number" && Number.isFinite(rr) && rr >= 0) mileageRatePerMile = rr
+      else if (typeof rr === "string") {
+        const p = Number.parseFloat(rr.replace(/[^0-9.]/g, ""))
+        if (Number.isFinite(p) && p >= 0) mileageRatePerMile = p
+      }
+      const includeMileageExplicit = meta.receipt_template_include_mileage
+      includeMileage =
+        includeMileageExplicit === true ||
+        (includeMileageExplicit !== false && itemize && mileageRatePerMile > 0)
+    }
+    const bodyBase = await buildCalendarReceiptBodyText(sb, completeFlowEvent, {
+      itemizeMaterials: itemize,
+      mileageRatePerMile: includeMileage && mileageRatePerMile > 0 ? mileageRatePerMile : null,
+    })
     const note = completeCompletionNote.trim()
     const body = note ? `${bodyBase}\n\nCompletion note:\n${note}` : bodyBase
+    let receiptPdfInline: { filename: string; content: string } | undefined
+    try {
+      setReceiptPdfBusy(true)
+      const prior = completeFlowEvent
+      const evForPdf = prior
+      const profileUserId = evForPdf.user_id ?? userId
+      let templateHeader: string | null = null
+      let templateFooter: string | null = null
+      let receiptBusinessLabel = "Receipt"
+      let logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>> = null
+      if (profileUserId) {
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("metadata, document_template_receipt, display_name")
+          .eq("id", profileUserId)
+          .maybeSingle()
+        const foot = (prof as { document_template_receipt?: string | null } | null)?.document_template_receipt
+        templateFooter = typeof foot === "string" && foot.trim() ? foot.trim() : null
+        const dn = (prof as { display_name?: string | null } | null)?.display_name
+        if (typeof dn === "string" && dn.trim()) receiptBusinessLabel = dn.trim()
+        const meta =
+          prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+            ? (prof.metadata as Record<string, unknown>)
+            : {}
+        const introRaw = meta.receipt_template_intro
+        templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
+        if (meta.receipt_template_show_logo === true) {
+          const u = resolveReceiptTemplateLogoUrl(meta)
+          if (u) logo = await fetchQuoteLogoForExport(u)
+        }
+      }
+      const receiptMeta = parseCalendarEventReceiptMeta(evForPdf.metadata)
+      const miles =
+        evForPdf.mileage_miles != null && Number.isFinite(Number(evForPdf.mileage_miles)) && Number(evForPdf.mileage_miles) > 0
+          ? Number(evForPdf.mileage_miles)
+          : 0
+      const sections = await buildCalendarReceiptPdfSections(sb, {
+        quote_id: evForPdf.quote_id,
+        materials_list: evForPdf.materials_list,
+        job_types: evForPdf.job_types ?? null,
+        start_at: evForPdf.start_at,
+        end_at: evForPdf.end_at,
+        receiptMeta,
+        itemizeMaterials: itemize,
+        mileageMiles: miles > 0 ? miles : null,
+        mileageRatePerMile: includeMileage && mileageRatePerMile > 0 ? mileageRatePerMile : null,
+      })
+      const mileageCostInItemized = includeMileage && miles > 0 && mileageRatePerMile > 0
+      const mileageLabel = miles > 0 && !mileageCostInItemized ? `Mileage: ${miles} mi` : null
+      const amount =
+        sections.lineSubtotal != null
+          ? `Total: $${sections.lineSubtotal.toFixed(2)}`
+          : evForPdf.quote_total != null && evForPdf.quote_total > 0
+            ? `Quote total: $${Number(evForPdf.quote_total).toFixed(2)}`
+            : null
+      const pdfBytes = await buildReceiptPdfBytes({
+        businessLabel: receiptBusinessLabel,
+        customerName: evForPdf.customers?.display_name ?? "Customer",
+        jobTitle: evForPdf.title,
+        completedAtLabel: new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
+        amountLabel: amount,
+        templateHeader,
+        logo,
+        templateFooter,
+        scheduledDurationLabel: sections.scheduledDurationLabel,
+        quoteLineItems: sections.quoteLines,
+        includeMaterialsChecklist: itemize,
+        materialsChecklistLines: sections.materialsChecklistLines,
+        lineSubtotalLabel:
+          sections.lineSubtotal != null
+            ? itemize
+              ? `Itemized subtotal: $${sections.lineSubtotal.toFixed(2)}`
+              : `Line items subtotal: $${sections.lineSubtotal.toFixed(2)}`
+            : null,
+        mileageLabel,
+        receiptItemizeMode: itemize,
+      })
+      if (pdfBytes.length > 0 && pdfBytes.length <= 2_500_000) {
+        receiptPdfInline = {
+          filename: `receipt-${evForPdf.id.slice(0, 8)}.pdf`,
+          content: uint8ArrayToBase64(pdfBytes),
+        }
+      }
+    } catch {
+      receiptPdfInline = undefined
+    } finally {
+      setReceiptPdfBusy(false)
+    }
 
     const actingId = authUserId || userId
     const isAssignedUserCompleting = actingId === ownerUserId
@@ -1179,6 +1335,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             to: completeCustomerEmail,
             subject: `Receipt: ${completeFlowEvent.title}`,
             body,
+            ...(receiptPdfInline ? { attachments: [receiptPdfInline], requireAttachments: true } : {}),
           })
           const raw = await res.text()
           if (!res.ok) sendErrs.push(formatOutboundError(raw))
@@ -1207,6 +1364,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             to: selfEmail,
             subject: `Receipt copy: ${completeFlowEvent.title}`,
             body,
+            ...(receiptPdfInline ? { attachments: [receiptPdfInline], requireAttachments: true } : {}),
           })
           const raw = await res.text()
           if (!res.ok) sendErrs.push(formatOutboundError(raw))
@@ -1295,7 +1453,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         miles > 0 && !mileageCostInItemized ? `Mileage: ${miles} mi` : null
       const customerName = ev.customers?.display_name ?? "Customer"
       const amount =
-        ev.quote_total != null && ev.quote_total > 0 ? `Quote total: $${Number(ev.quote_total).toFixed(2)}` : null
+        sections.lineSubtotal != null
+          ? `Total: $${sections.lineSubtotal.toFixed(2)}`
+          : ev.quote_total != null && ev.quote_total > 0
+            ? `Quote total: $${Number(ev.quote_total).toFixed(2)}`
+            : null
       const bytes = await buildReceiptPdfBytes({
         businessLabel: receiptBusinessLabel,
         customerName,
@@ -1448,6 +1610,88 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     loadEvents()
   }
 
+  async function updateSeriesRecurrence() {
+    if (!supabase || !selectedEvent?.id) return
+    let series = resolveRecurrenceFromPortal(addItemPortalItems, seriesRecurrenceValues)
+    if (!series) {
+      alert("Turn on recurring and choose a frequency to update this series.")
+      return
+    }
+    series = applyRecurrenceEndLimitsFromPortal(addItemPortalItems, seriesRecurrenceValues, series)
+    const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
+    if (Number.isNaN(start.getTime())) {
+      alert("Enter a valid date and time for the series anchor.")
+      return
+    }
+    const addMinRaw = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+    if (addMinRaw == null) {
+      alert("Enter a valid duration.")
+      return
+    }
+    const working = readCalendarWorkingHoursFromStorage()
+    const addMin = clampAppointmentDurationMinutes(addMinRaw, {
+      start,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
+    const durationMs = addMin * 60 * 1000
+    const starts = computeOccurrenceStarts(start, series)
+    const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
+    const owner = selectedEvent.user_id ?? userId
+    const scopeId = selectedEvent.recurrence_series_id
+    const legacyIds = selectedLegacyRecurringIds
+    const replaceIds = scopeId
+      ? events.filter((e) => e.recurrence_series_id === scopeId && !e.removed_at && !e.completed_at).map((e) => e.id)
+      : legacyIds && legacyIds.length >= 2
+        ? legacyIds.filter((id) => {
+            const row = events.find((e) => e.id === id)
+            return row && !row.completed_at && !row.removed_at
+          })
+        : [selectedEvent.id]
+    if (!window.confirm(`Replace ${replaceIds.length} upcoming occurrence(s) with ${newRanges.length} new date(s) using the recurrence settings below?`)) {
+      return
+    }
+    setSeriesRecurrenceSaving(true)
+    try {
+      const nowIso = new Date().toISOString()
+      if (replaceIds.length > 0) {
+        const { error: rmErr } = await supabase
+          .from("calendar_events")
+          .update({ removed_at: nowIso })
+          .in("id", replaceIds)
+          .is("removed_at", null)
+        if (rmErr) throw new Error(rmErr.message)
+      }
+      const recurrenceSeriesId = newRanges.length > 1 ? crypto.randomUUID() : null
+      const rowBase = {
+        user_id: owner,
+        title: selectedEvent.title,
+        job_type_id: selectedEvent.job_type_id || null,
+        quote_id: selectedEvent.quote_id || null,
+        customer_id: selectedEvent.customer_id || null,
+        notes: selectedEvent.notes?.trim() || null,
+        materials_list: selectedEvent.materials_list?.trim() || null,
+        mileage_miles: selectedEvent.mileage_miles ?? null,
+        quote_total: selectedEvent.quote_total ?? null,
+        metadata: selectedEvent.metadata ?? null,
+        ...(recurrenceSeriesId ? { recurrence_series_id: recurrenceSeriesId } : {}),
+      }
+      const rows = newRanges.map(({ s, e }) => ({
+        ...rowBase,
+        start_at: s.toISOString(),
+        end_at: e.toISOString(),
+      }))
+      const { error: insErr } = await supabase.from("calendar_events").insert(rows)
+      if (insErr) throw new Error(insErr.message)
+      setSelectedEvent(null)
+      loadEvents()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSeriesRecurrenceSaving(false)
+    }
+  }
+
   async function saveEventJobSite() {
     if (!supabase || !selectedEvent?.id) return
     setJobSiteSaving(true)
@@ -1512,28 +1756,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
-    setEventWantsLineItems(true)
     loadEvents()
-  }
-
-  async function saveEventWantsLineItems(wants: boolean) {
-    if (!supabase || !selectedEvent?.id) return
-    setEventWantsLineItemsSaving(true)
-    const parsed = parseCalendarEventReceiptMeta(selectedEvent.metadata)
-    const nextMeta = serializeCalendarReceiptMeta(selectedEvent.metadata, {
-      ...parsed,
-      receipt_quote_overrides: receiptOverridesDraft,
-      receipt_additional_lines: receiptAdditionalDraft,
-      receipt_wants_line_items: wants,
-    })
-    const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", selectedEvent.id)
-    setEventWantsLineItemsSaving(false)
-    if (error) {
-      alert(error.message ?? String(error))
-      return
-    }
-    setEventWantsLineItems(wants)
-    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
   }
 
   async function handleCalendarEntityFileChange(files: FileList | null) {
@@ -1736,17 +1959,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setReceiptNewDesc("")
       setReceiptNewQty("1")
       setReceiptNewUnit("0")
-      setEventWantsLineItems(false)
       return
     }
     const p = parseCalendarEventReceiptMeta(selectedEvent.metadata)
     setReceiptOverridesDraft(p.receipt_quote_overrides)
     setReceiptAdditionalDraft(p.receipt_additional_lines)
-    const hasSavedLineEdits =
-      p.receipt_wants_line_items ||
-      p.receipt_additional_lines.length > 0 ||
-      Object.keys(p.receipt_quote_overrides).length > 0
-    setEventWantsLineItems(hasSavedLineEdits || Boolean(selectedEvent.quote_id))
   }, [selectedEvent?.id, selectedEvent?.metadata, selectedEvent?.quote_id])
 
   useEffect(() => {
@@ -1907,6 +2124,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
+    const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
 
     if (noDuplicateTimes && newRanges.length > 0) {
       const windowStart = newRanges[0].s
@@ -1914,7 +2132,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const { data: existing } = await supabase
         .from("calendar_events")
         .select("id, start_at, end_at")
-        .eq("user_id", selectedTarget)
+        .eq("user_id", eventOwnerUserId)
         .is("removed_at", null)
         .lt("start_at", windowEnd.toISOString())
         .gt("end_at", windowStart.toISOString())
@@ -1923,7 +2141,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         for (const ex of exRows) {
           if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
             setAddError(
-              "One or more recurring times overlap an existing event. Change the start time, recurrence, or turn off \"Do not allow duplicate times\" in Settings."
+              "One or more recurring times overlap an existing event. Change the start time, recurrence, or turn off \"Do not allow duplicate times\" under Team management → Settings."
             )
             return
           }
@@ -1940,7 +2158,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
 
     setAddSaving(true)
-    const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
     const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
     const jtForMaterials = addJobTypeId ? jobTypes.find((j) => j.id === addJobTypeId) : undefined
     const materialsFromJobType =
@@ -2016,7 +2233,111 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddNotes("")
     setAddQuoteId(null)
     setAddCustomerId(null)
+    setAddCustomerSearch("")
     setAddMileage("")
+  }
+
+  const applySchedulingAddWizardPrefill = useCallback(
+    (prefill: SchedulingAddWizardPrefill) => {
+      if (prefill.title) setAddTitle(prefill.title)
+      if (prefill.startDate) setAddStartDate(prefill.startDate)
+      if (prefill.startTime) setAddStartTime(prefill.startTime)
+      if (prefill.durationMinutes != null) {
+        setAddDurationStr(formatDurationFieldFromMinutes(prefill.durationMinutes, timeIncrement))
+      }
+      if (prefill.jobTypeId) {
+        setAddJobTypeId(prefill.jobTypeId)
+        applyJobTypeToAddForm(prefill.jobTypeId)
+      }
+      if (prefill.customerId) setAddCustomerId(prefill.customerId)
+      if (prefill.notes) setAddNotes(prefill.notes)
+      setShowAddItem(true)
+      if (userId) setAddTargetUserId(userId)
+    },
+    [timeIncrement, userId],
+  )
+
+  function onAddCustomerPick(customerId: string) {
+    if (!customerId) {
+      setAddCustomerId(null)
+      return
+    }
+    setAddCustomerId(customerId)
+    const row = addCustomerOptions.find((c) => c.id === customerId)
+    if (!row) return
+    setAddTitle((prev) => prev.trim() || row.display_name)
+    if (row.service_address.trim()) {
+      setAddNotes((prev) => {
+        const addr = `Service address: ${row.service_address.trim()}`
+        if (!prev.trim()) return addr
+        if (prev.includes(row.service_address.trim())) return prev
+        return `${prev.trim()}\n${addr}`
+      })
+    }
+  }
+
+  function openAddItemFromEvent(ev: CalendarEvent) {
+    resetAddForm()
+    const start = new Date(ev.start_at)
+    if (!Number.isNaN(start.getTime())) {
+      const y = start.getFullYear()
+      const m = String(start.getMonth() + 1).padStart(2, "0")
+      const day = String(start.getDate()).padStart(2, "0")
+      setAddStartDate(`${y}-${m}-${day}`)
+      const hh = String(start.getHours()).padStart(2, "0")
+      const mm = String(start.getMinutes()).padStart(2, "0")
+      setAddStartTime(`${hh}:${mm}`)
+    }
+    const durMs = new Date(ev.end_at).getTime() - start.getTime()
+    if (Number.isFinite(durMs) && durMs > 0) {
+      setAddDurationStr(formatDurationFieldFromMinutes(Math.round(durMs / 60000), timeIncrement))
+    }
+    setAddTitle(ev.title || "")
+    setAddNotes(ev.notes?.trim() || "")
+    setAddCustomerId(ev.customer_id ?? null)
+    setAddQuoteId(ev.quote_id ?? null)
+    if (ev.job_type_id) setAddJobTypeId(ev.job_type_id)
+    if (ev.mileage_miles != null) setAddMileage(String(ev.mileage_miles))
+    setAddTargetUserId(ev.user_id ?? userId ?? "")
+    setSelectedEvent(null)
+    setShowAddItem(true)
+  }
+
+  async function resolveEventCustomerId(ev: CalendarEvent): Promise<string | null> {
+    if (ev.customer_id) return ev.customer_id
+    if (!ev.quote_id || !supabase) return null
+    const { data } = await supabase.from("quotes").select("customer_id").eq("id", ev.quote_id).maybeSingle()
+    return (data?.customer_id as string | null) ?? null
+  }
+
+  async function openCreateEstimateFromEvent(ev: CalendarEvent) {
+    const customerId = await resolveEventCustomerId(ev)
+    if (!customerId) {
+      alert("Link a customer to this event before creating an estimate.")
+      return
+    }
+    if (!setPage) return
+    queueQuotesCustomerPrefill(customerId)
+    setSelectedEvent(null)
+    setPage("quotes")
+  }
+
+  async function openCustomReceiptFromEvent(ev: CalendarEvent) {
+    const customerId = await resolveEventCustomerId(ev)
+    setCustomReceiptPrefillCustomerId(customerId)
+    setShowCustomReceiptModal(true)
+    setSelectedEvent(null)
+  }
+
+  function openAddItemForDate(d: Date) {
+    resetAddForm()
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, "0")
+    const day = String(d.getDate()).padStart(2, "0")
+    setAddStartDate(`${y}-${m}-${day}`)
+    setAddStartTime("09:00")
+    setAddTargetUserId(userId)
+    setShowAddItem(true)
   }
 
   useEffect(() => {
@@ -2024,6 +2345,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const cid = consumeCustomReceiptCustomerPrefill()
     if (cid) {
       setCustomReceiptPrefillCustomerId(cid)
+      setShowCustomReceiptModal(true)
+      return
+    }
+    if (consumeOpenCustomReceiptModal()) {
+      setCustomReceiptPrefillCustomerId(null)
       setShowCustomReceiptModal(true)
     }
   }, [userId])
@@ -2066,6 +2392,33 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
   }, [userId, supabase])
 
+  useEffect(() => {
+    if (!showAddItem || !supabase || !userId) {
+      if (!showAddItem) setAddCustomerSearch("")
+      return
+    }
+    void loadCustomersForCustomReceipt(supabase, userId)
+      .then(setAddCustomerOptions)
+      .catch(() => setAddCustomerOptions([]))
+  }, [showAddItem, supabase, userId])
+
+  useEffect(() => {
+    if (!showAddItem) return
+    if (!addCustomerId) return
+    const row = addCustomerOptions.find((c) => c.id === addCustomerId)
+    if (row) setAddCustomerSearch(formatAddCustomerPickerLabel(row))
+  }, [showAddItem, addCustomerId, addCustomerOptions])
+
+  useEffect(() => {
+    const onPrefill = () => {
+      const prefill = consumeSchedulingAddWizardPrefill()
+      if (!prefill) return
+      applySchedulingAddWizardPrefill(prefill)
+    }
+    window.addEventListener(SCHEDULING_ADD_WIZARD_PREFILL_EVENT, onPrefill)
+    return () => window.removeEventListener(SCHEDULING_ADD_WIZARD_PREFILL_EVENT, onPrefill)
+  }, [applySchedulingAddWizardPrefill])
+
   function getEventsForDay(d: Date): CalendarEvent[] {
     const dayStart = new Date(d)
     dayStart.setHours(0, 0, 0, 0)
@@ -2094,6 +2447,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const addInputStyle: React.CSSProperties = {
     ...theme.formInput,
   }
+
+  const filteredAddCustomers = useMemo(() => {
+    const q = addCustomerSearch.trim().toLowerCase()
+    if (!q) return addCustomerOptions.slice(0, 80)
+    return addCustomerOptions
+      .filter(
+        (c) =>
+          c.display_name.toLowerCase().includes(q) ||
+          c.phone.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q) ||
+          c.service_address.toLowerCase().includes(q) ||
+          c.id.toLowerCase().includes(q),
+      )
+      .slice(0, 40)
+  }, [addCustomerOptions, addCustomerSearch])
 
   const jobTypeSelectStyle: React.CSSProperties = {
     ...theme.formInput,
@@ -2225,15 +2593,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 Job Types
               </button>
             ) : null}
-            {showCalSettings ? (
-              <button
-                type="button"
-                onClick={() => setShowSettings(true)}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
-              >
-                Settings
-              </button>
-            ) : null}
             {showCalCompletionSettings ? (
               <button
                 type="button"
@@ -2353,9 +2712,23 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             )}
             {calendarSuite.id === "team_management" ? (
               <>
-                {(["team_members", "job_types", "team_map"] as const).map((panel) => {
+                {(
+                  [
+                    "team_members",
+                    "job_types",
+                    "team_map",
+                    ...(showCalSettings ? (["scheduling_settings"] as const) : []),
+                  ] as const
+                ).map((panel) => {
                   const active = calendarSuite.panel === panel
-                  const label = panel === "team_members" ? "Team member options" : panel === "job_types" ? "Job types" : "Team map"
+                  const label =
+                    panel === "team_members"
+                      ? "Team member options"
+                      : panel === "job_types"
+                        ? "Job types"
+                        : panel === "team_map"
+                          ? "Team map"
+                          : calendarSettingsButtonLabel
                   return (
                     <button
                       key={panel}
@@ -2530,20 +2903,25 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       return (
                         <td
                           key={di}
+                          onClick={() => openAddItemForDate(cell)}
                           style={{
                             padding: "4px",
                             border: `1px solid ${theme.border}`,
                             verticalAlign: "top",
                             height: expanded ? "120px" : "80px",
                             background: inMonth ? "white" : "#f9fafb",
-                            color: inMonth ? theme.text : "#9ca3af"
+                            color: inMonth ? theme.text : "#9ca3af",
+                            cursor: "pointer",
                           }}
                         >
                           <div style={{ fontWeight: isToday(cell) ? 700 : 400, fontSize: "13px", marginBottom: "4px" }}>{cell.getDate()}</div>
                           {dayEvents.slice(0, expanded ? 10 : 3).map((ev) => (
                             <div
                               key={ev.id}
-                              onClick={() => setSelectedEvent(ev)}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedEvent(ev)
+                              }}
                               style={{
                                 fontSize: "11px",
                                 padding: "2px 6px",
@@ -2579,7 +2957,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   const d = new Date(weekStart)
                   d.setDate(d.getDate() + i)
                   return (
-                    <div key={i} style={{ background: "#f9fafb", padding: "6px 8px", fontSize: "12px", fontWeight: 600, textAlign: "center", color: theme.text }}>
+                    <div
+                      key={i}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openAddItemForDate(d)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") openAddItemForDate(d)
+                      }}
+                      style={{
+                        background: "#f9fafb",
+                        padding: "6px 8px",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        textAlign: "center",
+                        color: theme.text,
+                        cursor: "pointer",
+                      }}
+                    >
                       <div style={{ fontSize: "11px", color: "#6b7280", marginBottom: "2px" }}>{WEEKDAY_NAMES_FULL[d.getDay()]}</div>
                       {WEEKDAY_NAMES[d.getDay()]} {d.getDate()}
                     </div>
@@ -2611,7 +3006,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     return s < dayEnd && en > dayStart
                   })
                   return (
-                    <div key={dayIdx} style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", borderLeft: `1px solid ${theme.border}` }}>
+                    <div
+                      key={dayIdx}
+                      onClick={() => openAddItemForDate(calDayStart)}
+                      style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", borderLeft: `1px solid ${theme.border}`, cursor: "pointer" }}
+                    >
                       {dayEvents.map((ev) => {
                         const start = new Date(ev.start_at)
                         const end = new Date(ev.end_at)
@@ -2624,7 +3023,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                         return (
                           <div
                             key={ev.id}
-                            onClick={() => setSelectedEvent(ev)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedEvent(ev)
+                            }}
                             style={{
                               position: "absolute",
                               left: 2,
@@ -2661,7 +3063,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   </div>
                 ))}
               </div>
-              <div style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white" }}>
+              <div
+                onClick={() => openAddItemForDate(currentDate)}
+                style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", cursor: "pointer" }}
+              >
                 {dayViewHours.map((hour, i) => (
                   <div
                     key={hour}
@@ -2704,7 +3109,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       return (
                         <div
                           key={ev.id}
-                          onClick={() => setSelectedEvent(ev)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedEvent(ev)
+                          }}
                           style={{
                             position: "absolute",
                             left: 4,
@@ -2788,6 +3196,37 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               onClose={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
             />
           ) : null}
+          {calendarSuite.id === "team_management" && calendarSuite.panel === "scheduling_settings" ? (
+            <div>
+              <p style={{ margin: "0 0 16px", fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
+                Working hours, duplicate-time rules, and other calendar defaults for scheduling. Team permissions and time tracking are under{" "}
+                <strong>Team member options</strong>.
+              </p>
+              {calendarSettingsItemsWithOrg.length === 0 ? (
+                <p style={{ fontSize: 14, color: theme.text, opacity: 0.8 }}>No settings configured. Your admin can add items in the portal config.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, color: theme.text, maxWidth: 560 }}>
+                  <PortalSettingItemsForm
+                    items={calendarSettingsItemsWithOrg}
+                    formValues={settingsFormValues}
+                    setFormValue={(id, value) => {
+                      setSettingsFormValues((prev) => ({ ...prev, [id]: value }))
+                      if (id === "__org_all_events") {
+                        const next = value === "checked"
+                        setShowAllOrgEvents(next)
+                        try {
+                          localStorage.setItem("calendar_showAllOrgEvents", String(next))
+                        } catch {
+                          /* ignore */
+                        }
+                      }
+                    }}
+                    isItemVisible={isCalendarSettingItemVisible}
+                  />
+                </div>
+              )}
+            </div>
+          ) : null}
           {calendarSuite.id === "scheduling_tools" &&
           calendarSuite.panel === "customer_map" &&
           authUserId &&
@@ -2807,7 +3246,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         <>
           <div onClick={() => { setShowAddItem(false); setAddError("") }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
           <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
-            <h3 style={{ margin: "0 0 16px", color: theme.text }}>Add to calendar</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: theme.text }}>Add to calendar</h3>
+              <SetupWizardLaunchButton wizardId="scheduling_add_to_calendar" compact />
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <div>
                 <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
@@ -2818,6 +3260,98 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text }}>Customer (optional)</label>
+                <input
+                  type="search"
+                  autoComplete="off"
+                  placeholder="Type to search customers…"
+                  value={addCustomerSearch}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setAddCustomerSearch(v)
+                    if (!addCustomerId) return
+                    const row = addCustomerOptions.find((c) => c.id === addCustomerId)
+                    const label = row ? formatAddCustomerPickerLabel(row) : ""
+                    if (label && v.trim().toLowerCase() !== label.trim().toLowerCase()) {
+                      setAddCustomerId(null)
+                    }
+                  }}
+                  style={{ ...addInputStyle, marginTop: 4 }}
+                />
+                <div
+                  role="listbox"
+                  aria-label="Matching customers"
+                  style={{
+                    marginTop: 6,
+                    maxHeight: 180,
+                    overflowY: "auto",
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 8,
+                    background: "#fafafa",
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={!addCustomerId}
+                    onClick={() => {
+                      setAddCustomerId(null)
+                      setAddCustomerSearch("")
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "10px 14px",
+                      fontSize: 14,
+                      border: "none",
+                      borderBottom: `1px solid ${theme.border}`,
+                      background: !addCustomerId ? "#eff6ff" : "transparent",
+                      cursor: "pointer",
+                      color: "#64748b",
+                      fontWeight: !addCustomerId ? 700 : 500,
+                    }}
+                  >
+                    — No customer —
+                  </button>
+                  {filteredAddCustomers.length === 0 ? (
+                    <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>No matches.</div>
+                  ) : (
+                    filteredAddCustomers.map((c) => {
+                      const label = formatAddCustomerPickerLabel(c)
+                      const selected = addCustomerId === c.id
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            onAddCustomerPick(c.id)
+                            setAddCustomerSearch(label)
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px 14px",
+                            fontSize: 14,
+                            border: "none",
+                            borderBottom: `1px solid ${theme.border}`,
+                            background: selected ? "#eff6ff" : "transparent",
+                            cursor: "pointer",
+                            color: theme.text,
+                            fontWeight: selected ? 700 : 500,
+                          }}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
               </div>
               <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={addInputStyle} />
               <div style={{ display: "flex", gap: "8px" }}>
@@ -2936,23 +3470,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         </>
       )}
 
-      {showSettings && (
-        <PortalSettingsModal
-          title="Scheduling Settings"
-          items={calendarSettingsItemsWithOrg}
-          formValues={settingsFormValues}
-          setFormValue={(id, value) => {
-            setSettingsFormValues((prev) => ({ ...prev, [id]: value }))
-            if (id === "__org_all_events") {
-              const next = value === "checked"
-              setShowAllOrgEvents(next)
-              try { localStorage.setItem("calendar_showAllOrgEvents", String(next)) } catch { /* ignore */ }
-            }
-          }}
-          isItemVisible={isCalendarSettingItemVisible}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
       {showReceiptTemplateModal && (
         <PortalSettingsModal
           title={receiptTemplateButtonLabel}
@@ -3321,6 +3838,48 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 {eventScheduleSaving ? "Saving…" : "Save date & time"}
               </button>
+              {showRecurringRemoveChoices && addItemPortalItems.length > 0 ? (
+                <details
+                  style={{
+                    marginTop: 14,
+                    padding: 12,
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <summary style={{ fontWeight: 700, fontSize: 13, color: theme.text, cursor: "pointer", listStyle: "none" }}>
+                    Edit recurrence
+                  </summary>
+                  <p style={{ margin: "10px 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Change frequency or end rules, then update the series. Non-completed occurrences are replaced using the date &amp; time above as the anchor.
+                  </p>
+                  <PortalSettingItemsForm
+                    items={addItemPortalItems.filter((item) => !isRemoveRecurrencePortalItem(item))}
+                    formValues={seriesRecurrenceValues}
+                    setFormValue={(id, value) => setSeriesRecurrenceValues((p) => ({ ...p, [id]: value }))}
+                    isItemVisible={(item) => isPortalItemVisible(addItemPortalItems, seriesRecurrenceValues, item)}
+                  />
+                  <button
+                    type="button"
+                    disabled={seriesRecurrenceSaving || !supabase}
+                    onClick={() => void updateSeriesRecurrence()}
+                    style={{
+                      marginTop: 10,
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: seriesRecurrenceSaving ? "wait" : "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    {seriesRecurrenceSaving ? "Updating…" : "Update recurrence series"}
+                  </button>
+                </details>
+              ) : null}
               <div style={{ marginTop: 12 }}>
                 {renderJobTypeSelect(eventEditJobTypeId, "event", jobTypeSelectStyle, (id) => {
                   setEventEditJobTypeId(id)
@@ -3459,116 +4018,63 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   listStyle: "none",
                 }}
               >
-                Job site
-                {jobSiteDraft.address.trim() ? (
+                Line items
+                {eventLineItemRows.length > 0 ? (
                   <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
-                    — {jobSiteDraft.address.trim().length > 36
-                      ? `${jobSiteDraft.address.trim().slice(0, 36)}…`
-                      : jobSiteDraft.address.trim()}
+                    ({eventLineItemRows.length}
+                    {eventLineItemSummaryHint ? ` — ${eventLineItemSummaryHint}` : ""})
                   </span>
-                ) : null}
+                ) : selectedEvent.quote_id && quoteItemsForReceipt.length === 0 ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>— loading estimate…</span>
+                ) : (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>— none yet</span>
+                )}
               </summary>
               <div style={{ marginTop: 10 }}>
-                <label style={{ display: "block", marginBottom: 6, fontSize: 12, color: theme.text, fontWeight: 600 }}>Address</label>
-                <textarea
-                  value={jobSiteDraft.address}
-                  onChange={(e) => setJobSiteDraft((p) => ({ ...p, address: e.target.value }))}
-                  rows={2}
-                  placeholder="Street, city, state"
-                  style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13, marginBottom: 8 }}
-                />
-                <details style={{ marginBottom: 8 }}>
-                  <summary style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", cursor: "pointer", listStyle: "none" }}>
-                    Coordinates (optional)
-                  </summary>
-                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
-                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lat</span>
-                      <input
-                        value={jobSiteDraft.lat}
-                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lat: e.target.value }))}
-                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
-                        placeholder="e.g. 40.7128"
-                      />
-                    </label>
-                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
-                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lng</span>
-                      <input
-                        value={jobSiteDraft.lng}
-                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lng: e.target.value }))}
-                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
-                        placeholder="e.g. -74.0060"
-                      />
-                    </label>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={jobGeocodeBusy}
-                    onClick={() => void geocodeJobSiteDraft()}
+                {eventLineItemRows.length > 0 ? (
+                  <ul
                     style={{
-                      marginTop: 8,
-                      padding: "6px 10px",
+                      margin: "0 0 12px",
+                      padding: "8px 10px",
+                      listStyle: "none",
                       borderRadius: 6,
                       border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      cursor: jobGeocodeBusy ? "wait" : "pointer",
-                      fontSize: 12,
-                      fontWeight: 600,
+                      background: "#fafafa",
+                      maxHeight: 160,
+                      overflowY: "auto",
                     }}
                   >
-                    {jobGeocodeBusy ? "Looking up…" : "Look up coordinates"}
-                  </button>
-                </details>
-                <button
-                  type="button"
-                  disabled={jobSiteSaving || !supabase}
-                  onClick={() => void saveEventJobSite()}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: theme.primary,
-                    color: "#fff",
-                    fontWeight: 600,
-                    cursor: jobSiteSaving ? "wait" : "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  {jobSiteSaving ? "Saving…" : "Save job site"}
-                </button>
-              </div>
-            </details>
-            <details
-              style={{
-                borderRadius: 6,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                padding: "8px 10px",
-                marginBottom: 14,
-              }}
-            >
-              <summary
-                style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#111827",
-                  cursor: "pointer",
-                  listStyle: "none",
-                }}
-              >
-                Materials
-                {eventMaterialsDraft.trim() ? (
-                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
-                    ({eventMaterialsDraft.split("\n").filter((l) => l.trim()).length} lines)
-                  </span>
-                ) : null}
-              </summary>
-              <div style={{ marginTop: 10 }}>
+                    {eventLineItemRows.map((row) => (
+                      <li
+                        key={row.key}
+                        style={{
+                          fontSize: 12,
+                          color: theme.text,
+                          padding: "5px 0",
+                          borderBottom: `1px solid ${theme.border}`,
+                        }}
+                      >
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", marginRight: 6 }}>
+                          {row.sourceLabel}
+                        </span>
+                        {row.description}
+                        {row.detail ? (
+                          <span style={{ display: "block", fontSize: 11, color: "#64748b", marginTop: 2 }}>{row.detail}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ margin: "0 0 12px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                    Items from the job type, linked estimate, or lines added on this event will appear here.
+                  </p>
+                )}
+                <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 12, color: theme.text }}>Checklist / materials (one per line)</p>
                 <textarea
                   value={eventMaterialsDraft}
                   onChange={(e) => setEventMaterialsDraft(e.target.value)}
-                  rows={5}
-                  placeholder="One line per item"
+                  rows={4}
+                  placeholder="One line per item — from job type, estimate materials, or typed here"
                   style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
                 />
                 <button
@@ -3577,6 +4083,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   onClick={() => void saveEventMaterialsList()}
                   style={{
                     marginTop: 8,
+                    marginBottom: 14,
                     padding: "8px 14px",
                     borderRadius: 6,
                     border: "none",
@@ -3587,49 +4094,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     fontSize: 13,
                   }}
                 >
-                  {eventMaterialsSaving ? "Saving…" : "Save materials"}
+                  {eventMaterialsSaving ? "Saving…" : "Save checklist"}
                 </button>
-              </div>
-            </details>
-            <div
-              style={{
-                borderRadius: 6,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                padding: "10px 12px",
-                marginBottom: 14,
-              }}
-            >
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: theme.text,
-                  cursor: eventWantsLineItemsSaving ? "wait" : "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={eventWantsLineItems}
-                  disabled={eventWantsLineItemsSaving}
-                  onChange={(e) => void saveEventWantsLineItems(e.target.checked)}
-                  style={{ marginTop: 2, flexShrink: 0 }}
-                />
-                <span>
-                  Would you like to add Line Items?
-                  {quoteItemsForReceipt.length + receiptAdditionalDraft.length > 0 ? (
-                    <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
-                      ({quoteItemsForReceipt.length + receiptAdditionalDraft.length} line
-                      {quoteItemsForReceipt.length + receiptAdditionalDraft.length === 1 ? "" : "s"})
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-              {eventWantsLineItems ? (
-              <div style={{ marginTop: 10 }}>
+                <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 12, color: theme.text }}>Priced lines (estimate &amp; receipt)</p>
               <div
                 style={{
                   maxHeight: 240,
@@ -3897,12 +4364,104 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 {receiptLinesSaving ? "Saving…" : "Save receipt lines"}
               </button>
               </div>
-              ) : (
-                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                  Check the box to edit receipt line items for this job — from a linked estimate or lines added just for this visit.
-                </p>
-              )}
-            </div>
+            </details>
+            <details
+              style={{
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                padding: "8px 10px",
+                marginBottom: 14,
+              }}
+            >
+              <summary
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                Job site
+                {jobSiteDraft.address.trim() ? (
+                  <span style={{ fontWeight: 500, color: "#6b7280", marginLeft: 6 }}>
+                    — {jobSiteDraft.address.trim().length > 36
+                      ? `${jobSiteDraft.address.trim().slice(0, 36)}…`
+                      : jobSiteDraft.address.trim()}
+                  </span>
+                ) : null}
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: "block", marginBottom: 6, fontSize: 12, color: theme.text, fontWeight: 600 }}>Address</label>
+                <textarea
+                  value={jobSiteDraft.address}
+                  onChange={(e) => setJobSiteDraft((p) => ({ ...p, address: e.target.value }))}
+                  rows={2}
+                  placeholder="Street, city, state"
+                  style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 13, marginBottom: 8 }}
+                />
+                <details style={{ marginBottom: 8 }}>
+                  <summary style={{ fontSize: 12, fontWeight: 600, color: "#6b7280", cursor: "pointer", listStyle: "none" }}>
+                    Coordinates (optional)
+                  </summary>
+                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lat</span>
+                      <input
+                        value={jobSiteDraft.lat}
+                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lat: e.target.value }))}
+                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                        placeholder="e.g. 40.7128"
+                      />
+                    </label>
+                    <label style={{ flex: "1 1 120px", fontSize: 12 }}>
+                      <span style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Lng</span>
+                      <input
+                        value={jobSiteDraft.lng}
+                        onChange={(e) => setJobSiteDraft((p) => ({ ...p, lng: e.target.value }))}
+                        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                        placeholder="e.g. -74.0060"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={jobGeocodeBusy}
+                    onClick={() => void geocodeJobSiteDraft()}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      cursor: jobGeocodeBusy ? "wait" : "pointer",
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {jobGeocodeBusy ? "Looking up…" : "Look up coordinates"}
+                  </button>
+                </details>
+                <button
+                  type="button"
+                  disabled={jobSiteSaving || !supabase}
+                  onClick={() => void saveEventJobSite()}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: jobSiteSaving ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  {jobSiteSaving ? "Saving…" : "Save job site"}
+                </button>
+              </div>
+            </details>
             {(() => {
               const jt =
                 selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null
@@ -4077,6 +4636,72 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </p>
               </div>
             )}
+            <div
+              style={{
+                marginBottom: 12,
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+              }}
+            >
+              <p style={{ margin: "0 0 8px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Quick actions</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {setPage ? (
+                  <button
+                    type="button"
+                    disabled={calendarEventActionBusy}
+                    onClick={() => void openCreateEstimateFromEvent(selectedEvent)}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: calendarEventActionBusy ? "wait" : "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    Create estimate
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={calendarEventActionBusy}
+                  onClick={() => openAddItemFromEvent(selectedEvent)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    fontWeight: 600,
+                    cursor: calendarEventActionBusy ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Add to calendar
+                </button>
+                <button
+                  type="button"
+                  disabled={calendarEventActionBusy}
+                  onClick={() => void openCustomReceiptFromEvent(selectedEvent)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    fontWeight: 600,
+                    cursor: calendarEventActionBusy ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Create receipt
+                </button>
+              </div>
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", gap: "8px", flexWrap: "wrap" }}>
               <button
                 type="button"

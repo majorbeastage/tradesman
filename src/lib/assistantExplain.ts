@@ -47,6 +47,29 @@ export function buildAssistantExplainMessage(ctx: GlobalAssistantParseContext, _
     ].join(" ")
   }
 
+  if (page === "account") {
+    return [
+      `You are on ${pageLabel} (My T).`,
+      "Voicemail, help desk phone, business profile, and communication settings live here.",
+      'Try “setup guide”, “open scheduling wizard”, or “how do I set up voicemail?”.',
+    ].join(" ")
+  }
+
+  if (page === "payments") {
+    return [
+      `You are on ${pageLabel}.`,
+      "Your Tradesman subscription tab pays your office bill; Collect from customers sends payment requests to homeowners.",
+      'Try “open payments”, “provider settings”, or “setup guide”.',
+    ].join(" ")
+  }
+
+  if (page === "tech-support") {
+    return [
+      `You are on ${pageLabel}.`,
+      "Submit a support ticket here, or open AI Chat on this page for instant navigation and settings help.",
+    ].join(" ")
+  }
+
   return [
     `You are on ${pageLabel}.`,
     "Tell me a tab (“customers”, “calendar”) or a task (“setup guide”, “start estimate for Smith”).",

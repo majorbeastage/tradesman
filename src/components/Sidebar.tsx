@@ -21,7 +21,7 @@ type SidebarProps = {
 const DEFAULT_TABS = [...V2_SIDEBAR_DEFAULT_TAB_IDS]
 
 /** Shown on the dashboard only — keep off the left nav (including portal-configured tabs). */
-const SIDEBAR_EXCLUDED_TAB_IDS = new Set(["insurance-options"])
+const SIDEBAR_EXCLUDED_TAB_IDS = new Set(["insurance-options", "tech-support"])
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const { t } = useLocale()
@@ -50,8 +50,26 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
   const paymentsTabEntry = allTabs.find((t) => t.tab_id === "payments")
   /** Account + Payments: pinned in the footer (desktop) or header stack (mobile), not in the long scroll list — Payments sits right above My T. */
   const tabs = allTabs.filter((t) => t.tab_id !== "account" && t.tab_id !== "payments")
-  const mainNavTabs = tabs.filter((t) => t.tab_id !== "tech-support")
-  const techSupportNavTabs = tabs.filter((t) => t.tab_id === "tech-support")
+
+  const openHelpDesk = () => {
+    setPage("tech-support")
+    onClose?.()
+  }
+
+  const helpDeskLinkStyle: CSSProperties = {
+    display: "block",
+    width: "100%",
+    padding: 0,
+    margin: "0 0 4px",
+    border: "none",
+    background: "transparent",
+    fontWeight: 700,
+    color: theme.primary,
+    fontSize: 11,
+    letterSpacing: 0.3,
+    textAlign: "left",
+    cursor: "pointer",
+  }
 
   const grainUrl =
     "data:image/svg+xml," +
@@ -204,7 +222,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
       <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
         {isMobile ? (
           <div style={{ display: "grid", gap: 8 }}>
-            {mainNavTabs.map((tab) => (
+            {tabs.map((tab) => (
               <button
                 key={tab.tab_id}
                 type="button"
@@ -216,7 +234,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             ))}
           </div>
         ) : (
-          mainNavTabs.map((tab) => (
+          tabs.map((tab) => (
             <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
               {formatPortalTabLabel(tab.tab_id, tab.label, t)}
             </p>
@@ -234,16 +252,9 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           color: "rgba(255,255,255,0.75)",
         }}
       >
-        {techSupportNavTabs.map((tab) => (
-          <p
-            key={tab.tab_id}
-            onClick={() => { setPage(tab.tab_id); onClose?.() }}
-            style={{ ...itemStyle, margin: "8px 0 10px" }}
-          >
-            {formatPortalTabLabel(tab.tab_id, tab.label, t)}
-          </p>
-        ))}
-        <div style={{ fontWeight: 700, color: theme.primary, marginBottom: 6, fontSize: 11, letterSpacing: 0.3 }}>{t("sidebar.helpDesk")}</div>
+        <button type="button" onClick={openHelpDesk} style={{ ...helpDeskLinkStyle, marginBottom: 8 }}>
+          {t("sidebar.helpDesk")}
+        </button>
         <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
           {HELP_DESK_PHONE_DISPLAY}
         </a>

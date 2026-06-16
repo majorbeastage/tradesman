@@ -13,10 +13,6 @@ import {
 } from "../../lib/billingProfileMetadata"
 import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
-import {
-  applyCustomerPaymentSettingsToProfileMetadata,
-  parseCustomerPaymentMetadata,
-} from "../../lib/customerPaymentMetadata"
 import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   customerPaymentEventTypeLabel,
@@ -27,6 +23,7 @@ import {
   formatUsdAmount,
   type CustomerPaymentCollectionsRow,
 } from "../../lib/customerPaymentCollections"
+import PaymentRequestsWorkspace from "./PaymentRequestsWorkspace"
 
 declare global {
   interface Window {
@@ -40,9 +37,6 @@ const ENV_JS_TOKEN = String(import.meta.env.VITE_HELCIM_JS_TOKEN ?? "").trim()
 const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
 
-const HELCIM_HOME = "https://www.helcim.com/"
-const HELCIM_HELP_CENTER = "https://help.helcim.com/"
-
 const inputStyle: CSSProperties = {
   width: "100%",
   maxWidth: 420,
@@ -53,15 +47,6 @@ const inputStyle: CSSProperties = {
   background: "#0f172a",
   color: "#f9fafb",
   fontSize: 15,
-}
-
-const textareaStyle: CSSProperties = {
-  ...inputStyle,
-  maxWidth: "100%",
-  width: "100%",
-  minHeight: 100,
-  resize: "vertical" as const,
-  fontFamily: "inherit",
 }
 
 const quickLinkCardBaseStyle: CSSProperties = {
@@ -91,7 +76,7 @@ function formatProfilePaymentIso(iso: string | null | undefined): string {
   return new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 }
 
-type PaymentsHubTab = "tradesman" | "customer" | "history"
+type PaymentsHubTab = "subscription" | "collect" | "history"
 
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
@@ -104,20 +89,7 @@ export default function PaymentsPage() {
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
   /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
   const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
-  /** Homeowner/GC-facing pay link — stored on `profiles.metadata`, not subscription Helcim checkout. */
-  const [customerPayLinkDraft, setCustomerPayLinkDraft] = useState("")
-  const [customerPayBarcodeLinkDraft, setCustomerPayBarcodeLinkDraft] = useState("")
-  const [customerPayInstructionsDraft, setCustomerPayInstructionsDraft] = useState("")
-  const [customerPayProvider, setCustomerPayProvider] = useState<"helcim" | "stripe" | "square" | "other">("helcim")
-  const [customerPayProviderAccountLabel, setCustomerPayProviderAccountLabel] = useState("")
-  const [customerPaySetupStatus, setCustomerPaySetupStatus] = useState<"not_started" | "onboarding" | "ready">("not_started")
-  const [customerPaySendLinkEnabled, setCustomerPaySendLinkEnabled] = useState(true)
-  const [customerPaySendBarcodeEnabled, setCustomerPaySendBarcodeEnabled] = useState(false)
-  const [customerPayRequireReview, setCustomerPayRequireReview] = useState(true)
-  const [customerPaySaving, setCustomerPaySaving] = useState(false)
-  const [customerPayBanner, setCustomerPayBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
-  const [customerPayCopied, setCustomerPayCopied] = useState(false)
-  const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("tradesman")
+  const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("subscription")
   const [collectionsBusy, setCollectionsBusy] = useState(false)
   const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
@@ -247,7 +219,7 @@ export default function PaymentsPage() {
           portalFromEdge = (fromHost || fromEdge).trim()
           if (!cancelled && portalFromEdge) {
             setBillingPortalConfigError(null)
-          } else if (!cancelled && !portalFromEdge) {
+          } else if (!cancelled && !portalFromEdge && !ENV_PORTAL.trim()) {
             setBillingPortalConfigError(
               "Could not load the payment portal link. Try refreshing. If it only fails on the live site: in Vercel set HELCIM_PAYMENT_PORTAL_URL (or VITE_HELCIM_PAYMENT_PORTAL_URL) and redeploy; Supabase URL/anon can come from server env or the app request body.",
             )
@@ -263,15 +235,6 @@ export default function PaymentsPage() {
         setBillingForPayments({})
         setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL.trim() || portalFromEdge || null, null))
         setCustomerCode(null)
-        setCustomerPayLinkDraft("")
-        setCustomerPayBarcodeLinkDraft("")
-        setCustomerPayInstructionsDraft("")
-        setCustomerPayProvider("helcim")
-        setCustomerPayProviderAccountLabel("")
-        setCustomerPaySetupStatus("not_started")
-        setCustomerPaySendLinkEnabled(true)
-        setCustomerPaySendBarcodeEnabled(false)
-        setCustomerPayRequireReview(true)
         return
       }
       const meta =
@@ -280,18 +243,10 @@ export default function PaymentsPage() {
           : {}
       const billing = parseBillingMetadata(meta)
       setBillingForPayments(billing)
-      const cp = parseCustomerPaymentMetadata(meta)
-      setCustomerPayLinkDraft(cp.customer_pay_link_url ?? "")
-      setCustomerPayBarcodeLinkDraft(cp.customer_pay_barcode_url ?? "")
-      setCustomerPayInstructionsDraft(cp.customer_pay_instructions ?? "")
-      setCustomerPayProvider(cp.customer_pay_provider ?? "helcim")
-      setCustomerPayProviderAccountLabel(cp.customer_pay_provider_account_label ?? "")
-      setCustomerPaySetupStatus(cp.customer_pay_setup_status ?? "not_started")
-      setCustomerPaySendLinkEnabled(cp.customer_pay_send_link_enabled !== false)
-      setCustomerPaySendBarcodeEnabled(cp.customer_pay_send_barcode_enabled === true)
-      setCustomerPayRequireReview(cp.customer_pay_require_review_before_send !== false)
       const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
-      setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null))
+      const resolvedPortal = resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null)
+      setPortalBaseUrl(resolvedPortal)
+      if (!cancelled && resolvedPortal) setBillingPortalConfigError(null)
       setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
     })()
     return () => {
@@ -327,9 +282,9 @@ export default function PaymentsPage() {
       } catch {
         return
       }
-      setPaymentsHubTab("customer")
+      setPaymentsHubTab("collect")
       window.setTimeout(() => {
-        document.getElementById("customer-pay-collection")?.scrollIntoView({ behavior: "smooth", block: "start" })
+        document.getElementById("payment-provider-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })
       }, 320)
     }
     scrollToCustomerPay()
@@ -374,64 +329,6 @@ export default function PaymentsPage() {
 
   const helcimJsHttpsOk = typeof window !== "undefined" && window.location.protocol === "https:"
 
-  async function persistCustomerPayments() {
-    if (!supabase || !profileUserId) return
-    setCustomerPaySaving(true)
-    setCustomerPayBanner(null)
-    try {
-      const { data: row, error: fe } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
-      if (fe) throw fe
-      const prevMeta =
-        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
-          ? (row.metadata as Record<string, unknown>)
-          : {}
-      const applied = applyCustomerPaymentSettingsToProfileMetadata(prevMeta, {
-        provider: customerPayProvider,
-        providerAccountLabel: customerPayProviderAccountLabel,
-        setupStatus: customerPaySetupStatus,
-        linkUrlRaw: customerPayLinkDraft,
-        barcodeUrlRaw: customerPayBarcodeLinkDraft,
-        sendLinkEnabled: customerPaySendLinkEnabled,
-        sendBarcodeEnabled: customerPaySendBarcodeEnabled,
-        requireReviewBeforeSend: customerPayRequireReview,
-        instructionsRaw: customerPayInstructionsDraft,
-      })
-      if (applied.error) {
-        setCustomerPayBanner({ kind: "err", text: applied.error })
-        return
-      }
-      const { error: ue } = await supabase.from("profiles").update({ metadata: applied.metadata }).eq("id", profileUserId)
-      if (ue) throw ue
-      const reread = parseCustomerPaymentMetadata(applied.metadata)
-      setCustomerPayLinkDraft(reread.customer_pay_link_url ?? "")
-      setCustomerPayBarcodeLinkDraft(reread.customer_pay_barcode_url ?? "")
-      setCustomerPayInstructionsDraft(reread.customer_pay_instructions ?? "")
-      setCustomerPayProvider(reread.customer_pay_provider ?? "helcim")
-      setCustomerPayProviderAccountLabel(reread.customer_pay_provider_account_label ?? "")
-      setCustomerPaySetupStatus(reread.customer_pay_setup_status ?? "not_started")
-      setCustomerPaySendLinkEnabled(reread.customer_pay_send_link_enabled !== false)
-      setCustomerPaySendBarcodeEnabled(reread.customer_pay_send_barcode_enabled === true)
-      setCustomerPayRequireReview(reread.customer_pay_require_review_before_send !== false)
-      setCustomerPayBanner({ kind: "ok", text: "Saved customer-payment setup, share methods, and notes." })
-    } catch {
-      setCustomerPayBanner({
-        kind: "err",
-        text: "Could not save customer payment preferences. Refresh and try again, or contact support.",
-      })
-    } finally {
-      setCustomerPaySaving(false)
-    }
-  }
-
-  function copyCustomerPayLink() {
-    const normalized = normalizeHelcimPayPortalUrl(customerPayLinkDraft)
-    if (!normalized || typeof navigator.clipboard?.writeText !== "function") return
-    void navigator.clipboard.writeText(normalized).then(() => {
-      setCustomerPayCopied(true)
-      window.setTimeout(() => setCustomerPayCopied(false), 2400)
-    })
-  }
-
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>Payments</h1>
@@ -439,25 +336,25 @@ export default function PaymentsPage() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <button
           type="button"
-          onClick={() => setPaymentsHubTab("tradesman")}
+          onClick={() => setPaymentsHubTab("subscription")}
           style={{
             ...quickLinkCardBaseStyle,
-            ...(paymentsHubTab === "tradesman" ? quickLinkCardAltActiveStyle : {}),
+            ...(paymentsHubTab === "subscription" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          <span style={{ fontWeight: 800, fontSize: 14 }}>Manage Payments to Tradesman</span>
-          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Pay your Tradesman subscription</span>
+          <span style={{ fontWeight: 800, fontSize: 14 }}>Your Tradesman subscription</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Pay your office&apos;s Tradesman bill</span>
         </button>
         <button
           type="button"
-          onClick={() => setPaymentsHubTab("customer")}
+          onClick={() => setPaymentsHubTab("collect")}
           style={{
             ...quickLinkCardBaseStyle,
-            ...(paymentsHubTab === "customer" ? quickLinkCardAltActiveStyle : {}),
+            ...(paymentsHubTab === "collect" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          <span style={{ fontWeight: 800, fontSize: 14 }}>Send Payment Information to Customer</span>
-          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Save links and share settings</span>
+          <span style={{ fontWeight: 800, fontSize: 14 }}>Collect from customers</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Payment requests · SMS & email</span>
         </button>
         <button
           type="button"
@@ -467,280 +364,28 @@ export default function PaymentsPage() {
             ...(paymentsHubTab === "history" ? quickLinkCardAltActiveStyle : {}),
           }}
         >
-          <span style={{ fontWeight: 800, fontSize: 14 }}>View Previous Payments</span>
-          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Review billing history and signals</span>
+          <span style={{ fontWeight: 800, fontSize: 14 }}>Payment history</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Subscription & customer activity</span>
         </button>
       </div>
 
-      {paymentsHubTab !== "customer" ? (
-        <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
-          {paymentsHubTab === "tradesman" ? (
-            <>
-              <strong style={{ color: theme.text }}>Tradesman subscription billing</strong> — your office pays Tradesman through the processor
-              below; separate from homeowner payments.
-            </>
-          ) : (
-            <>
-              <strong style={{ color: theme.text }}>Payment history &amp; signals</strong> — your Tradesman subscription metadata, homeowner
-              payment activity you logged in-app, plus this browser &apos;s latest embedded checkout attempt.
-            </>
-          )}
-        </p>
-      ) : null}
+      <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
+        {paymentsHubTab === "subscription" ? (
+          <>
+            <strong style={{ color: theme.text }}>Tradesman subscription</strong> — your office pays Tradesman. This is separate from collecting payments from your customers.
+          </>
+        ) : paymentsHubTab === "collect" ? (
+          <>
+            <strong style={{ color: theme.text }}>Customer collections</strong> — send hosted payment links to homeowners and GCs. Configure your processor under Provider settings in this tab.
+          </>
+        ) : (
+          <>
+            <strong style={{ color: theme.text }}>History</strong> — your subscription billing signals plus customer payment activity logged in Tradesman.
+          </>
+        )}
+      </p>
 
-      {paymentsHubTab === "customer" ? (
-      <section
-        id="customer-pay-collection"
-        style={{
-          marginBottom: 28,
-          padding: 22,
-          borderRadius: 12,
-          border: `1px solid ${theme.border}`,
-          background: "#f8fafc",
-        }}
-      >
-        <div
-          style={{
-            marginBottom: 16,
-            padding: 14,
-            borderRadius: 10,
-            border: "1px solid #bae6fd",
-            background: "linear-gradient(160deg, #ecfeff 0%, #ffffff 70%)",
-            color: theme.text,
-          }}
-        >
-          <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 800 }}>Helcim hosted pay (quick setup)</h3>
-          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
-            Tradesman never stores your merchant API keys in the browser — you paste only the <strong>hosted pay / customer link</strong> you
-            configure in your processor. Subscription billing to Tradesman is separate from homeowner payments.
-          </p>
-          <ol style={{ margin: "0 0 12px", paddingLeft: 22, fontSize: 13, color: theme.text, lineHeight: 1.6 }}>
-            <li>Open or create a merchant account with Helcim ({HELCIM_HOME}).</li>
-            <li>
-              Configure a <strong>hosted payment page</strong> or shareable pay link in Helcim (exact menu names vary — use their{" "}
-              <a href={HELCIM_HELP_CENTER} target="_blank" rel="noreferrer" style={{ color: "#0369a1", fontWeight: 700 }}>
-                Help Center
-              </a>
-              ).
-            </li>
-            <li>Copy the HTTPS link Helcim gives you and paste it into <strong>Customer pay link</strong> below.</li>
-            <li>
-              Optionally add a barcode/QR landing URL if Helcim exposes one separately, then toggle share options and save settings.
-            </li>
-          </ol>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-            <a
-              href={HELCIM_HOME}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                padding: "9px 16px",
-                borderRadius: 8,
-                background: "#0ea5e9",
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 13,
-                textDecoration: "none",
-              }}
-            >
-              Helcim — open signup
-            </a>
-            <a
-              href={HELCIM_HELP_CENTER}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                padding: "9px 16px",
-                borderRadius: 8,
-                border: "1px solid #cbd5e1",
-                background: "#fff",
-                color: "#0f172a",
-                fontWeight: 600,
-                fontSize: 13,
-                textDecoration: "none",
-              }}
-            >
-              Helcim Help Center
-            </a>
-          </div>
-        </div>
-
-        <div
-          style={{
-            marginBottom: 14,
-            padding: 12,
-            borderRadius: 10,
-            border: "1px solid #cbd5e1",
-            background: "#ffffff",
-            color: theme.text,
-            display: "grid",
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
-              Processor
-              <select
-                value={customerPayProvider}
-                onChange={(e) => setCustomerPayProvider(e.target.value as "helcim" | "stripe" | "square" | "other")}
-                style={{ ...inputStyle, maxWidth: 200, fontSize: 14 }}
-              >
-                <option value="helcim">Helcim</option>
-                <option value="stripe">Stripe</option>
-                <option value="square">Square</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
-              Setup status
-              <select
-                value={customerPaySetupStatus}
-                onChange={(e) => setCustomerPaySetupStatus(e.target.value as "not_started" | "onboarding" | "ready")}
-                style={{ ...inputStyle, maxWidth: 200, fontSize: 14 }}
-              >
-                <option value="not_started">Not started</option>
-                <option value="onboarding">Onboarding</option>
-                <option value="ready">Ready</option>
-              </select>
-            </label>
-          </div>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-            Merchant account label (team reference)
-            <input
-              type="text"
-              value={customerPayProviderAccountLabel}
-              onChange={(e) => setCustomerPayProviderAccountLabel(e.target.value)}
-              placeholder="Example: Helcim Main Merchant - Tradesman Roofing"
-              style={{ ...inputStyle, maxWidth: "100%" }}
-            />
-          </label>
-        </div>
-        {customerPayBanner ? (
-          <div
-            style={{
-              marginBottom: 14,
-              padding: 12,
-              borderRadius: 10,
-              border: `1px solid ${customerPayBanner.kind === "ok" ? "#047857" : "#b91c1c"}`,
-              background: customerPayBanner.kind === "ok" ? "#064e3b" : "#450a0a",
-              color: customerPayBanner.kind === "ok" ? "#d1fae5" : "#fecaca",
-              fontSize: 14,
-            }}
-          >
-            {customerPayBanner.text}
-          </div>
-        ) : null}
-        <div style={{ display: "grid", gap: 14, maxWidth: 620 }}>
-          <div style={{ display: "grid", gap: 14 }}>
-            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-              Customer pay link
-              <input
-                type="url"
-                value={customerPayLinkDraft}
-                onChange={(e) => setCustomerPayLinkDraft(e.target.value)}
-                placeholder="https://…"
-                autoComplete="off"
-                style={{ ...inputStyle, maxWidth: "100%" }}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-              Optional barcode / QR destination link
-              <input
-                type="url"
-                value={customerPayBarcodeLinkDraft}
-                onChange={(e) => setCustomerPayBarcodeLinkDraft(e.target.value)}
-                placeholder="https://... (optional)"
-                autoComplete="off"
-                style={{ ...inputStyle, maxWidth: "100%" }}
-              />
-            </label>
-          </div>
-          <div
-            style={{
-              padding: "12px 0 0",
-              borderTop: "1px solid #e2e8f0",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 12,
-            }}
-          >
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={customerPaySendLinkEnabled}
-                onChange={(e) => setCustomerPaySendLinkEnabled(e.target.checked)}
-              />
-              Allow sending link
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={customerPaySendBarcodeEnabled}
-                onChange={(e) => setCustomerPaySendBarcodeEnabled(e.target.checked)}
-              />
-              Allow sending barcode / QR
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={customerPayRequireReview}
-                onChange={(e) => setCustomerPayRequireReview(e.target.checked)}
-              />
-              Require estimate/receipt review before share
-            </label>
-          </div>
-          <div style={{ display: "grid", gap: 14 }}>
-            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-              Short instructions (deposit terms, ACH reminder, surcharge policy…)
-              <textarea
-                value={customerPayInstructionsDraft}
-                onChange={(e) => setCustomerPayInstructionsDraft(e.target.value)}
-                placeholder="Example: Deposits are 50%. Pay at the link below. Include your job ID in checkout notes."
-                style={textareaStyle}
-              />
-            </label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-              <button
-                type="button"
-                disabled={customerPaySaving || !profileUserId}
-                onClick={() => void persistCustomerPayments()}
-                style={{
-                  padding: "11px 20px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: customerPaySaving || !profileUserId ? "#4b5563" : theme.primary,
-                  color: "#fff",
-                  fontWeight: 700,
-                  fontSize: 14,
-                  cursor: customerPaySaving || !profileUserId ? "not-allowed" : "pointer",
-                }}
-              >
-                {customerPaySaving ? "Saving…" : "Save customer-pay settings"}
-              </button>
-              <button
-                type="button"
-                disabled={!normalizeHelcimPayPortalUrl(customerPayLinkDraft)}
-                onClick={copyCustomerPayLink}
-                style={{
-                  padding: "11px 16px",
-                  borderRadius: 8,
-                  border: "1px solid #475569",
-                  background: "#ffffff",
-                  color: "#0f172a",
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: normalizeHelcimPayPortalUrl(customerPayLinkDraft) ? "pointer" : "not-allowed",
-                }}
-              >
-                {customerPayCopied ? "Copied" : "Copy link"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-      ) : null}
-
-      {paymentsHubTab === "tradesman" ? (
+      {paymentsHubTab === "subscription" ? (
       <>
       <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#94a3b8", letterSpacing: 0.03, margin: "0 0 14px", textTransform: "uppercase" }}>
         Subscription &amp; Tradesman billing
@@ -1076,6 +721,10 @@ export default function PaymentsPage() {
         </>
       )}
       </>
+      ) : null}
+
+      {paymentsHubTab === "collect" ? (
+        <PaymentRequestsWorkspace />
       ) : null}
 
       {paymentsHubTab === "history" ? (

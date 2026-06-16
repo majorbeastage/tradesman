@@ -8,6 +8,11 @@ import { parseSpokenLineItem } from "./parseSpokenLineItem"
 import type { SetupMiniWizardId } from "./setupGuideWizards"
 import { NOTIFICATION_METADATA_KEY, type NotificationTabId, type TabNotificationPrefs } from "../types/notificationPreferences"
 import { getPrefsForTab, parseTabNotificationsMap, setPrefsForTab } from "./tabNotificationPrefs"
+import {
+  notifySchedulingAddWizardPrefill,
+  queueSchedulingAddWizardPrefill,
+  type SchedulingAddWizardPrefill,
+} from "./workflowNavigation"
 
 export type WizardAnswers = Record<string, string>
 
@@ -167,6 +172,59 @@ export async function applySetupMiniWizard(
       }
       await saveProfileMetadata(supabase, userId, nextMeta)
       return "Scheduling alert preferences saved."
+    }
+
+    case "scheduling_add_to_calendar": {
+      const title = (answers.job_title ?? "").trim()
+      if (!title) throw new Error("Job title is required.")
+      const customerName = (answers.customer_name ?? "").trim()
+      let customerId: string | null = null
+      if (customerName) {
+        const { data } = await supabase
+          .from("customers")
+          .select("id, display_name")
+          .eq("user_id", userId)
+          .ilike("display_name", `%${customerName.replace(/[%_]/g, "")}%`)
+          .limit(1)
+          .maybeSingle()
+        customerId = (data as { id?: string } | null)?.id ?? null
+      }
+      const jobTypeName = (answers.job_type ?? "").trim()
+      let jobTypeId: string | null = null
+      if (jobTypeName) {
+        const { data } = await supabase
+          .from("job_types")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("name", `%${jobTypeName.replace(/[%_]/g, "")}%`)
+          .limit(1)
+          .maybeSingle()
+        jobTypeId = (data as { id?: string } | null)?.id ?? null
+      }
+      const dateRaw = (answers.schedule_date ?? "").trim()
+      const startDate = /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : new Date().toISOString().slice(0, 10)
+      const timeRaw = (answers.schedule_time ?? "09:00").trim()
+      const timeMatch = timeRaw.match(/^(\d{1,2}):(\d{2})$/)
+      const startTime = timeMatch
+        ? `${String(Math.min(23, Math.max(0, Number.parseInt(timeMatch[1], 10)))).padStart(2, "0")}:${String(Math.min(59, Math.max(0, Number.parseInt(timeMatch[2], 10)))).padStart(2, "0")}`
+        : "09:00"
+      const hours = Number.parseFloat(answers.duration_hours ?? "2") || 2
+      const durationMinutes = Math.max(15, Math.round(hours * 60))
+      const notes = (answers.notes ?? "").trim()
+      const prefill: SchedulingAddWizardPrefill = {
+        customerId,
+        title,
+        startDate,
+        startTime,
+        durationMinutes,
+        jobTypeId,
+        notes: notes || undefined,
+      }
+      queueSchedulingAddWizardPrefill(prefill)
+      notifySchedulingAddWizardPrefill()
+      const customerNote = customerName && !customerId ? ` Could not match customer “${customerName}” — pick from the list.` : ""
+      const jobTypeNote = jobTypeName && !jobTypeId ? ` Job type “${jobTypeName}” was not found — choose one manually.` : ""
+      return `Add to calendar is ready to review.${customerNote}${jobTypeNote}`.trim()
     }
 
     case "scheduling_receipt_template": {

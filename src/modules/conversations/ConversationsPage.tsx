@@ -24,6 +24,8 @@ import {
   VoicemailTranscriptBlock,
   voicemailPreviewLine,
 } from "../../components/VoicemailEventBlock"
+import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
@@ -2710,6 +2712,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                         >
                           {ev.event_type === "email" ? (
                             <>
+                              <EmailEventAddressLine event={ev} />
                               {ev.subject?.trim() ? (
                                 <p style={{ margin: "0 0 8px", fontWeight: 700 }}>{ev.subject.trim()}</p>
                               ) : null}
@@ -2953,6 +2956,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                     emailOnlyEvents.map((evt) => {
                       const subj = evt.subject?.trim() || "(No subject)"
                       const who = evt.direction === "inbound" ? "Customer" : "You"
+                      const fromAddr = formatCommEventEmailFromLabel(evt)
                       const bodyPreview = (evt.body || "—").replace(/\s+/g, " ").trim()
                       return (
                         <ExpandableTimelineRow
@@ -2960,7 +2964,8 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                           titleContent={
                             <div>
                               <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
-                                {who} · {subj}
+                                {who}
+                                {fromAddr ? ` · ${fromAddr}` : ""} · {subj}
                                 {evt.created_at ? (
                                   <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
                                     {new Date(evt.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
@@ -2982,6 +2987,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                             </div>
                           }
                         >
+                          <EmailEventAddressLine event={evt} />
                           <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 15 }}>{subj}</p>
                           <p style={{ margin: "0 0 10px", whiteSpace: "pre-wrap" }}>{evt.body || "—"}</p>
                           <AttachmentStrip items={commAttachmentsByEvent[evt.id] ?? []} compact />

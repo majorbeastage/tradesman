@@ -102,13 +102,14 @@ export async function scheduleEstimateOnCalendar(
     noDup = false
   }
   const selectedTarget = input.targetUserId || input.userId
+  const eventOwnerUserId = input.assignToScopedUser ? selectedTarget : input.authUserId || selectedTarget
   if (noDup && newRanges.length > 0) {
     const windowStart = newRanges[0].s
     const windowEnd = newRanges[newRanges.length - 1].e
     const { data: existing } = await input.supabase
       .from("calendar_events")
       .select("start_at, end_at")
-      .eq("user_id", selectedTarget)
+      .eq("user_id", eventOwnerUserId)
       .is("removed_at", null)
       .lt("start_at", windowEnd.toISOString())
       .gt("end_at", windowStart.toISOString())

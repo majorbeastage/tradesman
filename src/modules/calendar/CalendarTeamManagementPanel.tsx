@@ -10,6 +10,7 @@ import {
   parseTeamRibbonColors,
   type OmCalendarPolicyV1,
 } from "../../lib/teamCalendarPolicy"
+import TimeClockPortal from "../../components/TimeClockPortal"
 
 type ProfileLite = {
   id: string
@@ -34,11 +35,8 @@ type UpcomingEventRow = {
 
 type JobTypeNameRow = { user_id: string; name: string }
 type JobQualificationLevel = "not_qualified" | "qualified" | "preferred" | "required"
-type TimeClockSessionRow = { user_id: string; clocked_in_at: string; clocked_out_at: string | null }
 
 type CardTab = "schedule" | "permissions"
-
-type OpenClockRow = { user_id: string; clocked_in_at: string }
 
 type Props = {
   officeManagerUserId: string
@@ -62,13 +60,6 @@ function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null
   }
   const n = raw.name
   return typeof n === "string" && n.trim() ? n.trim() : null
-}
-
-function startOfWeekLocal(d: Date): Date {
-  const at = new Date(d)
-  at.setHours(0, 0, 0, 0)
-  at.setDate(at.getDate() - at.getDay())
-  return at
 }
 
 function TeamUserCard({
@@ -571,154 +562,12 @@ export default function CalendarTeamManagementPanel({
   const [jobTypesByUser, setJobTypesByUser] = useState<Record<string, string[]>>({})
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
-  const [clockLoading, setClockLoading] = useState(false)
-  const [clockError, setClockError] = useState("")
-  const [clockActionBusy, setClockActionBusy] = useState(false)
-  const [clockPanelTab, setClockPanelTab] = useState<"time_clock" | "my_hours">("time_clock")
-  const [weekSessionsByUser, setWeekSessionsByUser] = useState<Record<string, TimeClockSessionRow[]>>({})
-  const [punchHistoryOpen, setPunchHistoryOpen] = useState(false)
-  const [punchHistoryRows, setPunchHistoryRows] = useState<TimeClockSessionRow[]>([])
-  const [punchHistoryBusy, setPunchHistoryBusy] = useState(false)
-  const weekStart = useMemo(() => startOfWeekLocal(new Date()), [])
-  const weekEnd = useMemo(() => {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() + 7)
-    return d
-  }, [weekStart])
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
   const setCardTab = useCallback((userId: string, tab: CardTab) => {
     setCardTabByUser((prev) => ({ ...prev, [userId]: tab }))
   }, [])
-
-  const loadOpenClockSessions = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!supabase || roster.length === 0) {
-      setOpenClockByUser({})
-      return
-    }
-    const ids = roster.map((r) => r.userId).filter(Boolean)
-    if (!opts?.silent) setClockLoading(true)
-    setClockError("")
-    const { data, error } = await supabase
-      .from("user_time_clock_sessions")
-      .select("user_id, clocked_in_at")
-      .in("user_id", ids)
-      .is("clocked_out_at", null)
-    if (!opts?.silent) setClockLoading(false)
-    if (error) {
-      setClockError(error.message)
-      setOpenClockByUser({})
-      return
-    }
-    const next: Record<string, string> = {}
-    for (const row of (data ?? []) as OpenClockRow[]) {
-      if (row.user_id && row.clocked_in_at) next[row.user_id] = row.clocked_in_at
-    }
-    setOpenClockByUser(next)
-  }, [roster])
-
-  useEffect(() => {
-    void loadOpenClockSessions()
-    const id = window.setInterval(() => void loadOpenClockSessions({ silent: true }), 45_000)
-    return () => {
-      window.clearInterval(id)
-    }
-  }, [loadOpenClockSessions])
-
-  useEffect(() => {
-    if (!supabase || roster.length === 0) {
-      setWeekSessionsByUser({})
-      return
-    }
-    const ids = roster.map((r) => r.userId).filter(Boolean)
-    let cancelled = false
-    void supabase
-      .from("user_time_clock_sessions")
-      .select("user_id, clocked_in_at, clocked_out_at")
-      .in("user_id", ids)
-      .gte("clocked_in_at", weekStart.toISOString())
-      .lt("clocked_in_at", weekEnd.toISOString())
-      .order("clocked_in_at", { ascending: true })
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error || !data) {
-          setWeekSessionsByUser({})
-          return
-        }
-        const byUser: Record<string, TimeClockSessionRow[]> = {}
-        for (const id of ids) byUser[id] = []
-        for (const row of data as TimeClockSessionRow[]) {
-          if (!row.user_id || !byUser[row.user_id]) continue
-          byUser[row.user_id].push(row)
-        }
-        setWeekSessionsByUser(byUser)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [roster, weekStart, weekEnd])
-
-  const loadPunchHistory = useCallback(async () => {
-    if (!supabase || roster.length === 0) {
-      setPunchHistoryRows([])
-      return
-    }
-    setPunchHistoryBusy(true)
-    const ids = roster.map((r) => r.userId).filter(Boolean)
-    const since = new Date()
-    since.setDate(since.getDate() - 56)
-    const { data, error } = await supabase
-      .from("user_time_clock_sessions")
-      .select("user_id, clocked_in_at, clocked_out_at")
-      .in("user_id", ids)
-      .gte("clocked_in_at", since.toISOString())
-      .order("clocked_in_at", { ascending: false })
-      .limit(500)
-    setPunchHistoryBusy(false)
-    if (error || !data) {
-      setPunchHistoryRows([])
-      return
-    }
-    setPunchHistoryRows(data as TimeClockSessionRow[])
-  }, [roster])
-
-  useEffect(() => {
-    if (!punchHistoryOpen) return
-    void loadPunchHistory()
-  }, [punchHistoryOpen, loadPunchHistory])
-
-  async function handleClockIn() {
-    if (!supabase) return
-    setClockActionBusy(true)
-    setClockError("")
-    const { error } = await supabase.from("user_time_clock_sessions").insert({ user_id: viewerUserId })
-    setClockActionBusy(false)
-    if (error) {
-      setClockError(error.message)
-      return
-    }
-    await loadOpenClockSessions({ silent: true })
-  }
-
-  async function handleClockOut() {
-    if (!supabase) return
-    setClockActionBusy(true)
-    setClockError("")
-    const { error } = await supabase
-      .from("user_time_clock_sessions")
-      .update({ clocked_out_at: new Date().toISOString() })
-      .eq("user_id", viewerUserId)
-      .is("clocked_out_at", null)
-    setClockActionBusy(false)
-    if (error) {
-      setClockError(error.message)
-      return
-    }
-    await loadOpenClockSessions({ silent: true })
-  }
-
-  const viewerOnRoster = useMemo(() => roster.some((r) => r.userId === viewerUserId), [roster, viewerUserId])
 
   const rosterLabel = useCallback(
     (userId: string) => {
@@ -728,19 +577,6 @@ export default function CalendarTeamManagementPanel({
     },
     [profilesById, roster],
   )
-
-  const clockedInMembers = useMemo(() => {
-    return roster
-      .filter((m) => openClockByUser[m.userId])
-      .map((m) => ({ member: m, at: openClockByUser[m.userId]! }))
-      .sort((a, b) => rosterLabel(a.member.userId).localeCompare(rosterLabel(b.member.userId)))
-  }, [roster, openClockByUser, rosterLabel])
-
-  const notClockedInMembers = useMemo(() => {
-    return roster
-      .filter((m) => !openClockByUser[m.userId])
-      .sort((a, b) => rosterLabel(a.userId).localeCompare(rosterLabel(b.userId)))
-  }, [roster, openClockByUser, rosterLabel])
 
   useEffect(() => {
     if (!supabase) return
@@ -919,7 +755,6 @@ export default function CalendarTeamManagementPanel({
     await persistManagedPolicy(targetUserId, { job_qualifications: next })
   }
 
-  const myOpenClock = openClockByUser[viewerUserId]
   const rosterOptions = useMemo(
     () =>
       roster.map((m) => ({
@@ -928,261 +763,20 @@ export default function CalendarTeamManagementPanel({
       })),
     [roster, profilesById],
   )
-  const clockPanelStyle: CSSProperties = {
-    borderRadius: 10,
-    border: `1px solid ${theme.border}`,
-    background: "#f8fafc",
-    padding: "14px 16px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  }
-  const clockColStyle: CSSProperties = {
-    borderRadius: 8,
-    border: `1px solid ${theme.border}`,
-    background: "#fff",
-    padding: "10px 12px",
-    minHeight: 100,
-    maxHeight: variant === "time_clock_only" ? 420 : 220,
-    overflow: "auto",
-    fontSize: 12,
-    color: "#334155",
-  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={clockPanelStyle}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Time clock</span>
-          {clockLoading ? <span style={{ fontSize: 11, color: "#64748b" }}>Refreshing…</span> : null}
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            type="button"
-            onClick={() => setClockPanelTab("time_clock")}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: clockPanelTab === "time_clock" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-              background: clockPanelTab === "time_clock" ? "#eff6ff" : "#fff",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: clockPanelTab === "time_clock" ? 800 : 600,
-              color: theme.text,
-            }}
-          >
-            Time clock
-          </button>
-          {!timeClockWorkspacePage && onOpenTimeClockWorkspace ? (
-            <button
-              type="button"
-              onClick={() => onOpenTimeClockWorkspace()}
-              title="Opens the Time clock workspace as its own page in Scheduling"
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                cursor: "pointer",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#334155",
-              }}
-            >
-              Time clock workspace
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => setClockPanelTab("my_hours")}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: clockPanelTab === "my_hours" ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-              background: clockPanelTab === "my_hours" ? "#eff6ff" : "#fff",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: clockPanelTab === "my_hours" ? 800 : 600,
-              color: theme.text,
-            }}
-          >
-            My hrs (week)
-          </button>
-          <button
-            type="button"
-            onClick={() => setPunchHistoryOpen((o) => !o)}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: punchHistoryOpen ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-              background: punchHistoryOpen ? "#eff6ff" : "#fff",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: punchHistoryOpen ? 800 : 600,
-              color: theme.text,
-            }}
-          >
-            Punch history (8 wk)
-          </button>
-        </div>
-        {clockError ? (
-          <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", lineHeight: 1.45 }}>{clockError}</p>
-        ) : null}
-        {clockPanelTab === "time_clock" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))", gap: 10 }}>
-          <div style={clockColStyle}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#059669", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 8 }}>Clocked in</div>
-            {clockedInMembers.length === 0 ? (
-              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Nobody on this roster is clocked in.</span>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.5 }}>
-                {clockedInMembers.map(({ member: m, at }) => (
-                  <li key={m.userId} style={{ marginBottom: 6 }}>
-                    <span style={{ fontWeight: 700 }}>{rosterLabel(m.userId)}</span>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>
-                      Since {new Date(at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div style={clockColStyle}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 8 }}>Not clocked in</div>
-            {notClockedInMembers.length === 0 ? (
-              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Everyone is clocked in.</span>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.5 }}>
-                {notClockedInMembers.map((m) => (
-                  <li key={m.userId} style={{ marginBottom: 4 }}>
-                    {rosterLabel(m.userId)}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 11, color: "#64748b" }}>
-              Week of {weekStart.toLocaleDateString(undefined, { dateStyle: "medium" })} to{" "}
-              {new Date(weekEnd.getTime() - 1).toLocaleDateString(undefined, { dateStyle: "medium" })}
-            </div>
-            {roster.map((m) => {
-              const rows = weekSessionsByUser[m.userId] ?? []
-              const label = rosterLabel(m.userId)
-              return (
-                <div key={m.userId} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "8px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>{label}</div>
-                  {rows.length === 0 ? (
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>No clock entries this week.</span>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
-                      {rows.slice(0, 25).map((row, idx) => (
-                        <li key={`${m.userId}-${idx}`}>
-                          {new Date(row.clocked_in_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })} -{" "}
-                          {row.clocked_out_at
-                            ? new Date(row.clocked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-                            : "Active"}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {punchHistoryOpen ? (
-          <div
-            style={{
-              marginTop: 4,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 10,
-              background: "#fff",
-              maxHeight: 280,
-              overflow: "auto",
-              padding: "10px 12px",
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Recent punches (newest first)</div>
-            {punchHistoryBusy ? (
-              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Loading…</p>
-            ) : punchHistoryRows.length === 0 ? (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No rows in the last ~8 weeks.</p>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
-                {punchHistoryRows.map((row, idx) => (
-                  <li key={`${row.user_id}-${row.clocked_in_at}-${idx}`}>
-                    <strong>{rosterLabel(row.user_id)}</strong> · In{" "}
-                    {new Date(row.clocked_in_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                    {" — "}
-                    {row.clocked_out_at
-                      ? `Out ${new Date(row.clocked_out_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`
-                      : "Still clocked in"}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
-        {viewerOnRoster && clockPanelTab === "time_clock" ? (
-          <div
-            style={{
-              borderTop: `1px solid ${theme.border}`,
-              paddingTop: 12,
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Your shift</span>
-            {myOpenClock ? (
-              <>
-                <span style={{ fontSize: 12, color: "#475569" }}>
-                  Clocked in since {new Date(myOpenClock).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
-                </span>
-                <button
-                  type="button"
-                  disabled={clockActionBusy}
-                  onClick={() => void handleClockOut()}
-                  style={{
-                    padding: "6px 14px",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#334155",
-                    color: "#fff",
-                    cursor: clockActionBusy ? "wait" : "pointer",
-                  }}
-                >
-                  {clockActionBusy ? "Working…" : "Clock out"}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                disabled={clockActionBusy}
-                onClick={() => void handleClockIn()}
-                style={{
-                  padding: "6px 14px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  borderRadius: 8,
-                  border: "none",
-                  background: theme.primary,
-                  color: "#fff",
-                  cursor: clockActionBusy ? "wait" : "pointer",
-                }}
-              >
-                {clockActionBusy ? "Working…" : "Clock in"}
-              </button>
-            )}
-          </div>
-        ) : null}
-      </div>
+      <TimeClockPortal
+        viewerUserId={viewerUserId}
+        roster={roster}
+        rosterLabel={rosterLabel}
+        upcomingByUser={upcomingByUser}
+        variant={variant}
+        onOpenTimeClockWorkspace={onOpenTimeClockWorkspace}
+        timeClockWorkspacePage={timeClockWorkspacePage}
+        canManageTeamEntries={managedOnly.length > 0}
+        onOpenShiftSessionsChange={setOpenClockByUser}
+      />
 
       {message ? (
         <p style={{ margin: 0, fontSize: 13, color: message.includes("saved") ? "#059669" : "#b91c1c" }}>{message}</p>

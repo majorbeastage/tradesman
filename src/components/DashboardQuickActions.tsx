@@ -3,6 +3,7 @@ import type { UserRole } from "../contexts/AuthContext"
 import { theme } from "../styles/theme"
 import {
   queueCalendarSuiteNavigation,
+  queueOpenCustomReceiptModal,
   type QueuedCalendarSuite,
 } from "../lib/workflowNavigation"
 import { supabase } from "../lib/supabase"
@@ -34,6 +35,8 @@ type Props = {
   officeManager?: boolean
   showSettingsShortcut?: boolean
   showPaymentsShortcut?: boolean
+  showTimeClockShortcut?: boolean
+  showCustomReceiptShortcut?: boolean
   /** Saves quick-link order under this profile's `metadata.dashboard_quick_links`. */
   profileUserId?: string | null
   /** Calendar/customer scope for Today&apos;s to-do (managed user when in office portal). */
@@ -51,6 +54,8 @@ type Props = {
     reporting: string
     jobTypes: string
     todayTodo: string
+    timeClock: string
+    customReceipt: string
     customizeHint: string
     customizeDone: string
     customizePaletteTitle: string
@@ -539,19 +544,23 @@ export default function DashboardQuickActions(props: Props) {
       { id: "customer_payments_soon", show: true },
       { id: "job_types", show: true },
       { id: "today_todo", show: true },
+      { id: "time_clock", show: Boolean(props.showTimeClockShortcut) },
+      { id: "custom_receipt", show: Boolean(props.showCustomReceiptShortcut) },
     ]
     const visSet = new Set(vis.filter((x) => x.show).map((x) => x.id))
     return optionalOrder.filter((id) => visSet.has(id))
-  }, [optionalOrder, showSettingsShortcut, showPaymentsShortcut])
+  }, [optionalOrder, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, showSettingsShortcut])
 
   const paletteAvailable = useMemo(() => {
     const onBar = new Set(optionalTiles)
     return DASHBOARD_PALETTE_ONLY_IDS.filter((id) => {
       if (onBar.has(id)) return false
       if (id === "payments" && !showPaymentsShortcut) return false
+      if (id === "time_clock" && !props.showTimeClockShortcut) return false
+      if (id === "custom_receipt" && !props.showCustomReceiptShortcut) return false
       return true
     })
-  }, [optionalTiles, showPaymentsShortcut])
+  }, [optionalTiles, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut])
 
   const onOptionalDragStart = useCallback((id: DashboardOptionalQuickLinkId) => {
     setDragId(id)
@@ -761,6 +770,42 @@ export default function DashboardQuickActions(props: Props) {
         />
       )
     }
+    if (id === "time_clock" && props.showTimeClockShortcut) {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.timeClock}
+          accent="#334155"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => !customize && go("calendar", { id: "time_clock" })}
+        />
+      )
+    }
+    if (id === "custom_receipt" && props.showCustomReceiptShortcut) {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.customReceipt}
+          accent="#059669"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => {
+            if (customize) return
+            queueOpenCustomReceiptModal()
+            go("calendar")
+          }}
+        />
+      )
+    }
     return null
   }
 
@@ -964,6 +1009,10 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.jobTypes
     case "today_todo":
       return labels.todayTodo
+    case "time_clock":
+      return labels.timeClock
+    case "custom_receipt":
+      return labels.customReceipt
     case "setup_guide":
       return labels.setupGuide
     default:

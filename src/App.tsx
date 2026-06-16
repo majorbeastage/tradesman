@@ -27,8 +27,7 @@ import PrivacyPage from "./modules/public/PrivacyPage"
 import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
-import { useAuth } from "./contexts/AuthContext"
-import type { UserRole } from "./contexts/AuthContext"
+import { useAuth, type UserRole } from "./contexts/AuthContext"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
@@ -39,6 +38,8 @@ import {
   filterPortalTabsForV2,
   filterUserPortalTabsForManagedPaymentsPolicy,
   getPortalTabListForConfig,
+  getPageActionVisible,
+  getOmPageActionVisible,
   isPortalTabVisibleInV2,
   type PortalConfig,
   type PortalTab,
@@ -47,9 +48,11 @@ import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
+import DashboardReportsPreview from "./components/DashboardReportsPreview"
 import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
+import HelpDeskChatPanel from "./components/HelpDeskChatPanel"
 import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "./contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
@@ -104,6 +107,7 @@ function AdminPortalWithAssistantTrain({ setView }: { setView: (v: View) => void
       >
         <AdminApp />
         <GlobalAssistantFab />
+        <HelpDeskChatPanel />
       </GlobalAssistantProvider>
     </ViewProvider>
   )
@@ -157,6 +161,14 @@ function MainAppInner() {
   const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
   const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
   const settingsTabAvailable = portalTabs.some((t) => t.tab_id === "settings")
+  const calendarTabAvailable = portalTabs.some((t) => t.tab_id === "calendar")
+  const showTimeClockShortcut = calendarTabAvailable && !estimateToolsOnlyPackage
+  const showCustomReceiptShortcut =
+    calendarTabAvailable &&
+    !estimateToolsOnlyPackage &&
+    getPageActionVisible(portalConfig, "calendar", "custom_receipt") &&
+    getOmPageActionVisible(portalConfig, "calendar", "custom_receipt")
+  const customReceiptQuickLabel = portalConfig?.controlLabels?.custom_receipt?.trim() || null
 
   const dashboardHeroCopy = useMemo(() => {
     const base = {
@@ -201,7 +213,7 @@ function MainAppInner() {
 
   useEffect(() => {
     if (!isPortalTabVisibleInV2(page, portalConfig)) {
-      if (page === "leads" || page === "conversations" || page === "settings" || page === "web-support") {
+      if (page === "leads" || page === "conversations" || page === "web-support") {
         setPage("dashboard")
       }
     }
@@ -283,6 +295,7 @@ function MainAppInner() {
       setPage={setPage}
     />
     <GlobalAssistantFab />
+    <HelpDeskChatPanel />
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
       {authRole === "demo_user" && (
         <div
@@ -350,6 +363,8 @@ function MainAppInner() {
             managedSchedulingToolsEnabled={managedSchedulingToolsEnabled}
             showSettingsShortcut={settingsTabAvailable}
             showPaymentsShortcut={paymentsTabAvailable}
+            showTimeClockShortcut={showTimeClockShortcut}
+            showCustomReceiptShortcut={showCustomReceiptShortcut}
             profileUserId={user?.id ?? null}
             dashboardDataUserId={user?.id ?? null}
             labels={{
@@ -365,6 +380,8 @@ function MainAppInner() {
               reporting: t("dashboard.quickReporting"),
               jobTypes: t("dashboard.quickJobTypes"),
               todayTodo: t("dashboard.quickTodayTodo"),
+              timeClock: t("dashboard.quickTimeClock"),
+              customReceipt: customReceiptQuickLabel || t("dashboard.quickCustomReceipt"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -409,6 +426,21 @@ function MainAppInner() {
               openCalendar: t("dashboard.todayWorkOpenCalendar"),
             }}
           />
+          {(authRole === "office_manager" || authRole === "admin") ? (
+            <DashboardReportsPreview
+              isMobile={isMobile}
+              dataUserId={user?.id ?? null}
+              onOpenReporting={() => setPage("reporting")}
+              labels={{
+                title: t("dashboard.reportsPreviewTitle"),
+                subtitle: t("dashboard.reportsPreviewSubtitle"),
+                viewAll: t("dashboard.reportsPreviewViewAll"),
+                loading: t("dashboard.reportsPreviewLoading"),
+                noUser: t("dashboard.reportsPreviewNoUser"),
+                openReport: t("dashboard.reportsPreviewOpen"),
+              }}
+            />
+          ) : null}
           </>
           ) : null}
         </>

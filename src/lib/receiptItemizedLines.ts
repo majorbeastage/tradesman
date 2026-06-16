@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { ParsedCalendarReceiptMeta } from "./calendarReceiptMetadata"
+import { parseCalendarEventReceiptMeta } from "./calendarReceiptMetadata"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
 
 export function materialsListToLines(text: string | null | undefined): string[] {
@@ -178,4 +179,69 @@ export async function buildCalendarReceiptPdfSections(
     lineSubtotal,
     scheduledDurationLabel,
   }
+}
+
+type ReceiptBodyEvent = {
+  title: string
+  start_at: string
+  end_at: string
+  quote_total?: number | null
+  mileage_miles?: number | null
+  notes?: string | null
+  quote_id?: string | null
+  materials_list?: string | null
+  job_types?: { materials_list?: string | null } | null
+  metadata?: unknown
+}
+
+/** Plain-text receipt for completion email/SMS — includes itemized lines when configured on the event. */
+export async function buildCalendarReceiptBodyText(
+  supabase: SupabaseClient,
+  ev: ReceiptBodyEvent,
+  opts?: { itemizeMaterials?: boolean; mileageRatePerMile?: number | null },
+): Promise<string> {
+  const receiptMeta = parseCalendarEventReceiptMeta(ev.metadata)
+  const wantsLines =
+    receiptMeta.receipt_wants_line_items ||
+    receiptMeta.receipt_additional_lines.length > 0 ||
+    Object.keys(receiptMeta.receipt_quote_overrides).length > 0
+  const miles =
+    ev.mileage_miles != null && Number.isFinite(Number(ev.mileage_miles)) && Number(ev.mileage_miles) > 0
+      ? Number(ev.mileage_miles)
+      : 0
+  const sections = await buildCalendarReceiptPdfSections(supabase, {
+    quote_id: wantsLines ? ev.quote_id ?? null : null,
+    materials_list: ev.materials_list,
+    job_types: ev.job_types ?? null,
+    start_at: ev.start_at,
+    end_at: ev.end_at,
+    receiptMeta,
+    itemizeMaterials: opts?.itemizeMaterials === true,
+    mileageMiles: miles > 0 ? miles : null,
+    mileageRatePerMile:
+      opts?.mileageRatePerMile != null && Number.isFinite(Number(opts.mileageRatePerMile)) && Number(opts.mileageRatePerMile) > 0
+        ? Number(opts.mileageRatePerMile)
+        : null,
+  })
+  const lines = [
+    `Job: ${ev.title}`,
+    `When: ${new Date(ev.start_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} – ${new Date(ev.end_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+    sections.scheduledDurationLabel,
+  ]
+  if (sections.quoteLines.length > 0) {
+    lines.push("", "Line items:")
+    lines.push(...sections.quoteLines.map((l) => `  • ${l}`))
+    if (sections.lineSubtotal != null) lines.push(`Subtotal: $${sections.lineSubtotal.toFixed(2)}`)
+  } else if (ev.quote_total != null && ev.quote_total > 0) {
+    lines.push(`Total: $${Number(ev.quote_total).toFixed(2)}`)
+  }
+  if (miles > 0 && !(opts?.mileageRatePerMile && Number(opts.mileageRatePerMile) > 0)) {
+    lines.push(`Mileage: ${miles} mi`)
+  }
+  if (sections.materialsChecklistLines.length > 0) {
+    lines.push("", "Materials:")
+    lines.push(...sections.materialsChecklistLines.map((l) => `  • ${l}`))
+  }
+  if (ev.notes?.trim()) lines.push(`Notes: ${ev.notes.trim()}`)
+  return lines.join("\n")
 }

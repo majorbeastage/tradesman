@@ -17,6 +17,135 @@ export const thimbleOfficialLinks = {
   helpCenter: "https://help.thimble.com/",
 } as const
 
+/** Swap this builder for a native Thimble API handoff when partnership terms allow. */
+export type ThimbleQuoteContext = {
+  insuranceType: InsuranceTypeId
+  reason?: InsuranceReasonId
+  customerName?: string
+  jobTitle?: string
+}
+
+export function buildThimbleQuoteUrl(ctx: ThimbleQuoteContext): string {
+  const base = thimbleOfficialLinks.quoteStart
+  const params = new URLSearchParams()
+  params.set("utm_source", "tradesman")
+  params.set("utm_medium", "insurance_assistant")
+  params.set("utm_campaign", ctx.insuranceType)
+  if (ctx.reason) params.set("utm_content", ctx.reason)
+  if (ctx.customerName?.trim()) params.set("utm_term", ctx.customerName.trim().slice(0, 80))
+  return `${base}?${params.toString()}`
+}
+
+export type InsuranceTypeId = "business" | "job_specific"
+
+export type InsuranceReasonId =
+  | "customer_requirement"
+  | "general_contractor"
+  | "municipality"
+  | "property_manager"
+  | "personal_protection"
+  | "other"
+
+export const INSURANCE_TYPES: { id: InsuranceTypeId; label: string; description: string }[] = [
+  {
+    id: "business",
+    label: "Business Insurance",
+    description: "Ongoing coverage for your company — vehicles, crew, shop, and year-round operations.",
+  },
+  {
+    id: "job_specific",
+    label: "Job-Specific Insurance",
+    description: "Coverage tied to one customer, job site, and scheduled work — ideal for COI requests.",
+  },
+]
+
+export const INSURANCE_REASONS: { id: InsuranceReasonId; label: string; hint: string }[] = [
+  { id: "customer_requirement", label: "Customer requirement", hint: "Homeowner or commercial owner asked for proof before work starts." },
+  { id: "general_contractor", label: "General contractor", hint: "Prime contractor or GC packet requires additional insured wording." },
+  { id: "municipality", label: "Municipality", hint: "Permit, inspection, or city registration needs liability on file." },
+  { id: "property_manager", label: "Property manager", hint: "Multi-family or commercial PM needs COI for vendor access." },
+  { id: "personal_protection", label: "Personal protection", hint: "You want liability limits before taking on higher-risk scope." },
+  { id: "other", label: "Other", hint: "Another compliance trigger — we'll still recommend baseline coverages." },
+]
+
+export type InsuranceCoverageCard = {
+  id: string
+  name: string
+  shortDescription: string
+  learnMore: string
+  href: string
+  priority: number
+}
+
+export const INSURANCE_COVERAGE_CARDS: InsuranceCoverageCard[] = [
+  {
+    id: "general_liability",
+    name: "General Liability",
+    shortDescription: "Core third-party coverage for property damage and bodily injury on job sites.",
+    learnMore:
+      "General liability is the baseline most GCs, municipalities, and customers ask for first. Limits are often stated as per-occurrence / aggregate (for example $1M / $2M). Match the contract schedule before you mobilize.",
+    href: thimbleOfficialLinks.generalLiability,
+    priority: 1,
+  },
+  {
+    id: "workers_comp",
+    name: "Workers Compensation",
+    shortDescription: "Statutory coverage for employee injuries — usually required when you have W-2 crew.",
+    learnMore:
+      "Workers comp rules vary by state and payroll. If anyone on your payroll steps on the job site, assume you need it unless a licensed advisor tells you otherwise.",
+    href: thimbleOfficialLinks.workersComp,
+    priority: 2,
+  },
+  {
+    id: "professional_liability",
+    name: "Professional Liability",
+    shortDescription: "Errors & omissions when design, engineering judgment, or sign-off language is in scope.",
+    learnMore:
+      "Professional liability protects against claims that your advice or professional work caused a financial loss — not just physical damage. Relevant when estimates include compliance sign-offs or design-build language.",
+    href: thimbleOfficialLinks.professionalLiability,
+    priority: 3,
+  },
+  {
+    id: "bop",
+    name: "Business Owner's Policy (BOP)",
+    shortDescription: "Bundles property (tools, office, stock) with liability when you have fixed assets.",
+    learnMore:
+      "A BOP can cover owned gear, small shop stock, and liability together. Useful when you maintain a yard, warehouse, or office — not just field labor.",
+    href: thimbleOfficialLinks.businessOwnersPolicy,
+    priority: 4,
+  },
+  {
+    id: "tools_equipment",
+    name: "Tools & Equipment",
+    shortDescription: "Theft or damage to owned gear in the field or in transit between sites.",
+    learnMore:
+      "When offered, tools coverage can fill gaps left by GL. Inventory high-value saws, lasers, and specialty gear before you quote limits.",
+    href: thimbleOfficialLinks.smallBusinessInsurance,
+    priority: 5,
+  },
+]
+
+const REASON_COVERAGE: Record<InsuranceReasonId, string[]> = {
+  customer_requirement: ["general_liability", "workers_comp"],
+  general_contractor: ["general_liability", "workers_comp", "professional_liability"],
+  municipality: ["general_liability", "workers_comp"],
+  property_manager: ["general_liability", "bop", "workers_comp"],
+  personal_protection: ["general_liability", "professional_liability"],
+  other: ["general_liability", "workers_comp", "professional_liability", "bop"],
+}
+
+export function recommendedCoverageCards(
+  reason: InsuranceReasonId,
+  insuranceType: InsuranceTypeId,
+): InsuranceCoverageCard[] {
+  const ids = new Set(REASON_COVERAGE[reason] ?? REASON_COVERAGE.other)
+  if (insuranceType === "business") {
+    ids.add("bop")
+    ids.add("tools_equipment")
+  }
+  return INSURANCE_COVERAGE_CARDS.filter((c) => ids.has(c.id)).sort((a, b) => a.priority - b.priority)
+}
+
 export type ThimbleToolkitStep = {
   title: string
   body: string

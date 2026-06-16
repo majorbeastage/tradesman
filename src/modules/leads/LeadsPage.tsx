@@ -15,6 +15,8 @@ import {
   isPortalSettingDependencyVisible,
 } from "../../types/portal-builder"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
+import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import type { PortalSettingItem } from "../../types/portal-builder"
@@ -167,6 +169,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const [leadReplySms, setLeadReplySms] = useState("")
   const [leadSmsSending, setLeadSmsSending] = useState(false)
   const [leadEmailTo, setLeadEmailTo] = useState("")
+  const [leadEmailAdditionalTo, setLeadEmailAdditionalTo] = useState("")
+  const [leadEmailCc, setLeadEmailCc] = useState("")
+  const [leadEmailBcc, setLeadEmailBcc] = useState("")
   const [leadEmailSubject, setLeadEmailSubject] = useState("")
   const [leadEmailBody, setLeadEmailBody] = useState("")
   const [leadEmailSending, setLeadEmailSending] = useState(false)
@@ -799,6 +804,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       status: st,
     })
     setLeadEmailTo(email)
+    setLeadEmailAdditionalTo("")
+    setLeadEmailCc("")
+    setLeadEmailBcc("")
     setLeadEmailSubject(data.title?.trim() ? `Re: ${String(data.title).trim()}` : "Re: Your request")
     setLeadEmailBody("")
     setLeadReplySms("")
@@ -963,10 +971,13 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   async function sendLeadEmail() {
     if (!userId || !selectedLead?.id || !selectedLead.customer_id) return
     const to = leadEmailTo.trim()
+    const additional = leadEmailAdditionalTo.trim()
+    const cc = leadEmailCc.trim()
+    const bcc = leadEmailBcc.trim()
     const subject = leadEmailSubject.trim()
     const body = leadEmailBody.trim()
-    if (!to) {
-      alert("Enter an email address.")
+    if (!to && !additional) {
+      alert("Enter at least one recipient (To) or add addresses in Additional recipients.")
       return
     }
     if (!subject) {
@@ -983,7 +994,10 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to,
+          to: to || undefined,
+          toAdditional: additional || undefined,
+          cc: cc || undefined,
+          bcc: bcc || undefined,
           subject,
           body,
           userId,
@@ -2682,6 +2696,24 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                 style={{ ...theme.formInput, maxWidth: 560 }}
                               />
                               <input
+                                placeholder="Additional recipients (To), comma-separated"
+                                value={leadEmailAdditionalTo}
+                                onChange={(e) => setLeadEmailAdditionalTo(e.target.value)}
+                                style={{ ...theme.formInput, maxWidth: 560 }}
+                              />
+                              <input
+                                placeholder="CC, comma-separated"
+                                value={leadEmailCc}
+                                onChange={(e) => setLeadEmailCc(e.target.value)}
+                                style={{ ...theme.formInput, maxWidth: 560 }}
+                              />
+                              <input
+                                placeholder="BCC, comma-separated"
+                                value={leadEmailBcc}
+                                onChange={(e) => setLeadEmailBcc(e.target.value)}
+                                style={{ ...theme.formInput, maxWidth: 560 }}
+                              />
+                              <input
                                 placeholder="Subject"
                                 value={leadEmailSubject}
                                 onChange={(e) => setLeadEmailSubject(e.target.value)}
@@ -2770,6 +2802,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   )
                                 }
                                 const ev = item.payload
+                                const fromAddr = ev.event_type === "email" ? formatCommEventEmailFromLabel(ev) : null
                                 const label =
                                   ev.event_type === "email"
                                     ? "Email"
@@ -2787,6 +2820,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                   >
                                     <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
                                       {label}
+                                      {fromAddr ? ` · ${fromAddr}` : ""}
                                       {ev.direction === "inbound" ? " · In" : ev.direction === "outbound" ? " · Out" : ""}
                                       {ev.created_at ? (
                                         <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 8 }}>
@@ -2808,6 +2842,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                                       </>
                                     ) : ev.event_type === "email" ? (
                                       <>
+                                        <EmailEventAddressLine event={ev} />
                                         {ev.subject?.trim() ? (
                                           <p style={{ margin: "0 0 6px", fontWeight: 700 }}>{ev.subject.trim()}</p>
                                         ) : null}

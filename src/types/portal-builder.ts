@@ -79,7 +79,6 @@ export const V2_SIDEBAR_DEFAULT_TAB_IDS = [
   'quotes',
   'calendar',
   'payments',
-  'tech-support',
 ] as const
 
 export function isV2DeprecatedPortalTab(tabId: string): boolean {
@@ -131,7 +130,7 @@ export const TAB_ID_LABELS: Record<string, string> = {
   'insurance-options': "Insurance Options — Coming Soon",
   account: 'Account',
   'web-support': 'Web Support',
-  'tech-support': 'Tech Support',
+  'tech-support': 'Tradesman Help Desk',
   settings: 'Settings',
 }
 
