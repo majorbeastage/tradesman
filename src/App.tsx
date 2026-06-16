@@ -59,6 +59,8 @@ import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
+import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
+import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 type LoginType = "user" | "office_manager" | "admin"
@@ -117,7 +119,16 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
 }
 
 function MainApp() {
-  const [page, setPage] = useState("dashboard")
+  const [page, setPageState] = useState("dashboard")
+  return (
+    <AppNavigationProvider page={page} setPage={setPageState}>
+      <MainAppInner />
+    </AppNavigationProvider>
+  )
+}
+
+function MainAppInner() {
+  const { page, navigatePage: setPage } = useAppNavigation()
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
   const { clientId, portalConfig, role: authRole, user } = useAuth()
@@ -245,6 +256,7 @@ function MainApp() {
   }, [user?.id])
 
   return (
+    <JobTypesModalProvider>
     <SetupWizardProvider
       setPage={setPage}
       userId={user?.id ?? null}
@@ -425,6 +437,7 @@ function MainApp() {
     </AppLayout>
     </GlobalAssistantProvider>
     </SetupWizardProvider>
+    </JobTypesModalProvider>
   )
 }
 

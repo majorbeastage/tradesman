@@ -3,12 +3,12 @@ import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
 import {
   formatDurationFieldFromMinutes,
   parseDurationFieldToMinutes,
-  parseJobTypeDurationMinutes,
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
+import { useJobTypesModalOptional, type OpenJobTypesModalOptions } from "../../contexts/JobTypesModalContext"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import { QUOTE_STATUS_SELECT_OPTIONS } from "../../constants/tabNotificationStatuses"
 import { theme } from "../../styles/theme"
@@ -63,7 +63,6 @@ import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteI
 import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   type EstimateLinePresetRow,
-  formatEstimatePresetCostSummary,
   parseEstimateLinePresetsFromMetadata,
   serializePresetForProfile,
 } from "../../lib/estimateLinePresets"
@@ -99,6 +98,7 @@ import {
   readCalendarWorkingHoursFromStorage,
 } from "../../lib/scheduleDurationDefaults"
 import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
+import { loadJobTypesForUser } from "../../lib/jobTypesApi"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
   filterEstimateScopeSuggestions,
@@ -344,17 +344,6 @@ type QuoteRow = {
 
 type QuotesPageProps = { /** @deprecated Tab changes after workflow actions are no longer used */ setPage?: (page: string) => void }
 
-/** Job type row for calendar picker + Job types modal (columns vary with DB migration). */
-type QuoteJobTypeListRow = {
-  id: string
-  name: string
-  duration_minutes: number
-  description: string | null
-  color_hex: string | null
-  materials_list?: string | null
-  track_mileage?: boolean | null
-}
-
 type CalendarPickerJobType = {
   id: string
   name: string
@@ -418,6 +407,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const isMobile = useIsMobile()
   const { userId: authUserId, session } = useAuth()
   const globalAssistant = useGlobalAssistantOptional()
+  const jobTypesModal = useJobTypesModalOptional()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
@@ -520,12 +510,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteLegalSignatures, setQuoteLegalSignatures] = useState(true)
   const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
   const [lineItemsHandoff, setLineItemsHandoff] = useState<AssistantHandoffPayload | null>(null)
-  const [showQuoteJobTypesModal, setShowQuoteJobTypesModal] = useState(false)
-  const [quoteJobTypeEditorOpen, setQuoteJobTypeEditorOpen] = useState(false)
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
-  const [quoteJobTypesList, setQuoteJobTypesList] = useState<QuoteJobTypeListRow[]>([])
   const [estimateReview, setEstimateReview] = useState<{
     subtotal: number | null
     issues: string[]
@@ -542,8 +529,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [expandedEliById, setExpandedEliById] = useState<Record<string, boolean>>({})
   /** Per draft row: job type picked for “Add to job type” */
   const [eliLinkJtPick, setEliLinkJtPick] = useState<Record<string, string>>({})
-  /** Job types modal: link templates to the job type being added/edited */
-  const [jtModalPresetChecks, setJtModalPresetChecks] = useState<Record<string, boolean>>({})
   const [estimateModalJobTypes, setEstimateModalJobTypes] = useState<{ id: string; name: string }[]>([])
   /** Job types for quote line dropdowns (loaded with quote detail). */
   const [quoteDetailJobTypes, setQuoteDetailJobTypes] = useState<{ id: string; name: string }[]>([])
@@ -582,15 +567,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [newItemPresetId, setNewItemPresetId] = useState<string | null>(null)
   const [presetSuggestOpen, setPresetSuggestOpen] = useState(false)
   const [addItemLoading, setAddItemLoading] = useState(false)
-  const [quoteJtNewName, setQuoteJtNewName] = useState("")
-  const [quoteJtNewDurationStr, setQuoteJtNewDurationStr] = useState("60")
-  const [quoteJtDurationUnit, setQuoteJtDurationUnit] = useState<15 | 60>(60)
-  const [quoteJtNewDesc, setQuoteJtNewDesc] = useState("")
-  const [quoteJtNewColor, setQuoteJtNewColor] = useState("#F97316")
-  const [quoteJtSaving, setQuoteJtSaving] = useState(false)
-  const [editingQuoteJtId, setEditingQuoteJtId] = useState<string | null>(null)
-  const [quoteJtMaterials, setQuoteJtMaterials] = useState("")
-  const [quoteJtTrackMileage, setQuoteJtTrackMileage] = useState(false)
   const [applyJtLinesBusy, setApplyJtLinesBusy] = useState(false)
   // Add to Calendar (from quote detail)
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
@@ -1041,6 +1017,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return isPortalSettingDependencyVisible(item, estimateLineItemsPortal, estimateLinePortalValues)
   }
 
+  const reloadQuoteJobTypesList = useCallback(async () => {
+    if (!supabase || !userId) return
+    const { rows } = await loadJobTypesForUser(supabase, userId)
+    const short = rows.map((j) => ({ id: j.id, name: j.name }))
+    setEstimateModalJobTypes(short)
+    setQuoteDetailJobTypes(short)
+  }, [userId])
+
+  const openQuoteJobTypesModal = useCallback(
+    (opts?: OpenJobTypesModalOptions) => {
+      jobTypesModal?.openJobTypesModal({
+        ...opts,
+        onChanged: () => {
+          void reloadQuoteJobTypesList()
+          opts?.onChanged?.()
+        },
+      })
+    },
+    [jobTypesModal, reloadQuoteJobTypesList],
+  )
+
+  useEffect(() => {
+    void reloadQuoteJobTypesList()
+  }, [reloadQuoteJobTypesList])
+
   useEffect(() => {
     if (estimateLineItemsPortal.length === 0) {
       setEstimateLinePortalValues({})
@@ -1068,13 +1069,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     if (!showEstimateLineItemsModal || !supabase || !userId) return
-    void supabase
-      .from("job_types")
-      .select("id, name")
-      .eq("user_id", userId)
-      .order("name")
-      .then(({ data }) => setEstimateModalJobTypes(data || []))
-  }, [showEstimateLineItemsModal, userId])
+    void reloadQuoteJobTypesList()
+  }, [showEstimateLineItemsModal, userId, reloadQuoteJobTypesList])
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -1751,72 +1747,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [showAddCustomer, quoteAddCustomerPortalItems])
 
   useEffect(() => {
-    if (!showQuoteJobTypesModal || !supabase || !userId) return
-    const client = supabase
-    void (async () => {
-      const em = (e: { message?: string } | null) => (e?.message ?? "").toLowerCase()
-      const full = await client
-        .from("job_types")
-        .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
-        .eq("user_id", userId)
-        .order("name")
-      if (!full.error) {
-        setQuoteJobTypesList((full.data ?? []) as QuoteJobTypeListRow[])
-        return
-      }
-      if (full.error && (em(full.error).includes("track_mileage") || em(full.error).includes("materials_list"))) {
-        const mid = await client
-          .from("job_types")
-          .select("id, name, duration_minutes, description, color_hex, materials_list")
-          .eq("user_id", userId)
-          .order("name")
-        if (!mid.error) {
-          setQuoteJobTypesList((mid.data ?? []) as QuoteJobTypeListRow[])
-          return
-        }
-        if (mid.error?.message?.toLowerCase().includes("materials_list")) {
-          const min = await client
-            .from("job_types")
-            .select("id, name, duration_minutes, description, color_hex")
-            .eq("user_id", userId)
-            .order("name")
-          setQuoteJobTypesList((min.data ?? []) as QuoteJobTypeListRow[])
-          return
-        }
-      }
-      setQuoteJobTypesList([])
-    })()
-  }, [showQuoteJobTypesModal, supabase, userId])
-
-  useEffect(() => {
-    if (!showQuoteJobTypesModal) return
-    setEstimateModalJobTypes(quoteJobTypesList.map((j) => ({ id: j.id, name: j.name })))
-  }, [showQuoteJobTypesModal, quoteJobTypesList])
-
-  useEffect(() => {
     if (!showEstimateLineItemsModal || !supabase || !userId) return
-    void supabase
-      .from("job_types")
-      .select("id, name")
-      .eq("user_id", userId)
-      .order("name")
-      .then(({ data }) => setEstimateModalJobTypes(data || []))
-  }, [showEstimateLineItemsModal, userId])
+    void reloadQuoteJobTypesList()
+  }, [showEstimateLineItemsModal, userId, reloadQuoteJobTypesList])
 
   useEffect(() => {
     if (eliSimpleKind === "travel") setEliSimpleUnit("miles")
     else if (eliSimpleKind === "labor") setEliSimpleUnit("hours")
     else setEliSimpleUnit("each")
   }, [eliSimpleKind])
-
-  useEffect(() => {
-    if (!editingQuoteJtId) return
-    const next: Record<string, boolean> = {}
-    for (const p of estimateLinePresets) {
-      next[p.id] = (p.linked_job_type_ids ?? []).includes(editingQuoteJtId)
-    }
-    setJtModalPresetChecks(next)
-  }, [editingQuoteJtId, estimateLinePresets])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -3347,8 +3286,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return
     }
     if (handoff?.specialist === "estimate_job_types_library") {
-      if (handoff.jobTypeName) setQuoteJtNewName(handoff.jobTypeName)
-      setShowQuoteJobTypesModal(true)
+      openQuoteJobTypesModal({ expandCreate: true, initialName: handoff.jobTypeName ?? "" })
       return
     }
     if (consumeOpenEstimateLineItemsModalFlag()) {
@@ -3360,10 +3298,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   function handoffOpenJobTypesWithPresets(jobTypeName: string, presetIds: string[]) {
     const checks: Record<string, boolean> = {}
     for (const id of presetIds) checks[id] = true
-    setJtModalPresetChecks(checks)
-    setQuoteJtNewName(jobTypeName)
-    setQuoteJobTypeEditorOpen(true)
-    setShowQuoteJobTypesModal(true)
+    openQuoteJobTypesModal({
+      expandCreate: true,
+      initialName: jobTypeName,
+      initialPresetChecks: checks,
+    })
   }
 
   function appendEliPresetFromSimpleForm() {
@@ -3561,47 +3500,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     })
   }
 
-  async function persistEstimatePresetsToProfile(nextPresets: EstimateLinePresetRow[]) {
-    if (!supabase || !userId) return
-    const trimmed = nextPresets.filter((p) => p.description.trim())
-    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    if (fetchErr) {
-      alert(fetchErr.message)
-      return
-    }
-    const prevMeta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? { ...(data.metadata as Record<string, unknown>) }
-        : {}
-    prevMeta.estimate_line_presets = trimmed.map(serializePresetForProfile)
-    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setEstimateLinePresets(trimmed)
-    if (showEstimateLineItemsModal) {
-      setEstimateLineDraft((prev) =>
-        prev.map((row) => {
-          const u = trimmed.find((t) => t.id === row.id)
-          if (!u) return row
-          return { ...row, linked_job_type_ids: u.linked_job_type_ids ? [...u.linked_job_type_ids] : [] }
-        }),
-      )
-    }
-  }
-
-  async function mergePresetLinksForJobType(jobTypeId: string, checks: Record<string, boolean>) {
-    const merged = estimateLinePresets.map((p) => {
-      const want = checks[p.id] === true
-      const set = new Set(p.linked_job_type_ids ?? [])
-      if (want) set.add(jobTypeId)
-      else set.delete(jobTypeId)
-      return { ...p, linked_job_type_ids: Array.from(set) }
-    })
-    await persistEstimatePresetsToProfile(merged)
-  }
-
   async function persistQuoteJobType(jobTypeId: string) {
     if (!supabase || !selectedQuoteId) return
     const v = jobTypeId.trim() || null
@@ -3620,203 +3518,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return
     }
     setSelectedQuote((prev: QuoteRow | null) => (prev && typeof prev === "object" ? { ...prev, job_type_id: v } : prev))
-  }
-
-  async function saveQuoteModalNewJobType() {
-    if (!quoteJtNewName.trim()) {
-      alert("Please enter a name for the job type.")
-      return
-    }
-    const parsedJtDur =
-      quoteJtDurationUnit === 60
-        ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
-        : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
-    if (parsedJtDur == null) {
-      alert(`Enter duration in ${quoteJtDurationUnit === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
-      return
-    }
-    if (!supabase || !userId) return
-    setQuoteJtSaving(true)
-    try {
-      let patch: Record<string, unknown> = {
-        name: quoteJtNewName.trim(),
-        description: quoteJtNewDesc.trim() || null,
-        duration_minutes: parsedJtDur,
-        color_hex: quoteJtNewColor,
-        materials_list: quoteJtMaterials.trim() || null,
-        track_mileage: quoteJtTrackMileage,
-      }
-      if (editingQuoteJtId) {
-        let r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
-        const lower = (m: string) => m.toLowerCase()
-        if (r.error && lower(r.error.message).includes("track_mileage")) {
-          const { track_mileage: _t, ...rest } = patch
-          patch = rest
-          r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
-        }
-        if (r.error && lower(r.error.message).includes("materials_list")) {
-          const { materials_list: _m, ...rest } = patch
-          patch = { ...rest }
-          r = await supabase.from("job_types").update(patch).eq("id", editingQuoteJtId).eq("user_id", userId)
-        }
-        if (r.error) {
-          alert(r.error.message)
-          return
-        }
-        await mergePresetLinksForJobType(editingQuoteJtId, jtModalPresetChecks)
-      } else {
-        let r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
-        const lower = (m: string) => m.toLowerCase()
-        if (r.error && lower(r.error.message).includes("track_mileage")) {
-          const { track_mileage: _t, ...rest } = patch
-          patch = rest
-          r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
-        }
-        if (r.error && lower(r.error.message).includes("materials_list")) {
-          const { materials_list: _m, ...rest } = patch
-          patch = { ...rest }
-          r = await supabase.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
-        }
-        if (r.error) {
-          alert(r.error.message)
-          return
-        }
-        const newId = (r.data as { id?: string } | null)?.id
-        if (newId) await mergePresetLinksForJobType(newId, jtModalPresetChecks)
-      }
-      setQuoteJtNewName("")
-      setQuoteJtNewDesc("")
-      setQuoteJtNewDurationStr("60")
-      setQuoteJtDurationUnit(60)
-      setQuoteJtNewColor("#F97316")
-      setQuoteJtTrackMileage(false)
-      setEditingQuoteJtId(null)
-      setJtModalPresetChecks({})
-      const listFull = await supabase
-        .from("job_types")
-        .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
-        .eq("user_id", userId)
-        .order("name")
-      let nextList: QuoteJobTypeListRow[]
-      if (!listFull.error) {
-        nextList = (listFull.data ?? []) as QuoteJobTypeListRow[]
-      } else if (
-        listFull.error.message.toLowerCase().includes("track_mileage") ||
-        listFull.error.message.toLowerCase().includes("materials_list")
-      ) {
-        const listMid = await supabase
-          .from("job_types")
-          .select("id, name, duration_minutes, description, color_hex, materials_list")
-          .eq("user_id", userId)
-          .order("name")
-        if (!listMid.error) {
-          nextList = (listMid.data ?? []) as QuoteJobTypeListRow[]
-        } else if (listMid.error.message.toLowerCase().includes("materials_list")) {
-          const listMin = await supabase
-            .from("job_types")
-            .select("id, name, duration_minutes, description, color_hex")
-            .eq("user_id", userId)
-            .order("name")
-          nextList = (listMin.data ?? []) as QuoteJobTypeListRow[]
-        } else {
-          nextList = []
-        }
-      } else {
-        nextList = []
-      }
-      setQuoteJobTypesList(nextList)
-      const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
-      setEstimateModalJobTypes(shortList || [])
-      setQuoteDetailJobTypes(shortList || [])
-    } finally {
-      setQuoteJtSaving(false)
-    }
-  }
-
-  function startEditQuoteJobType(jt: {
-    id: string
-    name: string
-    duration_minutes: number
-    description: string | null
-    color_hex: string | null
-    materials_list?: string | null
-    track_mileage?: boolean | null
-  }) {
-    setQuoteJtNewName(jt.name)
-    setQuoteJtNewDesc(jt.description ?? "")
-    const safeMinutes = Math.max(15, jt.duration_minutes)
-    const useHours = safeMinutes % 60 === 0
-    setQuoteJtDurationUnit(useHours ? 60 : 15)
-    setQuoteJtNewDurationStr(useHours ? String(safeMinutes / 60) : String(safeMinutes))
-    setQuoteJtNewColor(jt.color_hex ?? "#F97316")
-    setQuoteJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
-    setQuoteJtTrackMileage(jt.track_mileage === true)
-    setEditingQuoteJtId(jt.id)
-    setQuoteJobTypeEditorOpen(true)
-  }
-
-  function cancelEditQuoteJobType() {
-    setQuoteJtNewName("")
-    setQuoteJtNewDesc("")
-    setQuoteJtNewDurationStr("60")
-    setQuoteJtDurationUnit(60)
-    setQuoteJtNewColor("#F97316")
-    setQuoteJtMaterials("")
-    setQuoteJtTrackMileage(false)
-    setEditingQuoteJtId(null)
-    setJtModalPresetChecks({})
-  }
-
-  async function removeQuoteJobTypeRow(jt: { id: string; name: string }) {
-    if (!supabase || !userId) return
-    if (!confirm(`Remove job type "${jt.name}"? Calendar events keep their color; the type drops from lists.`)) return
-    const { error } = await supabase.from("job_types").delete().eq("id", jt.id).eq("user_id", userId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    if (editingQuoteJtId === jt.id) cancelEditQuoteJobType()
-    const rqFull = await supabase
-      .from("job_types")
-      .select("id, name, duration_minutes, description, color_hex, materials_list, track_mileage")
-      .eq("user_id", userId)
-      .order("name")
-    let afterRemove: QuoteJobTypeListRow[]
-    if (!rqFull.error) {
-      afterRemove = (rqFull.data ?? []) as QuoteJobTypeListRow[]
-    } else if (
-      rqFull.error.message.toLowerCase().includes("track_mileage") ||
-      rqFull.error.message.toLowerCase().includes("materials_list")
-    ) {
-      const rqMid = await supabase
-        .from("job_types")
-        .select("id, name, duration_minutes, description, color_hex, materials_list")
-        .eq("user_id", userId)
-        .order("name")
-      if (!rqMid.error) {
-        afterRemove = (rqMid.data ?? []) as QuoteJobTypeListRow[]
-      } else if (rqMid.error.message.toLowerCase().includes("materials_list")) {
-        const rqMin = await supabase
-          .from("job_types")
-          .select("id, name, duration_minutes, description, color_hex")
-          .eq("user_id", userId)
-          .order("name")
-        afterRemove = (rqMin.data ?? []) as QuoteJobTypeListRow[]
-      } else {
-        afterRemove = []
-      }
-    } else {
-      afterRemove = []
-    }
-    setQuoteJobTypesList(afterRemove)
-    const { data: shortList } = await supabase.from("job_types").select("id, name").eq("user_id", userId).order("name")
-    setEstimateModalJobTypes(shortList || [])
-    setQuoteDetailJobTypes(shortList || [])
-    const stripped = estimateLinePresets.map((p) => ({
-      ...p,
-      linked_job_type_ids: (p.linked_job_type_ids ?? []).filter((id) => id !== jt.id),
-    }))
-    await persistEstimatePresetsToProfile(stripped)
   }
 
   async function saveEstimateLineItemsModal() {
@@ -4954,7 +4655,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   type="button"
                   onClick={() => {
                     setLibrarySection("job_types")
-                    setShowQuoteJobTypesModal(true)
+                    openQuoteJobTypesModal()
                   }}
                   style={{
                     padding: "6px 12px",
@@ -7709,7 +7410,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                   <button
                     type="button"
-                    onClick={() => setShowQuoteJobTypesModal(true)}
+                    onClick={() => openQuoteJobTypesModal()}
                     style={{
                       fontSize: 13,
                       padding: "8px 14px",
@@ -8180,358 +7881,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   Cancel
                 </button>
               </div>
-            </div>
-          </>
-        )}
-
-        {showQuoteJobTypesModal && (
-          <>
-            <div
-              onClick={() => {
-                cancelEditQuoteJobType()
-                setShowQuoteJobTypesModal(false)
-                setQuoteJobTypeEditorOpen(false)
-              }}
-              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 10000 }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%, -50%)",
-                width: "92%",
-                maxWidth: 520,
-                maxHeight: "90vh",
-                overflow: "auto",
-                background: "white",
-                borderRadius: 8,
-                padding: 24,
-                boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
-                zIndex: 10001,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h3 style={{ margin: 0, color: theme.text, fontSize: 18 }}>{quoteJobTypesButtonLabel}</h3>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {showQuotesJobTypesPanel ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      cancelEditQuoteJobType()
-                      setShowQuoteJobTypesModal(false)
-                      setQuoteJobTypeEditorOpen(false)
-                    }}
-                    style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-                Same list as <strong>Calendar → Job Types</strong>. Color and duration apply to calendar events; types also appear on quote lines and estimate presets.
-              </p>
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: 12,
-                  borderRadius: 8,
-                  border: `1px solid ${theme.border}`,
-                  background: "#f8fafc",
-                }}
-              >
-                {!editingQuoteJtId ? (
-                  <button
-                    type="button"
-                    onClick={() => setQuoteJobTypeEditorOpen((prev) => !prev)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      color: theme.text,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {quoteJobTypeEditorOpen ? "Hide create new job type" : "Create new job type"}
-                  </button>
-                ) : null}
-                {(editingQuoteJtId || quoteJobTypeEditorOpen) && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                  <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: theme.text }}>
-                    {editingQuoteJtId ? "Edit job type" : "New job type"}
-                  </p>
-                  <input
-                    placeholder="Name"
-                    value={quoteJtNewName}
-                    onChange={(e) => setQuoteJtNewName(e.target.value)}
-                    style={theme.formInput}
-                  />
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <label style={{ fontSize: 12, color: theme.text }}>
-                      Duration
-                      <select
-                        value={quoteJtDurationUnit}
-                        onChange={(e) => {
-                          const nextUnit = e.target.value === "60" ? 60 : 15
-                          const parsed =
-                            quoteJtDurationUnit === 60
-                              ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
-                              : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
-                          setQuoteJtDurationUnit(nextUnit)
-                          if (parsed != null) setQuoteJtNewDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
-                        }}
-                        style={{ ...theme.formInput, display: "block", marginTop: 4, marginBottom: 4, width: 110 }}
-                      >
-                        <option value={60}>Hours</option>
-                        <option value={15}>Minutes</option>
-                      </select>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={quoteJtNewDurationStr}
-                        onChange={(e) => setQuoteJtNewDurationStr(e.target.value)}
-                        onBlur={() => {
-                          const parsed =
-                            quoteJtDurationUnit === 60
-                              ? parseDurationFieldToMinutes(quoteJtNewDurationStr, 60)
-                              : parseJobTypeDurationMinutes(quoteJtNewDurationStr)
-                          if (parsed != null) setQuoteJtNewDurationStr(formatDurationFieldFromMinutes(parsed, quoteJtDurationUnit))
-                        }}
-                        style={{ ...theme.formInput, display: "block", marginTop: 4, width: 100 }}
-                      />
-                    </label>
-                    <label style={{ fontSize: 12, color: theme.text }}>
-                      Color
-                      <input
-                        type="color"
-                        value={quoteJtNewColor}
-                        onChange={(e) => setQuoteJtNewColor(e.target.value)}
-                        style={{ display: "block", marginTop: 4, width: 48, height: 32, padding: 0, border: "none" }}
-                      />
-                    </label>
-                  </div>
-                  <input
-                    placeholder="Description (optional)"
-                    value={quoteJtNewDesc}
-                    onChange={(e) => setQuoteJtNewDesc(e.target.value)}
-                    style={theme.formInput}
-                  />
-                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
-                    Materials checklist (optional, one line per item — shown on scheduled calendar events)
-                    <textarea
-                      value={quoteJtMaterials}
-                      onChange={(e) => setQuoteJtMaterials(e.target.value)}
-                      rows={4}
-                      placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
-                      style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
-                    />
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-                    <input type="checkbox" checked={quoteJtTrackMileage} onChange={(e) => setQuoteJtTrackMileage(e.target.checked)} />
-                    Track mileage on calendar events (mileage field when this job type is selected)
-                  </label>
-                  <details
-                    style={{
-                      marginTop: 4,
-                      borderRadius: 6,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      padding: "8px 10px",
-                    }}
-                  >
-                    <summary
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "#111827",
-                        cursor: "pointer",
-                        listStyle: "none",
-                      }}
-                    >
-                      Saved line templates
-                      {estimateLinePresets.length > 0 ? (
-                        <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresets.length})</span>
-                      ) : null}
-                    </summary>
-                    <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
-                      Check lines to link them to this job type. One line can be linked to several types. Manage the full list under{" "}
-                      <strong style={{ color: "#111827" }}>{estimateLineItemsButtonLabel}</strong>.
-                    </p>
-                    {estimateLinePresets.length === 0 ? (
-                      <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
-                    ) : (
-                      <div
-                        style={{
-                          maxHeight: 220,
-                          overflow: "auto",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 8,
-                          padding: 8,
-                          borderRadius: 6,
-                          border: `1px solid ${theme.border}`,
-                          background: "#f9fafb",
-                        }}
-                      >
-                        {estimateLinePresets.map((p) => {
-                          const costLine = formatEstimatePresetCostSummary(p)
-                          return (
-                            <label
-                              key={p.id}
-                              style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
-                            >
-                              <input
-                                type="checkbox"
-                                style={{ marginTop: 4, flexShrink: 0 }}
-                                checked={jtModalPresetChecks[p.id] === true}
-                                onChange={(e) =>
-                                  setJtModalPresetChecks((prev) => ({ ...prev, [p.id]: e.target.checked }))
-                                }
-                              />
-                              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-                                <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
-                                {costLine ? (
-                                  <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span>
-                                ) : null}
-                              </span>
-                            </label>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </details>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <button
-                      type="button"
-                      disabled={quoteJtSaving}
-                      onClick={() => void saveQuoteModalNewJobType()}
-                      style={{
-                        alignSelf: "flex-start",
-                        padding: "8px 14px",
-                        borderRadius: 6,
-                        border: "none",
-                        background: theme.primary,
-                        color: "#fff",
-                        fontWeight: 600,
-                        cursor: quoteJtSaving ? "wait" : "pointer",
-                      }}
-                    >
-                      {quoteJtSaving ? "Saving…" : editingQuoteJtId ? "Update job type" : "Add job type"}
-                    </button>
-                    {editingQuoteJtId ? (
-                      <button
-                        type="button"
-                        disabled={quoteJtSaving}
-                        onClick={() => cancelEditQuoteJobType()}
-                        style={{
-                          padding: "8px 14px",
-                          borderRadius: 6,
-                          border: `1px solid ${theme.border}`,
-                          background: "#fff",
-                          color: theme.text,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Cancel edit
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                )}
-              </div>
-              {quoteJobTypesList.length === 0 ? (
-                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add one above or under Calendar → Job Types.</p>
-              ) : (
-                <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
-                  <h4 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: theme.text }}>Your job types</h4>
-                  {quoteJobTypesList.map((jt) => (
-                    <div
-                      key={jt.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 8,
-                        padding: 10,
-                        background: "#f9fafb",
-                        borderRadius: 6,
-                        border: `1px solid ${theme.border}`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: 4,
-                          background: jt.color_hex ?? theme.primary,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, color: theme.text, fontSize: 14 }}>{jt.name}</div>
-                        <div style={{ fontSize: 12, color: "#64748b" }}>
-                          {jt.duration_minutes} min
-                          {jt.description?.trim() ? ` · ${jt.description.trim()}` : ""}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => startEditQuoteJobType(jt)}
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: 12,
-                          border: `1px solid ${theme.border}`,
-                          borderRadius: 6,
-                          background: "white",
-                          cursor: "pointer",
-                          color: theme.text,
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void removeQuoteJobTypeRow(jt)}
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: 12,
-                          border: "1px solid #fca5a5",
-                          borderRadius: 6,
-                          background: "white",
-                          cursor: "pointer",
-                          color: "#b91c1c",
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  cancelEditQuoteJobType()
-                  setShowQuoteJobTypesModal(false)
-                  setQuoteJobTypeEditorOpen(false)
-                }}
-                style={{
-                  marginTop: 16,
-                  padding: "10px 16px",
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: 6,
-                  background: theme.background,
-                  color: theme.text,
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Close
-              </button>
             </div>
           </>
         )}

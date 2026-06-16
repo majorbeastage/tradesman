@@ -18,6 +18,7 @@ import {
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
+import { useJobTypesModalOptional } from "../contexts/JobTypesModalContext"
 
 const LS_OPTIONAL_ORDER = "tradesman_dashboard_optional_link_order_v2"
 
@@ -431,6 +432,7 @@ export default function DashboardQuickActions(props: Props) {
     onOpenSetupGuide,
   } = props
   const ga = useGlobalAssistantOptional()
+  const jobTypesModal = useJobTypesModalOptional()
   const fourth = resolveFourthCalendarState(props, labels)
   const tileScheme: DashboardTileScheme = "paper"
 
@@ -739,7 +741,7 @@ export default function DashboardQuickActions(props: Props) {
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
           {...dragProps}
-          onClick={() => !customize && go("calendar", { id: "scheduling_tools", panel: "job_types" })}
+          onClick={() => !customize && jobTypesModal?.openJobTypesModal()}
         />
       )
     }

@@ -40,6 +40,8 @@ import GlobalAssistantFab from "../../components/GlobalAssistantFab"
 import { GlobalAssistantProvider } from "../../contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "../../contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "../../components/RegisterSetupGuideOpener"
+import { AppNavigationProvider, useAppNavigation } from "../../contexts/AppNavigationContext"
+import { JobTypesModalProvider } from "../../contexts/JobTypesModalContext"
 
 const OM_CALENDAR_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "add_item", label: "Add item to calendar" },
@@ -464,7 +466,7 @@ function ManagedUserBar() {
 }
 
 function OfficeManagerAppContent() {
-  const [page, setPage] = useState("dashboard")
+  const { page, navigatePage: setPage } = useAppNavigation()
   const { clientId, user, portalConfig, role: authRole } = useAuth()
   const isMobile = useIsMobile()
   const { t } = useLocale()
@@ -522,6 +524,7 @@ function OfficeManagerAppContent() {
   }, [user?.id])
 
   return (
+    <JobTypesModalProvider>
     <SetupWizardProvider
       setPage={setPage}
       userId={user?.id ?? null}
@@ -650,13 +653,23 @@ function OfficeManagerAppContent() {
     </AppLayout>
     </GlobalAssistantProvider>
     </SetupWizardProvider>
+    </JobTypesModalProvider>
+  )
+}
+
+function OfficeManagerAppRoot() {
+  const [page, setPageState] = useState("dashboard")
+  return (
+    <AppNavigationProvider page={page} setPage={setPageState}>
+      <OfficeManagerAppContent />
+    </AppNavigationProvider>
   )
 }
 
 export default function OfficeManagerApp() {
   return (
     <OfficeManagerScopeProvider>
-      <OfficeManagerAppContent />
+      <OfficeManagerAppRoot />
     </OfficeManagerScopeProvider>
   )
 }

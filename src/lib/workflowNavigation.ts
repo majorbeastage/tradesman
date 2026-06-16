@@ -196,6 +196,34 @@ export function queueCalendarSuiteNavigation(state: QueuedCalendarSuite): void {
   }
 }
 
+const OPEN_JOB_TYPES_MODAL = "tradesman_open_job_types_modal_v1"
+
+export const OPEN_JOB_TYPES_MODAL_EVENT = "tradesman:open-job-types-modal"
+
+export function queueOpenJobTypesModal(): void {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(OPEN_JOB_TYPES_MODAL, "1")
+    window.dispatchEvent(new CustomEvent(OPEN_JOB_TYPES_MODAL_EVENT))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeOpenJobTypesModal(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    const v = sessionStorage.getItem(OPEN_JOB_TYPES_MODAL)
+    if (v) {
+      sessionStorage.removeItem(OPEN_JOB_TYPES_MODAL)
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
 export function consumeCalendarSuiteNavigation(): QueuedCalendarSuite | null {
   if (typeof window === "undefined") return null
   try {

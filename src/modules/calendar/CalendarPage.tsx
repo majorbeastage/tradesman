@@ -1,11 +1,10 @@
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, useCallback } from "react"
 import { supabase } from "../../lib/supabase"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
   formatDurationFieldFromMinutes,
   parseDurationFieldToMinutes,
-  parseJobTypeDurationMinutes,
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -48,6 +47,7 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerProfile } from "../../lib/customerNavigation"
+import { useJobTypesModalOptional } from "../../contexts/JobTypesModalContext"
 import {
   consumeCalendarSuiteNavigation,
   consumeCustomReceiptCustomerPrefill,
@@ -72,12 +72,6 @@ import {
 import { calendarEventEffectiveStatus } from "../../lib/calendarEventStatus"
 import { shareCalendarEventsToDevice, type CalendarIcsRow } from "../../lib/shareCalendarIcs"
 import { isNativeApp } from "../../lib/capacitorMobile"
-import {
-  type EstimateLinePresetRow,
-  formatEstimatePresetCostSummary,
-  parseEstimateLinePresetsFromMetadata,
-  serializePresetForProfile,
-} from "../../lib/estimateLinePresets"
 import {
   materialDescriptionsFromQuoteItemRows,
   parseQuoteItemMetadata,
@@ -306,9 +300,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
+  const jobTypesModal = useJobTypesModalOptional()
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [jobTypes, setJobTypes] = useState<JobType[]>([])
-  const [jobTypesLoadError, setJobTypesLoadError] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>("")
   const [view, setView] = useState<"day" | "week" | "month">("month")
@@ -327,10 +321,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
   const managedByOfficeManager = useManagedByOfficeManager()
 
-  useEffect(() => {
-    const next = consumeCalendarSuiteNavigation()
-    if (next) setCalendarSuite(next)
-  }, [])
   const [managedSelfPolicy, setManagedSelfPolicy] = useState(() => parseOmCalendarPolicy({}))
   const [receiptTemplateFormValues, setReceiptTemplateFormValues] = useState<Record<string, string>>({})
   const [completionSettingsFormValues, setCompletionSettingsFormValues] = useState<Record<string, string>>({})
@@ -368,17 +358,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addCustomerId, setAddCustomerId] = useState<string | null>(null)
   const [addSaving, setAddSaving] = useState(false)
 
-  // Job type form
-  const [jtName, setJtName] = useState("")
-  const [jtDescription, setJtDescription] = useState("")
-  const [jtDurationStr, setJtDurationStr] = useState("60")
-  const [jtDurationUnit, setJtDurationUnit] = useState<15 | 60>(60)
-  const [jtColor, setJtColor] = useState("#F97316")
-  const [jtSaving, setJtSaving] = useState(false)
-  const [editingJobTypeId, setEditingJobTypeId] = useState<string | null>(null)
-  const [jtMaterials, setJtMaterials] = useState("")
-  const [estimateLinePresetsCal, setEstimateLinePresetsCal] = useState<EstimateLinePresetRow[]>([])
-  const [jtModalPresetChecksCal, setJtModalPresetChecksCal] = useState<Record<string, boolean>>({})
+  // Job type form (managed in shared JobTypesManagerModal)
   const [eventMaterialsDraft, setEventMaterialsDraft] = useState("")
   const [eventMaterialsSaving, setEventMaterialsSaving] = useState(false)
   const [eventMileageDraft, setEventMileageDraft] = useState("")
@@ -392,12 +372,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [eventEditJobTypeId, setEventEditJobTypeId] = useState("")
   const [eventJobTypeSaving, setEventJobTypeSaving] = useState(false)
   const [eventScheduleSaving, setEventScheduleSaving] = useState(false)
-  const [inlineJtCreateFor, setInlineJtCreateFor] = useState<"add" | "event" | null>(null)
-  const [inlineJtName, setInlineJtName] = useState("")
-  const [inlineJtDurationStr, setInlineJtDurationStr] = useState("1")
-  const [inlineJtSaving, setInlineJtSaving] = useState(false)
   const [addMileage, setAddMileage] = useState("")
-  const [jtTrackMileage, setJtTrackMileage] = useState(false)
   const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
   const [receiptOverridesDraft, setReceiptOverridesDraft] = useState<Record<string, ReceiptQuoteOverride>>({})
   const [receiptAdditionalDraft, setReceiptAdditionalDraft] = useState<ReceiptAdditionalLine[]>([])
@@ -593,11 +568,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddItemPortalValues(next)
   }, [showAddItem, addItemPortalItems])
 
-  const jobTypesSurfaceActive =
-    calendarSuite.id === "managed_job_types" ||
-    (calendarSuite.id === "team_management" && calendarSuite.panel === "job_types") ||
-    (calendarSuite.id === "scheduling_tools" && calendarSuite.panel === "job_types")
-
   const isOfficeManagerOrAdmin = authRole === "office_manager" || authRole === "admin"
   const showTeamManagementEntry = isOfficeManagerOrAdmin
   const managedSchedulingToolsEnabled =
@@ -621,7 +591,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     if (calendarSuite.panel === "customer_map" && managedSelfPolicy.customer_map_access !== true) {
-      setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })
+      setCalendarSuite({ id: "calendar" })
     }
   }, [calendarSuite, managedByOfficeManager, managedSelfPolicy])
 
@@ -643,7 +613,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [managedByOfficeManager, supabase, authUserId])
 
   useEffect(() => {
-    if (!jobTypesSurfaceActive) return
     if (jobTypesPortalItems.length === 0) {
       setJobTypesPortalValues({})
       return
@@ -666,7 +635,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
     }
     setJobTypesPortalValues(next)
-  }, [jobTypesSurfaceActive, jobTypesPortalItems])
+  }, [jobTypesPortalItems])
 
   useEffect(() => {
     if (!showAutoResponse) return
@@ -1442,62 +1411,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     loadEvents()
   }
 
-  async function saveInlineJobType() {
-    if (!inlineJtCreateFor) return
-    if (!inlineJtName.trim()) {
-      alert("Please enter a name for the job type.")
-      return
-    }
-    const parsed =
-      timeIncrement === 60
-        ? parseDurationFieldToMinutes(inlineJtDurationStr, 60)
-        : parseJobTypeDurationMinutes(inlineJtDurationStr)
-    if (parsed == null) {
-      alert(`Enter duration in ${timeIncrement === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
-      return
-    }
-    if (!supabase || !userId) {
-      alert("You must be signed in to add job types.")
-      return
-    }
-    setInlineJtSaving(true)
-    const insertBase = {
-      user_id: userId,
-      name: inlineJtName.trim(),
-      description: null as string | null,
-      duration_minutes: parsed,
-      color_hex: "#F97316",
-    }
-    let r = await supabase.from("job_types").insert(insertBase).select("id").single()
-    setInlineJtSaving(false)
-    if (r.error) {
-      alert("Could not save job type: " + (r.error.message || String(r.error)))
-      return
-    }
-    const newId = String((r.data as { id?: string } | null)?.id ?? "").trim()
-    const newJt: JobType = {
-      id: newId,
-      name: inlineJtName.trim(),
-      description: null,
-      duration_minutes: parsed,
-      color_hex: "#F97316",
-    }
-    void loadJobTypes()
-    if (newId) {
-      if (inlineJtCreateFor === "add") {
-        setAddJobTypeId(newId)
-        setAddDurationStr(formatDurationFieldFromMinutes(parsed, timeIncrement))
-        setAddMileage("")
-      } else {
-        setEventEditJobTypeId(newId)
-        await saveEventJobType(newId, newJt)
-      }
-    }
-    setInlineJtCreateFor(null)
-    setInlineJtName("")
-    setInlineJtDurationStr(timeIncrement === 60 ? "1" : "60")
-  }
-
   async function saveEventSchedule() {
     if (!supabase || !selectedEvent?.id) return
     const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
@@ -1690,7 +1603,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function loadJobTypes() {
     if (!userId || !supabase) return
-    setJobTypesLoadError("")
     let q = await supabase
       .from("job_types")
       .select("id, name, description, duration_minutes, color_hex, materials_list, track_mileage")
@@ -1718,74 +1630,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       error = q3.error
     }
     if (error) {
-      setJobTypesLoadError(error.message)
       setJobTypes([])
       return
     }
     setJobTypes(rows)
   }
 
-  async function persistEstimatePresetsCal(next: EstimateLinePresetRow[]) {
-    if (!supabase || !userId) return
-    const trimmed = next.filter((p) => p.description.trim())
-    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    if (fetchErr) {
-      alert(fetchErr.message)
-      return
-    }
-    const prevMeta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? { ...(data.metadata as Record<string, unknown>) }
-        : {}
-    prevMeta.estimate_line_presets = trimmed.map(serializePresetForProfile)
-    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setEstimateLinePresetsCal(trimmed)
-  }
-
-  async function mergePresetLinksForJobTypeCal(jobTypeId: string, checks: Record<string, boolean>) {
-    const merged = estimateLinePresetsCal.map((p) => {
-      const want = checks[p.id] === true
-      const set = new Set(p.linked_job_type_ids ?? [])
-      if (want) set.add(jobTypeId)
-      else set.delete(jobTypeId)
-      return { ...p, linked_job_type_ids: Array.from(set) }
-    })
-    await persistEstimatePresetsCal(merged)
-  }
+  const openJobTypesFromCalendar = useCallback(() => {
+    jobTypesModal?.openJobTypesModal({ onChanged: () => void loadJobTypes() })
+  }, [jobTypesModal])
 
   useEffect(() => {
-    if (!jobTypesSurfaceActive || !supabase || !userId) return
-    let cancelled = false
-    void supabase
-      .from("profiles")
-      .select("metadata")
-      .eq("id", userId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (cancelled) return
-        const meta =
-          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-            ? (data.metadata as Record<string, unknown>)
-            : {}
-        setEstimateLinePresetsCal(parseEstimateLinePresetsFromMetadata(meta))
-      })
-    return () => {
-      cancelled = true
+    const next = consumeCalendarSuiteNavigation()
+    if (!next) return
+    if (
+      next.id === "managed_job_types" ||
+      (next.id === "team_management" && next.panel === "job_types") ||
+      (next.id === "scheduling_tools" && next.panel === "job_types")
+    ) {
+      setCalendarSuite({ id: "calendar" })
+      openJobTypesFromCalendar()
+      return
     }
-  }, [jobTypesSurfaceActive, supabase, userId])
-
-  useEffect(() => {
-    if (!editingJobTypeId) return
-    const next: Record<string, boolean> = {}
-    for (const p of estimateLinePresetsCal) {
-      next[p.id] = (p.linked_job_type_ids ?? []).includes(editingJobTypeId)
-    }
-    setJtModalPresetChecksCal(next)
-  }, [editingJobTypeId, estimateLinePresetsCal])
+    setCalendarSuite(next)
+  }, [openJobTypesFromCalendar])
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -1817,7 +1685,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setEventEditStartTime("")
       setEventEditDurationStr("60")
       setEventEditJobTypeId("")
-      setInlineJtCreateFor(null)
       return
     }
     const start = new Date(selectedEvent.start_at)
@@ -2199,144 +2066,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
   }, [userId, supabase])
 
-  async function saveJobType() {
-    if (!jtName.trim()) {
-      alert("Please enter a name for the job type.")
-      return
-    }
-    const jtDurParsed =
-      jtDurationUnit === 60
-        ? parseDurationFieldToMinutes(jtDurationStr, 60)
-        : parseJobTypeDurationMinutes(jtDurationStr)
-    if (jtDurParsed == null) {
-      alert(`Enter duration in ${jtDurationUnit === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
-      return
-    }
-    if (!supabase) {
-      alert("App is not connected to Supabase. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env")
-      return
-    }
-    if (!userId) {
-      alert("You must be signed in to add or update job types.")
-      return
-    }
-    const sb = supabase
-    setJtSaving(true)
-    const basePayload = {
-      name: jtName.trim(),
-      description: jtDescription.trim() || null,
-      duration_minutes: jtDurParsed,
-      color_hex: jtColor,
-    }
-    let patch: Record<string, unknown> = {
-      ...basePayload,
-      materials_list: jtMaterials.trim() || null,
-      track_mileage: jtTrackMileage,
-    }
-
-    let jobTypeIdForPresets: string | null = editingJobTypeId
-    let error: { message: string } | null = null
-
-    const runUpdate = async () => sb.from("job_types").update(patch).eq("id", editingJobTypeId!).eq("user_id", userId)
-    const runInsert = async () => sb.from("job_types").insert({ user_id: userId, ...patch }).select("id").single()
-
-    if (editingJobTypeId) {
-      let r = await runUpdate()
-      const lower = (m: string) => m.toLowerCase()
-      if (r.error && lower(r.error.message).includes("track_mileage")) {
-        const { track_mileage: _t, ...rest } = patch
-        patch = rest
-        r = await runUpdate()
-      }
-      if (r.error && lower(r.error.message).includes("materials_list")) {
-        const { materials_list: _m, ...rest } = patch
-        patch = { ...rest }
-        r = await runUpdate()
-      }
-      error = r.error
-    } else {
-      let r = await runInsert()
-      const lower = (m: string) => m.toLowerCase()
-      if (r.error && lower(r.error.message).includes("track_mileage")) {
-        const { track_mileage: _t, ...rest } = patch
-        patch = rest
-        r = await runInsert()
-      }
-      if (r.error && lower(r.error.message).includes("materials_list")) {
-        const { materials_list: _m, ...rest } = patch
-        patch = { ...rest }
-        r = await runInsert()
-      }
-      error = r.error
-      const inserted = r.data as { id?: string } | null
-      if (!error && inserted?.id) jobTypeIdForPresets = inserted.id
-    }
-
-    setJtSaving(false)
-    if (error) {
-      const msg = error.message || String(error)
-      console.error("[Job type save failed]", { error, userId, patch })
-      const hint = (msg.includes("policy") || msg.includes("RLS") || msg.includes("row-level") || msg.includes("permission") || msg.includes("does not exist"))
-        ? "\n\nFix: In Supabase Dashboard → SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql (creates job_types table + RLS policies), then try again."
-        : ""
-      alert("Could not save job type: " + msg + hint)
-      return
-    }
-    if (jobTypeIdForPresets) await mergePresetLinksForJobTypeCal(jobTypeIdForPresets, jtModalPresetChecksCal)
-    setJtName("")
-    setJtDescription("")
-    setJtDurationStr("60")
-    setJtDurationUnit(60)
-    setJtColor("#F97316")
-    setJtMaterials("")
-    setJtTrackMileage(false)
-    setJtModalPresetChecksCal({})
-    setEditingJobTypeId(null)
-    loadJobTypes()
-  }
-
-  function startEditJobType(jt: JobType) {
-    setJtName(jt.name)
-    setJtDescription(jt.description ?? "")
-    const safeMinutes = Math.max(15, jt.duration_minutes)
-    const useHours = safeMinutes % 60 === 0
-    setJtDurationUnit(useHours ? 60 : 15)
-    setJtDurationStr(useHours ? String(safeMinutes / 60) : String(safeMinutes))
-    setJtColor(jt.color_hex ?? "#F97316")
-    setJtMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
-    setJtTrackMileage(jt.track_mileage === true)
-    setEditingJobTypeId(jt.id)
-  }
-
-  function cancelEditJobType() {
-    setJtName("")
-    setJtDescription("")
-    setJtDurationStr("60")
-    setJtDurationUnit(60)
-    setJtColor("#F97316")
-    setJtMaterials("")
-    setJtTrackMileage(false)
-    setEditingJobTypeId(null)
-    setJtModalPresetChecksCal({})
-  }
-
-  async function removeJobType(jt: JobType) {
-    if (!supabase || !userId) return
-    if (!confirm(`Remove job type "${jt.name}"? Events using this type will keep their color but the type will no longer appear in the list.`)) return
-    const { error } = await supabase.from("job_types").delete().eq("id", jt.id).eq("user_id", userId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    if (editingJobTypeId === jt.id) cancelEditJobType()
-    const stripped = estimateLinePresetsCal.map((p) => ({
-      ...p,
-      linked_job_type_ids: (p.linked_job_type_ids ?? []).filter((id) => id !== jt.id),
-    }))
-    await persistEstimatePresetsCal(stripped)
-    loadJobTypes()
-  }
-
   function getEventsForDay(d: Date): CalendarEvent[] {
     const dayStart = new Date(d)
     dayStart.setHours(0, 0, 0, 0)
@@ -2375,82 +2104,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     background: "#fff",
   }
 
-  function renderInlineJobTypeCreate(context: "add" | "event") {
-    if (inlineJtCreateFor !== context) return null
-    return (
-      <div
-        style={{
-          marginTop: 8,
-          padding: 10,
-          borderRadius: 8,
-          border: `1px solid ${theme.border}`,
-          background: "#f8fafc",
-          display: "grid",
-          gap: 8,
-        }}
-      >
-        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: theme.text }}>New job type</p>
-        <input
-          placeholder="Name"
-          value={inlineJtName}
-          onChange={(e) => setInlineJtName(e.target.value)}
-          style={{ ...theme.formInput, fontSize: 13 }}
-          autoFocus
-        />
-        <label style={{ fontSize: 12, color: theme.text }}>
-          {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
-          <input
-            type="number"
-            min={timeIncrement === 60 ? 1 : 15}
-            step={timeIncrement === 60 ? 1 : 15}
-            value={inlineJtDurationStr}
-            onChange={(e) => setInlineJtDurationStr(e.target.value)}
-            style={{ ...theme.formInput, display: "block", marginTop: 4, fontSize: 13 }}
-          />
-        </label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <button
-            type="button"
-            disabled={inlineJtSaving}
-            onClick={() => void saveInlineJobType()}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 12,
-              cursor: inlineJtSaving ? "wait" : "pointer",
-            }}
-          >
-            {inlineJtSaving ? "Saving…" : "Save job type"}
-          </button>
-          <button
-            type="button"
-            disabled={inlineJtSaving}
-            onClick={() => {
-              setInlineJtCreateFor(null)
-              setInlineJtName("")
-            }}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              color: theme.text,
-              fontWeight: 600,
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   function renderJobTypeSelect(
     value: string,
     context: "add" | "event",
@@ -2468,12 +2121,19 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           onChange={(e) => {
             const id = e.target.value
             if (id === JOB_TYPE_CREATE_NEW_VALUE) {
-              setInlineJtCreateFor(context)
-              setInlineJtName("")
-              setInlineJtDurationStr(timeIncrement === 60 ? "1" : "60")
+              jobTypesModal?.openJobTypesModal({
+                expandCreate: true,
+                onChanged: () => void loadJobTypes(),
+                onCreated: (newId) => {
+                  void loadJobTypes().then(() => {
+                    onSelect(newId)
+                    if (context === "add") applyJobTypeToAddForm(newId)
+                    else void saveEventJobType(newId)
+                  })
+                },
+              })
               return
             }
-            setInlineJtCreateFor((prev) => (prev === context ? null : prev))
             onSelect(id)
           }}
           style={selectStyle}
@@ -2496,7 +2156,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         {context === "event" && eventJobTypeSaving ? (
           <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>Saving job type…</p>
         ) : null}
-        {renderInlineJobTypeCreate(context)}
       </div>
     )
   }
@@ -2560,7 +2219,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             {showCalJobTypes && !showTeamManagementEntry && !managedByOfficeManager && !showSchedulingToolsStandalone ? (
               <button
                 type="button"
-                onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })}
+                onClick={openJobTypesFromCalendar}
                 style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text }}
               >
                 Job Types
@@ -2610,7 +2269,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             {showManagedJobTypesEntry ? (
               <button
                 type="button"
-                onClick={() => setCalendarSuite({ id: "managed_job_types" })}
+                onClick={openJobTypesFromCalendar}
                 style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
               >
                 Job types
@@ -2619,7 +2278,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             {showSchedulingToolsStandalone ? (
               <button
                 type="button"
-                onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "job_types" })}
+                onClick={() => {
+                  if (!managedByOfficeManager || managedSelfPolicy.customer_map_access === true) {
+                    setCalendarSuite({ id: "scheduling_tools", panel: "customer_map" })
+                  } else {
+                    openJobTypesFromCalendar()
+                  }
+                }}
                 style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
               >
                 Scheduling tools
@@ -2695,7 +2360,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     <button
                       key={panel}
                       type="button"
-                      onClick={() => setCalendarSuite({ id: "team_management", panel })}
+                      onClick={() => {
+                        if (panel === "job_types") openJobTypesFromCalendar()
+                        else setCalendarSuite({ id: "team_management", panel })
+                      }}
                       style={{
                         padding: "8px 14px",
                         borderRadius: "6px",
@@ -2728,7 +2396,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     <button
                       key={panel}
                       type="button"
-                      onClick={() => setCalendarSuite({ id: "scheduling_tools", panel })}
+                      onClick={() => {
+                        if (panel === "job_types") openJobTypesFromCalendar()
+                        else setCalendarSuite({ id: "scheduling_tools", panel })
+                      }}
                       style={{
                         padding: "8px 14px",
                         borderRadius: "6px",
@@ -2744,9 +2415,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   )
                 })}
               </>
-            ) : null}
-            {calendarSuite.id === "managed_job_types" ? (
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>Job types (office-managed)</span>
             ) : null}
           </>
         )}
@@ -3130,180 +2798,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               orgUserIdsForJobs={[authUserId]}
               onClose={() => {}}
             />
-          ) : null}
-          {jobTypesSurfaceActive ? (
-            <div style={{ maxWidth: 900 }}>
-              <h3 style={{ margin: "0 0 16px", color: theme.text }}>Job types</h3>
-              <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, opacity: 0.9 }}>
-                Same job types as <strong>Quotes</strong> (materials + line templates), so both tabs stay consistent.
-              </p>
-              {jobTypesLoadError && (
-                <p style={{ margin: "0 0 12px", padding: "10px", background: "#fef2f2", color: "#b91c1c", borderRadius: "6px", fontSize: "13px" }}>
-                  Could not load job types: {jobTypesLoadError}
-                  <br />
-                  <strong>Fix:</strong> In Supabase Dashboard → SQL Editor, run the full script in <code style={{ fontSize: "12px" }}>tradesman/supabase-job-types-setup.sql</code>, then reload this view.
-                </p>
-              )}
-              <p style={{ fontSize: "14px", color: theme.text, marginBottom: "12px" }}>
-                Create job types with description, time required, color, optional materials checklist, and links to saved quote line templates.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
-                <input placeholder="Name" value={jtName} onChange={(e) => setJtName(e.target.value)} style={{ ...theme.formInput }} />
-                <input placeholder="Description (optional)" value={jtDescription} onChange={(e) => setJtDescription(e.target.value)} style={{ ...theme.formInput }} />
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                  <select
-                    value={jtDurationUnit}
-                    onChange={(e) => {
-                      const nextUnit = e.target.value === "60" ? 60 : 15
-                      const parsed =
-                        jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
-                      setJtDurationUnit(nextUnit)
-                      if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
-                    }}
-                    style={{ ...theme.formInput, width: "120px" }}
-                  >
-                    <option value={60}>Hours</option>
-                    <option value={15}>Minutes</option>
-                  </select>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder={jtDurationUnit === 60 ? "Duration (hours)" : "Duration (minutes)"}
-                    value={jtDurationStr}
-                    onChange={(e) => setJtDurationStr(e.target.value)}
-                    onBlur={() => {
-                      const parsed =
-                        jtDurationUnit === 60 ? parseDurationFieldToMinutes(jtDurationStr, 60) : parseJobTypeDurationMinutes(jtDurationStr)
-                      if (parsed != null) setJtDurationStr(formatDurationFieldFromMinutes(parsed, jtDurationUnit))
-                    }}
-                    style={{ ...theme.formInput, width: "120px" }}
-                  />
-                  <input type="color" value={jtColor} onChange={(e) => setJtColor(e.target.value)} style={{ width: "40px", height: "36px", border: `1px solid ${theme.border}`, borderRadius: "6px", cursor: "pointer" }} />
-                  <span style={{ fontSize: "14px", color: theme.text }}>{jtColor}</span>
-                </div>
-                <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
-                  Materials checklist (optional, one line per item — copied to new events; editable per event)
-                  <textarea
-                    value={jtMaterials}
-                    onChange={(e) => setJtMaterials(e.target.value)}
-                    rows={4}
-                    placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
-                    style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
-                  />
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
-                  <input type="checkbox" checked={jtTrackMileage} onChange={(e) => setJtTrackMileage(e.target.checked)} />
-                  Track mileage on calendar events (mileage field when this job type is selected)
-                </label>
-                <details
-                  style={{
-                    borderRadius: 6,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    padding: "8px 10px",
-                  }}
-                >
-                  <summary
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: "#111827",
-                      cursor: "pointer",
-                      listStyle: "none",
-                    }}
-                  >
-                    Saved line templates
-                    {estimateLinePresetsCal.length > 0 ? (
-                      <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresetsCal.length})</span>
-                    ) : null}
-                  </summary>
-                  <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
-                    Check lines to link them to this job type. Manage the full list under <strong style={{ color: "#111827" }}>Quotes → Saved line templates</strong>.
-                  </p>
-                  {estimateLinePresetsCal.length === 0 ? (
-                    <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
-                  ) : (
-                    <div
-                      style={{
-                        maxHeight: 220,
-                        overflow: "auto",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                        padding: 8,
-                        borderRadius: 6,
-                        border: `1px solid ${theme.border}`,
-                        background: "#f9fafb",
-                      }}
-                    >
-                      {estimateLinePresetsCal.map((p) => {
-                        const costLine = formatEstimatePresetCostSummary(p)
-                        return (
-                          <label
-                            key={p.id}
-                            style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}
-                          >
-                            <input
-                              type="checkbox"
-                              style={{ marginTop: 4, flexShrink: 0 }}
-                              checked={jtModalPresetChecksCal[p.id] === true}
-                              onChange={(e) =>
-                                setJtModalPresetChecksCal((prev) => ({ ...prev, [p.id]: e.target.checked }))
-                              }
-                            />
-                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-                              <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
-                              {costLine ? <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span> : null}
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  )}
-                </details>
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <button type="button" onClick={saveJobType} disabled={jtSaving} style={{ padding: "8px 14px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>
-                    {jtSaving ? (editingJobTypeId ? "Updating..." : "Adding...") : editingJobTypeId ? "Update job type" : "Add job type"}
-                  </button>
-                  {editingJobTypeId ? (
-                    <button type="button" onClick={cancelEditJobType} style={{ padding: "8px 14px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
-                      Cancel
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: "12px" }}>
-                <h4 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>Your job types</h4>
-                {jobTypes.length === 0 && !jobTypesLoadError ? (
-                  <p style={{ margin: 0, fontSize: "13px", color: "#6b7280" }}>No job types yet. Create one above; they will appear here and in the &quot;Add to calendar&quot; job type dropdown.</p>
-                ) : jobTypes.length === 0 ? null : (
-                  jobTypes.map((jt) => (
-                    <div key={jt.id} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", padding: "8px", background: "#f9fafb", borderRadius: "6px", flexWrap: "wrap" }}>
-                      <div style={{ width: "16px", height: "16px", borderRadius: "4px", background: jt.color_hex ?? theme.primary, flexShrink: 0 }} />
-                      <span style={{ flex: 1, fontWeight: 600, color: theme.text }}>{jt.name}</span>
-                      <span style={{ fontSize: "13px", color: "#6b7280" }}>{jt.duration_minutes} min</span>
-                      <button type="button" onClick={() => startEditJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>
-                        Edit
-                      </button>
-                      <button type="button" onClick={() => removeJobType(jt)} style={{ padding: "4px 10px", fontSize: "12px", border: "1px solid #fca5a5", borderRadius: "6px", background: "white", cursor: "pointer", color: "#b91c1c" }}>
-                        Remove
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (calendarSuite.id === "managed_job_types") setCalendarSuite({ id: "calendar" })
-                  else if (calendarSuite.id === "team_management") setCalendarSuite({ id: "team_management", panel: "team_members" })
-                  else if (calendarSuite.id === "scheduling_tools") setCalendarSuite({ id: "calendar" })
-                }}
-                style={{ marginTop: "16px", padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: theme.background, cursor: "pointer", color: theme.text }}
-              >
-                Done
-              </button>
-            </div>
           ) : null}
         </div>
       )}
