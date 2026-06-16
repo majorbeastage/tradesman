@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
@@ -26,7 +26,7 @@ export type JobTypesManagerModalProps = {
   title?: string
   estimateLineItemsLabel?: string
   showSetupWizard?: boolean
-  /** When true, expand the create form on open. */
+  /** Prefill create form fields on open. (Create section stays collapsed by default for consistency.) */
   expandCreateOnOpen?: boolean
   initialName?: string
   initialPresetChecks?: Record<string, boolean>
@@ -49,9 +49,11 @@ export default function JobTypesManagerModal({
 }: JobTypesManagerModalProps) {
   const [jobTypes, setJobTypes] = useState<JobTypeRow[]>([])
   const [loadError, setLoadError] = useState("")
+
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [durationStr, setDurationStr] = useState("60")
@@ -61,7 +63,6 @@ export default function JobTypesManagerModal({
   const [trackMileage, setTrackMileage] = useState(false)
   const [presetChecks, setPresetChecks] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
-  const expandOnOpenRef = useRef(false)
 
   const resetForm = useCallback(() => {
     setName("")
@@ -73,6 +74,7 @@ export default function JobTypesManagerModal({
     setTrackMileage(false)
     setPresetChecks({})
     setEditingId(null)
+    setEditorOpen(false)
   }, [])
 
   const reload = useCallback(async () => {
@@ -87,26 +89,33 @@ export default function JobTypesManagerModal({
   }, [open, userId])
 
   useEffect(() => {
-    if (!open) return
-    expandOnOpenRef.current = expandCreateOnOpen
-    void reload()
-  }, [open, reload, expandCreateOnOpen])
-
-  useEffect(() => {
     if (!open) {
       resetForm()
-      setEditorOpen(false)
       return
     }
-    if (expandOnOpenRef.current || expandCreateOnOpen) {
-      setEditorOpen(true)
-      if (initialName.trim()) setName(initialName.trim())
-      if (initialPresetChecks && Object.keys(initialPresetChecks).length > 0) {
-        setPresetChecks(initialPresetChecks)
-      }
-      expandOnOpenRef.current = false
+    // Always keep the create/editor section collapsed by default;
+    // this avoids extra “close twice” confusion.
+    setEditorOpen(false)
+    setEditingId(null)
+    if (initialName.trim()) setName(initialName.trim())
+    else setName("")
+
+    if (expandCreateOnOpen && initialPresetChecks && Object.keys(initialPresetChecks).length > 0) {
+      setPresetChecks(initialPresetChecks)
+    } else {
+      setPresetChecks({})
     }
-  }, [open, resetForm, expandCreateOnOpen, initialName, initialPresetChecks])
+
+    setDescription("")
+    setDurationStr("60")
+    setDurationUnit(60)
+    setColor("#F97316")
+    setMaterials("")
+    setTrackMileage(false)
+
+    setLoadError("")
+    void reload()
+  }, [open, resetForm, initialName, initialPresetChecks, expandCreateOnOpen, reload])
 
   useEffect(() => {
     if (!editingId) return
@@ -120,20 +129,31 @@ export default function JobTypesManagerModal({
   function startEdit(jt: JobTypeRow) {
     setName(jt.name)
     setDescription(jt.description ?? "")
+
     const safeMinutes = Math.max(15, jt.duration_minutes)
     const useHours = safeMinutes % 60 === 0
     setDurationUnit(useHours ? 60 : 15)
     setDurationStr(useHours ? String(safeMinutes / 60) : String(safeMinutes))
+
     setColor(jt.color_hex ?? "#F97316")
     setMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setTrackMileage(jt.track_mileage === true)
+
     setEditingId(jt.id)
     setEditorOpen(true)
   }
 
   function cancelEdit() {
-    resetForm()
+    setEditingId(null)
     setEditorOpen(false)
+    setPresetChecks({})
+    setName("")
+    setDescription("")
+    setDurationStr("60")
+    setDurationUnit(60)
+    setColor("#F97316")
+    setMaterials("")
+    setTrackMileage(false)
   }
 
   async function handleSave() {
@@ -142,9 +162,7 @@ export default function JobTypesManagerModal({
       return
     }
     const parsed =
-      durationUnit === 60
-        ? parseDurationFieldToMinutes(durationStr, 60)
-        : parseJobTypeDurationMinutes(durationStr)
+      durationUnit === 60 ? parseDurationFieldToMinutes(durationStr, 60) : parseJobTypeDurationMinutes(durationStr)
     if (parsed == null) {
       alert(`Enter duration in ${durationUnit === 60 ? "hours" : "minutes"} (at least 15 minutes total).`)
       return
@@ -153,6 +171,7 @@ export default function JobTypesManagerModal({
       alert("You must be signed in to add or update job types.")
       return
     }
+
     setSaving(true)
     const { id, error } = await saveJobTypeForUser(
       supabase,
@@ -175,47 +194,49 @@ export default function JobTypesManagerModal({
         error.includes("row-level") ||
         error.includes("permission") ||
         error.includes("does not exist")
-          ? "\n\nFix: In Supabase Dashboard �! SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql, then try again."
+          ? "\n\nFix: In Supabase Dashboard → SQL Editor, run the full script in tradesman/supabase-job-types-setup.sql, then try again."
           : ""
       alert("Could not save job type: " + error + hint)
       return
     }
+
     if (id) {
       const linkResult = await mergePresetLinksForJobType(supabase, userId, estimateLinePresets, id, presetChecks)
       if (linkResult.error) {
-        alert(linkResult.error)
         setSaving(false)
+        alert(linkResult.error)
         return
       }
       setEstimateLinePresets(linkResult.rows)
     }
+
     setSaving(false)
     const createdId = !editingId && id ? id : null
-    resetForm()
-    setEditorOpen(false)
+    cancelEdit()
     await reload()
     onChanged?.()
-    if (createdId) onCreated?.(createdId)
+    if (createdId && onCreated) onCreated(createdId)
   }
 
   async function handleRemove(jt: JobTypeRow) {
     if (!supabase || !userId) return
     if (
-      !confirm(
-        `Remove job type "${jt.name}"? Events using this type will keep their color but the type will no longer appear in the list.`,
-      )
+      !confirm(`Remove job type "${jt.name}"? Events using this type will keep their color but the type will no longer appear in the list.`)
     ) {
       return
     }
+
     const { error } = await deleteJobTypeForUser(supabase, userId, jt.id)
     if (error) {
       alert(error)
       return
     }
-    if (editingId === jt.id) cancelEdit()
+
     const stripped = await stripJobTypeFromPresets(supabase, userId, estimateLinePresets, jt.id)
     if (stripped.error) alert(stripped.error)
     else setEstimateLinePresets(stripped.rows)
+
+    if (editingId === jt.id) cancelEdit()
     await reload()
     onChanged?.()
   }
@@ -223,6 +244,19 @@ export default function JobTypesManagerModal({
   if (!open) return null
 
   const sorted = sortJobTypesByName(jobTypes)
+  const CloseButton = () => (
+    <button
+      type="button"
+      aria-label="Close"
+      onClick={() => {
+        cancelEdit()
+        onClose()
+      }}
+      style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
+    >
+      ✕
+    </button>
+  )
 
   return (
     <>
@@ -259,23 +293,13 @@ export default function JobTypesManagerModal({
           </h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {showSetupWizard ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={() => {
-                cancelEdit()
-                onClose()
-              }}
-              style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: theme.text }}
-            >
-              '
-            </button>
+            <CloseButton />
           </div>
         </div>
 
         <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-          One shared list for <strong>Estimates</strong>, <strong>Scheduling</strong>, and the dashboard   color and
-          duration apply to calendar events; types also appear on quote lines and saved templates.
+          One shared list for <strong>Estimates</strong>, <strong>Scheduling</strong>, and the dashboard. Color and duration apply
+          to calendar events; types also appear on quote lines and saved templates.
         </p>
 
         {loadError ? (
@@ -321,12 +345,15 @@ export default function JobTypesManagerModal({
               {editorOpen ? "Hide create new job type" : "Create new job type"}
             </button>
           ) : null}
-          {(editingId || editorOpen) && (
+
+          {editingId || editorOpen ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
               <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: theme.text }}>
                 {editingId ? "Edit job type" : "New job type"}
               </p>
+
               <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={theme.formInput} />
+
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <label style={{ fontSize: 12, color: theme.text }}>
                   Duration
@@ -335,9 +362,7 @@ export default function JobTypesManagerModal({
                     onChange={(e) => {
                       const nextUnit = e.target.value === "60" ? 60 : 15
                       const parsed =
-                        durationUnit === 60
-                          ? parseDurationFieldToMinutes(durationStr, 60)
-                          : parseJobTypeDurationMinutes(durationStr)
+                        durationUnit === 60 ? parseDurationFieldToMinutes(durationStr, 60) : parseJobTypeDurationMinutes(durationStr)
                       setDurationUnit(nextUnit)
                       if (parsed != null) setDurationStr(formatDurationFieldFromMinutes(parsed, nextUnit))
                     }}
@@ -353,14 +378,13 @@ export default function JobTypesManagerModal({
                     onChange={(e) => setDurationStr(e.target.value)}
                     onBlur={() => {
                       const parsed =
-                        durationUnit === 60
-                          ? parseDurationFieldToMinutes(durationStr, 60)
-                          : parseJobTypeDurationMinutes(durationStr)
+                        durationUnit === 60 ? parseDurationFieldToMinutes(durationStr, 60) : parseJobTypeDurationMinutes(durationStr)
                       if (parsed != null) setDurationStr(formatDurationFieldFromMinutes(parsed, durationUnit))
                     }}
                     style={{ ...theme.formInput, display: "block", marginTop: 4, width: 100 }}
                   />
                 </label>
+
                 <label style={{ fontSize: 12, color: theme.text }}>
                   Color
                   <input
@@ -371,28 +395,30 @@ export default function JobTypesManagerModal({
                   />
                 </label>
               </div>
+
               <input
                 placeholder="Description (optional)"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 style={theme.formInput}
               />
+
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: theme.text }}>
-                Materials checklist (optional, one line per item   shown on scheduled calendar events)
+                Materials checklist (optional, one line per item — shown on scheduled calendar events)
                 <textarea
                   value={materials}
                   onChange={(e) => setMaterials(e.target.value)}
                   rows={4}
-                  placeholder={"e.g. Shingles   10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
+                  placeholder={"e.g. Shingles — 10 bundles\nUnderlayment roll\nDrip edge 40 ft"}
                   style={{ ...theme.formInput, resize: "vertical", fontFamily: "inherit" }}
                 />
               </label>
-              <label
-                style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}
-              >
+
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: theme.text, cursor: "pointer" }}>
                 <input type="checkbox" checked={trackMileage} onChange={(e) => setTrackMileage(e.target.checked)} />
                 Track mileage on calendar events (mileage field when this job type is selected)
               </label>
+
               <details
                 style={{
                   marginTop: 4,
@@ -413,14 +439,11 @@ export default function JobTypesManagerModal({
                 >
                   Saved line templates
                   {estimateLinePresets.length > 0 ? (
-                    <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>
-                      ({estimateLinePresets.length})
-                    </span>
+                    <span style={{ fontWeight: 600, color: "#374151", marginLeft: 6 }}>({estimateLinePresets.length})</span>
                   ) : null}
                 </summary>
                 <p style={{ margin: "10px 0 10px", fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
-                  Check lines to link them to this job type. Manage the full list under{" "}
-                  <strong style={{ color: "#111827" }}>{estimateLineItemsLabel}</strong>.
+                  Check lines to link them to this job type. Manage the full list under <strong style={{ color: "#111827" }}>{estimateLineItemsLabel}</strong>.
                 </p>
                 {estimateLinePresets.length === 0 ? (
                   <p style={{ margin: "0 0 4px", fontSize: 12, color: "#4b5563" }}>No saved line templates yet.</p>
@@ -452,9 +475,7 @@ export default function JobTypesManagerModal({
                             onChange={(e) => setPresetChecks((prev) => ({ ...prev, [p.id]: e.target.checked }))}
                           />
                           <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-                            <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>
-                              {p.description.trim() || "Line"}
-                            </span>
+                            <span style={{ color: "#111827", fontWeight: 600, lineHeight: 1.35 }}>{p.description.trim() || "Line"}</span>
                             {costLine ? (
                               <span style={{ fontSize: 12, color: "#4b5563", fontWeight: 500 }}>{costLine}</span>
                             ) : null}
@@ -465,6 +486,7 @@ export default function JobTypesManagerModal({
                   </div>
                 )}
               </details>
+
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   type="button"
@@ -481,8 +503,9 @@ export default function JobTypesManagerModal({
                     cursor: saving ? "wait" : "pointer",
                   }}
                 >
-                  {saving ? "Saving& " : editingId ? "Update job type" : "Add job type"}
+                  {saving ? "Saving…" : editingId ? "Update job type" : "Add job type"}
                 </button>
+
                 {editingId ? (
                   <button
                     type="button"
@@ -502,7 +525,7 @@ export default function JobTypesManagerModal({
                 ) : null}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         {sorted.length === 0 && !loadError ? (
@@ -537,7 +560,7 @@ export default function JobTypesManagerModal({
                   <div style={{ fontWeight: 600, color: theme.text, fontSize: 14 }}>{jt.name}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     {jt.duration_minutes} min
-                    {jt.description?.trim() ? ` � ${jt.description.trim()}` : ""}
+                    {typeof jt.description === "string" && jt.description.trim() ? ` · ${jt.description.trim()}` : ""}
                   </div>
                 </div>
                 <button
@@ -574,27 +597,8 @@ export default function JobTypesManagerModal({
             ))}
           </div>
         ) : null}
-
-        <button
-          type="button"
-          onClick={() => {
-            cancelEdit()
-            onClose()
-          }}
-          style={{
-            marginTop: 16,
-            padding: "10px 16px",
-            border: `1px solid ${theme.border}`,
-            borderRadius: 6,
-            background: theme.background,
-            color: theme.text,
-            cursor: "pointer",
-            fontWeight: 600,
-          }}
-        >
-          Close
-        </button>
       </div>
     </>
   )
 }
+

@@ -212,7 +212,8 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
         <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
-          Notes {customerName ? `— ${customerName}` : ""}
+          Notes{" "}
+          {typeof customerName === "string" && customerName.trim() ? `— ${customerName.trim()}` : ""}
         </h3>
         <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: theme.text }}>
           ✕

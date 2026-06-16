@@ -4,7 +4,6 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import CommunicationUrgencyBadge from "../../components/CommunicationUrgencyBadge"
-import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import { consumeQueuedCustomerProfile, queueCustomerFocus } from "../../lib/customerNavigation"
 import {
   queueCustomReceiptCustomerPrefill,
@@ -50,7 +49,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
-  const [notesOpen, setNotesOpen] = useState(false)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -117,23 +115,24 @@ export default function CustomerProfilePage({ setPage }: Props) {
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
               <div>
                 <h1 style={{ margin: 0, fontSize: isMobile ? "1.35rem" : "1.75rem", fontWeight: 800, color: theme.text }}>
-                  {c.display_name?.trim() || "Customer profile"}
+                  {typeof c.display_name === "string" && c.display_name.trim() ? c.display_name.trim() : "Customer profile"}
                 </h1>
                 <p style={{ margin: "8px 0 0", fontSize: 14, color: "#64748b", lineHeight: 1.5 }}>
                   {bundle.contactLine}
                 </p>
                 <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                  <CommunicationUrgencyBadge level={c.communication_urgency} />
-                  {c.job_pipeline_status?.trim() ? (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>{c.job_pipeline_status}</span>
+                  <CommunicationUrgencyBadge
+                    level={typeof c.communication_urgency === "string" ? c.communication_urgency : null}
+                  />
+                  {typeof c.job_pipeline_status === "string" && c.job_pipeline_status.trim() ? (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>{c.job_pipeline_status.trim()}</span>
                   ) : null}
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>Last update: {formatWhen(c.last_activity_at)}</span>
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                    Last update: {formatWhen(typeof c.last_activity_at === "string" ? c.last_activity_at : null)}
+                  </span>
                 </div>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button type="button" onClick={() => setNotesOpen(true)} style={primaryBtnStyle}>
-                  Notes
-                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -162,21 +161,18 @@ export default function CustomerProfilePage({ setPage }: Props) {
             <div style={{ display: "grid", gap: 10, fontSize: 14 }}>
               <ProfileRow label="Phone" value={bundle.phone || "—"} />
               <ProfileRow label="Email" value={bundle.email || "—"} />
-              <ProfileRow label="Best contact" value={c.best_contact_method?.trim() || "—"} />
-              <ProfileRow label="Service address" value={c.service_address?.trim() || "—"} />
+              <ProfileRow
+                label="Best contact"
+                value={typeof c.best_contact_method === "string" && c.best_contact_method.trim() ? c.best_contact_method.trim() : "—"}
+              />
+              <ProfileRow
+                label="Service address"
+                value={typeof c.service_address === "string" && c.service_address.trim() ? c.service_address.trim() : "—"}
+              />
               {c.service_lat != null && c.service_lng != null ? (
                 <ProfileRow label="Coordinates" value={`${c.service_lat}, ${c.service_lng}`} />
               ) : null}
             </div>
-          </ProfileSection>
-
-          <ProfileSection title="Notes">
-            <p style={{ margin: "0 0 10px", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-              Full note history with add, edit, and remove. Quick communications stay on the Customers list.
-            </p>
-            <button type="button" onClick={() => setNotesOpen(true)} style={primaryBtnStyle}>
-              Open notes
-            </button>
           </ProfileSection>
 
           <ProfileSection title="Activity history">
@@ -186,9 +182,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Timeline
                 rows={bundle.commEvents.slice(0, 40).map((ev) => ({
                   key: ev.id,
-                  title: ev.subject?.trim() || ev.event_type || "Event",
-                  meta: `${ev.direction ?? ""} · ${formatWhen(ev.created_at)}`.trim(),
-                  body: ev.body?.trim() || "",
+                  title: typeof ev.subject === "string" && ev.subject.trim()
+                    ? ev.subject.trim()
+                    : ev.event_type || "Event",
+                  meta: `${typeof ev.direction === "string" ? ev.direction : ""} · ${formatWhen(ev.created_at)}`.trim(),
+                  body: typeof ev.body === "string" ? ev.body.trim() : "",
                 }))}
               />
             )}
@@ -201,9 +199,14 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Timeline
                 rows={bundle.calendarEvents.map((ev) => ({
                   key: ev.id,
-                  title: ev.title?.trim() || "Untitled job",
+                  title: typeof ev.title === "string" && ev.title.trim() ? ev.title.trim() : "Untitled job",
                   meta: `${formatWhen(ev.start_at)}${ev.completed_at ? " · Completed" : " · Scheduled"}`,
-                  body: ev.notes?.trim() || (ev.quote_id ? "Linked to estimate" : ""),
+                  body:
+                    typeof ev.notes === "string"
+                      ? ev.notes.trim() || (ev.quote_id ? "Linked to estimate" : "")
+                      : ev.quote_id
+                        ? "Linked to estimate"
+                        : "",
                   actions: (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                       <MiniBtn
@@ -260,9 +263,9 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Timeline
                 rows={bundle.receipts.map((r) => ({
                   key: r.id,
-                  title: r.job_title?.trim() || "Custom receipt",
+                  title: typeof r.job_title === "string" && r.job_title.trim() ? r.job_title.trim() : "Custom receipt",
                   meta: `${formatWhen(r.updated_at ?? r.created_at)} · ${r.line_items.length} line(s)`,
-                  body: r.notes?.trim() || "",
+                  body: typeof r.notes === "string" ? r.notes.trim() : "",
                   actions: (
                     <MiniBtn
                       label="Custom receipt"
@@ -330,16 +333,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
         </>
       ) : null}
 
-      {notesOpen && c ? (
-        <CustomerNotesPanel
-          customerId={c.id}
-          customerName={c.display_name ?? undefined}
-          onClose={() => {
-            setNotesOpen(false)
-            void reload()
-          }}
-        />
-      ) : null}
     </div>
   )
 }
@@ -395,17 +388,6 @@ const backBtnStyle: CSSProperties = {
   cursor: "pointer",
   fontSize: 13,
   color: theme.text,
-}
-
-const primaryBtnStyle: CSSProperties = {
-  padding: "8px 14px",
-  borderRadius: 8,
-  border: "none",
-  background: theme.primary,
-  color: "#fff",
-  fontWeight: 700,
-  cursor: "pointer",
-  fontSize: 13,
 }
 
 const secondaryBtnStyle: CSSProperties = {
