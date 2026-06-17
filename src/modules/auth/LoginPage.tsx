@@ -22,7 +22,7 @@ type LoginPageProps = {
 
 export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack }: LoginPageProps) {
   const { t } = useLocale()
-  const { signIn, signUp, user, role, accountAccessBlocked, clearAccessBlockedReason } = useAuth()
+  const { signIn, signUp, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
   const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin")
   const [email, setEmail] = useState("")
@@ -173,19 +173,25 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               border: "1px solid rgba(185, 28, 28, 0.25)",
             }}
           >
-            <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t("login.deactivatedTitle")}</p>
-            <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
-              <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
-                {t("login.emailTech")}
-              </a>
-              <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
-            </p>
-            <p style={{ margin: 0, color: "#7f1d1d" }}>
-              {t("login.helpDeskLabel")}{" "}
-              <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
-                {HELP_DESK_PHONE_DISPLAY}
-              </a>
-            </p>
+            {accessBlockedMessage ? (
+              <p style={{ margin: 0, fontWeight: 600 }}>{accessBlockedMessage}</p>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t("login.deactivatedTitle")}</p>
+                <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
+                  <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
+                    {t("login.emailTech")}
+                  </a>
+                  <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
+                </p>
+                <p style={{ margin: 0, color: "#7f1d1d" }}>
+                  {t("login.helpDeskLabel")}{" "}
+                  <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+                    {HELP_DESK_PHONE_DISPLAY}
+                  </a>
+                </p>
+              </>
+            )}
           </div>
         )}
 

@@ -1,21 +1,31 @@
-// Self-serve 24-hour demo account provisioning.
+// Self-serve demo: temp Office Manager login emailed via Resend.
+// 8h to first login; 24h active session after first login; comms blocked.
 // Deploy: supabase functions deploy provision-demo
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { demoActivateByIso, isDemoProfileRow } from "../_shared/demo-lifecycle.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const DEMO_HOURS = 24
-
 function randomPassword(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$"
   let out = ""
   for (let i = 0; i < 16; i++) out += chars[Math.floor(Math.random() * chars.length)]
   return out
+}
+
+async function deleteDemoUser(admin: ReturnType<typeof createClient>, uid: string): Promise<void> {
+  try {
+    await admin.rpc("purge_trial_user_data", { p_user_id: uid })
+  } catch {
+    /* purge_trial_user_data may not be deployed yet */
+  }
+  await admin.auth.admin.deleteUser(uid)
+  await admin.from("demo_access_grants").delete().eq("auth_user_id", uid)
 }
 
 Deno.serve(async (req) => {
@@ -57,7 +67,7 @@ Deno.serve(async (req) => {
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
   const name = typeof body.name === "string" ? body.name.trim() : ""
   if (!email || !email.includes("@")) {
-    return new Response(JSON.stringify({ error: "Valid email is required." }), {
+    return new Response(JSON.stringify({ error: "Valid email is required for instant demo access." }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -93,19 +103,45 @@ Deno.serve(async (req) => {
     source = "admin_manual"
   }
 
-  const { data: prior } = await admin
+  const { data: priorGrant } = await admin
     .from("demo_access_grants")
-    .select("id, expires_at")
+    .select("id, auth_user_id, activate_by, activated_at, expires_at")
     .ilike("email", email)
     .maybeSingle()
 
-  if (prior?.id && !body.admin_provision) {
-    const exp = prior.expires_at ? new Date(String(prior.expires_at)).getTime() : 0
-    if (exp > Date.now()) {
+  if (priorGrant?.id && !body.admin_provision) {
+    const activatedAt = priorGrant.activated_at ? String(priorGrant.activated_at) : null
+    const expiresAt = priorGrant.expires_at ? String(priorGrant.expires_at) : null
+    const activateBy = priorGrant.activate_by ? String(priorGrant.activate_by) : null
+    const now = Date.now()
+    const stillValid =
+      (activatedAt && expiresAt && new Date(expiresAt).getTime() > now) ||
+      (!activatedAt && activateBy && new Date(activateBy).getTime() > now)
+
+    if (stillValid) {
       return new Response(
         JSON.stringify({
-          error: "This email already received a demo period. Contact us if you need extended access.",
+          error: "This email already has an active demo. Check your inbox for login details or contact us for an extension.",
           alreadyGranted: true,
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+  }
+
+  const { data: existingProf } = await admin
+    .from("profiles")
+    .select("id, role, metadata, portal_config")
+    .ilike("email", email)
+    .maybeSingle()
+
+  if (existingProf?.id) {
+    if (isDemoProfileRow(existingProf as { role?: string; metadata?: Record<string, unknown>; portal_config?: { demo_account?: boolean } })) {
+      await deleteDemoUser(admin, String(existingProf.id))
+    } else if (!body.admin_provision) {
+      return new Response(
+        JSON.stringify({
+          error: "This email already has a Tradesman account. Sign in or use a different email for a demo.",
         }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       )
@@ -114,7 +150,7 @@ Deno.serve(async (req) => {
 
   const password = randomPassword()
   const displayName = name || body.business_name?.trim() || email.split("@")[0] || "Demo user"
-  const expiresAt = new Date(Date.now() + DEMO_HOURS * 3600000).toISOString()
+  const activateBy = demoActivateByIso()
 
   const { data: newUser, error: createErr } = await admin.auth.admin.createUser({
     email,
@@ -148,13 +184,21 @@ Deno.serve(async (req) => {
     demo_account: true,
   }
 
+  const profileMeta = {
+    demo_account: true,
+    demo_communications_blocked: true,
+    demo_activate_by: activateBy,
+    demo_activated_at: null,
+    demo_expires_at: null,
+  }
+
   await admin.from("profiles").upsert({
     id: uid,
     email,
     display_name: displayName,
     role: "office_manager",
     portal_config,
-    metadata: { demo_expires_at: expiresAt, demo_communications_blocked: true, demo_account: true },
+    metadata: profileMeta,
     updated_at: new Date().toISOString(),
   })
 
@@ -162,7 +206,9 @@ Deno.serve(async (req) => {
   await admin.from("demo_access_grants").insert({
     email,
     auth_user_id: uid,
-    expires_at: expiresAt,
+    activate_by: activateBy,
+    activated_at: null,
+    expires_at: activateBy,
     granted_by: grantedBy,
     source,
     ticket_id: body.ticket_id ?? null,
@@ -172,20 +218,23 @@ Deno.serve(async (req) => {
   const resendKey = Deno.env.get("RESEND_API_KEY")?.trim()
   const resendFrom = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
   let emailed = false
+  let emailError = ""
   if (resendKey && resendFrom) {
     const loginUrl = Deno.env.get("VITE_SITE_URL")?.trim() || "https://tradesman-us.vercel.app"
+    const activateByLabel = new Date(activateBy).toLocaleString()
     const text = [
       `Hi ${displayName},`,
       "",
-      "Your 24-hour Tradesman demo account is ready.",
+      "Your Tradesman demo is ready.",
       "",
       `1. Open: ${loginUrl}`,
-      `2. Choose **Office Manager Login** on the home page`,
-      `3. Sign in with:`,
+      "2. Choose Office Manager Login on the home page",
+      "3. Sign in with:",
       `   Email: ${email}`,
       `   Temporary password: ${password}`,
       "",
-      `This demo expires: ${new Date(expiresAt).toLocaleString()}`,
+      `Sign in within 8 hours (by ${activateByLabel}) or this login is removed.`,
+      "After your first sign-in you have 24 hours to explore the demo.",
       "",
       "Demo accounts cannot send or receive live texts, emails, or phone calls.",
       "",
@@ -198,22 +247,30 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           from: resendFrom,
           to: [email],
-          subject: "Your 24-hour Tradesman demo login",
+          subject: "Your Tradesman demo login",
           text,
         }),
       })
       emailed = sendRes.ok
-    } catch {
-      /* ignore */
+      if (!sendRes.ok) {
+        emailError = await sendRes.text()
+        console.warn("[provision-demo] Resend", sendRes.status, emailError)
+      }
+    } catch (e) {
+      emailError = e instanceof Error ? e.message : String(e)
+      console.warn("[provision-demo] Resend error", emailError)
     }
+  } else {
+    emailError = "RESEND_API_KEY or RESEND_FROM_EMAIL not set on Edge"
   }
 
   return new Response(
     JSON.stringify({
       ok: true,
       userId: uid,
-      expiresAt,
+      activateBy,
       emailed,
+      emailError: emailed ? undefined : emailError || "Email not sent",
       password: body.admin_provision ? password : undefined,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },

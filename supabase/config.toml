@@ -20,6 +20,12 @@ verify_jwt = false
 [functions.provision-demo]
 verify_jwt = false
 
+[functions.activate-demo]
+verify_jwt = false
+
+[functions.purge-expired-demos]
+verify_jwt = false
+
 [functions.send-team-invite]
 verify_jwt = false
 

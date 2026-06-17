@@ -26,7 +26,7 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.title": "Dashboard",
     "dashboard.demoLabel": "Demo account.",
     "dashboard.demoBanner":
-      "Demo account. Leads, conversations, quotes, calendar, and inbox-style activity are cleared on a schedule (typically every hour or two). Your login and profile stay; Twilio channels are not removed. Ask your admin for a full account when you are ready.",
+      "Sign in within 8 hours of requesting access; after your first login you have 24 hours to explore. Live texts, emails, and phone calls are disabled on demo accounts.",
     "dashboard.welcomeTitle": "Welcome to Tradesman",
     "dashboard.welcomeBody1":
       "We help contractors and small businesses manage leads, conversations, quotes, and scheduling in one clean workspace.",

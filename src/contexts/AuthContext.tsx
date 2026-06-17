@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react"
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
+import { activateDemoSession, demoAccessBlockReason } from "../lib/demoAccountLifecycle"
 import { revokeOtherAuthSessions } from "../lib/authSingleSession"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
@@ -28,8 +29,10 @@ type AuthState = {
   signOut: () => Promise<void>
   /** Refetch profile from DB and return role (e.g. to retry after login). */
   refetchProfile: () => Promise<ProfileFetchResult>
-  /** True after sign-in when profiles.account_disabled is true; user is signed out. Cleared when starting a new sign-in attempt. */
+  /** True after sign-in when profiles.account_disabled is true or demo expired; user is signed out. */
   accountAccessBlocked: boolean
+  /** Specific message when accountAccessBlocked (deactivated vs demo expired). */
+  accessBlockedMessage: string | null
   clearAccessBlockedReason: () => void
   /** Public URL from profiles.metadata.profile_photo_url when set. */
   profilePhotoUrl: string | null
@@ -45,13 +48,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [portalConfig, setPortalConfig] = useState<PortalConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
+  const [accessBlockedMessage, setAccessBlockedMessage] = useState<string | null>(null)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
   /** Last user id from auth session; used to avoid clearing `role` on TOKEN_REFRESHED (same user). */
   const authSessionUserIdRef = useRef<string | null>(null)
   /** Dedupe notify POST when both INITIAL_SESSION and getSession() run back-to-back. */
   const verifiedNotifyDedupeRef = useRef<{ userId: string; at: number } | null>(null)
 
-  const clearAccessBlockedReason = useCallback(() => setAccountAccessBlocked(false), [])
+  const clearAccessBlockedReason = useCallback(() => {
+    setAccountAccessBlocked(false)
+    setAccessBlockedMessage(null)
+  }, [])
 
   const postVerifiedSignupNotify = useCallback((session: Session | null) => {
     if (!session?.user?.email_confirmed_at || !session.access_token) return
@@ -93,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       /** USER_UPDATED: e.g. admin confirmed email in Dashboard while session is open — still ping ops once. */
       if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") {
         postVerifiedSignupNotify(session)
+        if (session?.access_token) void activateDemoSession(session.access_token)
       }
     })
     void supabase.auth.getSession().then(({ data: { session } }) => {
@@ -103,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
       /** Same notify as onAuthStateChange — covers loads where INITIAL_SESSION does not fire before hydration. */
       postVerifiedSignupNotify(session)
+      if (session?.access_token) void activateDemoSession(session.access_token)
     })
     return () => subscription.unsubscribe()
   }, [postVerifiedSignupNotify])
@@ -129,12 +138,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(({ data, error }) => {
         if (!cancelled && data?.account_disabled === true) {
           clearTimeout(timeoutId)
+          setAccessBlockedMessage(null)
           setAccountAccessBlocked(true)
           void sb.auth.signOut()
           return
         }
         if (!cancelled) {
           clearTimeout(timeoutId)
+          const meta =
+            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+              ? (data.metadata as Record<string, unknown>)
+              : {}
+          const portalCfg = (data?.portal_config as PortalConfig) ?? null
+          const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
+          if (demoBlock) {
+            setAccessBlockedMessage(demoBlock)
+            setAccountAccessBlocked(true)
+            void sb.auth.signOut()
+            return
+          }
           if (!error && data?.role) setRole(data.role as UserRole)
           else setRole("user")
         }
@@ -182,9 +204,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .eq("id", user.id)
       .single()
     if (data?.account_disabled === true) {
+      setAccessBlockedMessage(null)
       setAccountAccessBlocked(true)
       await supabase.auth.signOut()
       return { role: null, error: "Account deactivated" }
+    }
+    const meta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? (data.metadata as Record<string, unknown>)
+        : {}
+    const portalCfg = (data?.portal_config as PortalConfig) ?? null
+    const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
+    if (demoBlock) {
+      setAccessBlockedMessage(demoBlock)
+      setAccountAccessBlocked(true)
+      await supabase.auth.signOut()
+      return { role: null, error: demoBlock }
     }
     if (error) {
       const fallback: UserRole = "user"
@@ -196,9 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (data?.client_id) setClientId(data.client_id as string)
     else setClientId(DEFAULT_CLIENT_ID)
     setPortalConfig((data?.portal_config as PortalConfig) ?? null)
-    const meta = (data as { metadata?: unknown })?.metadata
-    const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
-    const url = m.profile_photo_url
+    const url = meta.profile_photo_url
     setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
     return { role: roleFromDb }
   }, [user?.id])
@@ -223,6 +256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     refetchProfile,
     accountAccessBlocked,
+    accessBlockedMessage,
     clearAccessBlockedReason,
     profilePhotoUrl,
   }

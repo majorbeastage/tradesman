@@ -4,6 +4,7 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { hintForSupportTicketsError } from "../../lib/supabaseTicketErrors"
 import { notifyAdminSupportTicket } from "../../lib/notifyAdminSupportTicket"
+import { DEMO_ACTIVATION_HOURS, DEMO_ACTIVE_HOURS } from "../../lib/demoAccountLifecycle"
 
 const supabaseUrlEnv = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonEnv = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -13,7 +14,7 @@ async function provisionDemoAccount(params: {
   name: string
   businessName: string
   ticketId: string | null
-}): Promise<{ ok: boolean; error?: string; alreadyGranted?: boolean; emailed?: boolean }> {
+}): Promise<{ ok: boolean; error?: string; alreadyGranted?: boolean; emailed?: boolean; emailError?: string }> {
   if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) {
     return { ok: false, error: "Demo service is not configured." }
   }
@@ -32,7 +33,7 @@ async function provisionDemoAccount(params: {
       ticket_id: params.ticketId,
     }),
   })
-  let json: { error?: string; alreadyGranted?: boolean; emailed?: boolean } = {}
+  let json: { error?: string; alreadyGranted?: boolean; emailed?: boolean; emailError?: string } = {}
   try {
     json = (await res.json()) as typeof json
   } catch {
@@ -41,7 +42,7 @@ async function provisionDemoAccount(params: {
   if (!res.ok) {
     return { ok: false, error: json.error ?? `Demo service error (${res.status})`, alreadyGranted: json.alreadyGranted }
   }
-  return { ok: true, emailed: json.emailed === true }
+  return { ok: true, emailed: json.emailed === true, emailError: json.emailError }
 }
 
 type DemoPageProps = {
@@ -71,8 +72,8 @@ export default function DemoPage({ onBack }: DemoPageProps) {
       setError("Name is required.")
       return
     }
-    if (!email.trim() && !phone.trim()) {
-      setError("Please provide an email or a phone number so we can reach you.")
+    if (!email.trim()) {
+      setError("Email is required — we email your temporary demo login there.")
       return
     }
     if (!supabase) {
@@ -91,7 +92,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
         name: name.trim(),
         business_name: businessName.trim() || null,
         phone: phone.trim() || null,
-        email: email.trim() || null,
+        email: email.trim(),
         title: resolvedTitle,
         preferred_contact: preferredContact,
         message: description.trim() || null,
@@ -114,33 +115,37 @@ export default function DemoPage({ onBack }: DemoPageProps) {
       })
     }
 
-    setSubmitting(false)
     if (insertError) {
+      setSubmitting(false)
       setError(hintForSupportTicketsError(insertError.message))
       return
     }
+
     setTicketNumber(data?.ticket_number ?? null)
-    setSubmitted(true)
     if (data?.id) void notifyAdminSupportTicket(data.id)
 
-    if (email.trim()) {
-      const demo = await provisionDemoAccount({
-        email: email.trim(),
-        name: name.trim(),
-        businessName: businessName.trim(),
-        ticketId: data?.id ?? null,
-      })
-      if (demo.ok && demo.emailed) {
-        setDemoLoginSent(true)
-      } else if (demo.ok && !demo.emailed) {
-        setDemoProvisionError(
-          "Your demo account was created but we could not email the login details. Contact support or try again later.",
-        )
-      } else if (demo.alreadyGranted) {
-        setDemoProvisionError(demo.error ?? "Demo already granted for this email.")
-      } else {
-        setDemoProvisionError(demo.error ?? "Could not send demo login email.")
-      }
+    const demo = await provisionDemoAccount({
+      email: email.trim(),
+      name: name.trim(),
+      businessName: businessName.trim(),
+      ticketId: data?.id ?? null,
+    })
+
+    setSubmitting(false)
+    setSubmitted(true)
+
+    if (demo.ok && demo.emailed) {
+      setDemoLoginSent(true)
+    } else if (demo.ok && !demo.emailed) {
+      setDemoProvisionError(
+        demo.emailError?.includes("RESEND")
+          ? "Your demo was created but email is not configured on the server yet. Contact support for login details."
+          : "Your demo account was created but we could not email the login details. Check spam or contact support.",
+      )
+    } else if (demo.alreadyGranted) {
+      setDemoProvisionError(demo.error ?? "An active demo already exists for this email.")
+    } else if (!demo.ok) {
+      setDemoProvisionError(demo.error ?? "Could not create demo access.")
     }
   }
 
@@ -154,11 +159,13 @@ export default function DemoPage({ onBack }: DemoPageProps) {
     borderRadius: 6,
     fontSize: 14,
     boxSizing: "border-box",
+    color: theme.text,
+    background: "#fff",
   }
-  const labelStyle: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: theme.text }
+  const labelStyle: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: theme.text }
 
   return (
-    <div style={{ minHeight: "100vh", background: theme.background, display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: theme.background, display: "flex", flexDirection: "column", color: theme.text, colorScheme: "light" }}>
       <header
         style={{
           padding: "16px 24px",
@@ -172,16 +179,18 @@ export default function DemoPage({ onBack }: DemoPageProps) {
         <button
           type="button"
           onClick={onBack}
-          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: theme.primary }}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: theme.primary, fontWeight: 600 }}
         >
           ← Back to home
         </button>
       </header>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: 24, flex: 1 }}>
-        <h1 style={{ color: theme.text, marginBottom: 8 }}>Dashboard preview</h1>
-        <p style={{ color: theme.text, opacity: 0.8, marginBottom: 24 }}>
-          Start a conversation to get in touch with our team.
+        <h1 style={{ color: theme.text, marginBottom: 8 }}>Try Tradesman demo</h1>
+        <p style={{ color: theme.text, marginBottom: 24, lineHeight: 1.6, maxWidth: 520 }}>
+          Submit the form and we email a temporary <strong>Office Manager</strong> login. Sign in within{" "}
+          <strong>{DEMO_ACTIVATION_HOURS} hours</strong>; after your first login you have{" "}
+          <strong>{DEMO_ACTIVE_HOURS} hours</strong> to explore. Demo accounts cannot send or receive live texts, emails, or phone calls.
         </p>
 
         {!showForm && !submitted && (
@@ -194,12 +203,12 @@ export default function DemoPage({ onBack }: DemoPageProps) {
               color: "white",
               border: "none",
               borderRadius: 8,
-              fontWeight: 600,
+              fontWeight: 700,
               fontSize: 16,
               cursor: "pointer",
             }}
           >
-            Start a conversation
+            Get demo access
           </button>
         )}
 
@@ -215,7 +224,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
               border: `1px solid ${theme.border}`,
             }}
           >
-            <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 20 }}>Contact details</h2>
+            <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 20 }}>Demo access</h2>
             <label style={labelStyle}>
               Name <span style={{ color: theme.primary }}>*</span>
               <input
@@ -238,28 +247,29 @@ export default function DemoPage({ onBack }: DemoPageProps) {
               />
             </label>
             <label style={labelStyle}>
-              Phone number
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                style={inputStyle}
-                placeholder="Phone number"
-              />
-            </label>
-            <label style={labelStyle}>
-              Email
+              Email <span style={{ color: theme.primary }}>*</span>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle}
                 placeholder="you@example.com"
+                required
               />
             </label>
-            <p style={{ fontSize: 12, color: "#6b7280", marginTop: -8, marginBottom: 16 }}>
-              Provide at least one of email or phone.
+            <p style={{ fontSize: 12, color: "#374151", marginTop: -8, marginBottom: 16, lineHeight: 1.5 }}>
+              We email your temporary password here. Use <strong>Office Manager Login</strong> on the home page.
             </p>
+            <label style={labelStyle}>
+              Phone (optional)
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                style={inputStyle}
+                placeholder="For our team to follow up"
+              />
+            </label>
             <label style={labelStyle}>
               Short title / summary (optional)
               <input
@@ -305,11 +315,11 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                   color: "white",
                   border: "none",
                   borderRadius: 6,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   cursor: submitting ? "wait" : "pointer",
                 }}
               >
-                {submitting ? "Submitting…" : "Submit request"}
+                {submitting ? "Creating demo access…" : "Email my demo login"}
               </button>
               <button
                 type="button"
@@ -321,6 +331,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
                   border: `1px solid ${theme.border}`,
                   borderRadius: 6,
                   cursor: "pointer",
+                  fontWeight: 600,
                 }}
               >
                 Cancel
@@ -332,7 +343,7 @@ export default function DemoPage({ onBack }: DemoPageProps) {
         {submitted && (
           <div
             style={{
-              maxWidth: 440,
+              maxWidth: 480,
               padding: 24,
               background: "#ecfdf5",
               border: "1px solid #10b981",
@@ -340,20 +351,17 @@ export default function DemoPage({ onBack }: DemoPageProps) {
               color: "#065f46",
             }}
           >
-            <p style={{ margin: 0, fontWeight: 600 }}>Thank you!</p>
+            <p style={{ margin: 0, fontWeight: 700 }}>Thank you!</p>
             {ticketNumber && (
-              <p style={{ margin: "8px 0 0" }}>
-                Your request is ticket <strong>{ticketNumber}</strong>. Our team will see it in the admin Trouble tickets tab.
+              <p style={{ margin: "8px 0 0", lineHeight: 1.55 }}>
+                Reference ticket <strong>{ticketNumber}</strong> — our team can follow up if needed.
               </p>
-            )}
-            {!ticketNumber && (
-              <p style={{ margin: "8px 0 0" }}>We received your request.</p>
             )}
             {demoLoginSent ? (
               <p style={{ margin: "12px 0 0", lineHeight: 1.55 }}>
-                We emailed a <strong>24-hour Office Manager demo login</strong> to {email.trim()}. On the home page,
-                choose <strong>Office Manager Login</strong>, then sign in with the email and temporary password we sent.
-                Demo accounts cannot send or receive live texts, emails, or phone calls.
+                We emailed a temporary <strong>Office Manager</strong> login to <strong>{email.trim()}</strong>. Check inbox and spam.
+                On the home page choose <strong>Office Manager Login</strong>, then sign in within {DEMO_ACTIVATION_HOURS} hours.
+                After your first sign-in you have {DEMO_ACTIVE_HOURS} hours to explore. Live texts, emails, and calls are disabled on demos.
               </p>
             ) : null}
             {demoProvisionError ? (
