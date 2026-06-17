@@ -3,19 +3,23 @@ import {
   customerEmailFromIdentifiers,
   customerEmailsFromIdentifiers,
   customerPhoneFromIdentifiers,
+  customerPhonesFromIdentifiers,
   formatCustomerContactLine,
 } from "./customerIdentifiers"
 import {
   customerEmailMatchesHubKind,
   deriveOrgGroupKeyFromEmail,
+  isCustomerContactSeparated,
   normalizeCustomerEmail,
   orgGroupSummaryLabel,
   parseCustomerHubKind,
   parseCustomerOrgGroupKey,
+  parseSplitOrgEmails,
 } from "./customerContactKind"
 import { loadCustomReceiptsForCustomer, type CustomReceiptDraft } from "./customReceipt"
-import { loadCustomerCalendarEvents, type CustomerCalendarEventRow } from "./customerSchedulingActivity"
+import { loadCustomerCalendarEventsForProfile, type CalendarEventProfileRow } from "./calendarEventProfile"
 import { normalizeCommunicationUrgency } from "./customerUrgency"
+import { quoteItemsSubtotalFromRows } from "./customerQuotePaymentOptions"
 import {
   parseSpecialtyReportRegistry,
   specialtyReportLinkedCustomerId,
@@ -51,6 +55,8 @@ export type CustomerProfileQuoteRow = {
   created_at: string | null
   updated_at: string | null
   title: string | null
+  total: number
+  metadata: Record<string, unknown> | null
 }
 
 export type CustomerProfileCommEvent = {
@@ -74,12 +80,13 @@ export type CustomerProfileBundle = {
   customer: CustomerProfileRecord
   contactLine: string
   phone: string
+  phones: string[]
   email: string
   emails: string[]
   orgGroupLabel: string | null
   urgency: ReturnType<typeof normalizeCommunicationUrgency>
   quotes: CustomerProfileQuoteRow[]
-  calendarEvents: CustomerCalendarEventRow[]
+  calendarEvents: CalendarEventProfileRow[]
   receipts: CustomReceiptDraft[]
   reports: SpecialtyReportRegistryItem[]
   commEvents: CustomerProfileCommEvent[]
@@ -181,6 +188,7 @@ async function findOrgGroupedCustomerIds(
   emails: string[],
   metadata: unknown,
 ): Promise<string[]> {
+  if (isCustomerContactSeparated(metadata)) return [customerId]
   const hubKind = parseCustomerHubKind(metadata)
   const orgRoots = new Set<string>()
   for (const raw of emails) {
@@ -210,6 +218,8 @@ async function findOrgGroupedCustomerIds(
     if (!root || !orgRoots.has(root)) continue
     const cust = Array.isArray(row.customers) ? row.customers[0] : row.customers
     if (!cust) continue
+    if (isCustomerContactSeparated(cust.metadata)) continue
+    if (parseSplitOrgEmails(metadata).includes(email)) continue
     if (!customerEmailMatchesHubKind(email, cust.metadata, hubKind)) continue
     ids.add(String(row.customer_id))
   }
@@ -276,6 +286,7 @@ export async function loadCustomerProfileBundle(
 ): Promise<CustomerProfileBundle> {
   const row = await loadCustomerRow(supabase, userId, customerId)
   const phone = customerPhoneFromIdentifiers(row.customer_identifiers)
+  const phones = customerPhonesFromIdentifiers(row.customer_identifiers)
   const email = customerEmailFromIdentifiers(row.customer_identifiers)
   const emails = customerEmailsFromIdentifiers(row.customer_identifiers)
   const orgGroupLabel = orgGroupSummaryLabel(parseCustomerOrgGroupKey(row.metadata), parseCustomerHubKind(row.metadata))
@@ -290,7 +301,7 @@ export async function loadCustomerProfileBundle(
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
       .limit(80),
-    loadCustomerCalendarEvents(supabase, userId, customerId).catch(() => [] as CustomerCalendarEventRow[]),
+    loadCustomerCalendarEventsForProfile(supabase, userId, customerId).catch(() => [] as CalendarEventProfileRow[]),
     loadCustomReceiptsForCustomer(supabase, customerId).catch(() => [] as CustomReceiptDraft[]),
     loadLeadsForCustomers(supabase, userId, relatedCustomerIds),
     loadCommEventsForCustomers(supabase, userId, relatedCustomerIds).catch(() => [] as CustomerProfileCommEvent[]),
@@ -299,18 +310,37 @@ export async function loadCustomerProfileBundle(
 
   if (quotesRes.error) throw quotesRes.error
 
+  const quoteIds = (quotesRes.data ?? []).map((q) => String(q.id))
+  let quoteItemsById = new Map<string, Array<{ description?: string | null; quantity?: unknown; unit_price?: unknown; metadata?: unknown }>>()
+  if (quoteIds.length > 0) {
+    const { data: quoteItems } = await supabase
+      .from("quote_items")
+      .select("quote_id, description, quantity, unit_price, metadata")
+      .in("quote_id", quoteIds)
+    for (const row of quoteItems ?? []) {
+      const qid = String((row as { quote_id?: string }).quote_id ?? "")
+      if (!qid) continue
+      const list = quoteItemsById.get(qid) ?? []
+      list.push(row as { description?: string | null; quantity?: unknown; unit_price?: unknown; metadata?: unknown })
+      quoteItemsById.set(qid, list)
+    }
+  }
+
   const quotes: CustomerProfileQuoteRow[] = (quotesRes.data ?? []).map((q) => {
     const meta =
       q.metadata && typeof q.metadata === "object" && !Array.isArray(q.metadata)
         ? (q.metadata as Record<string, unknown>)
-        : {}
-    const title = typeof meta.job_title === "string" ? meta.job_title : typeof meta.title === "string" ? meta.title : null
+        : null
+    const title = typeof meta?.job_title === "string" ? meta.job_title : typeof meta?.title === "string" ? meta.title : null
+    const id = String(q.id)
     return {
-      id: String(q.id),
+      id,
       status: typeof q.status === "string" ? q.status : null,
       created_at: typeof q.created_at === "string" ? q.created_at : null,
       updated_at: typeof q.updated_at === "string" ? q.updated_at : null,
       title,
+      total: quoteItemsSubtotalFromRows(quoteItemsById.get(id) ?? []),
+      metadata: meta,
     }
   })
 
@@ -336,6 +366,7 @@ export async function loadCustomerProfileBundle(
     customer: row,
     contactLine: formatCustomerContactLine(row.customer_identifiers),
     phone,
+    phones,
     email,
     emails,
     orgGroupLabel,

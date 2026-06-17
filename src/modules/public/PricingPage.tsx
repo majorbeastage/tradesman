@@ -8,6 +8,8 @@ type Props = {
   onBack: () => void
   /** Opens signup with the selected package id stored for the form. */
   onSignupWithPackage: (packageId: ProductPackageId) => void
+  /** Opens signup with the product advisor wizard. */
+  onHelpDecidingProduct?: () => void
 }
 
 const DEFAULT_EXPANDED_ID: ProductPackageId = "office_manager_pro"
@@ -50,6 +52,8 @@ const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
   office_manager_entry: "1 office manager + 1 user, internal messaging, map view & calendar control.",
   office_manager_pro: "10 leads/mo, 1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
   office_manager_elite: "Max leads (25/mo), 2 OMs + 8 users, top-tier comms — built for larger operations.",
+  corporate:
+    "Multi-department operations — work orders, purchase orders, org & workflow charts, 20 users, 5 office managers, 10 internal + 10 external phone logins.",
 }
 
 const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
@@ -205,6 +209,16 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
       <li>Customer Database</li>
     </ul>
   ),
+  corporate: (
+    <ul style={ulStyle}>
+      <li>Everything in Office Manager Elite, plus:</li>
+      <li>Work Orders, Purchase Orders, Parts &amp; Materials Inventory</li>
+      <li>Organization chart &amp; business workflow chart (dashboard tools)</li>
+      <li>20 user logins — 10 internal (no assigned phone) + 10 external (Tradesman phone numbers)</li>
+      <li>5 Office Manager logins</li>
+      <li>Future routing: estimates, POs, work orders, scheduling, receipts &amp; approvals via org chart</li>
+    </ul>
+  ),
 }
 
 function packageExpanded(
@@ -216,7 +230,7 @@ function packageExpanded(
   return pkg === DEFAULT_EXPANDED_ID
 }
 
-export default function PricingPage({ onBack, onSignupWithPackage }: Props) {
+export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidingProduct }: Props) {
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<ProductPackageId | null>(null)
   /** When set, expansion follows the click only — hover does not switch cards. */
@@ -278,6 +292,11 @@ export default function PricingPage({ onBack, onSignupWithPackage }: Props) {
         >
           Hover or tap a package to expand details. Click a card to keep it open while you compare.
         </p>
+        {onHelpDecidingProduct ? (
+          <button type="button" onClick={onHelpDecidingProduct} style={{ ...btnPrimary, marginTop: 0, marginBottom: 20 }}>
+            I need help deciding product
+          </button>
+        ) : null}
 
         {ESTIMATE_TOOLS_PACKAGE ? (
           <div

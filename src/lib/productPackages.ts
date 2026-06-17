@@ -2,6 +2,8 @@
 
 /** sessionStorage key: cold navigation from /pricing → / opens signup with preset package. */
 export const SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY = "tradesman_signup_product_package"
+/** Open signup with product advisor wizard. */
+export const SIGNUP_OPEN_PRODUCT_ADVISOR_KEY = "tradesman_open_product_advisor"
 
 export type ProductPackageId =
   | "estimate_tools_only"
@@ -9,12 +11,14 @@ export type ProductPackageId =
   | "office_manager_entry"
   | "office_manager_pro"
   | "office_manager_elite"
+  | "corporate"
 
 export const PRODUCT_PACKAGE_IDS: ProductPackageId[] = [
   "base",
   "office_manager_entry",
   "office_manager_pro",
   "office_manager_elite",
+  "corporate",
   "estimate_tools_only",
 ]
 
@@ -28,6 +32,11 @@ export const PRODUCT_PACKAGES: {
   { id: "office_manager_pro", title: "Office Manager Pro", priceLine: "$199.99/month + applicable taxes and fees*" },
   { id: "office_manager_elite", title: "Office Manager Elite", priceLine: "$369.99/month + applicable taxes and fees*" },
   {
+    id: "corporate",
+    title: "Corporate",
+    priceLine: "$649.99/month + applicable taxes and fees*",
+  },
+  {
     id: "estimate_tools_only",
     title: "Estimate Tools only (1-tool user)",
     priceLine: "$49.99/month + applicable taxes and fees*",
@@ -40,6 +49,7 @@ const LABEL_BY_ID: Record<ProductPackageId, string> = {
   office_manager_entry: "Office Manager Entry Level — $159.99/mo",
   office_manager_pro: "Office Manager Pro — $199.99/mo",
   office_manager_elite: "Office Manager Elite — $369.99/mo",
+  corporate: "Corporate — $649.99/mo",
 }
 
 export function labelForProductPackageId(id: string | null | undefined): string {
@@ -55,6 +65,7 @@ export const PRODUCT_PACKAGE_QUERY_VALUES: Record<ProductPackageId, string> = {
   office_manager_entry: "om-entry",
   office_manager_pro: "om-pro",
   office_manager_elite: "om-elite",
+  corporate: "corporate",
 }
 
 const QUERY_TO_ID = Object.fromEntries(

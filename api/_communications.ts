@@ -903,7 +903,6 @@ async function ensureCanonicalOrgMetadata(
   customerId: string,
   classification: ReturnType<typeof classifyInboundEmailContact>,
 ): Promise<void> {
-  if (!classification.orgGroupKey) return
   const { data, error } = await supabase
     .from("customers")
     .select("metadata")
@@ -975,7 +974,10 @@ export async function getOrCreateCustomerByEmail(
     .maybeSingle()
   if (identifierErr) throw identifierErr
   if (existingIdentifier?.customer_id) {
-    return { customerId: String(existingIdentifier.customer_id), previousCustomer: true }
+    const customerId = String(existingIdentifier.customer_id)
+    const classification = classifyInboundEmailContact(normalizedEmail)
+    await ensureCanonicalOrgMetadata(supabase, userId, customerId, classification)
+    return { customerId, previousCustomer: true }
   }
 
   const classification = classifyInboundEmailContact(normalizedEmail)

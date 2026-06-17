@@ -47,6 +47,16 @@ export type CustomFieldDependency = {
   depends_on_field?: CustomField
 }
 
+export const WORK_ORDERS_TAB_ID = "work_orders"
+export const PURCHASE_ORDERS_TAB_ID = "purchase_orders"
+export const PARTS_INVENTORY_TAB_ID = "parts_inventory"
+
+export const OPTIONAL_PORTAL_TAB_IDS = [
+  WORK_ORDERS_TAB_ID,
+  PURCHASE_ORDERS_TAB_ID,
+  PARTS_INVENTORY_TAB_ID,
+] as const
+
 export const USER_PORTAL_TAB_IDS = [
   'dashboard',
   'leads',
@@ -87,6 +97,15 @@ export function isV2DeprecatedPortalTab(tabId: string): boolean {
 
 /** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
 export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
+  if (tabId === WORK_ORDERS_TAB_ID) {
+    return portalConfig?.enable_work_orders_tab === true && portalConfig?.tabs?.work_orders !== false
+  }
+  if (tabId === PURCHASE_ORDERS_TAB_ID) {
+    return portalConfig?.enable_purchase_orders_tab === true && portalConfig?.tabs?.purchase_orders !== false
+  }
+  if (tabId === PARTS_INVENTORY_TAB_ID) {
+    return portalConfig?.enable_parts_inventory_tab === true && portalConfig?.tabs?.parts_inventory !== false
+  }
   if (!isV2DeprecatedPortalTab(tabId)) {
     return portalConfig?.tabs?.[tabId] !== false
   }
@@ -124,6 +143,9 @@ export const TAB_ID_LABELS: Record<string, string> = {
   leads: 'Leads',
   conversations: 'Conversations',
   quotes: 'Estimates Tool',
+  [WORK_ORDERS_TAB_ID]: 'Work Orders',
+  [PURCHASE_ORDERS_TAB_ID]: 'Purchase Orders',
+  [PARTS_INVENTORY_TAB_ID]: 'Parts & Materials',
   calendar: 'Scheduling',
   customers: 'Customers',
   payments: 'Payments',
@@ -132,6 +154,8 @@ export const TAB_ID_LABELS: Record<string, string> = {
   'web-support': 'Web Support',
   'tech-support': 'Tradesman Help Desk',
   settings: 'Settings',
+  'business-workflow': 'My Business Workflow',
+  'organization-chart': 'Organization chart',
 }
 
 /** Custom item added by admin (id + label) */
@@ -255,6 +279,19 @@ export type PortalConfig = {
    * status looks “sent” (Sent, Viewed, Accepted, Declined). Default omitted: button follows normal line-item / customer rules.
    */
   customer_pay_only_after_estimate_sent?: boolean
+  /**
+   * Onboarding option: show Work Orders tab between Estimates and Scheduling.
+   * Requires `tabs.work_orders` not false when enabled.
+   */
+  enable_work_orders_tab?: boolean
+  /** Onboarding option: show Purchase Orders tab (optional, after Work Orders when enabled). */
+  enable_purchase_orders_tab?: boolean
+  /** Onboarding option: Parts & Materials Inventory tab. */
+  enable_parts_inventory_tab?: boolean
+  /** Corporate subscription — enables multi-module operations package. */
+  corporate_package?: boolean
+  /** Onboarding option: rename Estimates sidebar (e.g. "Proposal Tool"). */
+  quotes_tab_display_name?: string
 }
 
 /** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
@@ -407,13 +444,36 @@ export function mergeCanonicalOrder(savedOrder: string[] | undefined, canonicalI
   return out
 }
 
+/** Insert optional onboarding tabs after Estimates (work orders → purchase orders → parts inventory). */
+export function applyOptionalPortalTabOrder(order: string[], portalConfig: PortalConfig): string[] {
+  const out = [...order]
+  const qi = out.indexOf("quotes")
+  const insertAt = qi >= 0 ? qi + 1 : out.length
+  const optional: { enabled: boolean; id: string }[] = [
+    { enabled: portalConfig.enable_work_orders_tab === true, id: WORK_ORDERS_TAB_ID },
+    { enabled: portalConfig.enable_purchase_orders_tab === true, id: PURCHASE_ORDERS_TAB_ID },
+    { enabled: portalConfig.enable_parts_inventory_tab === true, id: PARTS_INVENTORY_TAB_ID },
+  ]
+  let offset = 0
+  for (const tab of optional) {
+    if (!tab.enabled || out.includes(tab.id)) continue
+    out.splice(insertAt + offset, 0, tab.id)
+    offset += 1
+  }
+  return out
+}
+
 /** Ordered tab entries for user portal sidebar (default + custom labels). */
 export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
   const customTabs = portalConfig.customTabs ?? []
-  const canonical = [...USER_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
-  const order = mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical)
+  const canonical = [...USER_PORTAL_TAB_IDS, ...OPTIONAL_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const order = applyOptionalPortalTabOrder(mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical), portalConfig)
   const labelById = new Map<string, string | null>()
   for (const id of USER_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const id of OPTIONAL_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  if (portalConfig.quotes_tab_display_name?.trim()) {
+    labelById.set("quotes", portalConfig.quotes_tab_display_name.trim())
+  }
   for (const t of customTabs) labelById.set(t.id, t.label)
   return order
     .filter((id) => labelById.has(id))
@@ -424,10 +484,14 @@ export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ t
 /** Office manager portal: same `sidebarTabOrder` as user config, canonical tabs exclude Settings. */
 export function getOfficePortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
   const customTabs = portalConfig.customTabs ?? []
-  const canonical = [...OFFICE_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
-  const order = mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical)
+  const canonical = [...OFFICE_PORTAL_TAB_IDS, ...OPTIONAL_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const order = applyOptionalPortalTabOrder(mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical), portalConfig)
   const labelById = new Map<string, string | null>()
   for (const id of OFFICE_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const id of OPTIONAL_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  if (portalConfig.quotes_tab_display_name?.trim()) {
+    labelById.set("quotes", portalConfig.quotes_tab_display_name.trim())
+  }
   for (const t of customTabs) labelById.set(t.id, t.label)
   return order
     .filter((id) => labelById.has(id))
@@ -1456,6 +1520,12 @@ export const DEFAULT_CALENDAR_COMPLETION_ITEMS: PortalSettingItem[] = [
     label: "When a receipt is sent to the customer, send a copy to the office manager email (if configured)",
     defaultChecked: false,
     dependency: { dependsOnItemId: "calendar_completion_worker_may_message_customer", showWhenValue: "checked" },
+  },
+  {
+    id: "calendar_completion_offer_new_estimate_on_additional_items",
+    type: "checkbox",
+    label: "If additional line items are added to a calendar event, offer to create a new estimate and send to the customer",
+    defaultChecked: false,
   },
 ]
 

@@ -63,6 +63,9 @@ import {
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
 import { customerEmailFromIdentifiers, customerEmailsFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
+import { listCustomerEmailValues, listCustomerPhoneValues, pickDefaultContactValue } from "../../lib/customerContactList"
+import CustomerContactChannelPicker from "../../components/CustomerContactChannelPicker"
+import { loadCustomerPaymentQuoteOptions, type CustomerPaymentQuoteOption } from "../../lib/customerQuotePaymentOptions"
 import {
   collapseOrgGroupedCustomers,
   remapEventsToCanonicalCustomers,
@@ -70,7 +73,11 @@ import {
   resolveOrgSiblingCustomerIds,
   type CustomerOrgGroupingMaps,
 } from "../../lib/customerOrgGrouping"
-import { orgGroupSummaryLabel, parseCustomerHubKind, parseCustomerOrgGroupKey } from "../../lib/customerContactKind"
+import { orgGroupSummaryLabel, parseCustomerHubKind, parseCustomerOrgGroupKey, customerBelongsInPromotionsHub, promotionalEmailFromEventMetadata, isCustomerManuallyArchived, mergeCustomerHubMetadata } from "../../lib/customerContactKind"
+import {
+  reassignCommunicationEventToPromotions,
+  setCustomerHubKind,
+} from "../../lib/customerPromotionsRouting"
 import {
   SPECIALTY_REPORT_REGISTRY_KEY,
   parseSpecialtyReportRegistry,
@@ -79,6 +86,7 @@ import {
 } from "../../lib/specialtyReports/reportRecords"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
+import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -228,10 +236,22 @@ const CUSTOMER_COMM_CARD_SUMMARY: CSSProperties = {
   boxSizing: "border-box",
   padding: "10px 12px",
   margin: 0,
-  border: `1px solid ${theme.border}`,
-  borderRadius: 10,
-  background: "#fff",
+  border: "none",
+  borderRadius: 0,
+  background: "transparent",
   textAlign: "left",
+}
+
+const customerQuickActionSmall: CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 6,
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  color: theme.text,
+  whiteSpace: "nowrap",
 }
 
 function classifyCustomerCommChannel(item: { kind: "msg" | "ev"; payload: Record<string, unknown> }): "sms" | "email" | "phone" | "other" {
@@ -282,6 +302,10 @@ function commChannelOneLineSummary(
   return `${label} · ${n} item${n === 1 ? "" : "s"} · Last ${when}`
 }
 
+function isPromotionalCustomer(c: CustomerRow): boolean {
+  return customerBelongsInPromotionsHub(c)
+}
+
 function isCompletedJobStatus(status: string | null | undefined): boolean {
   return String(status ?? "").trim().toLowerCase() === "completed"
 }
@@ -301,16 +325,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [inProcessCustomers, setInProcessCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
+  const [promotionalCustomers, setPromotionalCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
   const [customerPaymentRequestOpen, setCustomerPaymentRequestOpen] = useState(false)
+  const [customerPaymentQuoteOptions, setCustomerPaymentQuoteOptions] = useState<CustomerPaymentQuoteOption[]>([])
+  const [outboundPhone, setOutboundPhone] = useState("")
+  const [outboundEmail, setOutboundEmail] = useState("")
   const [search, setSearch] = useState("")
   const [filterUrgency, setFilterUrgency] = useState<string>("")
   const [sortField, setSortField] = useState<string>("name")
   const [sortAsc, setSortAsc] = useState(true)
-  const [section, setSection] = useState<"active" | "in_process" | "archived">("active")
+  const [section, setSection] = useState<"active" | "in_process" | "archived" | "promotions">("active")
   const [loadError, setLoadError] = useState<string>("")
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
@@ -359,6 +387,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [completeBusy, setCompleteBusy] = useState(false)
   const [removeBusy, setRemoveBusy] = useState(false)
+  const [hubKindBusy, setHubKindBusy] = useState(false)
+  const [eventPromoBusy, setEventPromoBusy] = useState<string | null>(null)
   const [showLeadFilterPrefs, setShowLeadFilterPrefs] = useState(false)
   const [leadFilterSaveBusy, setLeadFilterSaveBusy] = useState(false)
   const [leadFilterPrefs, setLeadFilterPrefs] = useState<LeadFilterPrefsState>({
@@ -374,7 +404,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   /** profiles.display_name — used in SMS compliance footer preview and character budget. */
   const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
   const [timelineExpanded, setTimelineExpanded] = useState<Record<string, boolean>>({})
-  const [commCardOpen, setCommCardOpen] = useState({ phone: false, sms: false, email: false })
+  const [commCardOpen, setCommCardOpen] = useState({ phone: false, sms: false, email: false, notes: false })
   const [commHistoryChannel, setCommHistoryChannel] = useState<null | "phone" | "sms" | "email">(null)
   const [aiSummaryByKey, setAiSummaryByKey] = useState<Record<string, string>>({})
   const [aiSummaryBusy, setAiSummaryBusy] = useState<Record<string, boolean>>({})
@@ -466,14 +496,32 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setDetailConsentSource(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
     setDetailConsentSourceTouched(false)
     if (!selectedCustomer) {
-      setCommCardOpen({ phone: false, sms: false, email: false })
+      setCommCardOpen({ phone: false, sms: false, email: false, notes: false })
+      setCustomerPaymentQuoteOptions([])
+      setOutboundPhone("")
+      setOutboundEmail("")
       return
     }
-    const ids = selectedCustomer.customer_identifiers ?? []
-    const hasPhone = ids.some((i) => i.type === "phone" && String(i.value ?? "").trim())
-    const hasEmail = ids.some((i) => i.type === "email" && String(i.value ?? "").trim())
-    setCommCardOpen({ phone: hasPhone, sms: hasPhone, email: hasEmail })
+    setCommCardOpen({ phone: false, sms: false, email: false, notes: false })
+    const phones = listCustomerPhoneValues(selectedCustomer.customer_identifiers ?? null)
+    const emails = listCustomerEmailValues(selectedCustomer.customer_identifiers ?? null)
+    setOutboundPhone(pickDefaultContactValue(phones))
+    setOutboundEmail(pickDefaultContactValue(emails))
   }, [selectedCustomer?.id])
+
+  useEffect(() => {
+    if (!supabase || !userId || !selectedCustomer?.id) {
+      setCustomerPaymentQuoteOptions([])
+      return
+    }
+    let cancelled = false
+    void loadCustomerPaymentQuoteOptions(supabase, userId, selectedCustomer.id).then((opts) => {
+      if (!cancelled) setCustomerPaymentQuoteOptions(opts)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, userId, selectedCustomer?.id])
 
   const smsFirstComplianceVariant = useMemo(
     () => resolveSmsFirstComplianceVariant(customerCommEvents),
@@ -816,6 +864,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setActiveCustomers([])
       setInProcessCustomers([])
       setArchivedCustomers([])
+      setPromotionalCustomers([])
       return
     }
 
@@ -857,21 +906,31 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
     // Completed customers should move to Archived even if legacy related rows still exist.
     // Standalone customers (Add customer only — no lead/quote/conversation/calendar yet) stay on Active.
-    let inProcess = list.filter((c) => recurringBookedIds.has(c.id) && !isCompletedJobStatus(c.job_pipeline_status))
-    let active = list.filter(
+    const promotional = list.filter(isPromotionalCustomer)
+    const operational = list.filter((c) => !isPromotionalCustomer(c))
+    let inProcess = operational.filter(
       (c) =>
+        !isCustomerManuallyArchived(c.metadata) &&
+        recurringBookedIds.has(c.id) &&
+        !isCompletedJobStatus(c.job_pipeline_status),
+    )
+    let active = operational.filter(
+      (c) =>
+        !isCustomerManuallyArchived(c.metadata) &&
         !recurringBookedIds.has(c.id) &&
         !isCompletedJobStatus(c.job_pipeline_status) &&
         (activeIds.has(c.id) || !relatedIds.has(c.id)),
     )
-    let archived = list.filter(
+    let archived = operational.filter(
       (c) =>
         isCompletedJobStatus(c.job_pipeline_status) ||
+        isCustomerManuallyArchived(c.metadata) ||
         (relatedIds.has(c.id) && !activeIds.has(c.id) && !recurringBookedIds.has(c.id)),
     )
     inProcess = await escalateList(inProcess, urgencyPrefs)
     active = await escalateList(active, urgencyPrefs)
     archived = await escalateList(archived, urgencyPrefs)
+    setPromotionalCustomers(await escalateList(promotional, urgencyPrefs))
     setInProcessCustomers(inProcess)
     setActiveCustomers(active)
     setArchivedCustomers(archived)
@@ -1097,8 +1156,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setCustomerEmailBody("")
       return
     }
-    const em = selectedCustomer.customer_identifiers?.find((i) => i.type === "email")?.value?.trim() ?? ""
+    const em = pickDefaultContactValue(listCustomerEmailValues(selectedCustomer.customer_identifiers ?? null))
     setCustomerEmailTo(em)
+    setOutboundEmail(em)
     setCustomerEmailSubject(selectedCustomer.display_name?.trim() ? `Re: ${selectedCustomer.display_name.trim()}` : "Message from us")
     void loadCustomerActivity(selectedCustomer.id)
   }, [selectedCustomer?.id, userId, loadCustomerActivity])
@@ -1140,7 +1200,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }, [selectedCustomer?.id, userId])
 
-  const currentList = section === "active" ? activeCustomers : section === "in_process" ? inProcessCustomers : archivedCustomers
+  const currentList =
+    section === "active"
+      ? activeCustomers
+      : section === "in_process"
+        ? inProcessCustomers
+        : section === "promotions"
+          ? promotionalCustomers
+          : archivedCustomers
   const filtered = currentList.filter((c) => {
     const name = (c.display_name || "").toLowerCase()
     const contactValues = (c.customer_identifiers ?? [])
@@ -1330,7 +1397,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       return
     }
     const trimmed = clampSmsUserPortion(customerReplySms, smsComposeMaxChars)
-    const to = detailForm.phone.trim() || selectedCustomer.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() || ""
+    const to = outboundPhone.trim() || detailForm.phone.trim() || pickDefaultContactValue(listCustomerPhoneValues(selectedCustomer.customer_identifiers ?? null))
     if (!trimmed) {
       alert("Enter a message to send.")
       return
@@ -1374,7 +1441,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   async function sendCustomerEmail() {
     if (!userId || !selectedCustomer?.id) return
-    const to = customerEmailTo.trim()
+    const to = outboundEmail.trim() || customerEmailTo.trim()
     const subject = customerEmailSubject.trim()
     const body = customerEmailBody.trim()
     if (!to) {
@@ -1416,6 +1483,30 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
+  async function markCustomerArchived() {
+    if (!supabase || !selectedCustomer) return
+    setRemoveBusy(true)
+    try {
+      const nowIso = new Date().toISOString()
+      const nextMeta = mergeCustomerHubMetadata(selectedCustomer.metadata, { manualArchived: true })
+      const patch: Record<string, unknown> = { metadata: nextMeta, last_activity_at: nowIso }
+      let { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
+      if (error && String(error.message || "").toLowerCase().includes("last_activity")) {
+        const { last_activity_at: _la, ...rest } = patch
+        const r = await supabase.from("customers").update(rest).eq("id", selectedCustomer.id)
+        error = r.error
+      }
+      if (error) throw error
+      setSelectedCustomer(null)
+      await loadCustomers()
+      setSection("archived")
+    } catch (e) {
+      alert(formatAppError(e))
+    } finally {
+      setRemoveBusy(false)
+    }
+  }
+
   async function markCustomerComplete() {
     if (!supabase || !selectedCustomer) return
     setCompleteBusy(true)
@@ -1429,16 +1520,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         error = r.error
       }
       if (error) throw error
-      setDetailForm((p) => ({ ...p, jobStatus: "Completed" }))
+      setSelectedCustomer(null)
       await loadCustomers()
-      const tried = await supabase
-        .from("customers")
-        .select(
-          `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, communication_urgency, last_activity_at, customer_identifiers ( type, value )`,
-        )
-        .eq("id", selectedCustomer.id)
-        .maybeSingle()
-      if (!tried.error && tried.data) setSelectedCustomer(tried.data as CustomerRow)
       setSection("archived")
     } catch (e) {
       alert(formatAppError(e))
@@ -1550,29 +1633,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
-  async function removeCustomerRecord() {
-    if (!supabase || !selectedCustomer) return
-    if (
-      !window.confirm(
-        "Remove this customer record permanently? This only works if nothing still references them (quotes, events, etc.). Otherwise the database will refuse deletion.",
-      )
-    )
-      return
-    setRemoveBusy(true)
-    try {
-      const { error } = await supabase.from("customers").delete().eq("id", selectedCustomer.id)
-      if (error) {
-        alert(error.message)
-        return
-      }
-      setSelectedCustomer(null)
-      setDetailEditMode(false)
-      await loadCustomers()
-    } finally {
-      setRemoveBusy(false)
-    }
-  }
-
   async function focusCustomerAfterCreate(customerId: string, reusedExisting: boolean) {
     if (!supabase) return
     const fullSelectOne = `
@@ -1649,6 +1709,53 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
+  async function moveSelectedCustomerToPromotions() {
+    if (!supabase || !userId || !selectedCustomer) return
+    setHubKindBusy(true)
+    try {
+      const nextMeta = await setCustomerHubKind(supabase, userId, selectedCustomer.id, "promotional")
+      setSelectedCustomer({ ...selectedCustomer, metadata: nextMeta })
+      await loadCustomers()
+      setSection("promotions")
+    } catch (e) {
+      alert(formatAppError(e))
+    } finally {
+      setHubKindBusy(false)
+    }
+  }
+
+  async function moveSelectedCustomerToCustomers() {
+    if (!supabase || !userId || !selectedCustomer) return
+    setHubKindBusy(true)
+    try {
+      const nextMeta = await setCustomerHubKind(supabase, userId, selectedCustomer.id, "customer")
+      const clearedMeta = mergeCustomerHubMetadata(nextMeta, { manualArchived: false })
+      await supabase.from("customers").update({ metadata: clearedMeta }).eq("id", selectedCustomer.id).eq("user_id", userId)
+      setSelectedCustomer({ ...selectedCustomer, metadata: clearedMeta })
+      await loadCustomers()
+      setSection("active")
+    } catch (e) {
+      alert(formatAppError(e))
+    } finally {
+      setHubKindBusy(false)
+    }
+  }
+
+  async function sendCommunicationEventToPromotions(eventId: string, fromEmail: string) {
+    if (!supabase || !userId || !fromEmail.trim()) return
+    setEventPromoBusy(eventId)
+    try {
+      await reassignCommunicationEventToPromotions(supabase, userId, eventId, fromEmail)
+      if (selectedCustomer?.id) await loadCustomerActivity(selectedCustomer.id)
+      await loadCustomers()
+      setSection("promotions")
+    } catch (e) {
+      alert(formatAppError(e))
+    } finally {
+      setEventPromoBusy(null)
+    }
+  }
+
   async function patchCustomerUrgencyRow(c: CustomerRow, next: CommunicationUrgency) {
     if (!supabase) return
     const { error } = await supabase.from("customers").update({ communication_urgency: next }).eq("id", c.id)
@@ -1661,6 +1768,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setInProcessCustomers(bump)
     setActiveCustomers(bump)
     setArchivedCustomers(bump)
+    setPromotionalCustomers(bump)
     if (selectedCustomer?.id === c.id) {
       setSelectedCustomer({ ...c, communication_urgency: next })
       setDetailForm((p) => ({ ...p, urgency: next }))
@@ -1893,6 +2001,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
             >
               Archived
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSection("promotions")
+                setSelectedCustomer(null)
+              }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: section === "promotions" ? `2px solid ${theme.primary}` : "1px solid #d1d5db",
+                background: section === "promotions" ? "#eff6ff" : "white",
+                cursor: "pointer",
+                color: theme.text,
+                fontWeight: section === "promotions" ? 600 : 400,
+              }}
+            >
+              Promotions &amp; marketing
+            </button>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: isMobile ? "1 1 100%" : undefined }}>
@@ -2002,7 +2128,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
             {sorted.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ padding: "16px", color: "#6b7280" }}>
-                  {section === "active" ? "No active customers." : "No archived customers."}
+                  {section === "active"
+                    ? "No active customers."
+                    : section === "in_process"
+                      ? "No booked customers."
+                      : section === "promotions"
+                        ? "No promotions or marketing senders yet — no-reply, newsletter, and system mail (e.g. noreply@…) appears here automatically."
+                        : "No archived customers."}
                 </td>
               </tr>
             ) : (
@@ -2109,94 +2241,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </button>
                             </div>
 
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                {setPage ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openFullCustomerProfile(c.id)}
-                                    style={{
-                                      padding: "10px 16px",
-                                      borderRadius: 6,
-                                      border: "none",
-                                      background: theme.primary,
-                                      color: "white",
-                                      cursor: "pointer",
-                                      fontWeight: 700,
-                                      fontSize: 13,
-                                    }}
-                                  >
-                                    Full profile
-                                  </button>
-                                ) : null}
-                                {!CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      queueSchedulingCustomerPrefill(c.id)
-                                      queueCustomerFocus(c.id)
-                                      setPage("calendar")
-                                    }}
-                                    style={{
-                                      padding: "10px 16px",
-                                      borderRadius: 6,
-                                      border: "none",
-                                      background: theme.primary,
-                                      color: "white",
-                                      cursor: "pointer",
-                                      fontWeight: 600,
-                                      fontSize: 13,
-                                    }}
-                                  >
-                                    Add to calendar
-                                  </button>
-                                ) : null}
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                              {setPage ? (
                                 <button
                                   type="button"
-                                  disabled={completeBusy || !selectedCustomer}
-                                  onClick={() => void markCustomerComplete()}
+                                  onClick={() => openFullCustomerProfile(c.id)}
                                   style={{
-                                    padding: "6px 12px",
-                                    borderRadius: 6,
-                                    border: "1px solid #047857",
-                                    background: "#ecfdf5",
-                                    color: "#065f46",
-                                    cursor: completeBusy ? "wait" : "pointer",
-                                    fontWeight: 700,
-                                    fontSize: 13,
-                                  }}
-                                >
-                                  {completeBusy ? "…" : "Complete"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={removeBusy || !selectedCustomer}
-                                  onClick={() => void removeCustomerRecord()}
-                                  style={{
-                                    padding: "6px 12px",
-                                    borderRadius: 6,
-                                    border: "1px solid #b91c1c",
-                                    background: "#fef2f2",
-                                    color: "#991b1b",
-                                    cursor: removeBusy ? "wait" : "pointer",
-                                    fontWeight: 700,
-                                    fontSize: 13,
-                                  }}
-                                >
-                                  {removeBusy ? "…" : "Remove"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (CUSTOMER_LIST_COMPACT_DETAIL && setPage) {
-                                      openFullCustomerProfile(c.id)
-                                      return
-                                    }
-                                    setNotesCustomerId(c.id)
-                                    setNotesCustomerName(c.display_name ?? "")
-                                  }}
-                                  style={{
-                                    padding: "6px 12px",
+                                    padding: "10px 16px",
                                     borderRadius: 6,
                                     border: "none",
                                     background: theme.primary,
@@ -2204,28 +2255,97 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     cursor: "pointer",
                                     fontWeight: 700,
                                     fontSize: 13,
+                                    flexShrink: 0,
                                   }}
                                 >
-                                  {CUSTOMER_LIST_COMPACT_DETAIL ? "Notes in profile" : "Notes"}
+                                  Full profile
                                 </button>
-                                {showCustomersCustomerPayment ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setCustomerPaymentRequestOpen(true)}
-                                    style={{
-                                      padding: "6px 12px",
-                                      borderRadius: 6,
-                                      border: `2px solid ${theme.primary}`,
-                                      background: "#fff7ed",
-                                      color: theme.text,
-                                      cursor: "pointer",
-                                      fontWeight: 800,
-                                      fontSize: 13,
-                                    }}
-                                  >
-                                    Customer payment
-                                  </button>
-                                ) : null}
+                              ) : null}
+                              <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 6,
+                                    alignItems: "center",
+                                    padding: "8px 10px",
+                                    borderRadius: 10,
+                                    border: `1px solid ${theme.border}`,
+                                    background: "#fff",
+                                  }}
+                                >
+                                  {!CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        queueSchedulingCustomerPrefill(c.id)
+                                        queueCustomerFocus(c.id)
+                                        setPage("calendar")
+                                      }}
+                                      style={{ ...customerQuickActionSmall, background: "#fff7ed", borderColor: theme.primary }}
+                                    >
+                                      Add to calendar
+                                    </button>
+                                  ) : null}
+                                  {(section === "promotions" ||
+                                    section === "active" ||
+                                    section === "in_process" ||
+                                    (section === "archived" && customerBelongsInPromotionsHub(c))) && (
+                                    <button
+                                      type="button"
+                                      disabled={hubKindBusy || !selectedCustomer}
+                                      onClick={() =>
+                                        void (customerBelongsInPromotionsHub(c)
+                                          ? moveSelectedCustomerToCustomers()
+                                          : moveSelectedCustomerToPromotions())
+                                      }
+                                      style={{
+                                        ...customerQuickActionSmall,
+                                        borderColor: "#6366f1",
+                                        background: customerBelongsInPromotionsHub(c) ? "#eef2ff" : "#f5f3ff",
+                                        color: "#4338ca",
+                                      }}
+                                    >
+                                      {hubKindBusy
+                                        ? "…"
+                                        : customerBelongsInPromotionsHub(c)
+                                          ? "Move to Customers"
+                                          : "Promotions & marketing"}
+                                    </button>
+                                  )}
+                                  {section !== "archived" && section !== "promotions" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={completeBusy || !selectedCustomer}
+                                        onClick={() => void markCustomerComplete()}
+                                        style={{ ...customerQuickActionSmall, borderColor: "#047857", background: "#ecfdf5", color: "#065f46" }}
+                                      >
+                                        {completeBusy ? "…" : "Complete"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={removeBusy || !selectedCustomer}
+                                        onClick={() => void markCustomerArchived()}
+                                        style={{ ...customerQuickActionSmall, borderColor: "#64748b", background: "#f8fafc", color: "#334155" }}
+                                      >
+                                        {removeBusy ? "…" : "Archive"}
+                                      </button>
+                                    </>
+                                  ) : null}
+                                  {showCustomersCustomerPayment ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setCustomerPaymentRequestOpen(true)}
+                                      style={{ ...customerQuickActionSmall, borderColor: theme.primary, background: "#fff7ed" }}
+                                    >
+                                      Customer payment
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <p style={{ margin: "6px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.45 }}>
+                                  Complete marks the job done. Archive moves the record out of Active — nothing is deleted.
+                                </p>
                               </div>
                             </div>
 
@@ -2717,8 +2837,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                             {ev.notes?.trim() ? (
                                               <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>{ev.notes.trim()}</div>
                                             ) : null}
-                                            {setPage && ev.quote_id ? (
+                                            {setPage ? (
                                               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                                                <CustomerEventCoiButton
+                                                  userId={userId}
+                                                  customerId={c.id}
+                                                  customerMetadata={c.metadata}
+                                                  eventId={ev.id}
+                                                  quoteId={ev.quote_id ?? null}
+                                                  compact
+                                                  onUpdated={() => void loadCustomers()}
+                                                />
+                                                {ev.quote_id ? (
+                                                <>
                                                 <button
                                                   type="button"
                                                   onClick={() => {
@@ -2760,6 +2891,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                 >
                                                   Open estimate
                                                 </button>
+                                                </>
+                                                ) : null}
                                               </div>
                                             ) : null}
                                           </div>
@@ -2808,8 +2941,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     {(["phone", "sms", "email"] as const).map((chan) => {
                                         const list = commItemsByChannel[chan]
                                         const open = commCardOpen[chan]
-                                        const phoneHint = c.customer_identifiers?.find((i) => i.type === "phone")?.value?.trim() ?? ""
-                                        const emailHint = customerEmailFromIdentifiers(c.customer_identifiers ?? null) ?? ""
+                                        const phoneOptions = listCustomerPhoneValues(c.customer_identifiers ?? null)
+                                        const emailOptions = listCustomerEmailValues(c.customer_identifiers ?? null)
+                                        const phoneHint = outboundPhone || phoneOptions[0] || ""
+                                        const emailHint = outboundEmail || emailOptions[0] || ""
                                         const contactHint = chan === "email" ? emailHint : phoneHint
                                         return (
                                           <div
@@ -2835,12 +2970,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                               <div style={{ padding: "0 12px 12px", display: "grid", gap: 10 }}>
                                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
                                                   {chan === "phone" ? (
-                                                    (() => {
-                                                      const ph = c.customer_identifiers?.find((i) => i.type === "phone")?.value ?? ""
-                                                      return ph.trim() ? <CustomerCallButton phone={ph} bridgeOwnerUserId={userId} compact /> : (
-                                                        <span style={{ fontSize: 12, color: "#94a3b8" }}>No phone on file</span>
-                                                      )
-                                                    })()
+                                                    phoneHint.trim() ? (
+                                                      <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}>
+                                                        <CustomerContactChannelPicker
+                                                          channel="phone"
+                                                          options={phoneOptions}
+                                                          value={outboundPhone || phoneOptions[0] || ""}
+                                                          onChange={(v) => {
+                                                            setOutboundPhone(v)
+                                                          }}
+                                                        />
+                                                        <CustomerCallButton phone={outboundPhone || phoneHint} bridgeOwnerUserId={userId} compact />
+                                                      </div>
+                                                    ) : (
+                                                      <span style={{ fontSize: 12, color: "#94a3b8" }}>No phone on file</span>
+                                                    )
                                                   ) : (
                                                     <span style={{ fontSize: 12, color: "#64748b" }}>
                                                       {chan === "sms" ? "Thread texts below." : "Outbound / inbound email log below."}
@@ -2884,6 +3028,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                 )}
                                                 {chan === "sms" ? (
                                                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                                                    <CustomerContactChannelPicker
+                                                      channel="phone"
+                                                      options={phoneOptions}
+                                                      value={outboundPhone || phoneOptions[0] || ""}
+                                                      onChange={setOutboundPhone}
+                                                    />
                                                     {smsBlockedPendingManualOptIn ? (
                                                       <p
                                                         style={{
@@ -2962,6 +3112,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                 ) : null}
                                                 {chan === "email" ? (
                                                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                                                    <CustomerContactChannelPicker
+                                                      channel="email"
+                                                      options={emailOptions}
+                                                      value={outboundEmail || customerEmailTo || emailOptions[0] || ""}
+                                                      onChange={(v) => {
+                                                        setOutboundEmail(v)
+                                                        setCustomerEmailTo(v)
+                                                      }}
+                                                    />
                                                     <input
                                                       placeholder="To"
                                                       value={customerEmailTo}
@@ -3005,6 +3164,33 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                           </div>
                                         )
                                       })}
+                                    <div
+                                      style={{
+                                        border: `1px solid ${theme.border}`,
+                                        borderRadius: 10,
+                                        background: "#fff",
+                                        overflow: "hidden",
+                                      }}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => setCommCardOpen((m) => ({ ...m, notes: !m.notes }))}
+                                        style={CUSTOMER_COMM_CARD_SUMMARY}
+                                      >
+                                        <span style={{ color: "#64748b", fontSize: 13 }}>{commCardOpen.notes ? "▾" : "▸"}</span>
+                                        <span style={{ flex: 1, minWidth: 0 }}>Notes · Add and view customer notes</span>
+                                      </button>
+                                      {commCardOpen.notes ? (
+                                        <div style={{ padding: "0 12px 12px", borderTop: `1px solid ${theme.border}` }}>
+                                          <CustomerNotesPanel
+                                            embedded
+                                            customerId={c.id}
+                                            customerName={c.display_name ?? undefined}
+                                            onClose={() => setCommCardOpen((m) => ({ ...m, notes: false }))}
+                                          />
+                                        </div>
+                                      ) : null}
+                                    </div>
                                     </div>
 
                                   {commHistoryChannel ? (
@@ -3114,6 +3300,44 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                           <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
                                                         ) : null}
                                                         <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
+                                                        {(() => {
+                                                          const metaFrom =
+                                                            ev?.metadata &&
+                                                            typeof ev.metadata === "object" &&
+                                                            !Array.isArray(ev.metadata) &&
+                                                            typeof (ev.metadata as { from?: unknown }).from === "string"
+                                                              ? String((ev.metadata as { from: string }).from).trim()
+                                                              : ""
+                                                          const promoFrom =
+                                                            promotionalEmailFromEventMetadata(ev?.metadata) ||
+                                                            (metaFrom.includes("@") ? metaFrom : "")
+                                                          if (!promoFrom || section === "promotions") return null
+                                                          const autoNoreply = promotionalEmailFromEventMetadata(ev?.metadata) != null
+                                                          return (
+                                                            <button
+                                                              type="button"
+                                                              disabled={eventPromoBusy === ev.id}
+                                                              onClick={() => void sendCommunicationEventToPromotions(String(ev.id), promoFrom)}
+                                                              style={{
+                                                                marginTop: 10,
+                                                                padding: "6px 12px",
+                                                                borderRadius: 6,
+                                                                border: "1px solid #6366f1",
+                                                                background: "#f5f3ff",
+                                                                color: "#4338ca",
+                                                                fontSize: 12,
+                                                                fontWeight: 600,
+                                                                cursor: eventPromoBusy === ev.id ? "wait" : "pointer",
+                                                              }}
+                                                            >
+                                                              {eventPromoBusy === ev.id
+                                                                ? "Moving…"
+                                                                : autoNoreply
+                                                                  ? "Send to Promotions & marketing (no-reply)"
+                                                                  : "Send to Promotions & marketing"}
+                                                            </button>
+                                                          )
+                                                        })()}
                                                       </>
                                                     ) : (
                                                       <>
@@ -3167,7 +3391,22 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       </div>
                                     </div>
                                   ) : null}
-                                  {!CUSTOMER_LIST_COMPACT_DETAIL && setPage ? (
+                                  {selectedCustomer?.id === c.id ? (
+                                    <CustomerCoiQuickActions
+                                      userId={userId}
+                                      customerId={c.id}
+                                      customerName={c.display_name ?? undefined}
+                                      customerMetadata={c.metadata}
+                                      calendarEvents={customerCalendarEvents.map((ev) => ({
+                                        id: ev.id,
+                                        title: ev.title,
+                                        quote_id: ev.quote_id,
+                                      }))}
+                                      compact
+                                      onUpdated={() => void loadCustomers()}
+                                    />
+                                  ) : null}
+                                  {setPage ? (
                                     <div
                                       style={{
                                         marginTop: 14,
@@ -3178,10 +3417,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         gap: 10,
                                       }}
                                     >
-                                      <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling and estimates</div>
-                                      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                        Open Scheduling with this customer prefilled, or open their latest estimate (saved job details, line items, and notes reload).
-                                      </p>
+                                      {!CUSTOMER_LIST_COMPACT_DETAIL ? (
+                                        <>
+                                          <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling and estimates</div>
+                                          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                            Open Scheduling with this customer prefilled, or open their latest estimate (saved job details, line items, and notes reload).
+                                          </p>
+                                        </>
+                                      ) : null}
                                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                         <button
                                           type="button"
@@ -3203,26 +3446,28 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         >
                                           Scheduling
                                         </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            queueCustomReceiptCustomerPrefill(c.id)
-                                            queueCustomerFocus(c.id)
-                                            setPage("calendar")
-                                          }}
-                                          style={{
-                                            padding: "8px 14px",
-                                            borderRadius: 6,
-                                            border: `1px solid ${theme.border}`,
-                                            background: "#fff",
-                                            color: theme.text,
-                                            fontWeight: 600,
-                                            cursor: "pointer",
-                                            fontSize: 13,
-                                          }}
-                                        >
-                                          Custom Receipt
-                                        </button>
+                                        {!CUSTOMER_LIST_COMPACT_DETAIL ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              queueCustomReceiptCustomerPrefill(c.id)
+                                              queueCustomerFocus(c.id)
+                                              setPage("calendar")
+                                            }}
+                                            style={{
+                                              padding: "8px 14px",
+                                              borderRadius: 6,
+                                              border: `1px solid ${theme.border}`,
+                                              background: "#fff",
+                                              color: theme.text,
+                                              fontWeight: 600,
+                                              cursor: "pointer",
+                                              fontSize: 13,
+                                            }}
+                                          >
+                                            Custom Receipt
+                                          </button>
+                                        ) : null}
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -3233,15 +3478,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                           style={{
                                             padding: "8px 14px",
                                             borderRadius: 6,
-                                            border: `1px solid ${theme.border}`,
-                                            background: "#fff",
-                                            color: theme.text,
+                                            border: CUSTOMER_LIST_COMPACT_DETAIL ? "none" : `1px solid ${theme.border}`,
+                                            background: CUSTOMER_LIST_COMPACT_DETAIL ? theme.primary : "#fff",
+                                            color: CUSTOMER_LIST_COMPACT_DETAIL ? "#fff" : theme.text,
                                             fontWeight: 600,
                                             cursor: "pointer",
                                             fontSize: 13,
                                           }}
                                         >
-                                          Open estimate
+                                          {CUSTOMER_LIST_COMPACT_DETAIL ? "Create estimate" : "Open estimate"}
                                         </button>
                                       </div>
                                     </div>
@@ -3268,8 +3513,17 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           customerId={selectedCustomer.id}
           customerName={selectedCustomer.display_name ?? null}
           profile={customerPaymentProfile}
-          estimateLabel={null}
-          amountLabel={null}
+          estimateLabel={
+            customerPaymentQuoteOptions[0]
+              ? customerPaymentQuoteOptions[0].estimateLabel
+              : null
+          }
+          amountLabel={
+            customerPaymentQuoteOptions[0]?.amountLabel ?? null
+          }
+          quoteId={customerPaymentQuoteOptions[0]?.quoteId ?? null}
+          quoteOptions={customerPaymentQuoteOptions.length > 0 ? customerPaymentQuoteOptions : undefined}
+          quoteMetadata={customerPaymentQuoteOptions[0]?.metadata ?? null}
         />
       ) : null}
 

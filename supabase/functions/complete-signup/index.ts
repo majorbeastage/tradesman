@@ -7,6 +7,14 @@
 // verifies auth.users.id matches the email in the body.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import {
+  isProductPackageId,
+  PACKAGE_TO_BILLING,
+  PACKAGE_TO_ROLE,
+  portalConfigForPackage,
+  shellSlotCount,
+  type ProductPackageId,
+} from "../_shared/onboarding-packages.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,6 +45,12 @@ type Body = {
   ack_sms?: boolean
   use_ai_automation?: boolean
   ui_language?: string
+  ack_billing?: boolean
+  bill_day_of_month?: number
+  signup_proration_usd?: number
+  helcim_transaction_id?: string | null
+  helcim_approval_code?: string | null
+  payment_completed_at?: string | null
 }
 
 type FieldRule = "required" | "optional"
@@ -341,21 +355,49 @@ Deno.serve(async (req) => {
     estimate_tools_only_package: true,
   }
 
-  const portal_config =
-    productPackage === "estimate_tools_only" ? portal_config_estimate_tools_only : portal_config_default
+  const paidPackage = productPackage && isProductPackageId(productPackage) ? (productPackage as ProductPackageId) : null
+  const signupRole = paidPackage ? PACKAGE_TO_ROLE[paidPackage] : "new_user"
+  const portal_config = paidPackage
+    ? portalConfigForPackage(paidPackage)
+    : productPackage === "estimate_tools_only"
+      ? portal_config_estimate_tools_only
+      : portal_config_default
 
   const useAi = body.use_ai_automation !== false
   const uiLang = body.ui_language === "es" ? "es" : "en"
 
+  const billDayRaw = typeof body.bill_day_of_month === "number" ? body.bill_day_of_month : Number(body.bill_day_of_month)
+  const billDay = Number.isFinite(billDayRaw) ? Math.min(28, Math.max(1, Math.floor(billDayRaw))) : null
+  const prorationUsd =
+    typeof body.signup_proration_usd === "number" && Number.isFinite(body.signup_proration_usd)
+      ? Math.round(body.signup_proration_usd * 100) / 100
+      : null
+
   const metadata: Record<string, unknown> = { ui_language: uiLang }
   if (productPackage) metadata.product_package = productPackage
+  if (paidPackage) {
+    metadata.billing_product_type = PACKAGE_TO_BILLING[paidPackage]
+    metadata.signup_paid_at = now
+  }
+  if (billDay != null) metadata.bill_day_of_month = billDay
+  if (prorationUsd != null) metadata.signup_proration_usd = prorationUsd
+  if (body.ack_billing === true) metadata.billing_consent_at = now
+  if (typeof body.helcim_transaction_id === "string" && body.helcim_transaction_id.trim()) {
+    metadata.signup_helcim_transaction_id = body.helcim_transaction_id.trim()
+  }
+  if (typeof body.helcim_approval_code === "string" && body.helcim_approval_code.trim()) {
+    metadata.signup_helcim_approval_code = body.helcim_approval_code.trim()
+  }
+  if (typeof body.payment_completed_at === "string" && body.payment_completed_at.trim()) {
+    metadata.signup_payment_completed_at = body.payment_completed_at.trim()
+  }
 
   const { error: profileErr } = await adminClient.from("profiles").upsert(
     {
       id: uid,
       email,
       display_name,
-      role: "new_user",
+      role: signupRole,
       portal_config,
       website_url,
       primary_phone,
@@ -380,6 +422,63 @@ Deno.serve(async (req) => {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
+  }
+
+  if (paidPackage) {
+    const shells = shellSlotCount(paidPackage)
+    if (shells > 0) {
+      const expires = new Date(Date.now() + 365 * 86400000).toISOString()
+      const rows = Array.from({ length: shells }, (_, i) => ({
+        account_owner_id: uid,
+        invite_email: null,
+        invite_role: i === 0 && PACKAGE_TO_ROLE[paidPackage] === "office_manager" ? "user" : "user",
+        token_hash: crypto.randomUUID(),
+        status: "shell",
+        expires_at: expires,
+        metadata: { package_id: paidPackage, slot_index: i + 1 },
+      }))
+      try {
+        await adminClient.from("team_member_invites").insert(rows)
+      } catch (e) {
+        console.warn("[complete-signup] team shells", e instanceof Error ? e.message : e)
+      }
+    }
+  }
+
+  const onboardingUrl = Deno.env.get("VERCEL_SEND_ONBOARDING_WELCOME_URL")?.trim()
+  const onboardingSecret =
+    Deno.env.get("COMPLETE_SIGNUP_NOTIFY_SECRET")?.trim() ?? Deno.env.get("ADMIN_SIGNUP_NOTIFY_SECRET")?.trim()
+  if (onboardingUrl && onboardingSecret && paidPackage) {
+    fetch(onboardingUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-tradesman-signup-notify-secret": onboardingSecret,
+      },
+      body: JSON.stringify({ user_id: uid, email, display_name }),
+    }).catch((e) => console.warn("[complete-signup] onboarding welcome", e instanceof Error ? e.message : e))
+  }
+
+  // Fire-and-forget ops alert (email + admin push) — do not block signup on failure.
+  const notifyUrl = Deno.env.get("VERCEL_NOTIFY_ADMIN_NEW_SIGNUP_URL")?.trim()
+  const notifySecret = Deno.env.get("COMPLETE_SIGNUP_NOTIFY_SECRET")?.trim() ?? Deno.env.get("ADMIN_SIGNUP_NOTIFY_SECRET")?.trim()
+  if (notifyUrl && notifySecret) {
+    fetch(notifyUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-tradesman-signup-notify-secret": notifySecret,
+      },
+      body: JSON.stringify({
+        user_id: uid,
+        email,
+        display_name,
+        primary_phone,
+        product_package: productPackage,
+      }),
+    }).catch((e) => console.warn("[complete-signup] admin notify", e instanceof Error ? e.message : e))
+  } else {
+    console.warn("[complete-signup] Set VERCEL_NOTIFY_ADMIN_NEW_SIGNUP_URL + COMPLETE_SIGNUP_NOTIFY_SECRET for admin signup alerts")
   }
 
   return new Response(

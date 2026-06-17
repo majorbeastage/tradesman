@@ -14,6 +14,7 @@ import {
   type InsuranceCoiRecord,
   type InsuranceJobEventRow,
 } from "../../lib/insuranceAssistant"
+import { inferCoiMetadataFromFile } from "../../lib/coiExpiration"
 import {
   buildThimbleQuoteUrl,
   INSURANCE_COVERAGE_CARDS,
@@ -29,6 +30,7 @@ import {
   type InsuranceReasonId,
   type InsuranceTypeId,
 } from "../../lib/thimbleInsuranceResources"
+import InsuranceExternalCoiWizardModal from "../../components/InsuranceExternalCoiWizardModal"
 
 type Step = "type" | "job" | "reason" | "coverage" | "coi"
 
@@ -69,6 +71,7 @@ export default function InsuranceOptionsPage() {
   const [coiErr, setCoiErr] = useState("")
   const [coiSaved, setCoiSaved] = useState<InsuranceCoiRecord | null>(null)
   const [purchased, setPurchased] = useState(false)
+  const [externalWizardOpen, setExternalWizardOpen] = useState(false)
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === customerId) ?? null,
@@ -158,6 +161,7 @@ export default function InsuranceOptionsPage() {
       setCoiBusy(true)
       setCoiErr("")
       try {
+        const inferred = await inferCoiMetadataFromFile(file)
         const record = await saveInsuranceCoi({
           userId,
           file,
@@ -166,6 +170,9 @@ export default function InsuranceOptionsPage() {
           customerId: customerId ?? undefined,
           calendarEventId: eventId ?? undefined,
           quoteId: selectedEvent?.quote_id ?? undefined,
+          expiresAt: inferred.expiresAt,
+          policyNumber: inferred.policyNumber,
+          source: "assistant",
         })
         setCoiSaved(record)
       } catch (e: unknown) {
@@ -468,6 +475,21 @@ export default function InsuranceOptionsPage() {
           </>
         ) : null}
       </div>
+
+      <section style={{ ...card, marginBottom: 20 }}>
+        <h2 style={{ margin: "0 0 8px", fontSize: 17, fontWeight: 800, color: theme.text }}>
+          Add your Insurance COI from external source
+        </h2>
+        <p style={{ margin: "0 0 14px", fontSize: 14, color: "#64748b", lineHeight: 1.55 }}>
+          Already have a certificate from your agent, GC, or another carrier? Upload it here and choose whether it belongs on a specific job,
+          a customer file, or your contractor-wide records.
+        </p>
+        <button type="button" onClick={() => setExternalWizardOpen(true)} style={primaryBtn}>
+          Add external COI
+        </button>
+      </section>
+
+      <InsuranceExternalCoiWizardModal open={externalWizardOpen} onClose={() => setExternalWizardOpen(false)} userId={userId} />
 
       <HelpLearningSection />
     </div>

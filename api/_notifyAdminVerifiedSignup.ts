@@ -5,6 +5,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
 import { createServiceSupabase, firstEnv } from "./_communications.js"
+import { notifyAdminOps } from "./_adminOpsNotify.js"
 
 const META_KEY = "verified_signup_admin_notified_at"
 
@@ -116,6 +117,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
       `Auth email: ${emailStr}`,
       `User id: ${u.id}`,
     ].join("\n")
+    let pushResult: Awaited<ReturnType<typeof notifyAdminOps>>["push"] | undefined
     try {
       const sendRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -134,12 +136,23 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
         return
       }
       console.info("[notify-admin-verified-signup] emailed (profile pending)", { to: adminRecipients, userId: u.id })
+      const ops = await notifyAdminOps({
+        service,
+        subject: `Email verified — profile missing: ${emailStr || u.id}`,
+        text,
+        pushTitle: "Verified signup (profile pending)",
+        pushBody: `${emailStr || u.id} verified — profile not found yet`,
+      })
+      pushResult = ops.push
+      if (pushResult.attempted) {
+        console.info("[notify-admin-verified-signup] push (profile pending)", pushResult)
+      }
     } catch (e) {
       console.error("[notify-admin-verified-signup]", e instanceof Error ? e.message : e)
       res.status(502).json({ error: "Resend request failed" })
       return
     }
-    res.status(200).json({ ok: true, emailed: true, profilePending: true })
+    res.status(200).json({ ok: true, emailed: true, profilePending: true, push: pushResult?.push })
     return
   }
 
@@ -217,5 +230,22 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
   }
 
   console.info("[notify-admin-verified-signup] emailed", { to: adminRecipients, userId: u.id })
-  res.status(200).json({ ok: true, emailed: true })
+
+  const pushResult = await notifyAdminOps({
+    service,
+    subject: `Email verified — new user: ${displayStr} (${emailStr})`,
+    text,
+    pushTitle: "New verified signup",
+    pushBody: `${displayStr} verified email · ${productPackageLine}`,
+  })
+  if (pushResult.push.attempted) {
+    console.info("[notify-admin-verified-signup] push", pushResult.push)
+  }
+
+  res.status(200).json({
+    ok: true,
+    emailed: true,
+    push: pushResult.push,
+    emailDisabled: pushResult.email.disabled === true,
+  })
 }

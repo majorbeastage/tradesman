@@ -13,6 +13,7 @@ export type BillingProductTypeId =
   | "om_entry"
   | "om_pro"
   | "om_elite"
+  | "corporate"
 
 export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string; monthlyUsd: number }[] = [
   { id: "inactive", label: "Inactive", monthlyUsd: 0 },
@@ -24,6 +25,7 @@ export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string;
   { id: "om_entry", label: "Office Manager ENTRY", monthlyUsd: 159.99 },
   { id: "om_pro", label: "Office Manager PRO", monthlyUsd: 199.99 },
   { id: "om_elite", label: "Office Manager ELITE", monthlyUsd: 369.99 },
+  { id: "corporate", label: "Corporate", monthlyUsd: 649.99 },
 ]
 
 const MONTHLY_BY_ID: Record<BillingProductTypeId, number> = BILLING_PRODUCT_OPTIONS.reduce(

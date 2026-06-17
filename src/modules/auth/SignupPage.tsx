@@ -13,7 +13,12 @@ import {
   parseSignupRequirements,
   type SignupRequirementsValue,
 } from "../../types/signup-requirements"
-import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, type ProductPackageId } from "../../lib/productPackages"
+import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, type ProductPackageId } from "../../lib/productPackages"
+import { computeSignupProrationUsd } from "../../lib/subscriptionEntitlements"
+import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
+import SignupProductAdvisorPanel from "../../components/SignupProductAdvisorPanel"
+import SignupSupportCallout from "../../components/SignupSupportCallout"
+import type { HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
 import { PublicLegalNav } from "../public/PublicLegalNav"
 import { LEGAL_LINKS } from "../../lib/legalLinks"
 
@@ -75,6 +80,12 @@ type SyncProfileBody = {
   ack_sms?: boolean
   use_ai_automation?: boolean
   ui_language?: string
+  ack_billing?: boolean
+  bill_day_of_month?: number
+  signup_proration_usd?: number
+  helcim_transaction_id?: string | null
+  helcim_approval_code?: string | null
+  payment_completed_at?: string | null
 }
 
 /** Saves full profile via Edge (service role). Password is never sent. */
@@ -141,6 +152,12 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   const [aiAutomationChoice, setAiAutomationChoice] = useState<"allow" | "deny" | null>(null)
   const [uiLanguage, setUiLanguage] = useState<"en" | "es">("en")
   const [productPackageChoice, setProductPackageChoice] = useState<ProductPackageId | "">("")
+  const [productAdvisorJson, setProductAdvisorJson] = useState<string | null>(null)
+  const [advisorOpen, setAdvisorOpen] = useState(false)
+  const [billDayOfMonth, setBillDayOfMonth] = useState(1)
+  const [ackBilling, setAckBilling] = useState(false)
+  const [signupStep, setSignupStep] = useState<"account" | "payment">("account")
+  const [paymentResult, setPaymentResult] = useState<HelcimJsReturnMessage | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
@@ -178,8 +195,22 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     }
   }, [initialProductPackage])
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY) !== "1") return
+      sessionStorage.removeItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
+      setAdvisorOpen(true)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const proration = productPackageChoice
+    ? computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth })
+    : null
+  const requiresPaidSignup = Boolean(productPackageChoice)
+
+  async function createAccountAfterPayment(payment?: HelcimJsReturnMessage | null) {
     setError("")
     setMessage("")
     if (!supabase) {
@@ -272,6 +303,14 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     if (productPackageChoice) {
       signup_extras.product_package = productPackageChoice
     }
+    if (productAdvisorJson) {
+      signup_extras.product_advisor_json = productAdvisorJson
+    }
+
+    if (requiresPaidSignup && !ackBilling) {
+      setError("Please authorize recurring billing to continue with a paid plan.")
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -313,6 +352,12 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         ack_sms: ackSms,
         use_ai_automation: useAiAutomation,
         ui_language: uiLanguage,
+        ack_billing: requiresPaidSignup ? ackBilling : undefined,
+        bill_day_of_month: requiresPaidSignup ? billDayOfMonth : undefined,
+        signup_proration_usd: proration?.dueTodayUsd,
+        helcim_transaction_id: payment?.transactionId ?? null,
+        helcim_approval_code: payment?.approvalCode ?? null,
+        payment_completed_at: payment ? new Date().toISOString() : null,
       }
 
       const portalCfg =
@@ -397,6 +442,35 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (requiresPaidSignup && signupStep === "account") {
+      setError("")
+      setMessage("")
+      if (!productPackageChoice) {
+        setError("Select a product package to continue.")
+        return
+      }
+      if (!ackBilling) {
+        setError("Please authorize recurring billing for your selected plan.")
+        return
+      }
+      setSignupStep("payment")
+      return
+    }
+    await createAccountAfterPayment(paymentResult)
+  }
+
+  async function handlePaymentSuccess(result: HelcimJsReturnMessage) {
+    setPaymentResult(result)
+    await createAccountAfterPayment(result)
+  }
+
+  async function handleSkipPaymentAndCreate() {
+    setPaymentResult(null)
+    await createAccountAfterPayment(null)
   }
 
   const inputStyle: React.CSSProperties = {
@@ -504,6 +578,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             {resendHint ? (
               <p style={{ margin: "0 0 14px", fontSize: 14, color: resendHint.includes("sent") ? "#059669" : "#b91c1c" }}>{resendHint}</p>
             ) : null}
+            <SignupSupportCallout compact />
             <div
               style={{
                 marginTop: 8,
@@ -553,6 +628,8 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         <p style={{ color: theme.text, opacity: 0.85, margin: "0 0 20px", lineHeight: 1.55, fontSize: 14 }}>
           Required fields are marked. Email verification may be required before your first login, depending on your project settings.
         </p>
+
+        <SignupSupportCallout />
 
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "grid", gap: 14 }}>
           <label style={labelStyle}>
@@ -651,11 +728,30 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             </select>
           </label>
           <label style={labelStyle}>
-            Product package <span style={{ fontWeight: 400, opacity: 0.75 }}>(optional)</span>
+            Product package {requiresPaidSignup ? <span style={{ color: "#b91c1c" }}>*</span> : <span style={{ fontWeight: 400, opacity: 0.75 }}>(optional)</span>}
+            <button
+              type="button"
+              onClick={() => setAdvisorOpen(true)}
+              style={{
+                marginBottom: 8,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+                color: theme.text,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              I need help deciding product →
+            </button>
             <select
               value={productPackageChoice}
               onChange={(e) => setProductPackageChoice((e.target.value as ProductPackageId | "") || "")}
               style={inputStyle}
+              required={requiresPaidSignup}
             >
               <option value="">No selection — we&apos;ll follow up</option>
               {PRODUCT_PACKAGES.map((p) => (
@@ -664,8 +760,30 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 </option>
               ))}
             </select>
+            {productPackageChoice && proration ? (
+              <div style={{ marginTop: 10, padding: 12, borderRadius: 8, background: "#f0fdf4", border: "1px solid #86efac", fontSize: 13, fontWeight: 400 }}>
+                <label style={{ display: "grid", gap: 6, fontWeight: 600, marginBottom: 8 }}>
+                  Recurring bill date (day of month)
+                  <select
+                    value={billDayOfMonth}
+                    onChange={(e) => setBillDayOfMonth(Number(e.target.value))}
+                    style={{ ...inputStyle, marginTop: 0, maxWidth: 120 }}
+                  >
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p style={{ margin: 0, lineHeight: 1.55 }}>
+                  Due today at signup (prorated): <strong>${proration.dueTodayUsd.toFixed(2)}</strong> · then $
+                  {proration.monthlyUsd.toFixed(2)}/mo starting {proration.billDateLabel}.
+                </p>
+              </div>
+            ) : null}
             <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 400, display: "block", marginTop: 4 }}>
-              Lets our team know which plan you&apos;re interested in. See{" "}
+              See{" "}
               <a href="/pricing" style={{ color: theme.primary, fontWeight: 600 }}>
                 Pricing
               </a>{" "}
@@ -813,9 +931,49 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             </div>
           )}
 
+          {productPackageChoice ? (
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontWeight: 700 }}>Billing authorization</p>
+              <p style={{ margin: "0 0 10px", fontSize: 13, color: "#4b5563" }}>
+                You authorize Tradesman Systems to charge the prorated amount due today and recurring monthly charges on
+                your selected bill date until you cancel. Taxes and payment processor fees may apply. See{" "}
+                {legalLink("/terms", "Terms & Conditions")}.
+              </p>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+                <input type="checkbox" checked={ackBilling} onChange={(e) => setAckBilling(e.target.checked)} style={{ marginTop: 3 }} required />
+                <span>
+                  I authorize recurring billing for the plan I selected.
+                  <span style={{ color: "#b91c1c", fontWeight: 700 }}> *</span>
+                </span>
+              </label>
+            </div>
+          ) : null}
+
+          {signupStep === "payment" && productPackageChoice && proration ? (
+            <SignupHelcimPaymentStep
+              dueTodayUsd={proration.dueTodayUsd}
+              monthlyUsd={proration.monthlyUsd}
+              billDateLabel={proration.billDateLabel}
+              orderEmail={email.trim()}
+              onPaymentSuccess={(r) => void handlePaymentSuccess(r)}
+              onSkip={() => void handleSkipPaymentAndCreate()}
+              allowSkip
+            />
+          ) : null}
+
           {error && <p style={{ color: "#b91c1c", margin: 0, fontSize: 14 }}>{error}</p>}
           {message && <p style={{ color: "#059669", margin: 0, fontSize: 14 }}>{message}</p>}
 
+          {signupStep !== "payment" ? (
           <button
             type="submit"
             disabled={submitting}
@@ -831,14 +989,46 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
               cursor: submitting ? "wait" : "pointer",
             }}
           >
-            {submitting ? "Creating account…" : "Create account"}
+            {submitting
+              ? "Creating account…"
+              : productPackageChoice
+                ? "Continue to payment"
+                : "Create account"}
           </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSignupStep("account")}
+              style={{
+                marginTop: 8,
+                padding: "10px 16px",
+                background: "transparent",
+                color: theme.text,
+                border: `1px solid ${theme.border}`,
+                borderRadius: 10,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              ← Back to account details
+            </button>
+          )}
         </form>
       </div>
       <div style={{ maxWidth: 520, margin: "0 auto", padding: "0 8px" }}>
         <PublicLegalNav borderTop={false} />
       </div>
       <CopyrightVersionFooter variant="default" align="center" style={{ paddingBottom: 8 }} />
+      {advisorOpen ? (
+        <SignupProductAdvisorPanel
+          onClose={() => setAdvisorOpen(false)}
+          onApply={(packageId, advisorJson) => {
+            setProductPackageChoice(packageId)
+            setProductAdvisorJson(advisorJson)
+            setAdvisorOpen(false)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

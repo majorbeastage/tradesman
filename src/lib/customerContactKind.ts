@@ -5,6 +5,11 @@ export const CUSTOMER_HUB_KIND_META_KEY = "customer_hub_kind"
 export const CUSTOMER_ORG_GROUP_META_KEY = "org_group_key"
 /** Emails intentionally split out of an org-grouped customer (audit on source row). */
 export const CUSTOMER_SPLIT_EMAILS_META_KEY = "split_org_emails"
+/** Phones intentionally split out to another customer (audit on source row). */
+export const CUSTOMER_SPLIT_PHONES_META_KEY = "split_contact_phones"
+/** Marks a customer created by splitting contacts — excluded from org hub grouping. */
+export const CUSTOMER_CONTACT_SEPARATED_META_KEY = "contact_separated"
+export const CUSTOMER_SPLIT_FROM_META_KEY = "split_from_customer_id"
 
 const PROMOTIONAL_LOCAL_PART =
   /^(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounce|bounces|notifications?|newsletter|marketing|promo|unsubscribe|daemon|robot|automated|alerts?|notify|notification|helpdesk|servicedesk|tickets?|ticket[-_.]?system)$/i
@@ -116,6 +121,21 @@ export function parseSplitOrgEmails(metadata: unknown): string[] {
   return raw.flatMap((v) => (typeof v === "string" && v.trim() ? [normalizeCustomerEmail(v)] : []))
 }
 
+export function parseSplitContactPhones(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return []
+  const raw = (metadata as Record<string, unknown>)[CUSTOMER_SPLIT_PHONES_META_KEY]
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((v) => (typeof v === "string" && v.trim() ? [v.trim()] : []))
+}
+
+/** True when this customer was split out or should not be org-converged with siblings. */
+export function isCustomerContactSeparated(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+  const o = metadata as Record<string, unknown>
+  if (o[CUSTOMER_CONTACT_SEPARATED_META_KEY] === true) return true
+  return typeof o[CUSTOMER_SPLIT_FROM_META_KEY] === "string" && Boolean(o[CUSTOMER_SPLIT_FROM_META_KEY])
+}
+
 /** Match org-grouped customers even when legacy rows lack customer_hub_kind metadata. */
 export function customerEmailMatchesHubKind(
   email: string,
@@ -130,7 +150,14 @@ export function customerEmailMatchesHubKind(
 
 export function mergeCustomerHubMetadata(
   existingMetadata: unknown,
-  patch: { hubKind?: CustomerHubKind; orgGroupKey?: string | null; splitOrgEmails?: string[] },
+  patch: {
+    hubKind?: CustomerHubKind
+    orgGroupKey?: string | null
+    splitOrgEmails?: string[]
+    splitContactPhones?: string[]
+    contactSeparated?: boolean
+    manualArchived?: boolean
+  },
 ): Record<string, unknown> {
   const prev =
     existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
@@ -142,6 +169,10 @@ export function mergeCustomerHubMetadata(
     else delete prev[CUSTOMER_ORG_GROUP_META_KEY]
   }
   if (patch.splitOrgEmails) prev[CUSTOMER_SPLIT_EMAILS_META_KEY] = patch.splitOrgEmails
+  if (patch.splitContactPhones) prev[CUSTOMER_SPLIT_PHONES_META_KEY] = patch.splitContactPhones
+  if (patch.contactSeparated === true) prev[CUSTOMER_CONTACT_SEPARATED_META_KEY] = true
+  if (patch.manualArchived === true) prev[CUSTOMER_MANUAL_ARCHIVED_META_KEY] = true
+  if (patch.manualArchived === false) delete prev[CUSTOMER_MANUAL_ARCHIVED_META_KEY]
   return prev
 }
 
@@ -177,6 +208,48 @@ export function classifyInboundEmailContact(email: string): {
 
 export function customerHubKindLabel(kind: CustomerHubKind): string {
   return kind === "promotional" ? "Promotions & system" : "Customer"
+}
+
+/** True when any email on the customer looks like system / no-reply / marketing mail. */
+export function customerHasPromotionalEmail(
+  identifiers?: { type: string; value: string }[] | null,
+): boolean {
+  for (const ident of identifiers ?? []) {
+    if (ident.type === "email" && isPromotionalEmailAddress(ident.value)) return true
+  }
+  return false
+}
+
+/** Customers hub Promotions tab — stored kind or inferred from noreply / system email addresses. */
+export function parseCustomerHubKindExplicit(metadata: unknown): CustomerHubKind | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const raw = (metadata as Record<string, unknown>)[CUSTOMER_HUB_KIND_META_KEY]
+  return raw === "promotional" ? "promotional" : raw === "customer" ? "customer" : null
+}
+
+export const CUSTOMER_MANUAL_ARCHIVED_META_KEY = "manual_archived"
+
+export function isCustomerManuallyArchived(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+  return (metadata as Record<string, unknown>)[CUSTOMER_MANUAL_ARCHIVED_META_KEY] === true
+}
+
+/** Customers hub Promotions tab — stored kind or inferred from noreply / system email addresses. */
+export function customerBelongsInPromotionsHub(customer: {
+  metadata?: unknown
+  customer_identifiers?: { type: string; value: string }[] | null
+}): boolean {
+  const explicit = parseCustomerHubKindExplicit(customer.metadata)
+  if (explicit === "promotional") return true
+  if (explicit === "customer") return false
+  return customerHasPromotionalEmail(customer.customer_identifiers)
+}
+
+export function promotionalEmailFromEventMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const from = (metadata as Record<string, unknown>).from
+  if (typeof from === "string" && isPromotionalEmailAddress(from)) return normalizeCustomerEmail(from)
+  return null
 }
 
 export function orgGroupSummaryLabel(orgKey: string | null, hubKind: CustomerHubKind): string | null {

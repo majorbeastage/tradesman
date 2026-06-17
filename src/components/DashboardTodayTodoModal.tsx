@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { normalizeCommunicationUrgency } from "../lib/customerUrgency"
+import { formatCoiExpiryLabel } from "../lib/coiExpiration"
+import { loadCoiTodoItems, type CoiTodoItem } from "../lib/insuranceAssistant"
 
 type CalendarRow = { id: string; title: string | null; start_at: string | null; end_at: string | null }
 
@@ -24,6 +26,7 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
   const [err, setErr] = useState("")
   const [events, setEvents] = useState<CalendarRow[]>([])
   const [attentionCustomers, setAttentionCustomers] = useState<{ id: string; display_name: string | null }[]>([])
+  const [coiTodos, setCoiTodos] = useState<CoiTodoItem[]>([])
 
   const bounds = useMemo(() => localDayBounds(), [open])
 
@@ -35,7 +38,7 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
     void (async () => {
       try {
         const { startIso, endIso } = bounds
-        const [evRes, custRes] = await Promise.all([
+        const [evRes, custRes, coiItems] = await Promise.all([
           supabase
             .from("calendar_events")
             .select("id, title, start_at, end_at")
@@ -49,6 +52,7 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
             .select("id, display_name, communication_urgency")
             .eq("user_id", dataUserId)
             .limit(500),
+          loadCoiTodoItems(supabase, dataUserId),
         ])
         if (cancelled) return
         if (evRes.error) throw evRes.error
@@ -59,6 +63,7 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
           return u === "Needs Attention"
         })
         setAttentionCustomers(nearCritical.map((c: { id: string; display_name: string | null }) => ({ id: c.id, display_name: c.display_name })))
+        setCoiTodos(coiItems)
       } catch (e: unknown) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -98,7 +103,7 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
           <div>
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: theme.text }}>Today&apos;s to-do list</h2>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Scheduled jobs for today, customers whose urgency may escalate toward Critical, and a placeholder for AI task suggestions.
+              Scheduled jobs for today, customers whose urgency may escalate toward Critical, insurance COI renewals, and a placeholder for AI task suggestions.
             </p>
           </div>
           <button
@@ -156,6 +161,29 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId }: P
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
                   {attentionCustomers.map((c) => (
                     <li key={c.id}>{c.display_name?.trim() || "Customer"}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section style={{ marginBottom: 16 }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: "#475569" }}>Insurance COI renewals</h3>
+              {coiTodos.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>No certificates expiring within 30 days.</p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
+                  {coiTodos.map((item) => (
+                    <li key={item.id}>
+                      <strong>{item.label}</strong>
+                      <span style={{ color: item.status === "expired" ? "#b91c1c" : "#b45309", fontWeight: 600 }}>
+                        {" "}
+                        · {formatCoiExpiryLabel(item.expiresAt)}
+                      </span>
+                      <span style={{ color: "#64748b", fontWeight: 500 }}>
+                        {" "}
+                        · {item.scope === "business" ? "Contractor file" : item.scope === "job" ? "Job-linked" : "Customer file"}
+                      </span>
+                    </li>
                   ))}
                 </ul>
               )}

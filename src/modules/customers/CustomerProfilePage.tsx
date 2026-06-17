@@ -14,9 +14,20 @@ import { loadCustomerProfileBundle, type CustomerProfileBundle } from "../../lib
 import { formatAppError } from "../../lib/formatAppError"
 import { formatDisplayText } from "../../lib/formatDisplayText"
 import { formatCommEventEmailAddressSummary } from "../../lib/communicationEmailAddresses"
-import { splitEmailToSeparateCustomer } from "../../lib/splitCustomerEmail"
+import CustomerContactSplitMergeModal from "../../components/CustomerContactSplitMergeModal"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { estimateDisplayStatus, formatUsdAmount, receiptDisplayStatus } from "../../lib/customerDocumentStatus"
+import { calendarEventDisplayStatus, openCalendarEventSummaryPdf } from "../../lib/calendarEventProfile"
+import { openEstimatePdfInBrowser } from "../../lib/estimatePdfExport"
+import {
+  buildCustomReceiptPdfBytes,
+  customReceiptDraftToFormState,
+  formatCustomReceiptLineItems,
+  loadReceiptTemplateSettings,
+} from "../../lib/customReceipt"
+import { downloadPdfBlob } from "../../lib/documentPdf"
+import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
 
 type Props = {
   setPage: (page: string) => void
@@ -26,8 +37,8 @@ const DEFAULT_BEST_CONTACT_OPTIONS = ["Phone call", "Text message", "Email", "Ot
 
 type ContactFormState = {
   customerName: string
-  phone: string
-  email: string
+  phones: string[]
+  emails: string[]
   serviceAddress: string
   serviceLat: string
   serviceLng: string
@@ -146,20 +157,22 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
-  const [splitBusyEmail, setSplitBusyEmail] = useState<string | null>(null)
   const [contactEditMode, setContactEditMode] = useState(false)
   const [contactSectionOpen, setContactSectionOpen] = useState(false)
   const [contactSaving, setContactSaving] = useState(false)
   const [serviceGeocodeBusy, setServiceGeocodeBusy] = useState(false)
   const [contactForm, setContactForm] = useState<ContactFormState>({
     customerName: "",
-    phone: "",
-    email: "",
+    phones: [""],
+    emails: [""],
     serviceAddress: "",
     serviceLat: "",
     serviceLng: "",
     bestContact: DEFAULT_BEST_CONTACT_OPTIONS[0],
   })
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null)
+  const [contactSplitMergeOpen, setContactSplitMergeOpen] = useState(false)
+  const [contactSplitMergeMode, setContactSplitMergeMode] = useState<"separate" | "merge">("separate")
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -187,8 +200,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
     const best = (DEFAULT_BEST_CONTACT_OPTIONS as readonly string[]).includes(bc) ? bc : DEFAULT_BEST_CONTACT_OPTIONS[0]
     setContactForm({
       customerName: formatDisplayText(c.display_name, ""),
-      phone: bundle.phone,
-      email: bundle.email,
+      phones: bundle.phones.length > 0 ? bundle.phones : bundle.phone ? [bundle.phone] : [""],
+      emails: bundle.emails.length > 0 ? bundle.emails : bundle.email ? [bundle.email] : [""],
       serviceAddress: formatDisplayText(c.service_address, ""),
       serviceLat: c.service_lat != null && Number.isFinite(Number(c.service_lat)) ? String(c.service_lat) : "",
       serviceLng: c.service_lng != null && Number.isFinite(Number(c.service_lng)) ? String(c.service_lng) : "",
@@ -227,8 +240,10 @@ export default function CustomerProfilePage({ setPage }: Props) {
     setContactSaving(true)
     setErr("")
     try {
-      const phoneT = contactForm.phone.trim()
-      const emailT = contactForm.email.trim().toLowerCase()
+      const phoneValues = contactForm.phones.map((p) => p.trim()).filter(Boolean)
+      const emailValues = [
+        ...new Set(contactForm.emails.map((e) => e.trim().toLowerCase()).filter(Boolean)),
+      ]
       const nameT = contactForm.customerName.trim()
       const latRaw = contactForm.serviceLat.trim()
       const lngRaw = contactForm.serviceLng.trim()
@@ -258,49 +273,41 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .delete()
         .eq("customer_id", customerId)
         .eq("user_id", userId)
-        .eq("type", "phone")
+        .in("type", ["phone", "additional_phone"])
       if (delPhoneErr) throw delPhoneErr
-      if (phoneT) {
-        const { error: insPhoneErr } = await supabase.from("customer_identifiers").insert({
-          user_id: userId,
-          customer_id: customerId,
-          type: "phone",
-          value: phoneT,
-          is_primary: true,
-          verified: false,
-        })
+      if (phoneValues.length > 0) {
+        const { error: insPhoneErr } = await supabase.from("customer_identifiers").insert(
+          phoneValues.map((value, i) => ({
+            user_id: userId,
+            customer_id: customerId,
+            type: i === 0 ? "phone" : "phone",
+            value,
+            is_primary: i === 0,
+            verified: false,
+          })),
+        )
         if (insPhoneErr) throw insPhoneErr
       }
 
-      const { data: emailIdents, error: loadEmailErr } = await supabase
+      const { error: delEmailErr } = await supabase
         .from("customer_identifiers")
-        .select("id, value, is_primary")
+        .delete()
         .eq("customer_id", customerId)
         .eq("user_id", userId)
-        .eq("type", "email")
-      if (loadEmailErr) throw loadEmailErr
-
-      const rows = (emailIdents ?? []) as { id: string; value: string; is_primary?: boolean }[]
-      const primaryRow = rows.find((r) => r.is_primary) ?? rows[0]
-
-      if (emailT) {
-        if (primaryRow) {
-          const { error: upEmailErr } = await supabase.from("customer_identifiers").update({ value: emailT }).eq("id", primaryRow.id)
-          if (upEmailErr) throw upEmailErr
-        } else {
-          const { error: insEmailErr } = await supabase.from("customer_identifiers").insert({
+        .in("type", ["email", "additional_email"])
+      if (delEmailErr) throw delEmailErr
+      if (emailValues.length > 0) {
+        const { error: insEmailErr } = await supabase.from("customer_identifiers").insert(
+          emailValues.map((value, i) => ({
             user_id: userId,
             customer_id: customerId,
             type: "email",
-            value: emailT,
-            is_primary: true,
+            value,
+            is_primary: i === 0,
             verified: false,
-          })
-          if (insEmailErr) throw insEmailErr
-        }
-      } else if (primaryRow) {
-        const { error: delPrimaryErr } = await supabase.from("customer_identifiers").delete().eq("id", primaryRow.id)
-        if (delPrimaryErr) throw delPrimaryErr
+          })),
+        )
+        if (insEmailErr) throw insEmailErr
       }
 
       const { error: delNameErr } = await supabase
@@ -331,23 +338,67 @@ export default function CustomerProfilePage({ setPage }: Props) {
     }
   }
 
-  async function splitEmailFromOrg(email: string) {
-    if (!supabase || !userId || !customerId) return
-    const ok = window.confirm(
-      `Split ${email} into its own customer?\n\nFuture email from this address will go to the new profile. Past messages stay on this customer.`,
-    )
-    if (!ok) return
-    setSplitBusyEmail(email)
-    setErr("")
+  async function openCalendarEventPdf(eventId: string) {
+    if (!supabase || !userId || !bundle) return
+    const ev = bundle.calendarEvents.find((row) => row.id === eventId)
+    if (!ev) return
+    setPdfBusyId(`ev-${eventId}`)
     try {
-      const { newCustomerId } = await splitEmailToSeparateCustomer(supabase, userId, customerId, email)
-      queueCustomerProfile(newCustomerId)
-      setPage("customer-profile")
+      await openCalendarEventSummaryPdf(supabase, userId, ev)
     } catch (e: unknown) {
-      setErr(formatAppError(e))
+      alert(formatAppError(e))
     } finally {
-      setSplitBusyEmail(null)
+      setPdfBusyId(null)
     }
+  }
+
+  async function openEstimatePdf(quoteId: string) {
+    if (!supabase || !userId) return
+    setPdfBusyId(`q-${quoteId}`)
+    try {
+      await openEstimatePdfInBrowser(supabase, userId, quoteId)
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setPdfBusyId(null)
+    }
+  }
+
+  async function openReceiptPdf(receiptId: string) {
+    if (!supabase || !userId || !bundle) return
+    const draft = bundle.receipts.find((r) => r.id === receiptId)
+    if (!draft) return
+    setPdfBusyId(`r-${receiptId}`)
+    try {
+      const template = await loadReceiptTemplateSettings(supabase, userId)
+      const form = customReceiptDraftToFormState(draft)
+      const bytes = await buildCustomReceiptPdfBytes(form, template)
+      const slug = receiptId.slice(0, 8)
+      downloadPdfBlob(bytes, `receipt-${slug}.pdf`)
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setPdfBusyId(null)
+    }
+  }
+
+  function updateContactList(kind: "phones" | "emails", index: number, value: string) {
+    setContactForm((prev) => {
+      const next = [...prev[kind]]
+      next[index] = value
+      return { ...prev, [kind]: next }
+    })
+  }
+
+  function addContactListRow(kind: "phones" | "emails") {
+    setContactForm((prev) => ({ ...prev, [kind]: [...prev[kind], ""] }))
+  }
+
+  function removeContactListRow(kind: "phones" | "emails", index: number) {
+    setContactForm((prev) => {
+      const next = prev[kind].filter((_, i) => i !== index)
+      return { ...prev, [kind]: next.length > 0 ? next : [""] }
+    })
   }
 
   if (!customerId) {
@@ -363,6 +414,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
 
   const c = bundle?.customer
   const notesPast = c ? parseProfileNotesPast(c.notes_past) : []
+  const hasMultipleContacts = bundle ? bundle.phones.length > 1 || bundle.emails.length > 1 : false
 
   const contactHeaderActions = (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -382,8 +434,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 const best = (DEFAULT_BEST_CONTACT_OPTIONS as readonly string[]).includes(bc) ? bc : DEFAULT_BEST_CONTACT_OPTIONS[0]
                 setContactForm({
                   customerName: formatDisplayText(row.display_name, ""),
-                  phone: bundle.phone,
-                  email: bundle.email,
+                  phones: bundle.phones.length > 0 ? bundle.phones : bundle.phone ? [bundle.phone] : [""],
+                  emails: bundle.emails.length > 0 ? bundle.emails : bundle.email ? [bundle.email] : [""],
                   serviceAddress: formatDisplayText(row.service_address, ""),
                   serviceLat: row.service_lat != null && Number.isFinite(Number(row.service_lat)) ? String(row.service_lat) : "",
                   serviceLng: row.service_lng != null && Number.isFinite(Number(row.service_lng)) ? String(row.service_lng) : "",
@@ -397,16 +449,40 @@ export default function CustomerProfilePage({ setPage }: Props) {
           </button>
         </>
       ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setContactSectionOpen(true)
-            setContactEditMode(true)
-          }}
-          style={backBtnStyle}
-        >
-          Edit
-        </button>
+        <>
+          {hasMultipleContacts ? (
+            <button
+              type="button"
+              onClick={() => {
+                setContactSplitMergeMode("separate")
+                setContactSplitMergeOpen(true)
+              }}
+              style={backBtnStyle}
+            >
+              Separate contacts
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              setContactSplitMergeMode("merge")
+              setContactSplitMergeOpen(true)
+            }}
+            style={backBtnStyle}
+          >
+            Merge contacts
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setContactSectionOpen(true)
+              setContactEditMode(true)
+            }}
+            style={backBtnStyle}
+          >
+            Edit
+          </button>
+        </>
       )}
     </div>
   )
@@ -505,7 +581,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
           >
             {bundle.orgGroupLabel ? (
               <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-                {bundle.orgGroupLabel} — addresses on the same business domain are grouped here by default. Split any extra address below to give it its own customer.
+                {bundle.orgGroupLabel} — addresses on the same business domain are grouped here by default. Use <strong>Separate contacts</strong> to
+                split phones or emails into their own customer without merging them back.
               </p>
             ) : null}
             {contactEditMode ? (
@@ -517,26 +594,51 @@ export default function CustomerProfilePage({ setPage }: Props) {
                     style={{ ...theme.formInput, width: "100%" }}
                   />
                 </Field>
-                <Field label="Phone">
-                  <input
-                    value={contactForm.phone}
-                    onChange={(e) => setContactForm((p) => ({ ...p, phone: e.target.value }))}
-                    style={{ ...theme.formInput, width: "100%" }}
-                  />
+                <Field label="Phone numbers">
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {contactForm.phones.map((phone, i) => (
+                      <div key={`phone-${i}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          value={phone}
+                          onChange={(e) => updateContactList("phones", i, e.target.value)}
+                          style={{ ...theme.formInput, flex: 1 }}
+                          placeholder={i === 0 ? "Primary phone" : "Additional phone"}
+                        />
+                        {contactForm.phones.length > 1 ? (
+                          <button type="button" onClick={() => removeContactListRow("phones", i)} style={backBtnStyle}>
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => addContactListRow("phones")} style={backBtnStyle}>
+                      + Add phone
+                    </button>
+                  </div>
                 </Field>
-                <Field label={bundle.emails.length > 1 ? "Primary email" : "Email"}>
-                  <input
-                    type="email"
-                    value={contactForm.email}
-                    onChange={(e) => setContactForm((p) => ({ ...p, email: e.target.value }))}
-                    style={{ ...theme.formInput, width: "100%" }}
-                  />
+                <Field label="Email addresses">
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {contactForm.emails.map((email, i) => (
+                      <div key={`email-${i}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => updateContactList("emails", i, e.target.value)}
+                          style={{ ...theme.formInput, flex: 1 }}
+                          placeholder={i === 0 ? "Primary email" : "Additional email"}
+                        />
+                        {contactForm.emails.length > 1 ? (
+                          <button type="button" onClick={() => removeContactListRow("emails", i)} style={backBtnStyle}>
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => addContactListRow("emails")} style={backBtnStyle}>
+                      + Add email
+                    </button>
+                  </div>
                 </Field>
-                {bundle.emails.length > 1 ? (
-                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                    Other addresses on this profile: {bundle.emails.filter((e) => e !== contactForm.email.trim().toLowerCase()).join(", ") || "—"}
-                  </p>
-                ) : null}
                 <Field label="Best contact">
                   <select
                     value={contactForm.bestContact}
@@ -582,7 +684,22 @@ export default function CustomerProfilePage({ setPage }: Props) {
               </div>
             ) : (
               <div style={{ display: "grid", gap: 10, fontSize: 14 }}>
-                <ProfileRow label="Phone" value={formatDisplayText(bundle.phone, "—")} />
+                {bundle.phones.length > 1 ? (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.04 }}>
+                      Phone numbers
+                    </div>
+                    <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                      {bundle.phones.map((ph) => (
+                        <div key={ph} style={{ fontWeight: 600, color: theme.text }}>
+                          {ph}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <ProfileRow label="Phone" value={formatDisplayText(bundle.phone, "—")} />
+                )}
                 {bundle.emails.length > 1 ? (
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.04 }}>
@@ -605,25 +722,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
                           }}
                         >
                           <span style={{ fontWeight: 600, color: theme.text, wordBreak: "break-all" }}>{addr}</span>
-                          {bundle.orgGroupLabel ? (
-                            <button
-                              type="button"
-                              disabled={splitBusyEmail === addr}
-                              onClick={() => void splitEmailFromOrg(addr)}
-                              style={{
-                                padding: "4px 10px",
-                                borderRadius: 6,
-                                border: `1px solid ${theme.border}`,
-                                background: "#fff",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: splitBusyEmail === addr ? "wait" : "pointer",
-                                color: "#0f172a",
-                              }}
-                            >
-                              {splitBusyEmail === addr ? "Splitting…" : "Split to own customer"}
-                            </button>
-                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -639,6 +737,27 @@ export default function CustomerProfilePage({ setPage }: Props) {
               </div>
             )}
           </CollapsibleProfileSection>
+
+          {c ? (
+            <CustomerContactSplitMergeModal
+              open={contactSplitMergeOpen}
+              mode={contactSplitMergeMode}
+              onClose={() => setContactSplitMergeOpen(false)}
+              userId={userId}
+              customerId={c.id}
+              customerName={c.display_name ?? undefined}
+              phones={bundle.phones}
+              emails={bundle.emails}
+              onComplete={({ newCustomerId }) => {
+                if (newCustomerId) {
+                  queueCustomerProfile(newCustomerId)
+                  setPage("customer-profile")
+                } else {
+                  void reload()
+                }
+              }}
+            />
+          ) : null}
 
           {formatDisplayText(c.notes) || notesPast.length > 0 ? (
             <CollapsibleProfileSection title="Notes">
@@ -665,6 +784,19 @@ export default function CustomerProfilePage({ setPage }: Props) {
             </CollapsibleProfileSection>
           ) : null}
 
+          <CustomerCoiQuickActions
+            userId={userId}
+            customerId={c.id}
+            customerName={c.display_name ?? undefined}
+            customerMetadata={c.metadata}
+            calendarEvents={bundle.calendarEvents.map((ev) => ({
+              id: ev.id,
+              title: formatDisplayText(ev.title, "Untitled job"),
+              quote_id: ev.quote_id,
+            }))}
+            onUpdated={() => void reload()}
+          />
+
           <CollapsibleProfileSection title="Activity history" badge={bundle.commEvents.length || undefined}>
             {bundle.commEvents.length === 0 ? (
               <Empty text="No communication events logged yet." />
@@ -689,32 +821,47 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Empty text="No scheduled jobs linked to this customer." />
             ) : (
               <Timeline
-                rows={bundle.calendarEvents.map((ev) => ({
-                  key: ev.id,
-                  title: formatDisplayText(ev.title, "Untitled job"),
-                  meta: `${formatWhen(ev.start_at)}${ev.completed_at ? " · Completed" : " · Scheduled"}`,
-                  body: formatDisplayText(ev.notes, "") || (ev.quote_id ? "Linked to estimate" : ""),
-                  actions: (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                      <MiniBtn
-                        label="Calendar"
-                        onClick={() => {
-                          queueSchedulingCustomerPrefill(c.id)
-                          setPage("calendar")
-                        }}
-                      />
-                      {ev.quote_id ? (
+                rows={bundle.calendarEvents.map((ev) => {
+                  const status = calendarEventDisplayStatus(ev)
+                  const jobTypeLabel = ev.job_type_name?.trim() || (ev.job_type_id ? "Job type selected" : null)
+                  const metaParts = [
+                    status,
+                    formatWhen(ev.start_at),
+                    jobTypeLabel ? `Job type: ${jobTypeLabel}` : null,
+                    ev.quote_id ? "From estimate" : null,
+                  ].filter(Boolean)
+                  return {
+                    key: ev.id,
+                    title: formatDisplayText(ev.title, "Untitled job"),
+                    meta: metaParts.join(" · "),
+                    body: formatDisplayText(ev.notes, ""),
+                    actions: (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                         <MiniBtn
-                          label="Estimate"
+                          label="Calendar"
                           onClick={() => {
-                            queueQuotesCustomerPrefill(c.id)
-                            setPage("quotes")
+                            queueSchedulingCustomerPrefill(c.id)
+                            setPage("calendar")
                           }}
                         />
-                      ) : null}
-                    </div>
-                  ),
-                }))}
+                        {status === "Complete" ? (
+                          <MiniBtn
+                            label={pdfBusyId === `ev-${ev.id}` ? "Opening PDF…" : "View PDF summary"}
+                            onClick={() => void openCalendarEventPdf(ev.id)}
+                          />
+                        ) : null}
+                        <CustomerEventCoiButton
+                          userId={userId}
+                          customerId={c.id}
+                          customerMetadata={c.metadata}
+                          eventId={ev.id}
+                          quoteId={ev.quote_id ?? null}
+                          onUpdated={() => void reload()}
+                        />
+                      </div>
+                    ),
+                  }
+                })}
               />
             )}
           </CollapsibleProfileSection>
@@ -724,21 +871,22 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Empty text="No estimates for this customer yet." />
             ) : (
               <Timeline
-                rows={bundle.quotes.map((q) => ({
-                  key: q.id,
-                  title: formatDisplayText(q.title, "") || `Estimate ${q.id.slice(0, 8)}…`,
-                  meta: `${formatDisplayText(q.status, "unknown")} · Updated ${formatWhen(q.updated_at ?? q.created_at)}`,
-                  body: "",
-                  actions: (
-                    <MiniBtn
-                      label="Open in Estimates"
-                      onClick={() => {
-                        queueQuotesCustomerPrefill(c.id)
-                        setPage("quotes")
-                      }}
-                    />
-                  ),
-                }))}
+                rows={bundle.quotes.map((q) => {
+                  const status = estimateDisplayStatus(q.status, q.metadata)
+                  const totalLabel = formatUsdAmount(q.total)
+                  return {
+                    key: q.id,
+                    title: formatDisplayText(q.title, "") || `Estimate ${q.id.slice(0, 8)}`,
+                    meta: `${status}${totalLabel ? ` · ${totalLabel}` : ""} · Updated ${formatWhen(q.updated_at ?? q.created_at)}`,
+                    body: "",
+                    actions: (
+                      <MiniBtn
+                        label={pdfBusyId === `q-${q.id}` ? "Opening PDF…" : "View PDF"}
+                        onClick={() => void openEstimatePdf(q.id)}
+                      />
+                    ),
+                  }
+                })}
               />
             )}
           </CollapsibleProfileSection>
@@ -748,21 +896,23 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <Empty text="No saved custom receipts on this profile." />
             ) : (
               <Timeline
-                rows={bundle.receipts.map((r) => ({
-                  key: r.id,
-                  title: formatDisplayText(r.job_title, "Custom receipt"),
-                  meta: `${formatWhen(r.updated_at ?? r.created_at)} · ${r.line_items.length} line(s)`,
-                  body: formatDisplayText(r.notes, ""),
-                  actions: (
-                    <MiniBtn
-                      label="Custom receipt"
-                      onClick={() => {
-                        queueCustomReceiptCustomerPrefill(c.id)
-                        setPage("calendar")
-                      }}
-                    />
-                  ),
-                }))}
+                rows={bundle.receipts.map((r) => {
+                  const status = receiptDisplayStatus(r)
+                  const { subtotal } = formatCustomReceiptLineItems(r.line_items)
+                  const amount = r.manual_amount != null && Number.isFinite(r.manual_amount) ? r.manual_amount : subtotal
+                  return {
+                    key: r.id,
+                    title: formatDisplayText(r.job_title, "Custom receipt"),
+                    meta: `${status}${amount > 0 ? ` · ${formatUsdAmount(amount)}` : ""} · ${formatWhen(r.updated_at ?? r.created_at)} · ${r.line_items.length} line(s)`,
+                    body: formatDisplayText(r.notes, ""),
+                    actions: (
+                      <MiniBtn
+                        label={pdfBusyId === `r-${r.id}` ? "Opening PDF…" : "View PDF"}
+                        onClick={() => void openReceiptPdf(r.id)}
+                      />
+                    ),
+                  }
+                })}
               />
             )}
           </CollapsibleProfileSection>

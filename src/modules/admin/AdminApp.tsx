@@ -19,6 +19,7 @@ import PortalItemDependencyEditor from "../../components/admin/PortalItemDepende
 import AdminCommunicationsSection from "./AdminCommunicationsSection"
 import AdminAboutUsSection from "./AdminAboutUsSection"
 import AdminSignupRequirementsSection from "./AdminSignupRequirementsSection"
+import AdminOnboardingMaterialsSection from "./AdminOnboardingMaterialsSection"
 import AdminTroubleTicketsSection from "./AdminTroubleTicketsSection"
 import AdminOpsInboxSection from "./AdminOpsInboxSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
@@ -1433,7 +1434,10 @@ function AdminAppInner() {
         ) : adminPanel === "about" ? (
           <AdminAboutUsSection />
         ) : adminPanel === "signup" ? (
-          <AdminSignupRequirementsSection />
+          <div style={{ display: "grid", gap: 28 }}>
+            <AdminSignupRequirementsSection />
+            <AdminOnboardingMaterialsSection />
+          </div>
         ) : loading ? (
           <AdminSettingBlock id="admin:portal:loading_profiles">
           <p style={{ color: theme.text }}>Loading profiles…</p>
@@ -1507,6 +1511,121 @@ function AdminAppInner() {
             </div>
             {message && <p style={{ color: "#059669", margin: 0 }}>{message}</p>}
             {error && <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p>}
+            </AdminSettingBlock>
+
+            <AdminSettingBlock id="admin:portal:onboarding_modules">
+              <h2 style={{ fontSize: 16, margin: "0 0 12px", color: theme.text }}>Onboarding module options</h2>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: theme.text, opacity: 0.85, maxWidth: 640 }}>
+                Enable optional modules when onboarding a customer. Work Orders appears between Estimates and Scheduling when turned on.
+              </p>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                  marginBottom: 12,
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontSize: 14,
+                  lineHeight: 1.45,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 3 }}
+                  checked={config.enable_work_orders_tab === true}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      enable_work_orders_tab: e.target.checked ? true : false,
+                      tabs: {
+                        ...config.tabs,
+                        work_orders: e.target.checked ? true : false,
+                      },
+                    })
+                  }
+                />
+                <span>
+                  Show <strong>Work Orders</strong> tab between Estimates and Scheduling
+                </span>
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                  marginBottom: 12,
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontSize: 14,
+                  lineHeight: 1.45,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 3 }}
+                  checked={config.enable_purchase_orders_tab === true}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      enable_purchase_orders_tab: e.target.checked ? true : false,
+                      tabs: {
+                        ...config.tabs,
+                        purchase_orders: e.target.checked ? true : false,
+                      },
+                    })
+                  }
+                />
+                <span>
+                  Show <strong>Purchase Orders</strong> tab (optional — parts department)
+                </span>
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                  marginBottom: 12,
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontSize: 14,
+                  lineHeight: 1.45,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 3 }}
+                  checked={config.enable_parts_inventory_tab === true}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      enable_parts_inventory_tab: e.target.checked ? true : false,
+                      tabs: {
+                        ...config.tabs,
+                        parts_inventory: e.target.checked ? true : false,
+                      },
+                    })
+                  }
+                />
+                <span>
+                  Show <strong>Parts &amp; Materials Inventory</strong> tab (optional)
+                </span>
+              </label>
+              <label style={{ display: "grid", gap: 6, maxWidth: 420, color: theme.text, fontSize: 14 }}>
+                Estimates tab display name (optional)
+                <input
+                  type="text"
+                  value={config.quotes_tab_display_name ?? ""}
+                  placeholder='e.g. "Proposal Tool"'
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      quotes_tab_display_name: e.target.value.trim() || undefined,
+                    })
+                  }
+                  style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, fontSize: 14 }}
+                />
+              </label>
             </AdminSettingBlock>
 
             <AdminSettingBlock id="admin:portal:legacy_flags">

@@ -12,6 +12,11 @@ import AccountPage from "../account/AccountPage"
 import PaymentsPage from "../payments/PaymentsPage"
 import InsuranceOptionsPage from "../insurance/InsuranceOptionsPage"
 import ReportingPage from "../reporting/ReportingPage"
+import BusinessWorkflowPage from "../workflow/BusinessWorkflowPage"
+import OrganizationChartPage from "../org-chart/OrganizationChartPage"
+import WorkOrdersPage from "../work-orders/WorkOrdersPage"
+import PurchaseOrdersPage from "../purchase-orders/PurchaseOrdersPage"
+import PartsInventoryPage from "../parts-inventory/PartsInventoryPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   OfficeManagerScopeProvider,
@@ -504,7 +509,7 @@ function OfficeManagerAppContent() {
   useEffect(() => {
     const cfg = scope?.scopedPortalConfig ?? portalConfig
     if (!isPortalTabVisibleInV2(page, cfg)) {
-      if (page === "leads" || page === "conversations" || page === "web-support") {
+      if (page === "leads" || page === "conversations" || page === "web-support" || page === "work_orders" || page === "purchase_orders" || page === "parts_inventory") {
         setPage("dashboard")
       }
     }
@@ -604,6 +609,9 @@ function OfficeManagerAppContent() {
               todayTodo: t("dashboard.quickTodayTodo"),
               timeClock: t("dashboard.quickTimeClock"),
               customReceipt: customReceiptQuickLabel || t("dashboard.quickCustomReceipt"),
+              businessWorkflow: t("dashboard.quickBusinessWorkflow"),
+              businessWorkflowSub: t("dashboard.quickBusinessWorkflowSub"),
+              organizationChart: t("dashboard.quickOrganizationChart"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -668,6 +676,9 @@ function OfficeManagerAppContent() {
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}
       {hasClients && page === "quotes" && <QuotesPage setPage={setPage} />}
+      {hasClients && page === "work_orders" && <WorkOrdersPage setPage={setPage} />}
+      {hasClients && page === "purchase_orders" && <PurchaseOrdersPage setPage={setPage} />}
+      {hasClients && page === "parts_inventory" && <PartsInventoryPage setPage={setPage} />}
       {hasClients && page === "calendar" && <CalendarPage setPage={setPage} />}
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}
@@ -675,6 +686,8 @@ function OfficeManagerAppContent() {
       {hasClients && page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
+      {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
+      {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}
       {!hasClients && page !== "dashboard" && (
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>

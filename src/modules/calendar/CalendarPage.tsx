@@ -1757,6 +1757,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, metadata: nextMeta } : prev))
     loadEvents()
+    const offerNewEstimate =
+      calendarCompletionProfile.calendar_completion_offer_new_estimate_on_additional_items === "checked" &&
+      receiptAdditionalDraft.some((row) => String(row.description ?? "").trim())
+    if (offerNewEstimate && selectedEvent.customer_id && setPage && window.confirm(
+      "Additional receipt line items were saved. Create a new estimate from these items and send it to the customer?",
+    )) {
+      queueQuotesCustomerPrefill(selectedEvent.customer_id)
+      setPage("quotes")
+    }
   }
 
   async function handleCalendarEntityFileChange(files: FileList | null) {

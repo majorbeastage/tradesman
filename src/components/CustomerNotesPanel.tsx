@@ -6,6 +6,8 @@ type Props = {
   customerId: string | null
   customerName?: string
   onClose: () => void
+  /** Inline under Communications (Customers quick access) instead of fixed drawer. */
+  embedded?: boolean
 }
 
 type PastNote = { id: string; text: string; saved_at: string }
@@ -36,7 +38,7 @@ function sortPastDesc(notes: PastNote[]): PastNote[] {
   return [...notes].sort((a, b) => b.saved_at.localeCompare(a.saved_at))
 }
 
-export default function CustomerNotesPanel({ customerId, customerName, onClose }: Props) {
+export default function CustomerNotesPanel({ customerId, customerName, onClose, embedded }: Props) {
   const [composer, setComposer] = useState("")
   const [notesList, setNotesList] = useState<PastNote[]>([])
   const [legacyNotesField, setLegacyNotesField] = useState<string | null>(null)
@@ -195,21 +197,30 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
 
   return (
     <div
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        width: "400px",
-        maxWidth: "100%",
-        height: "100%",
-        background: "white",
-        boxShadow: "-4px 0 20px rgba(0,0,0,0.15)",
-        zIndex: 10000,
-        display: "flex",
-        flexDirection: "column",
-        padding: "20px",
-      }}
+      style={
+        embedded
+          ? {
+              display: "flex",
+              flexDirection: "column",
+              padding: "12px 0 0",
+            }
+          : {
+              position: "fixed",
+              top: 0,
+              right: 0,
+              width: "400px",
+              maxWidth: "100%",
+              height: "100%",
+              background: "white",
+              boxShadow: "-4px 0 20px rgba(0,0,0,0.15)",
+              zIndex: 10000,
+              display: "flex",
+              flexDirection: "column",
+              padding: "20px",
+            }
+      }
     >
+      {!embedded ? (
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
         <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
           Notes{" "}
@@ -219,6 +230,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose }
           ✕
         </button>
       </div>
+      ) : null}
 
       {loading ? (
         <p style={{ color: theme.text }}>Loading…</p>

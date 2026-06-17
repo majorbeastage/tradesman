@@ -2,6 +2,7 @@ import { customerEmailsFromIdentifiers } from "./customerIdentifiers"
 import {
   customerEmailMatchesHubKind,
   deriveOrgGroupKeyFromEmail,
+  isCustomerContactSeparated,
   orgGroupSummaryLabel,
   parseCustomerHubKind,
   parseCustomerOrgGroupKey,
@@ -25,6 +26,7 @@ export type CustomerOrgGroupingMaps = {
 
 /** Stable key for grouping business-domain mail (Twilio, Stripe, etc.) in the Customers hub. */
 export function customerOrgGroupSignature(customer: CustomerOrgGroupable): string | null {
+  if (isCustomerContactSeparated(customer.metadata)) return null
   const hubKind = parseCustomerHubKind(customer.metadata)
   for (const email of customerEmailsFromIdentifiers(customer.customer_identifiers)) {
     const root = deriveOrgGroupKeyFromEmail(email)
@@ -154,6 +156,7 @@ export function findOrgSiblingIdsFromCustomers<T extends CustomerOrgGroupable>(
 
   const ids = new Set<string>([customer.id])
   for (const row of allCustomers) {
+    if (isCustomerContactSeparated(row.metadata)) continue
     for (const email of customerEmailsFromIdentifiers(row.customer_identifiers)) {
       const root = deriveOrgGroupKeyFromEmail(email)
       if (!root || !orgRoots.has(root)) continue

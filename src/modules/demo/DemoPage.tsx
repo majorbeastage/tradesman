@@ -5,6 +5,45 @@ import { supabase } from "../../lib/supabase"
 import { hintForSupportTicketsError } from "../../lib/supabaseTicketErrors"
 import { notifyAdminSupportTicket } from "../../lib/notifyAdminSupportTicket"
 
+const supabaseUrlEnv = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const supabaseAnonEnv = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+
+async function provisionDemoAccount(params: {
+  email: string
+  name: string
+  businessName: string
+  ticketId: string | null
+}): Promise<{ ok: boolean; error?: string; alreadyGranted?: boolean }> {
+  if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) {
+    return { ok: false, error: "Demo service is not configured." }
+  }
+  const base = supabaseUrlEnv.replace(/\/$/, "")
+  const res = await fetch(`${base}/functions/v1/provision-demo`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${supabaseAnonEnv}`,
+      apikey: supabaseAnonEnv,
+    },
+    body: JSON.stringify({
+      email: params.email.trim(),
+      name: params.name.trim(),
+      business_name: params.businessName.trim() || null,
+      ticket_id: params.ticketId,
+    }),
+  })
+  let json: { error?: string; alreadyGranted?: boolean } = {}
+  try {
+    json = (await res.json()) as typeof json
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    return { ok: false, error: json.error ?? `Demo service error (${res.status})`, alreadyGranted: json.alreadyGranted }
+  }
+  return { ok: true }
+}
+
 type DemoPageProps = {
   onBack: () => void
 }
@@ -22,6 +61,8 @@ export default function DemoPage({ onBack }: DemoPageProps) {
   const [ticketNumber, setTicketNumber] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [demoLoginSent, setDemoLoginSent] = useState(false)
+  const [demoProvisionError, setDemoProvisionError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -81,6 +122,22 @@ export default function DemoPage({ onBack }: DemoPageProps) {
     setTicketNumber(data?.ticket_number ?? null)
     setSubmitted(true)
     if (data?.id) void notifyAdminSupportTicket(data.id)
+
+    if (email.trim()) {
+      const demo = await provisionDemoAccount({
+        email: email.trim(),
+        name: name.trim(),
+        businessName: businessName.trim(),
+        ticketId: data?.id ?? null,
+      })
+      if (demo.ok) {
+        setDemoLoginSent(true)
+      } else if (demo.alreadyGranted) {
+        setDemoProvisionError(demo.error ?? "Demo already granted for this email.")
+      } else {
+        setDemoProvisionError(demo.error ?? "Could not send demo login email.")
+      }
+    }
   }
 
   const inputStyle: React.CSSProperties = {
@@ -288,6 +345,15 @@ export default function DemoPage({ onBack }: DemoPageProps) {
             {!ticketNumber && (
               <p style={{ margin: "8px 0 0" }}>We received your request.</p>
             )}
+            {demoLoginSent ? (
+              <p style={{ margin: "12px 0 0", lineHeight: 1.55 }}>
+                We emailed a <strong>24-hour demo login</strong> to {email.trim()}. Check inbox and spam. Demo accounts
+                cannot send or receive live texts, emails, or phone calls.
+              </p>
+            ) : null}
+            {demoProvisionError ? (
+              <p style={{ margin: "12px 0 0", color: "#92400e", lineHeight: 1.55 }}>{demoProvisionError}</p>
+            ) : null}
           </div>
         )}
       </div>

@@ -18,6 +18,7 @@ import {
 } from "./_smsComplianceLimits.js"
 import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResolve.js"
 import { isPhoneSmsOptedOut } from "./_smsOptOut.js"
+import { DEMO_COMM_BLOCK_MESSAGE, isDemoRestrictedUser } from "./_demoAccountRestrictions.js"
 
 /**
  * Single Hobby-plan function for outbound email (Resend) + SMS (Twilio / webhook).
@@ -295,6 +296,9 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
         "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Vercel, or call with Authorization: Bearer <Supabase JWT> and supabaseUrl + supabaseAnonKey in the JSON body.",
     })
   }
+  if (await isDemoRestrictedUser(supabase, userId)) {
+    return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
+  }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
   const rawFrom =
     (typeof dbChannel?.public_address === "string" && dbChannel.public_address.trim()
@@ -498,6 +502,9 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   let complianceVariant: SmsOutboundComplianceVariant = "none"
   let businessDisplayName = ""
   if (supabase && userId) {
+    if (await isDemoRestrictedUser(supabase, userId)) {
+      return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
+    }
     const resolved = await resolveFirstSmsComplianceForOutbound(supabase, userId, customerIdForCompliance || null)
     complianceVariant = resolved.variant
     businessDisplayName = resolved.businessDisplayName

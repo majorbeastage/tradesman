@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { ensureCustomerIdentifiers, normalizeCustomerEmail } from "./customerIdentifiers"
 import {
+  classifyInboundEmailContact,
+  mergeCustomerHubMetadata,
+} from "./customerContactKind"
+import {
   buildConsentAuditNote,
   mapManualMethodToSource,
   persistCustomerSmsConsent,
@@ -174,6 +178,14 @@ export async function createCustomerRecord(
 
   const displayName = name || (phone ? `Unknown (${phone})` : email ? `Unknown (${email})` : "New customer")
   const nowIso = new Date().toISOString()
+  const emailNorm = email ? normalizeCustomerEmail(email) : ""
+  const emailClassification = emailNorm ? classifyInboundEmailContact(emailNorm) : null
+  const customerMetadata = emailClassification
+    ? mergeCustomerHubMetadata(null, {
+        hubKind: emailClassification.hubKind,
+        orgGroupKey: emailClassification.orgGroupKey,
+      })
+    : undefined
 
   let lat: number | null = null
   let lng: number | null = null
@@ -193,12 +205,13 @@ export async function createCustomerRecord(
     .from("customers")
     .insert({
       user_id: userId,
-      display_name: displayName,
+      display_name: emailClassification?.displayName?.trim() ? emailClassification.displayName : displayName,
       notes: null,
       service_address: serviceAddress || null,
       service_lat: lat,
       service_lng: lng,
       last_activity_at: nowIso,
+      ...(customerMetadata ? { metadata: customerMetadata } : {}),
     })
     .select("id")
     .single()

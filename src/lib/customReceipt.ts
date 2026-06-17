@@ -21,6 +21,8 @@ export type CustomReceiptDraft = {
   notes?: string
   line_items: CustomReceiptLineItem[]
   manual_amount?: number | null
+  sent_at?: string | null
+  status?: string | null
 }
 
 export type CustomReceiptTemplateSettings = {
@@ -168,6 +170,8 @@ export function parseCustomReceiptDrafts(raw: unknown): CustomReceiptDraft[] {
       notes: typeof row.notes === "string" ? row.notes : undefined,
       line_items,
       manual_amount: manual_amount != null && Number.isFinite(manual_amount) ? manual_amount : null,
+      sent_at: typeof row.sent_at === "string" ? row.sent_at : undefined,
+      status: typeof row.status === "string" ? row.status : undefined,
     })
   }
   return out.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))

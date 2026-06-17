@@ -18,6 +18,7 @@ import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
+import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
@@ -793,6 +794,11 @@ export function AccountProfilePanel({
               </label>
               </div>
             </AccountFold>
+            {user?.id && !adminContext ? (
+              <div style={{ marginTop: 16 }}>
+                <TeamMemberInvitesPanel ownerUserId={user.id} />
+              </div>
+            ) : null}
             </Fragment>
               )
               if (sectionId === "business_address") return (

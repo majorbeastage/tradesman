@@ -13,6 +13,11 @@ import AccountPage from "./modules/account/AccountPage"
 import PaymentsPage from "./modules/payments/PaymentsPage"
 import InsuranceOptionsPage from "./modules/insurance/InsuranceOptionsPage"
 import ReportingPage from "./modules/reporting/ReportingPage"
+import BusinessWorkflowPage from "./modules/workflow/BusinessWorkflowPage"
+import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
+import WorkOrdersPage from "./modules/work-orders/WorkOrdersPage"
+import PurchaseOrdersPage from "./modules/purchase-orders/PurchaseOrdersPage"
+import PartsInventoryPage from "./modules/parts-inventory/PartsInventoryPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -59,7 +64,7 @@ import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
 import { supabase } from "./lib/supabase"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
-import { PRODUCT_PACKAGE_IDS, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
+import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
@@ -213,7 +218,7 @@ function MainAppInner() {
 
   useEffect(() => {
     if (!isPortalTabVisibleInV2(page, portalConfig)) {
-      if (page === "leads" || page === "conversations" || page === "web-support") {
+      if (page === "leads" || page === "conversations" || page === "web-support" || page === "work_orders" || page === "purchase_orders" || page === "parts_inventory") {
         setPage("dashboard")
       }
     }
@@ -382,6 +387,9 @@ function MainAppInner() {
               todayTodo: t("dashboard.quickTodayTodo"),
               timeClock: t("dashboard.quickTimeClock"),
               customReceipt: customReceiptQuickLabel || t("dashboard.quickCustomReceipt"),
+              businessWorkflow: t("dashboard.quickBusinessWorkflow"),
+              businessWorkflowSub: t("dashboard.quickBusinessWorkflowSub"),
+              organizationChart: t("dashboard.quickOrganizationChart"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -451,6 +459,9 @@ function MainAppInner() {
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
       {page === "quotes" && <QuotesPage setPage={setPage} />}
+      {page === "work_orders" && <WorkOrdersPage setPage={setPage} />}
+      {page === "purchase_orders" && <PurchaseOrdersPage setPage={setPage} />}
+      {page === "parts_inventory" && <PartsInventoryPage setPage={setPage} />}
       {page === "calendar" && <CalendarPage setPage={setPage} />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
@@ -458,6 +469,8 @@ function MainAppInner() {
       {page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
+      {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
+      {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}
       {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "customer-profile", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
         <div style={{ padding: 24 }}>
@@ -484,6 +497,11 @@ function App() {
 
   useEffect(() => {
     try {
+      const advisor = sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
+      if (advisor === "1") {
+        setView("signup")
+        return
+      }
       const raw = sessionStorage.getItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
       if (!raw) return
       sessionStorage.removeItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
@@ -531,6 +549,14 @@ function App() {
         onSignupWithPackage={(packageId) => {
           try {
             sessionStorage.setItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, packageId)
+          } catch {
+            /* ignore */
+          }
+          window.location.href = "/"
+        }}
+        onHelpDecidingProduct={() => {
+          try {
+            sessionStorage.setItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, "1")
           } catch {
             /* ignore */
           }
@@ -608,6 +634,15 @@ function App() {
         onBack={() => setView("home")}
         onSignupWithPackage={(packageId) => {
           setSignupPackagePreset(packageId)
+          setView("signup")
+        }}
+        onHelpDecidingProduct={() => {
+          setSignupPackagePreset(null)
+          try {
+            sessionStorage.setItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, "1")
+          } catch {
+            /* ignore */
+          }
           setView("signup")
         }}
       />

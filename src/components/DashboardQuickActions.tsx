@@ -56,6 +56,9 @@ type Props = {
     todayTodo: string
     timeClock: string
     customReceipt: string
+    businessWorkflow: string
+    businessWorkflowSub: string
+    organizationChart: string
     customizeHint: string
     customizeDone: string
     customizePaletteTitle: string
@@ -265,6 +268,7 @@ function resolveFourthCalendarState(
 function Tile({
   scheme,
   label,
+  sublabel,
   onClick,
   accent,
   compact,
@@ -281,6 +285,7 @@ function Tile({
 }: {
   scheme: DashboardTileScheme
   label: string
+  sublabel?: string
   onClick: () => void
   accent: string
   compact: boolean
@@ -406,6 +411,21 @@ function Tile({
         }}
       >
         {label}
+        {sublabel ? (
+          <span
+            style={{
+              display: "block",
+              marginTop: 4,
+              fontSize: compact ? 10 : 11,
+              fontWeight: 600,
+              color: labelColor,
+              opacity: 0.82,
+              lineHeight: 1.3,
+            }}
+          >
+            {sublabel}
+          </span>
+        ) : null}
       </span>
     </button>
   )
@@ -546,10 +566,13 @@ export default function DashboardQuickActions(props: Props) {
       { id: "today_todo", show: true },
       { id: "time_clock", show: Boolean(props.showTimeClockShortcut) },
       { id: "custom_receipt", show: Boolean(props.showCustomReceiptShortcut) },
+      { id: "setup_guide", show: Boolean(onOpenSetupGuide) },
+      { id: "business_workflow", show: true },
+      { id: "organization_chart", show: true },
     ]
     const visSet = new Set(vis.filter((x) => x.show).map((x) => x.id))
     return optionalOrder.filter((id) => visSet.has(id))
-  }, [optionalOrder, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, showSettingsShortcut])
+  }, [optionalOrder, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, showSettingsShortcut, onOpenSetupGuide])
 
   const paletteAvailable = useMemo(() => {
     const onBar = new Set(optionalTiles)
@@ -806,6 +829,39 @@ export default function DashboardQuickActions(props: Props) {
         />
       )
     }
+    if (id === "business_workflow") {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.businessWorkflow}
+          sublabel={labels.businessWorkflowSub}
+          accent="#7c3aed"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => !customize && go("business-workflow")}
+        />
+      )
+    }
+    if (id === "organization_chart") {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.organizationChart}
+          accent="#0d9488"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => !customize && go("organization-chart")}
+        />
+      )
+    }
     return null
   }
 
@@ -1013,6 +1069,10 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.timeClock
     case "custom_receipt":
       return labels.customReceipt
+    case "business_workflow":
+      return labels.businessWorkflow
+    case "organization_chart":
+      return labels.organizationChart
     case "setup_guide":
       return labels.setupGuide
     default:

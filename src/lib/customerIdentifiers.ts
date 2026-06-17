@@ -27,7 +27,24 @@ export function customerEmailsFromIdentifiers(
   const seen = new Set<string>()
   const out: string[] = []
   for (const row of identifiers ?? []) {
-    if (row.type !== "email") continue
+    const type = String(row.type ?? "").toLowerCase()
+    if (type !== "email" && type !== "additional_email") continue
+    const v = identifierValueString(row.value)
+    if (!v || seen.has(v)) continue
+    seen.add(v)
+    out.push(v)
+  }
+  return out
+}
+
+export function customerPhonesFromIdentifiers(
+  identifiers: CustomerIdentifierRow[] | null | undefined,
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const row of identifiers ?? []) {
+    const type = String(row.type ?? "").toLowerCase()
+    if (type !== "phone" && type !== "additional_phone") continue
     const v = identifierValueString(row.value)
     if (!v || seen.has(v)) continue
     seen.add(v)

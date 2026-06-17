@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { supabase as defaultSupabase } from "./supabase"
+import { coiExpiryStatus, daysUntilCoiExpiry } from "./coiExpiration"
 import { customerPhoneFromIdentifiers, customerEmailFromIdentifiers } from "./customerIdentifiers"
 import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "./customReceipt"
 import type { InsuranceReasonId, InsuranceTypeId } from "./thimbleInsuranceResources"
@@ -27,6 +28,9 @@ export type InsuranceCoiRecord = {
   calendar_event_id?: string | null
   quote_id?: string | null
   attachment_ids: string[]
+  expires_at?: string | null
+  policy_number?: string | null
+  source?: "assistant" | "external"
 }
 
 const COI_META_KEY = "insurance_coi_records"
@@ -136,6 +140,9 @@ function parseCoiList(meta: unknown, key: string): InsuranceCoiRecord[] {
       calendar_event_id: typeof o.calendar_event_id === "string" ? o.calendar_event_id : null,
       quote_id: typeof o.quote_id === "string" ? o.quote_id : null,
       attachment_ids: Array.isArray(o.attachment_ids) ? o.attachment_ids.map(String) : [],
+      expires_at: typeof o.expires_at === "string" ? o.expires_at : null,
+      policy_number: typeof o.policy_number === "string" ? o.policy_number : null,
+      source: o.source === "external" ? "external" : "assistant",
     })
   }
   return out
@@ -149,6 +156,78 @@ export type SaveCoiInput = {
   customerId?: string | null
   calendarEventId?: string | null
   quoteId?: string | null
+  expiresAt?: string | null
+  policyNumber?: string | null
+  source?: "assistant" | "external"
+}
+
+export function listBusinessCoiRecords(profileMetadata: unknown): InsuranceCoiRecord[] {
+  return parseCoiList(profileMetadata, BUSINESS_COI_META_KEY)
+}
+
+export function listCustomerCoiRecords(customerMetadata: unknown): InsuranceCoiRecord[] {
+  return parseCoiList(customerMetadata, COI_META_KEY)
+}
+
+export type CoiTodoItem = {
+  id: string
+  label: string
+  expiresAt: string | null
+  scope: "business" | "customer" | "job"
+  customerId?: string | null
+  calendarEventId?: string | null
+  daysUntil: number | null
+  status: "expired" | "expiring_soon"
+}
+
+/** Collect COI renewal items for dashboard to-do (expired or within 30 days). */
+export async function loadCoiTodoItems(
+  client: SupabaseClient,
+  userId: string,
+): Promise<CoiTodoItem[]> {
+  const now = Date.now()
+  const items: CoiTodoItem[] = []
+
+  const { data: prof } = await client.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  for (const rec of listBusinessCoiRecords(prof?.metadata)) {
+    const status = coiExpiryStatus(rec.expires_at, now)
+    if (status !== "expired" && status !== "expiring_soon") continue
+    items.push({
+      id: rec.id,
+      label: rec.file_name,
+      expiresAt: rec.expires_at ?? null,
+      scope: "business",
+      daysUntil: daysUntilCoiExpiry(rec.expires_at, now),
+      status,
+    })
+  }
+
+  const { data: customers } = await client.from("customers").select("id, display_name, metadata").eq("user_id", userId).limit(500)
+  for (const row of customers ?? []) {
+    const name = String((row as { display_name?: string | null }).display_name ?? "").trim() || "Customer"
+    const cid = String((row as { id: string }).id)
+    for (const rec of listCustomerCoiRecords((row as { metadata?: unknown }).metadata)) {
+      const status = coiExpiryStatus(rec.expires_at, now)
+      if (status !== "expired" && status !== "expiring_soon") continue
+      items.push({
+        id: `${cid}:${rec.id}`,
+        label: `${name} — ${rec.file_name}`,
+        expiresAt: rec.expires_at ?? null,
+        scope: rec.calendar_event_id ? "job" : "customer",
+        customerId: cid,
+        calendarEventId: rec.calendar_event_id ?? null,
+        daysUntil: daysUntilCoiExpiry(rec.expires_at, now),
+        status,
+      })
+    }
+  }
+
+  items.sort((a, b) => {
+    const da = a.daysUntil ?? -9999
+    const db = b.daysUntil ?? -9999
+    return da - db
+  })
+  return items
 }
 
 /** Upload COI and link to customer metadata, calendar event, and estimate when available. */
@@ -230,6 +309,9 @@ export async function saveInsuranceCoi(
     calendar_event_id: input.calendarEventId ?? null,
     quote_id: input.quoteId ?? null,
     attachment_ids: attachmentIds,
+    expires_at: input.expiresAt ?? null,
+    policy_number: input.policyNumber ?? null,
+    source: input.source ?? "assistant",
   }
 
   if (input.customerId) {
@@ -277,6 +359,55 @@ export async function saveInsuranceCoi(
   }
 
   return record
+}
+
+/** Share an on-file COI with a customer (and optional job) without re-uploading. */
+export async function provideExistingCoiToCustomer(
+  input: {
+    userId: string
+    customerId: string
+    coi: InsuranceCoiRecord
+    calendarEventId?: string | null
+    quoteId?: string | null
+  },
+  client: SupabaseClient = defaultSupabase!,
+): Promise<void> {
+  if (!client) throw new Error("Not connected.")
+  const { data: cust } = await client.from("customers").select("metadata").eq("id", input.customerId).maybeSingle()
+  const meta =
+    cust?.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
+      ? (cust.metadata as Record<string, unknown>)
+      : {}
+  const list = parseCoiList(meta, COI_META_KEY)
+  const linked: InsuranceCoiRecord = {
+    ...input.coi,
+    id: crypto.randomUUID(),
+    customer_id: input.customerId,
+    calendar_event_id: input.calendarEventId ?? input.coi.calendar_event_id ?? null,
+    quote_id: input.quoteId ?? input.coi.quote_id ?? null,
+    uploaded_at: new Date().toISOString(),
+  }
+  const nextMeta = { ...meta, [COI_META_KEY]: [linked, ...list].slice(0, 40) }
+  const { error } = await client.from("customers").update({ metadata: nextMeta }).eq("id", input.customerId)
+  if (error && !error.message.includes("metadata")) throw new Error(error.message)
+
+  const expiryLine = linked.expires_at
+    ? ` Expiration: ${new Date(linked.expires_at).toLocaleDateString(undefined, { dateStyle: "medium" })}.`
+    : ""
+  void client.from("communication_events").insert({
+    user_id: input.userId,
+    customer_id: input.customerId,
+    event_type: "note",
+    direction: "outbound",
+    subject: "Certificate of insurance provided",
+    body: `${linked.file_name} shared with this customer.${expiryLine} View: ${linked.public_url}`,
+    unread: false,
+    metadata: {
+      source: "insurance_coi_provide",
+      coi_id: linked.id,
+      calendar_event_id: linked.calendar_event_id,
+    },
+  })
 }
 
 export function customerContactLine(row: CustomerReceiptPickerRow): string {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../styles/theme"
 import type { CustomerPaymentProfileMetadata } from "../lib/customerPaymentMetadata"
@@ -9,6 +9,7 @@ import {
   customerPayWorkflowLabel,
   parseQuoteCustomerPayWorkflow,
 } from "../lib/quoteCustomerPayWorkflow"
+import type { CustomerPaymentQuoteOption } from "../lib/customerQuotePaymentOptions"
 
 export type CustomerPaymentRequestModalProps = {
   open: boolean
@@ -24,6 +25,8 @@ export type CustomerPaymentRequestModalProps = {
   calendarEventId?: string | null
   /** Latest `quotes.metadata` for this estimate — drives status chips when `quoteId` is set */
   quoteMetadata?: Record<string, unknown> | null
+  /** When set (e.g. Customers tab), user picks which estimate to attach payment to. */
+  quoteOptions?: CustomerPaymentQuoteOption[]
   /** After copy or manual mark updates metadata on server */
   onQuoteMetadataPatched?: (meta: Record<string, unknown>) => void
 }
@@ -41,6 +44,7 @@ export default function CustomerPaymentRequestModal({
   quoteId,
   calendarEventId,
   quoteMetadata,
+  quoteOptions,
   onQuoteMetadataPatched,
 }: CustomerPaymentRequestModalProps) {
   const [includeBarcode, setIncludeBarcode] = useState(false)
@@ -50,12 +54,30 @@ export default function CustomerPaymentRequestModal({
   const [copyBusy, setCopyBusy] = useState(false)
   const [markBusy, setMarkBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [pickedQuoteId, setPickedQuoteId] = useState<string>("")
+
+  const activeQuoteOption = useMemo(() => {
+    if (!quoteOptions?.length) return null
+    const id = pickedQuoteId.trim() || quoteId?.trim() || quoteOptions[0]?.quoteId || ""
+    return quoteOptions.find((o) => o.quoteId === id) ?? quoteOptions[0] ?? null
+  }, [quoteOptions, pickedQuoteId, quoteId])
+
+  const resolvedQuoteId = activeQuoteOption?.quoteId ?? quoteId?.trim() ?? ""
+  const resolvedEstimateLabel = activeQuoteOption?.estimateLabel ?? estimateLabel
+  const resolvedAmountLabel = activeQuoteOption?.amountLabel ?? amountLabel
+  const resolvedQuoteMetadata = activeQuoteOption?.metadata ?? quoteMetadata ?? null
 
   useEffect(() => {
     if (!open) return
     setIncludeBarcode(false)
     setAcknowledgeRisk(false)
     setNotice(null)
+    if (quoteOptions?.length) {
+      const initial = quoteId?.trim() && quoteOptions.some((o) => o.quoteId === quoteId.trim()) ? quoteId.trim() : quoteOptions[0].quoteId
+      setPickedQuoteId(initial)
+    } else {
+      setPickedQuoteId(quoteId?.trim() ?? "")
+    }
     if (!supabase || !userId || !customerId) {
       setShowReminder(false)
       return
@@ -66,13 +88,13 @@ export default function CustomerPaymentRequestModal({
       setShowReminder(p.showEstimateOrSchedulingReminder)
       setPreflightBusy(false)
     })()
-  }, [open, supabase, userId, customerId])
+  }, [open, supabase, userId, customerId, quoteOptions, quoteId])
 
   const payReady = Boolean(profile.customer_pay_link_url?.trim() || profile.customer_pay_barcode_url?.trim())
   const barcodeAvailable = Boolean(profile.customer_pay_barcode_url?.trim())
-  const workflow = parseQuoteCustomerPayWorkflow(quoteMetadata ?? null)
+  const workflow = parseQuoteCustomerPayWorkflow(resolvedQuoteMetadata ?? null)
   const aging = customerPayWorkflowAgingBadge(workflow)
-  const quoteIdTrim = quoteId?.trim() ?? ""
+  const quoteIdTrim = resolvedQuoteId
   const canCopy =
     payReady &&
     Boolean(customerId) &&
@@ -89,12 +111,12 @@ export default function CustomerPaymentRequestModal({
         supabase,
         userId,
         customerId,
-        quoteId: quoteId ?? null,
+        quoteId: resolvedQuoteId || null,
         calendarEventId: calendarEventId ?? null,
         profile,
         customerName: customerName ?? null,
-        estimateLabel,
-        amountLabel,
+        estimateLabel: resolvedEstimateLabel,
+        amountLabel: resolvedAmountLabel,
         includeBarcodeInMessage: includeBarcode,
       })
       if (!res.ok) {
@@ -204,6 +226,23 @@ export default function CustomerPaymentRequestModal({
           </p>
             ) : (
           <>
+            {quoteOptions && quoteOptions.length > 0 ? (
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, fontSize: 13, color: theme.text }}>
+                <span style={{ fontWeight: 700 }}>Estimate for this payment</span>
+                <select
+                  value={pickedQuoteId || quoteOptions[0]?.quoteId || ""}
+                  onChange={(e) => setPickedQuoteId(e.target.value)}
+                  style={{ ...theme.formInput, padding: "8px 10px", fontSize: 13 }}
+                >
+                  {quoteOptions.map((opt) => (
+                    <option key={opt.quoteId} value={opt.quoteId}>
+                      {opt.estimateLabel}
+                      {opt.amountLabel ? ` · ${opt.amountLabel}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {quoteIdTrim ? (
               <div
                 style={{
@@ -229,13 +268,13 @@ export default function CustomerPaymentRequestModal({
                 ) : null}
               </div>
             ) : null}
-            {estimateLabel ? (
+            {resolvedEstimateLabel ? (
               <p style={{ margin: "0 0 8px", fontSize: 13, color: theme.text }}>
-                <strong>Context:</strong> {estimateLabel}
-                {amountLabel ? (
+                <strong>Context:</strong> {resolvedEstimateLabel}
+                {resolvedAmountLabel ? (
                   <>
                     {" "}
-                    · <strong>{amountLabel}</strong>
+                    · <strong>{resolvedAmountLabel}</strong>
                   </>
                 ) : null}
               </p>
