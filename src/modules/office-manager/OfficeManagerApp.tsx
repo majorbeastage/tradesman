@@ -571,6 +571,23 @@ function OfficeManagerAppContent() {
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
       <ManagedUserBar />
 
+      {portalConfig?.demo_account === true ? (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "#fef3c7",
+            border: "1px solid #fcd34d",
+            color: "#92400e",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>{t("dashboard.demoLabel")}</strong> {t("dashboard.demoBanner")}
+        </div>
+      ) : null}
+
       {page === "dashboard" && (
         <>
           <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, color: theme.text }}>Office manager</h1>

@@ -70,12 +70,19 @@ export function SignupHelcimPaymentStep({
   }, [helcimReturnOrigin, onPaymentSuccess])
 
   const inputStyle: React.CSSProperties = {
+    ...theme.formInput,
     width: "100%",
     padding: "10px 12px",
-    border: `1px solid ${theme.border}`,
     borderRadius: 8,
     fontSize: 14,
-    boxSizing: "border-box",
+  }
+
+  const labelStyle: React.CSSProperties = {
+    display: "grid",
+    gap: 6,
+    fontWeight: 700,
+    fontSize: 14,
+    color: theme.text,
   }
 
   if (!ENV_JS_TOKEN) {
@@ -86,11 +93,13 @@ export function SignupHelcimPaymentStep({
           borderRadius: 10,
           border: `1px solid ${theme.border}`,
           background: "#fffbeb",
+          color: theme.text,
+          colorScheme: "light",
           fontSize: 14,
           lineHeight: 1.55,
         }}
       >
-        <p style={{ margin: "0 0 10px", fontWeight: 700 }}>Payment setup</p>
+        <p style={{ margin: "0 0 10px", fontWeight: 800, color: theme.text }}>Payment setup</p>
         <p style={{ margin: "0 0 10px" }}>
           Due today (prorated through {billDateLabel}): <strong>${dueTodayUsd.toFixed(2)}</strong> · then $
           {monthlyUsd.toFixed(2)}/mo on your selected bill date.
@@ -122,8 +131,8 @@ export function SignupHelcimPaymentStep({
   }
 
   return (
-    <div>
-      <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.55 }}>
+    <div style={{ color: theme.text, colorScheme: "light" }}>
+      <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.55, color: theme.text, fontWeight: 500 }}>
         Due today at signup (prorated through <strong>{billDateLabel}</strong>):{" "}
         <strong>${dueTodayUsd.toFixed(2)}</strong>. Recurring charge: <strong>${monthlyUsd.toFixed(2)}/month</strong> on
         day {billDateLabel.split(" ")[0] ? new Date(billDateLabel).getDate() : "your bill date"} each month.
@@ -149,24 +158,24 @@ export function SignupHelcimPaymentStep({
       >
         <input type="hidden" id="token" value={ENV_JS_TOKEN} />
         <input type="hidden" id="orderNumber" value={`signup-${orderEmail.replace(/[^a-z0-9]/gi, "").slice(0, 40)}`} />
-        <label style={{ display: "grid", gap: 6, marginBottom: 12, fontWeight: 600, fontSize: 14 }}>
+        <label style={{ ...labelStyle, marginBottom: 12 }}>
           Amount due today
           <input type="text" id="amount" readOnly defaultValue={dueTodayUsd.toFixed(2)} style={inputStyle} />
         </label>
-        <label style={{ display: "grid", gap: 6, marginBottom: 12, fontWeight: 600, fontSize: 14 }}>
+        <label style={{ ...labelStyle, marginBottom: 12 }}>
           Cardholder name
           <input type="text" id="cardHolderName" autoComplete="cc-name" style={inputStyle} required />
         </label>
-        <label style={{ display: "grid", gap: 6, marginBottom: 12, fontWeight: 600, fontSize: 14 }}>
+        <label style={{ ...labelStyle, marginBottom: 12 }}>
           Card number
           <input type="text" id="cardNumber" autoComplete="cc-number" style={inputStyle} required />
         </label>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-          <label style={{ display: "grid", gap: 6, fontWeight: 600, fontSize: 14 }}>
+          <label style={labelStyle}>
             Expiry (MMYY)
             <input type="text" id="expiryDate" autoComplete="cc-exp" style={inputStyle} required />
           </label>
-          <label style={{ display: "grid", gap: 6, fontWeight: 600, fontSize: 14 }}>
+          <label style={labelStyle}>
             CVV
             <input type="text" id="cvv" autoComplete="cc-csc" style={inputStyle} required />
           </label>

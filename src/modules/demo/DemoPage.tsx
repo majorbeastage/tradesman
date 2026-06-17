@@ -13,7 +13,7 @@ async function provisionDemoAccount(params: {
   name: string
   businessName: string
   ticketId: string | null
-}): Promise<{ ok: boolean; error?: string; alreadyGranted?: boolean }> {
+}): Promise<{ ok: boolean; error?: string; alreadyGranted?: boolean; emailed?: boolean }> {
   if (!supabaseUrlEnv?.trim() || !supabaseAnonEnv?.trim()) {
     return { ok: false, error: "Demo service is not configured." }
   }
@@ -32,7 +32,7 @@ async function provisionDemoAccount(params: {
       ticket_id: params.ticketId,
     }),
   })
-  let json: { error?: string; alreadyGranted?: boolean } = {}
+  let json: { error?: string; alreadyGranted?: boolean; emailed?: boolean } = {}
   try {
     json = (await res.json()) as typeof json
   } catch {
@@ -41,7 +41,7 @@ async function provisionDemoAccount(params: {
   if (!res.ok) {
     return { ok: false, error: json.error ?? `Demo service error (${res.status})`, alreadyGranted: json.alreadyGranted }
   }
-  return { ok: true }
+  return { ok: true, emailed: json.emailed === true }
 }
 
 type DemoPageProps = {
@@ -130,8 +130,12 @@ export default function DemoPage({ onBack }: DemoPageProps) {
         businessName: businessName.trim(),
         ticketId: data?.id ?? null,
       })
-      if (demo.ok) {
+      if (demo.ok && demo.emailed) {
         setDemoLoginSent(true)
+      } else if (demo.ok && !demo.emailed) {
+        setDemoProvisionError(
+          "Your demo account was created but we could not email the login details. Contact support or try again later.",
+        )
       } else if (demo.alreadyGranted) {
         setDemoProvisionError(demo.error ?? "Demo already granted for this email.")
       } else {
@@ -347,8 +351,9 @@ export default function DemoPage({ onBack }: DemoPageProps) {
             )}
             {demoLoginSent ? (
               <p style={{ margin: "12px 0 0", lineHeight: 1.55 }}>
-                We emailed a <strong>24-hour demo login</strong> to {email.trim()}. Check inbox and spam. Demo accounts
-                cannot send or receive live texts, emails, or phone calls.
+                We emailed a <strong>24-hour Office Manager demo login</strong> to {email.trim()}. On the home page,
+                choose <strong>Office Manager Login</strong>, then sign in with the email and temporary password we sent.
+                Demo accounts cannot send or receive live texts, emails, or phone calls.
               </p>
             ) : null}
             {demoProvisionError ? (

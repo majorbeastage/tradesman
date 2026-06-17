@@ -302,7 +302,7 @@ function MainAppInner() {
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
-      {authRole === "demo_user" && (
+      {authRole === "demo_user" || portalConfig?.demo_account === true ? (
         <div
           style={{
             marginBottom: 12,
@@ -317,7 +317,7 @@ function MainAppInner() {
         >
           <strong>{t("dashboard.demoLabel")}</strong> {t("dashboard.demoBanner")}
         </div>
-      )}
+      ) : null}
 
       {connectionStatus !== "ok" && (
         <div style={{
@@ -357,7 +357,7 @@ function MainAppInner() {
             layout={estimateToolsOnlyPackage ? "estimate_tools_only" : "three_cards"}
             copy={dashboardHeroCopy}
           />
-          {!estimateToolsOnlyPackage ? (
+          {!estimateToolsOnlyPackage && authRole !== "new_user" ? (
           <>
           <DashboardQuickActions
             isMobile={isMobile}

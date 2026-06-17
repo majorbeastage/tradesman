@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { theme } from "../styles/theme"
 import { labelForProductPackageId, type ProductPackageId } from "../lib/productPackages"
 import {
@@ -64,16 +64,18 @@ export default function SignupProductAdvisorPanel({ onApply, onClose }: Props) {
           maxHeight: "90vh",
           overflow: "auto",
           background: "#fff",
+          color: theme.text,
+          colorScheme: "light",
           borderRadius: 14,
           border: `1px solid ${theme.border}`,
           padding: "20px 22px 22px",
           boxShadow: "0 24px 48px rgba(15,23,42,0.18)",
         }}
       >
-        <h2 id="signup-advisor-title" style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800 }}>
+        <h2 id="signup-advisor-title" style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: theme.text }}>
           I need help deciding product
         </h2>
-        <p style={{ margin: "0 0 16px", fontSize: 14, color: "#64748b", lineHeight: 1.55 }}>
+        <p style={{ margin: "0 0 16px", fontSize: 14, color: "#374151", lineHeight: 1.55 }}>
           Answer a few questions about departments, employees, and phone users — we&apos;ll recommend the best Tradesman
           package and modules for your company.
         </p>
@@ -144,7 +146,7 @@ export default function SignupProductAdvisorPanel({ onApply, onClose }: Props) {
                 ))}
               </ul>
               {recommendation.bullets.length ? (
-                <ul style={{ margin: "12px 0 0", paddingLeft: 18, lineHeight: 1.55, fontSize: 13, color: "#475569" }}>
+                <ul style={{ margin: "12px 0 0", paddingLeft: 18, lineHeight: 1.55, fontSize: 13, color: "#374151" }}>
                   {recommendation.bullets.map((b) => (
                     <li key={b}>{b}</li>
                   ))}
@@ -195,12 +197,12 @@ function StepBlock({ title, children }: { title: string; children: ReactNode }) 
 function YesNo({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
     <fieldset style={{ border: "none", margin: 0, padding: 0 }}>
-      <legend style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{label}</legend>
+      <legend style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, color: theme.text }}>{label}</legend>
       <div style={{ display: "flex", gap: 10 }}>
-        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}>
+        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14, fontWeight: 600, color: theme.text }}>
           <input type="radio" checked={value} onChange={() => onChange(true)} /> Yes
         </label>
-        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}>
+        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14, fontWeight: 600, color: theme.text }}>
           <input type="radio" checked={!value} onChange={() => onChange(false)} /> No
         </label>
       </div>
@@ -221,21 +223,51 @@ function NumField({
   max?: number
   onChange: (v: number) => void
 }) {
+  const [text, setText] = useState(() => String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  function commit(raw: string) {
+    if (raw.trim() === "") {
+      const fallback = min ?? 0
+      onChange(fallback)
+      setText(String(fallback))
+      return
+    }
+    let v = Number(raw)
+    if (!Number.isFinite(v)) {
+      const fallback = min ?? 0
+      onChange(fallback)
+      setText(String(fallback))
+      return
+    }
+    if (max != null) v = Math.min(max, v)
+    if (min != null) v = Math.max(min, v)
+    onChange(v)
+    setText(String(v))
+  }
+
   return (
-    <label style={{ display: "grid", gap: 6, fontSize: 14, fontWeight: 600 }}>
+    <label style={{ display: "grid", gap: 6, fontSize: 14, fontWeight: 700, color: theme.text }}>
       {label}
       <input
         type="number"
         min={min}
         max={max}
-        value={value}
+        value={text}
         onChange={(e) => {
-          let v = Number(e.target.value)
-          if (!Number.isFinite(v)) v = min ?? 0
+          const raw = e.target.value
+          setText(raw)
+          if (raw.trim() === "") return
+          let v = Number(raw)
+          if (!Number.isFinite(v)) return
           if (max != null) v = Math.min(max, v)
           if (min != null) v = Math.max(min, v)
           onChange(v)
         }}
+        onBlur={() => commit(text)}
         style={{ ...theme.formInput, maxWidth: 120 }}
       />
     </label>
@@ -257,6 +289,7 @@ const secondaryBtn: CSSProperties = {
   borderRadius: 8,
   border: `1px solid ${theme.border}`,
   background: "#fff",
+  color: theme.text,
   fontWeight: 600,
   cursor: "pointer",
 }

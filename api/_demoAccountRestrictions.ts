@@ -9,6 +9,14 @@ export async function isDemoRestrictedUser(
   userId: string,
 ): Promise<boolean> {
   if (!userId.trim()) return false
-  const { data } = await supabase.from("profiles").select("role").eq("id", userId.trim()).maybeSingle()
-  return (data as { role?: string } | null)?.role === "demo_user"
+  const { data } = await supabase
+    .from("profiles")
+    .select("role, metadata, portal_config")
+    .eq("id", userId.trim())
+    .maybeSingle()
+  const row = data as { role?: string; metadata?: Record<string, unknown>; portal_config?: { demo_account?: boolean } } | null
+  if (row?.role === "demo_user") return true
+  if (row?.portal_config?.demo_account === true) return true
+  if (row?.metadata?.demo_communications_blocked === true) return true
+  return false
 }

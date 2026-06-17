@@ -48,10 +48,10 @@ const btnPrimary: CSSProperties = {
 const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
   estimate_tools_only:
     "Estimate Tools workspace only — build and send estimates; Payments & support included. No Customers or Scheduling tabs.",
-  base: "Soft leads (5/mo), 1 user, conversations, estimates & calendar with receipts.",
+  base: "1 user, conversations, estimates & calendar with receipts.",
   office_manager_entry: "1 office manager + 1 user, internal messaging, map view & calendar control.",
-  office_manager_pro: "10 leads/mo, 1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
-  office_manager_elite: "Max leads (25/mo), 2 OMs + 8 users, top-tier comms — built for larger operations.",
+  office_manager_pro: "1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
+  office_manager_elite: "2 OMs + 8 users, top-tier comms — built for larger operations.",
   corporate:
     "Multi-department operations — work orders, purchase orders, org & workflow charts, 20 users, 5 office managers, 10 internal + 10 external phone logins.",
 }
@@ -70,12 +70,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
   ),
   base: (
     <ul style={ulStyle}>
-      <li>
-        Soft Lead Capturing Service
-        <ul style={{ marginTop: 6 }}>
-          <li>Limited to 5 Paid Qualified Leads per month**</li>
-        </ul>
-      </li>
       <li>1 User Sign-In</li>
       <li>
         Customer Conversations Module
@@ -99,12 +93,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
   ),
   office_manager_entry: (
     <ul style={ulStyle}>
-      <li>
-        Soft Lead Capturing Service
-        <ul style={{ marginTop: 6 }}>
-          <li>Limited to 5 Paid Qualified Leads per month**</li>
-        </ul>
-      </li>
       <li>
         1 Office Manager Sign-In and 1 User Sign-In
         <ul style={{ marginTop: 6 }}>
@@ -135,12 +123,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
   ),
   office_manager_pro: (
     <ul style={ulStyle}>
-      <li>
-        Mid Tier Lead Capturing
-        <ul style={{ marginTop: 6 }}>
-          <li>Limited to 10 Paid Qualified Leads per month**</li>
-        </ul>
-      </li>
       <li>
         1 Office Manager Sign-In and 4 User Sign-Ins
         <ul style={{ marginTop: 6 }}>
@@ -173,12 +155,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
   ),
   office_manager_elite: (
     <ul style={ulStyle}>
-      <li>
-        Max Tier Lead Capturing
-        <ul style={{ marginTop: 6 }}>
-          <li>Limited to 25 Paid Qualified Leads per month**</li>
-        </ul>
-      </li>
       <li>
         2 Office Manager Sign-Ins and 8 User Sign-Ins
         <ul style={{ marginTop: 6 }}>
@@ -596,23 +572,10 @@ export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidin
             Overage usage is billed monthly and is subject to change based on third-party provider rates.
           </p>
 
-          <p style={{ margin: "14px 0 6px", fontWeight: 700, fontSize: 14, color: theme.charcoal }}>Lead Allocation &amp; Overage Fees:</p>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: theme.text }}>
-            Each package includes a set number of qualified leads per month. Additional leads beyond the included allocation may be provided and
-            billed based on service type, geographic location, and demand. Typical overage pricing ranges from $25 to $60 per qualified lead.
-          </p>
-
           <p style={{ margin: "14px 0 6px", fontWeight: 700, fontSize: 14, color: theme.charcoal }}>Carrier &amp; Bank Fees:</p>
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: theme.text }}>
             Additional charges may apply from mobile carriers or financial institutions, including SMS delivery fees or bank-related charges. These
             fees are determined by third parties and are outside the control of Tradesman Systems.
-          </p>
-
-          <p style={{ margin: "14px 0 6px", fontWeight: 700, fontSize: 14, color: theme.charcoal }}>Lead Qualification Disclaimer:</p>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: theme.text }}>
-            Tradesman Systems utilizes AI-assisted filtering to qualify leads based on user-defined preferences. While efforts are made to provide
-            high-quality, relevant leads, conversion is not guaranteed and results may vary based on response time, service offerings, market
-            conditions, and customer intent.
           </p>
         </div>
 

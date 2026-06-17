@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv, normalizePhone, pickFirstString } from "./_communications.js"
+import { parseAdminEmailRecipients } from "./_adminOpsNotify.js"
 import { mirrorTwilioRecordingToPublicUrl } from "./_mirrorTwilioToStorage.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
@@ -17,7 +18,17 @@ function requestPublicOrigin(req: VercelRequest): string {
 }
 
 const SAY = `voice="Polly.Matthew" language="en-US"`
-const DEFAULT_HELP_DESK_TO = "helpdesk@tradesman-us.com"
+
+function helpDeskNotifyRecipients(): string[] {
+  const raw = firstEnv("HELP_DESK_TICKET_NOTIFY_EMAIL").trim()
+  if (raw) {
+    return raw
+      .split(/[,;]+/g)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.includes("@"))
+  }
+  return parseAdminEmailRecipients()
+}
 
 async function notifyTicketEmail(params: {
   origin: string
@@ -26,9 +37,9 @@ async function notifyTicketEmail(params: {
   lines: string[]
 }): Promise<void> {
   const userId = firstEnv("HELP_DESK_TICKET_EMAIL_USER_ID", "HELP_DESK_LOG_USER_ID")
-  const to = firstEnv("HELP_DESK_TICKET_NOTIFY_EMAIL", DEFAULT_HELP_DESK_TO)
-  if (!userId || !to) {
-    console.warn("[help-desk-trouble-ticket] Skipping email: set HELP_DESK_TICKET_EMAIL_USER_ID (or HELP_DESK_LOG_USER_ID) and HELP_DESK_TICKET_NOTIFY_EMAIL")
+  const recipients = helpDeskNotifyRecipients()
+  if (!userId || recipients.length === 0) {
+    console.warn("[help-desk-trouble-ticket] Skipping email: set HELP_DESK_TICKET_EMAIL_USER_ID (or HELP_DESK_LOG_USER_ID) and notify recipients")
     return
   }
   const subject = `[${params.ticketNumber}] ${params.title}`.slice(0, 200)
@@ -39,7 +50,8 @@ async function notifyTicketEmail(params: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         userId,
-        to,
+        to: recipients[0],
+        toAdditional: recipients.slice(1),
         subject,
         body,
       }),

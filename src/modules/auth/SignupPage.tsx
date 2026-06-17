@@ -6,7 +6,7 @@ import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
 import { TIMEZONE_OPTIONS } from "../../constants/timezones"
-import { getDefaultPortalConfigForNewUser, getPortalConfigForEstimateToolsOnlyUser } from "../../types/portal-builder"
+import { getDefaultPortalConfigForNewUser, getPortalConfigForProductPackage, signupRoleForProductPackage } from "../../types/portal-builder"
 import {
   DEFAULT_SIGNUP_REQUIREMENTS,
   SIGNUP_REQUIREMENTS_KEY,
@@ -360,10 +360,10 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         payment_completed_at: payment ? new Date().toISOString() : null,
       }
 
-      const portalCfg =
-        productPackageChoice === "estimate_tools_only"
-          ? getPortalConfigForEstimateToolsOnlyUser()
-          : getDefaultPortalConfigForNewUser()
+      const portalCfg = productPackageChoice
+        ? getPortalConfigForProductPackage(productPackageChoice)
+        : getDefaultPortalConfigForNewUser()
+      const signupRole = productPackageChoice ? signupRoleForProductPackage(productPackageChoice) : ("new_user" as const)
       const metaPayload: Record<string, unknown> = { ui_language: uiLanguage }
       if (productPackageChoice) metaPayload.product_package = productPackageChoice
 
@@ -371,7 +371,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         id: uid,
         email: em,
         display_name: dn,
-        role: "new_user" as const,
+        role: signupRole,
         website_url: website,
         primary_phone: primary,
         best_contact_phone: best,
@@ -474,17 +474,26 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   }
 
   const inputStyle: React.CSSProperties = {
+    ...theme.formInput,
     width: "100%",
     maxWidth: 440,
     padding: "10px 12px",
     marginTop: 6,
-    border: `1px solid ${theme.border}`,
     borderRadius: 8,
     fontSize: 14,
-    boxSizing: "border-box",
   }
 
-  const labelStyle: React.CSSProperties = { display: "block", fontWeight: 600, fontSize: 14, color: theme.text, marginBottom: 4 }
+  const labelStyle: React.CSSProperties = { display: "block", fontWeight: 700, fontSize: 14, color: theme.text, marginBottom: 4 }
+
+  const checkboxLabelStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    fontWeight: 600,
+    fontSize: 14,
+    color: theme.text,
+    cursor: "pointer",
+  }
 
   const mark = (field: keyof SignupRequirementsValue["fields"]) =>
     req(signupCfg, field) ? (
@@ -514,7 +523,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
 
   if (awaitingEmailFor) {
     return (
-      <div style={{ minHeight: "100vh", background: theme.background, padding: 24 }}>
+      <div style={{ minHeight: "100vh", background: theme.background, padding: 24, color: theme.text, colorScheme: "light" }}>
         <div style={{ maxWidth: 520, margin: "0 auto" }}>
           <button
             type="button"
@@ -606,7 +615,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: theme.background, padding: 24 }}>
+    <div style={{ minHeight: "100vh", background: theme.background, padding: 24, color: theme.text, colorScheme: "light" }}>
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
         <button
           type="button"
@@ -631,7 +640,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
 
         <SignupSupportCallout />
 
-        <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "grid", gap: 14 }}>
+        <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "grid", gap: 14, color: theme.text }}>
           <label style={labelStyle}>
             Login email <span style={{ color: "#b91c1c" }}>*</span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} autoComplete="email" />
@@ -808,7 +817,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
               under Account (My T).
             </p>
             <div style={{ display: "grid", gap: 10 }}>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+              <label style={checkboxLabelStyle}>
                 <input
                   type="radio"
                   name="ai-automation"
@@ -818,7 +827,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 />
                 <span>Yes — allow AI-assisted features where available</span>
               </label>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+              <label style={checkboxLabelStyle}>
                 <input
                   type="radio"
                   name="ai-automation"
@@ -887,27 +896,27 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 {signupCfg.show_sms_consent_link ? legalLink("/sms-consent", "SMS consent") : null}
               </p>
               {signupCfg.require_terms_ack && signupCfg.show_terms_link ? (
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontWeight: 500, cursor: "pointer" }}>
+                <label style={{ ...checkboxLabelStyle, marginTop: 12 }}>
                   <input type="checkbox" checked={ackTerms} onChange={(e) => setAckTerms(e.target.checked)} style={{ marginTop: 3 }} />
                   <span>I agree to the Terms &amp; Conditions.</span>
                 </label>
               ) : null}
               {signupCfg.require_privacy_ack && signupCfg.show_privacy_link ? (
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, fontWeight: 500, cursor: "pointer" }}>
+                <label style={{ ...checkboxLabelStyle, marginTop: 10 }}>
                   <input type="checkbox" checked={ackPrivacy} onChange={(e) => setAckPrivacy(e.target.checked)} style={{ marginTop: 3 }} />
                   <span>I acknowledge the Privacy Policy.</span>
                 </label>
               ) : null}
               {signupCfg.show_sms_consent_link ? (
                 <div style={{ marginTop: 14 }}>
-                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#4b5563", lineHeight: 1.55 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
                     If you provide a mobile number, SMS may be used for scheduling, job updates, estimates, and account notifications.
                     Message and data rates may apply. Reply STOP to opt out where supported; reply HELP for help when offered. Your phone
                     number will not be shared with third parties for marketing purposes. See our{" "}
                     {legalLink(LEGAL_LINKS.privacy, "Privacy Policy")}, {legalLink(LEGAL_LINKS.terms, "Terms & Conditions")}, and{" "}
                     {legalLink(LEGAL_LINKS.smsConsent, "SMS consent & messaging")}.
                   </p>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+                  <label style={checkboxLabelStyle}>
                     <input
                       type="checkbox"
                       checked={ackSms}
@@ -938,17 +947,18 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 borderRadius: 10,
                 border: `1px solid ${theme.border}`,
                 background: "#fff",
+                color: theme.text,
                 fontSize: 14,
                 lineHeight: 1.55,
               }}
             >
-              <p style={{ margin: "0 0 10px", fontWeight: 700 }}>Billing authorization</p>
-              <p style={{ margin: "0 0 10px", fontSize: 13, color: "#4b5563" }}>
+              <p style={{ margin: "0 0 10px", fontWeight: 800, fontSize: 15, color: theme.text }}>Billing authorization</p>
+              <p style={{ margin: "0 0 10px", fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
                 You authorize Tradesman Systems to charge the prorated amount due today and recurring monthly charges on
                 your selected bill date until you cancel. Taxes and payment processor fees may apply. See{" "}
                 {legalLink("/terms", "Terms & Conditions")}.
               </p>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 500, cursor: "pointer" }}>
+              <label style={checkboxLabelStyle}>
                 <input type="checkbox" checked={ackBilling} onChange={(e) => setAckBilling(e.target.checked)} style={{ marginTop: 3 }} required />
                 <span>
                   I authorize recurring billing for the plan I selected.

@@ -1,3 +1,5 @@
+import type { ProductPackageId } from "../lib/productPackages"
+
 /** Client (tenant) – each has its own portal config and custom fields */
 export type Client = {
   id: string
@@ -290,6 +292,8 @@ export type PortalConfig = {
   enable_parts_inventory_tab?: boolean
   /** Corporate subscription — enables multi-module operations package. */
   corporate_package?: boolean
+  /** 24-hour demo / preview account (office manager portal). */
+  demo_account?: boolean
   /** Onboarding option: rename Estimates sidebar (e.g. "Proposal Tool"). */
   quotes_tab_display_name?: string
 }
@@ -321,6 +325,61 @@ export function getPortalConfigForEstimateToolsOnlyUser(): PortalConfig {
     tabs[id] = ESTIMATE_TOOLS_ONLY_TAB_IDS.includes(id) && !isV2DeprecatedPortalTab(id)
   }
   return { tabs, estimate_tools_only_package: true }
+}
+
+/** Role assigned at signup for a paid product package (mirrors Edge `PACKAGE_TO_ROLE`). */
+export function signupRoleForProductPackage(packageId: ProductPackageId): "user" | "office_manager" {
+  if (packageId === "estimate_tools_only" || packageId === "base") return "user"
+  return "office_manager"
+}
+
+function fullOperationsTabs(): Record<string, boolean> {
+  return {
+    dashboard: true,
+    leads: false,
+    conversations: false,
+    quotes: true,
+    calendar: true,
+    customers: true,
+    payments: true,
+    account: true,
+    "web-support": false,
+    "tech-support": true,
+    settings: false,
+    work_orders: true,
+    purchase_orders: true,
+    parts_inventory: true,
+  }
+}
+
+/** Portal tabs unlocked at signup for the selected package (mirrors Edge `portalConfigForPackage`). */
+export function getPortalConfigForProductPackage(packageId: ProductPackageId): PortalConfig {
+  if (packageId === "estimate_tools_only") {
+    return getPortalConfigForEstimateToolsOnlyUser()
+  }
+  if (packageId === "corporate") {
+    return {
+      tabs: fullOperationsTabs(),
+      corporate_package: true,
+      enable_work_orders_tab: true,
+      enable_purchase_orders_tab: true,
+      enable_parts_inventory_tab: true,
+    }
+  }
+  const tabs: Record<string, boolean> = {
+    dashboard: true,
+    leads: false,
+    conversations: false,
+    quotes: true,
+    calendar: true,
+    customers: true,
+    payments: true,
+    account: true,
+    "web-support": false,
+    "tech-support": true,
+    settings: false,
+  }
+  return { tabs }
 }
 
 export type UpgradeNewUserOptions = {
