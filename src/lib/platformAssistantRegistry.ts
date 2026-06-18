@@ -200,6 +200,23 @@ export const PLATFORM_PAGE_INTENTS: PlatformPageIntent[] = [
   },
   {
     kind: "page",
+    page: "growth",
+    label: TAB_ID_LABELS.growth,
+    description: "Growth — lead acquisition, Google Business, reviews, attribution, ROI",
+    platforms: ["user", "office_manager"],
+    patterns: [
+      /\bgrowth\b/i,
+      /\blead\s+acquisition\b/i,
+      /\bgoogle\s+business\b/i,
+      /\bgbp\b/i,
+      /\breview\s+campaign\b/i,
+      /\bmarketing\s+roi\b/i,
+      /\battribution\b/i,
+    ],
+    requiresTab: true,
+  },
+  {
+    kind: "page",
     page: "reporting",
     label: "Reporting",
     description: "Variance reports, inspections, specialty reporting",

@@ -5,15 +5,25 @@ export type OrgChartNode = {
   label: string
   jobTitle: string
   linkedUserId: string | null
+  /** @deprecated Lines are stored in `edges`; kept for migration/export. */
   parentId: string | null
   x: number
   y: number
+}
+
+export type OrgChartEdge = {
+  id: string
+  fromId: string
+  toId: string
+  /** Optional label on the reporting line. */
+  label?: string
 }
 
 export type OrganizationChartDoc = {
   v: 1
   title: string
   nodes: OrgChartNode[]
+  edges: OrgChartEdge[]
   updated_at: string
   shared_with_admin_at?: string | null
 }
@@ -35,12 +45,45 @@ export function createExampleOrganizationChart(): OrganizationChartDoc {
     id: i === 0 ? rootId : `org-${i + 1}`,
     parentId: n.parentId === "root" ? rootId : n.parentId,
   }))
+  const edges: OrgChartEdge[] = nodes
+    .filter((n) => n.parentId)
+    .map((n) => ({
+      id: `edge-${n.parentId}-${n.id}`,
+      fromId: n.parentId!,
+      toId: n.id,
+    }))
   return {
     v: 1,
     title: "Company organization chart",
     nodes,
+    edges,
     updated_at: new Date().toISOString(),
   }
+}
+
+function parseOrgChartEdges(raw: unknown, nodeIds: Set<string>): OrgChartEdge[] {
+  if (!Array.isArray(raw)) return []
+  const out: OrgChartEdge[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue
+    const o = row as Record<string, unknown>
+    if (typeof o.fromId !== "string" || typeof o.toId !== "string") continue
+    if (!nodeIds.has(o.fromId) || !nodeIds.has(o.toId) || o.fromId === o.toId) continue
+    out.push({
+      id: typeof o.id === "string" ? o.id : `edge-${crypto.randomUUID().slice(0, 8)}`,
+      fromId: o.fromId,
+      toId: o.toId,
+      label: typeof o.label === "string" && o.label.trim() ? o.label.trim() : undefined,
+    })
+  }
+  return out
+}
+
+export function syncOrgChartParentIds(nodes: OrgChartNode[], edges: OrgChartEdge[]): OrgChartNode[] {
+  return nodes.map((n) => {
+    const incoming = edges.find((e) => e.toId === n.id)
+    return { ...n, parentId: incoming?.fromId ?? null }
+  })
 }
 
 export function parseOrganizationChart(raw: unknown): OrganizationChartDoc | null {
@@ -63,10 +106,23 @@ export function parseOrganizationChart(raw: unknown): OrganizationChartDoc | nul
     })
   }
   if (!nodes.length) return null
+  const nodeIds = new Set(nodes.map((n) => n.id))
+  let edges = parseOrgChartEdges(o.edges, nodeIds)
+  if (!edges.length) {
+    edges = nodes
+      .filter((n) => n.parentId && nodeIds.has(n.parentId))
+      .map((n) => ({
+        id: `edge-${n.parentId}-${n.id}`,
+        fromId: n.parentId!,
+        toId: n.id,
+      }))
+  }
+  const syncedNodes = syncOrgChartParentIds(nodes, edges)
   return {
     v: 1,
     title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : "Organization chart",
-    nodes,
+    nodes: syncedNodes,
+    edges,
     updated_at: typeof o.updated_at === "string" ? o.updated_at : new Date().toISOString(),
     shared_with_admin_at: typeof o.shared_with_admin_at === "string" ? o.shared_with_admin_at : null,
   }
@@ -88,6 +144,70 @@ export function mergeOrganizationChartMetadata(
     ...prevMeta,
     [ORG_CHART_META_KEY]: { ...doc, v: 1, updated_at: new Date().toISOString() },
   }
+}
+
+export function newOrgChartEdge(fromId: string, toId: string, label = ""): OrgChartEdge {
+  const trimmed = label.trim()
+  return {
+    id: `edge-${crypto.randomUUID().slice(0, 8)}`,
+    fromId,
+    toId,
+    label: trimmed || undefined,
+  }
+}
+
+export type OrgChartEdgeGeometry = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  cx: number
+  cy: number
+}
+
+export function orgChartEdgeGeometry(
+  from: OrgChartNode,
+  to: OrgChartNode,
+  laneIndex: number,
+  laneCount: number,
+): OrgChartEdgeGeometry {
+  const x1 = from.x + NODE_W / 2
+  const y1 = from.y + NODE_H
+  const x2 = to.x + NODE_W / 2
+  const y2 = to.y
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.hypot(dx, dy) || 1
+  const perpX = (-dy / len) * 14
+  const perpY = (dx / len) * 14
+  const lane = laneCount > 1 ? laneIndex - (laneCount - 1) / 2 : 0
+  const ox = perpX * lane
+  const oy = perpY * lane
+  return {
+    x1: x1 + ox,
+    y1: y1 + oy,
+    x2: x2 + ox,
+    y2: y2 + oy,
+    cx: (x1 + x2) / 2 + ox,
+    cy: (y1 + y2) / 2 + oy,
+  }
+}
+
+export function orgChartEdgesWithLanes(edges: OrgChartEdge[]): Array<{ edge: OrgChartEdge; laneIndex: number; laneCount: number }> {
+  const groups = new Map<string, OrgChartEdge[]>()
+  for (const e of edges) {
+    const key = `${e.fromId}\0${e.toId}`
+    const g = groups.get(key) ?? []
+    g.push(e)
+    groups.set(key, g)
+  }
+  const out: Array<{ edge: OrgChartEdge; laneIndex: number; laneCount: number }> = []
+  for (const group of groups.values()) {
+    group.forEach((edge, laneIndex) => {
+      out.push({ edge, laneIndex, laneCount: group.length })
+    })
+  }
+  return out
 }
 
 export function newOrgChartNode(
@@ -117,15 +237,22 @@ export function orgChartToSvg(doc: OrganizationChartDoc, width = 760, height = 9
   lines.push(`<rect width="100%" height="100%" fill="#f8fafc"/>`)
   lines.push(`<text x="24" y="32" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#0f172a">${escapeXml(doc.title)}</text>`)
 
-  for (const n of doc.nodes) {
-    if (!n.parentId) continue
-    const parent = byId.get(n.parentId)
-    if (!parent) continue
-    const x1 = parent.x + NODE_W / 2
-    const y1 = parent.y + NODE_H
-    const x2 = n.x + NODE_W / 2
-    const y2 = n.y
-    lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#94a3b8" stroke-width="2"/>`)
+  for (const { edge, laneIndex, laneCount } of orgChartEdgesWithLanes(doc.edges)) {
+    const from = byId.get(edge.fromId)
+    const to = byId.get(edge.toId)
+    if (!from || !to) continue
+    const g = orgChartEdgeGeometry(from, to, laneIndex, laneCount)
+    lines.push(`<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="#94a3b8" stroke-width="2"/>`)
+    if (edge.label?.trim()) {
+      const label = escapeXml(truncate(edge.label.trim(), 28))
+      const w = Math.min(180, Math.max(60, label.length * 6 + 14))
+      lines.push(
+        `<rect x="${g.cx - w / 2}" y="${g.cy - 9}" width="${w}" height="18" rx="4" fill="#ffffff" stroke="#94a3b8" stroke-width="1"/>`,
+      )
+      lines.push(
+        `<text x="${g.cx}" y="${g.cy + 4}" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="600" fill="#475569">${label}</text>`,
+      )
+    }
   }
 
   for (const n of doc.nodes) {
@@ -164,12 +291,21 @@ export function downloadOrgChartSvg(doc: OrganizationChartDoc, fileName?: string
 }
 
 export function buildOrgChartShareMailto(doc: OrganizationChartDoc, userLabel: string): string {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n.label]))
   const rows = doc.nodes
     .map((n) => `- ${n.label}${n.jobTitle ? ` (${n.jobTitle})` : ""}${n.linkedUserId ? " [linked user]" : ""}`)
     .join("\n")
+  const lines = doc.edges
+    .map((e) => {
+      const from = byId.get(e.fromId) ?? e.fromId
+      const to = byId.get(e.toId) ?? e.toId
+      const label = e.label?.trim() ? ` · ${e.label.trim()}` : ""
+      return `• ${from} → ${to}${label}`
+    })
+    .join("\n")
   const subject = encodeURIComponent(`Tradesman org chart review — ${userLabel}`)
   const body = encodeURIComponent(
-    `Please review my organization chart setup.\n\nAccount: ${userLabel}\nChart: ${doc.title}\n\nRoles:\n${rows}\n\n(Future: estimates, POs, work orders, and approvals will route through this chart.)`,
+    `Please review my organization chart setup.\n\nAccount: ${userLabel}\nChart: ${doc.title}\n\nRoles:\n${rows}\n\nReporting lines:\n${lines || "(none)"}\n\n(Future: estimates, POs, work orders, and approvals will route through this chart.)`,
   )
   return `mailto:admin@tradesman-us.com?subject=${subject}&body=${body}`
 }

@@ -25,6 +25,7 @@ export type DashboardOptionalQuickLinkId =
   | "operations_purchase_orders"
   | "operations_invoicing"
   | "operations_inventory"
+  | "growth"
 
 export type DashboardQuickLinkId = DashboardCoreQuickLinkId | DashboardOptionalQuickLinkId
 
@@ -54,6 +55,7 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
   "operations_purchase_orders",
   "operations_invoicing",
   "operations_inventory",
+  "growth",
 ])
 
 export const ALL_DASHBOARD_LINK_IDS = new Set<DashboardQuickLinkId>([
@@ -79,6 +81,7 @@ export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
   "operations_purchase_orders",
   "operations_invoicing",
   "operations_inventory",
+  "growth",
 ]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [

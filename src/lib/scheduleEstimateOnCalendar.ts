@@ -9,6 +9,7 @@ import {
 import { mergeMaterialsListsForCalendar, materialDescriptionsFromQuoteItemRows } from "./quoteItemMath"
 import { parseLocalDateTime } from "./parseLocalDateTime"
 import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
+import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
 import type { PortalSettingItem } from "../types/portal-builder"
 
@@ -95,31 +96,20 @@ export async function scheduleEstimateOnCalendar(
   const starts = series ? computeOccurrenceStarts(start, series) : [start]
   const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
-  let noDup = false
-  try {
-    noDup = localStorage.getItem("calendar_noDuplicateTimes") === "true"
-  } catch {
-    noDup = false
-  }
+  const noDup = readCalendarNoDuplicateTimesSetting()
   const selectedTarget = input.targetUserId || input.userId
   const eventOwnerUserId = input.assignToScopedUser ? selectedTarget : input.authUserId || selectedTarget
   if (noDup && newRanges.length > 0) {
-    const windowStart = newRanges[0].s
-    const windowEnd = newRanges[newRanges.length - 1].e
-    const { data: existing } = await input.supabase
-      .from("calendar_events")
-      .select("start_at, end_at")
-      .eq("user_id", eventOwnerUserId)
-      .is("removed_at", null)
-      .lt("start_at", windowEnd.toISOString())
-      .gt("end_at", windowStart.toISOString())
-    const exRows = (existing ?? []) as { start_at: string; end_at: string }[]
-    for (const nr of newRanges) {
-      for (const ex of exRows) {
-        if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
-          return { ok: false, error: "One or more recurring times overlap an existing calendar event." }
-        }
+    try {
+      const conflicts = await findCalendarScheduleConflicts(input.supabase, {
+        userId: eventOwnerUserId,
+        ranges: newRanges,
+      })
+      if (conflicts.length > 0) {
+        return { ok: false, error: "One or more recurring times overlap an existing calendar event." }
       }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
     for (let i = 0; i < newRanges.length; i += 1) {
       for (let j = i + 1; j < newRanges.length; j += 1) {

@@ -31,6 +31,13 @@ import {
   type WorkflowNodeColor,
 } from "../../lib/businessWorkflow"
 import { formatAppError } from "../../lib/formatAppError"
+import {
+  canvasPointFromEvent,
+  connectorIn,
+  connectorOut,
+  hitTestDiagramNode,
+  type WireDragState,
+} from "../../lib/diagramWire"
 
 type Props = {
   setPage: (page: string) => void
@@ -54,6 +61,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   const [newArrowApproval, setNewArrowApproval] = useState<WorkflowEdgeApproval>("needs_approval")
   const [newArrowRequirement, setNewArrowRequirement] = useState("")
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null)
+  const [wireDrag, setWireDrag] = useState<WireDragState | null>(null)
+  const [wireDropTargetId, setWireDropTargetId] = useState<string | null>(null)
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
   const clipboardRef = useRef<{ kind: "node"; node: WorkflowNode } | null>(null)
@@ -129,6 +138,12 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
+      if (wireDrag && canvasRef.current) {
+        const pt = canvasPointFromEvent(e, canvasRef.current)
+        setWireDrag((prev) => (prev ? { ...prev, x: pt.x, y: pt.y } : prev))
+        setWireDropTargetId(hitTestDiagramNode(nodes, pt.x, pt.y, NODE_W, NODE_H))
+        return
+      }
       if (!drag || !canvasRef.current) return
       const rect = canvasRef.current.getBoundingClientRect()
       const x = Math.max(8, Math.min(rect.width - NODE_W - 8, e.clientX - rect.left - drag.offsetX))
@@ -138,10 +153,77 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         nodes: prev.nodes.map((n) => (n.id === drag.id ? { ...n, x, y } : n)),
       }))
     },
-    [drag, updateDoc],
+    [drag, wireDrag, nodes, updateDoc],
   )
 
-  const endDrag = useCallback(() => setDrag(null), [])
+  const completeWireDrag = useCallback(
+    (targetNodeId: string | null) => {
+      if (!wireDrag) return
+      if (!targetNodeId) {
+        setWireDrag(null)
+        setWireDropTargetId(null)
+        return
+      }
+      if (wireDrag.kind === "new") {
+        if (wireDrag.fromId === targetNodeId) {
+          setWireDrag(null)
+          setWireDropTargetId(null)
+          return
+        }
+        const req = newArrowRequirement.trim()
+        const duplicate = doc.edges.some(
+          (edge) =>
+            edge.fromId === wireDrag.fromId &&
+            edge.toId === targetNodeId &&
+            edge.approval === newArrowApproval &&
+            (edge.requirement ?? "") === req,
+        )
+        if (!duplicate) {
+          const edge = newWorkflowEdge(wireDrag.fromId, targetNodeId, newArrowApproval, req)
+          updateDoc((prev) => ({ ...prev, edges: [...prev.edges, edge] }))
+          setSelectedEdgeId(edge.id)
+          setSelectedId(targetNodeId)
+        }
+        setLinkFromId(null)
+        setNewArrowRequirement("")
+      } else {
+        const edge = doc.edges.find((row) => row.id === wireDrag.edgeId)
+        if (edge) {
+          updateDoc((prev) => ({
+            ...prev,
+            edges: prev.edges.map((row) => {
+              if (row.id !== wireDrag.edgeId) return row
+              if (wireDrag.end === "from") {
+                return targetNodeId !== row.toId ? { ...row, fromId: targetNodeId } : row
+              }
+              return targetNodeId !== row.fromId ? { ...row, toId: targetNodeId } : row
+            }),
+          }))
+          setSelectedEdgeId(wireDrag.edgeId)
+          setSelectedId(null)
+        }
+      }
+      setWireDrag(null)
+      setWireDropTargetId(null)
+    },
+    [wireDrag, doc.edges, newArrowApproval, newArrowRequirement, updateDoc],
+  )
+
+  const endDrag = useCallback(
+    (e?: React.PointerEvent) => {
+      if (wireDrag && canvasRef.current && e) {
+        const pt = canvasPointFromEvent(e, canvasRef.current)
+        completeWireDrag(hitTestDiagramNode(nodes, pt.x, pt.y, NODE_W, NODE_H))
+        return
+      }
+      if (wireDrag) {
+        setWireDrag(null)
+        setWireDropTargetId(null)
+      }
+      setDrag(null)
+    },
+    [wireDrag, nodes, completeWireDrag],
+  )
 
   function handleNodeClick(nodeId: string) {
     if (linkFromId) {
@@ -214,6 +296,39 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     if (!selectedId) return
     setLinkFromId(selectedId)
     setSelectedEdgeId(null)
+  }
+
+  function startWireFromNode(nodeId: string, e: React.PointerEvent) {
+    if (!canvasRef.current) return
+    const node = nodeById.get(nodeId)
+    if (!node) return
+    const out = connectorOut(node, NODE_W, NODE_H)
+    const pt = canvasPointFromEvent(e, canvasRef.current)
+    setWireDrag({ kind: "new", fromId: nodeId, anchorX: out.x, anchorY: out.y, x: pt.x, y: pt.y })
+    setLinkFromId(null)
+    setSelectedEdgeId(null)
+    setSelectedId(nodeId)
+  }
+
+  function startReconnectWire(edge: WorkflowEdge, end: "from" | "to", _e: React.PointerEvent) {
+    if (!canvasRef.current) return
+    const from = nodeById.get(edge.fromId)
+    const to = nodeById.get(edge.toId)
+    if (!from || !to) return
+    const anchor = end === "from" ? connectorIn(to, NODE_W) : connectorOut(from, NODE_W, NODE_H)
+    const g = workflowEdgeGeometry(from, to, 0, 1)
+    setWireDrag({
+      kind: "reconnect",
+      edgeId: edge.id,
+      end,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+      x: end === "from" ? g.x1 : g.x2,
+      y: end === "from" ? g.y1 : g.y2,
+    })
+    setSelectedEdgeId(edge.id)
+    setSelectedId(null)
+    setLinkFromId(null)
   }
 
   function resetExample() {
@@ -341,7 +456,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       </div>
 
       <p style={{ margin: "0 0 12px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
-        Drag steps to lay out your process. Color each box, add multiple arrows, and label each arrow with requirements
+        Drag steps to lay out your process. Drag from a step&apos;s connector dot to another step to draw an arrow, or
+        drag an arrow endpoint when selected. Color each box, add multiple arrows, and label each arrow with requirements
         (e.g. estimate approvals, purchase order approvals). Green = approved, red = needs approval from target, yellow =
         multiple approvals.
       </p>
@@ -397,8 +513,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           <div
             ref={canvasRef}
             onPointerMove={onPointerMove}
-            onPointerUp={endDrag}
-            onPointerLeave={endDrag}
+            onPointerUp={(e) => endDrag(e)}
+            onPointerLeave={(e) => endDrag(e)}
             onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
@@ -417,6 +533,18 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                   </marker>
                 ))}
               </defs>
+              {wireDrag ? (
+                <line
+                  x1={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.x : wireDrag.anchorX}
+                  y1={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.y : wireDrag.anchorY}
+                  x2={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.anchorX : wireDrag.x}
+                  y2={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.anchorY : wireDrag.y}
+                  stroke="#64748b"
+                  strokeWidth={2.5}
+                  strokeDasharray="7 5"
+                  style={{ pointerEvents: "none" }}
+                />
+              ) : null}
               {edgesWithLanes.map(({ edge, laneIndex, laneCount }) => {
                 const from = nodeById.get(edge.fromId)
                 const to = nodeById.get(edge.toId)
@@ -479,6 +607,36 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                         </text>
                       </g>
                     ) : null}
+                    {selected ? (
+                      <>
+                        <circle
+                          cx={g.x1}
+                          cy={g.y1}
+                          r={7}
+                          fill="#ffffff"
+                          stroke={stroke}
+                          strokeWidth={2}
+                          style={{ pointerEvents: "auto", cursor: "grab" }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            startReconnectWire(edge, "from", e)
+                          }}
+                        />
+                        <circle
+                          cx={g.x2}
+                          cy={g.y2}
+                          r={7}
+                          fill="#ffffff"
+                          stroke={stroke}
+                          strokeWidth={2}
+                          style={{ pointerEvents: "auto", cursor: "grab" }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            startReconnectWire(edge, "to", e)
+                          }}
+                        />
+                      </>
+                    ) : null}
                   </g>
                 )
               })}
@@ -490,7 +648,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                 node={n}
                 selected={selectedId === n.id}
                 linkSource={linkFromId === n.id}
-                linkMode={Boolean(linkFromId)}
+                linkMode={Boolean(linkFromId) || Boolean(wireDrag)}
+                wireDropTarget={wireDropTargetId === n.id}
                 onSelect={() => handleNodeClick(n.id)}
                 onLabelChange={(label) =>
                   updateDoc((prev) => ({
@@ -499,9 +658,10 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                   }))
                 }
                 onDragStart={(offsetX, offsetY) => {
-                  if (linkFromId) return
+                  if (linkFromId || wireDrag) return
                   setDrag({ id: n.id, offsetX, offsetY })
                 }}
+                onStartWire={(e) => startWireFromNode(n.id, e)}
                 onContextMenu={(e) => openContextMenu(e, "node", n.id)}
                 assignedLabel={
                   n.assignedUserId ? members.find((m) => m.id === n.assignedUserId)?.displayName ?? null : null
@@ -794,20 +954,24 @@ function WorkflowNodeCard({
   selected,
   linkSource,
   linkMode,
+  wireDropTarget,
   assignedLabel,
   onSelect,
   onLabelChange,
   onDragStart,
+  onStartWire,
   onContextMenu,
 }: {
   node: WorkflowNode
   selected: boolean
   linkSource: boolean
   linkMode: boolean
+  wireDropTarget?: boolean
   assignedLabel?: string | null
   onSelect: () => void
   onLabelChange: (label: string) => void
   onDragStart: (offsetX: number, offsetY: number) => void
+  onStartWire: (e: React.PointerEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const pres = workflowNodePresentation(node)
@@ -822,17 +986,20 @@ function WorkflowNodeCard({
         borderRadius: 10,
         border: linkSource
           ? "2px solid #ca8a04"
-          : selected
-            ? `2px solid ${theme.primary}`
-            : `1px solid ${pres.border}`,
-        background: linkSource ? "#fefce8" : pres.fill,
-        boxShadow: selected || linkSource ? "0 4px 14px rgba(249,115,22,0.18)" : "0 2px 8px rgba(15,23,42,0.06)",
+          : wireDropTarget
+            ? "2px solid #16a34a"
+            : selected
+              ? `2px solid ${theme.primary}`
+              : `1px solid ${pres.border}`,
+        background: linkSource ? "#fefce8" : wireDropTarget ? "#f0fdf4" : pres.fill,
+        boxShadow: selected || linkSource || wireDropTarget ? "0 4px 14px rgba(249,115,22,0.18)" : "0 2px 8px rgba(15,23,42,0.06)",
         padding: "8px 10px",
         cursor: linkMode ? "crosshair" : "grab",
         touchAction: "none",
-        zIndex: selected || linkSource ? 2 : 1,
+        zIndex: selected || linkSource || wireDropTarget ? 2 : 1,
       }}
       onPointerDown={(e) => {
+        if ((e.target as HTMLElement).dataset.wirePort === "out") return
         e.stopPropagation()
         onSelect()
         if (linkMode) return
@@ -861,6 +1028,30 @@ function WorkflowNodeCard({
       ) : linkSource ? (
         <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 2 }}>Arrow starts here — click target</div>
       ) : null}
+      <button
+        type="button"
+        data-wire-port="out"
+        title="Drag to another step to connect"
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          onStartWire(e)
+          ;(e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId)
+        }}
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: -7,
+          transform: "translateX(-50%)",
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          border: `2px solid ${theme.primary}`,
+          background: "#fff",
+          cursor: "crosshair",
+          padding: 0,
+          zIndex: 3,
+        }}
+      />
     </div>
   )
 }

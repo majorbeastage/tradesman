@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase"
 import { useAuth } from "../contexts/AuthContext"
 import {
   isOperationsPackageEnabled,
+  isGrowthTabEnabled,
   operationsSubModuleEnabled,
 } from "../types/portal-builder"
 import {
@@ -82,6 +83,8 @@ type Props = {
     operationsPurchaseOrders: string
     operationsInvoicing: string
     operationsInventory: string
+    growth: string
+    growthSub: string
     customizeHint: string
     customizeDone: string
     customizePaletteTitle: string
@@ -664,6 +667,7 @@ export default function DashboardQuickActions(props: Props) {
       if (id === "custom_receipt") return Boolean(props.showCustomReceiptShortcut)
       if (id === "setup_guide") return Boolean(onOpenSetupGuide)
       if (id.startsWith("operations")) return operationsQuickLinkVisible(id as DashboardOptionalQuickLinkId)
+      if (id === "growth") return isGrowthTabEnabled(portalConfig)
       return true
     },
     [
@@ -674,6 +678,7 @@ export default function DashboardQuickActions(props: Props) {
       props.showCustomReceiptShortcut,
       onOpenSetupGuide,
       operationsQuickLinkVisible,
+      portalConfig,
     ],
   )
 
@@ -936,6 +941,24 @@ export default function DashboardQuickActions(props: Props) {
           onContextMenu={(e) => openStyleMenu(id, e)}
           tileStyle={tileStyle}
           onClick={() => !customize && go("reporting")}
+        />
+      )
+    }
+    if (id === "growth") {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={labels.growth}
+          sublabel={labels.growthSub}
+          accent="#16a34a"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          onContextMenu={(e) => openStyleMenu(id, e)}
+          tileStyle={tileStyle}
+          onClick={() => !customize && go("growth")}
         />
       )
     }
@@ -1301,6 +1324,8 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.operationsInvoicing
     case "operations_inventory":
       return labels.operationsInventory
+    case "growth":
+      return labels.growth
     case "setup_guide":
       return labels.setupGuide
     default:

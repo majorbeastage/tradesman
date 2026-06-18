@@ -6,6 +6,13 @@ import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { saveJobTitleNicknameForProfile } from "../../lib/jobTitleNickname"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
+import {
+  canvasPointFromEvent,
+  connectorIn,
+  connectorOut,
+  hitTestDiagramNode,
+  type WireDragState,
+} from "../../lib/diagramWire"
 import { DiagramContextMenu, type DiagramMenuAction } from "../../components/diagram/DiagramContextMenu"
 import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import {
@@ -14,9 +21,14 @@ import {
   downloadOrgChartSvg,
   loadOrganizationChartFromMetadata,
   mergeOrganizationChartMetadata,
+  newOrgChartEdge,
   newOrgChartNode,
+  orgChartEdgeGeometry,
+  orgChartEdgesWithLanes,
   orgChartToSvg,
+  syncOrgChartParentIds,
   type OrganizationChartDoc,
+  type OrgChartEdge,
   type OrgChartNode,
 } from "../../lib/organizationChart"
 
@@ -36,8 +48,13 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+  const [linkFromId, setLinkFromId] = useState<string | null>(null)
+  const [newLineLabel, setNewLineLabel] = useState("")
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "canvas"; id?: string } | null>(null)
+  const [wireDrag, setWireDrag] = useState<WireDragState | null>(null)
+  const [wireDropTargetId, setWireDropTargetId] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
   const clipboardRef = useRef<OrgChartNode | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<number | null>(null)
@@ -99,7 +116,12 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const updateDoc = useCallback(
     (patch: Partial<OrganizationChartDoc> | ((prev: OrganizationChartDoc) => OrganizationChartDoc)) => {
       setDoc((prev) => {
-        const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
+        const raw = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
+        const next: OrganizationChartDoc = {
+          ...raw,
+          edges: raw.edges ?? prev.edges ?? [],
+          nodes: syncOrgChartParentIds(raw.nodes ?? prev.nodes, raw.edges ?? prev.edges ?? []),
+        }
         if (saveTimer.current) window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => persist(next), 800)
         return next
@@ -107,6 +129,9 @@ export default function OrganizationChartPage({ setPage }: Props) {
     },
     [persist],
   )
+
+  const nodeById = useMemo(() => new Map(doc.nodes.map((n) => [n.id, n])), [doc.nodes])
+  const edgesWithLanes = useMemo(() => orgChartEdgesWithLanes(doc.edges), [doc.edges])
 
   const patchNode = useCallback(
     (id: string, patch: Partial<OrgChartNode>) => {
@@ -118,27 +143,185 @@ export default function OrganizationChartPage({ setPage }: Props) {
     [updateDoc],
   )
 
+  const patchEdge = useCallback(
+    (edgeId: string, patch: Partial<OrgChartEdge>) => {
+      updateDoc((prev) => ({
+        ...prev,
+        edges: prev.edges.map((e) => (e.id === edgeId ? { ...e, ...patch } : e)),
+      }))
+    },
+    [updateDoc],
+  )
+
+  const removeEdge = useCallback(
+    (edgeId: string) => {
+      updateDoc((prev) => ({ ...prev, edges: prev.edges.filter((e) => e.id !== edgeId) }))
+      if (selectedEdgeId === edgeId) setSelectedEdgeId(null)
+    },
+    [selectedEdgeId, updateDoc],
+  )
+
   const onPointerMove = useCallback(
     (e: ReactPointerEvent) => {
+      if (wireDrag && canvasRef.current) {
+        const pt = canvasPointFromEvent(e, canvasRef.current)
+        setWireDrag((prev) => (prev ? { ...prev, x: pt.x, y: pt.y } : prev))
+        setWireDropTargetId(hitTestDiagramNode(doc.nodes, pt.x, pt.y, NODE_W, NODE_H))
+        return
+      }
       if (!drag || !canvasRef.current) return
       const rect = canvasRef.current.getBoundingClientRect()
       const x = Math.max(8, Math.min(rect.width - NODE_W - 8, e.clientX - rect.left - drag.offsetX))
       const y = Math.max(8, e.clientY - rect.top - drag.offsetY)
       patchNode(drag.id, { x, y })
     },
-    [drag, patchNode],
+    [drag, wireDrag, doc.nodes, patchNode],
   )
 
-  const endDrag = useCallback(() => setDrag(null), [])
+  const completeWireDrag = useCallback(
+    (targetNodeId: string | null) => {
+      if (!wireDrag) return
+      if (!targetNodeId) {
+        setWireDrag(null)
+        setWireDropTargetId(null)
+        return
+      }
+      if (wireDrag.kind === "new") {
+        if (wireDrag.fromId === targetNodeId) {
+          setWireDrag(null)
+          setWireDropTargetId(null)
+          return
+        }
+        const label = newLineLabel.trim()
+        const duplicate = doc.edges.some((e) => e.fromId === wireDrag.fromId && e.toId === targetNodeId && (e.label ?? "") === label)
+        if (!duplicate) {
+          const edge = newOrgChartEdge(wireDrag.fromId, targetNodeId, label)
+          updateDoc((prev) => ({ ...prev, edges: [...prev.edges, edge] }))
+          setSelectedEdgeId(edge.id)
+          setSelectedId(targetNodeId)
+        }
+        setLinkFromId(null)
+        setNewLineLabel("")
+      } else {
+        const edge = doc.edges.find((row) => row.id === wireDrag.edgeId)
+        if (edge) {
+          updateDoc((prev) => ({
+            ...prev,
+            edges: prev.edges.map((row) => {
+              if (row.id !== wireDrag.edgeId) return row
+              if (wireDrag.end === "from") {
+                return targetNodeId !== row.toId ? { ...row, fromId: targetNodeId } : row
+              }
+              return targetNodeId !== row.fromId ? { ...row, toId: targetNodeId } : row
+            }),
+          }))
+          setSelectedEdgeId(wireDrag.edgeId)
+          setSelectedId(null)
+        }
+      }
+      setWireDrag(null)
+      setWireDropTargetId(null)
+    },
+    [wireDrag, doc.edges, newLineLabel, updateDoc],
+  )
 
-  const selected = doc.nodes.find((n) => n.id === selectedId) ?? null
+  const endDrag = useCallback(
+    (e?: ReactPointerEvent) => {
+      if (wireDrag && canvasRef.current && e) {
+        const pt = canvasPointFromEvent(e, canvasRef.current)
+        completeWireDrag(hitTestDiagramNode(doc.nodes, pt.x, pt.y, NODE_W, NODE_H))
+        return
+      }
+      if (wireDrag) {
+        setWireDrag(null)
+        setWireDropTargetId(null)
+      }
+      setDrag(null)
+    },
+    [wireDrag, doc.nodes, completeWireDrag],
+  )
+
+  const selected = selectedId ? nodeById.get(selectedId) ?? null : null
   const rootNode = doc.nodes.find((n) => !n.parentId) ?? doc.nodes[0]
 
-  function addChild() {
-    const parent = selected ?? rootNode
+  function handleNodeClick(nodeId: string) {
+    if (linkFromId) {
+      if (linkFromId === nodeId) {
+        setLinkFromId(null)
+        return
+      }
+      const label = newLineLabel.trim()
+      const duplicate = doc.edges.some((e) => e.fromId === linkFromId && e.toId === nodeId && (e.label ?? "") === label)
+      if (!duplicate) {
+        const edge = newOrgChartEdge(linkFromId, nodeId, label)
+        updateDoc((prev) => ({ ...prev, edges: [...prev.edges, edge] }))
+        setSelectedEdgeId(edge.id)
+      }
+      setLinkFromId(null)
+      setNewLineLabel("")
+      setSelectedId(nodeId)
+      return
+    }
+    setSelectedId(nodeId)
+    setSelectedEdgeId(null)
+  }
+
+  function startWireFromNode(nodeId: string, e: ReactPointerEvent) {
+    if (!canvasRef.current) return
+    const node = nodeById.get(nodeId)
+    if (!node) return
+    const out = connectorOut(node, NODE_W, NODE_H)
+    const pt = canvasPointFromEvent(e, canvasRef.current)
+    setWireDrag({ kind: "new", fromId: nodeId, anchorX: out.x, anchorY: out.y, x: pt.x, y: pt.y })
+    setLinkFromId(null)
+    setSelectedEdgeId(null)
+    setSelectedId(nodeId)
+  }
+
+  function startReconnectWire(edge: OrgChartEdge, end: "from" | "to", _e: ReactPointerEvent) {
+    if (!canvasRef.current) return
+    const from = nodeById.get(edge.fromId)
+    const to = nodeById.get(edge.toId)
+    if (!from || !to) return
+    const anchor = end === "from" ? connectorIn(to, NODE_W) : connectorOut(from, NODE_W, NODE_H)
+    const g = orgChartEdgeGeometry(from, to, 0, 1)
+    setWireDrag({
+      kind: "reconnect",
+      edgeId: edge.id,
+      end,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+      x: end === "from" ? g.x1 : g.x2,
+      y: end === "from" ? g.y1 : g.y2,
+    })
+    setSelectedEdgeId(edge.id)
+    setSelectedId(null)
+    setLinkFromId(null)
+  }
+
+  function startLinkFromSelected() {
+    if (!selectedId) return
+    setLinkFromId(selectedId)
+    setSelectedEdgeId(null)
+  }
+
+  function addChild(parentIdOverride?: string) {
+    const parent = (parentIdOverride ? nodeById.get(parentIdOverride) : null) ?? selected ?? rootNode
     if (!parent) return
-    const childCount = doc.nodes.filter((n) => n.parentId === parent.id).length
+    const childCount = doc.edges.filter((e) => e.fromId === parent.id).length
     const node = newOrgChartNode("New role", parent.id, parent.x + childCount * 40 - 40, parent.y + 116)
+    const edge = newOrgChartEdge(parent.id, node.id)
+    updateDoc((prev) => ({
+      ...prev,
+      nodes: [...prev.nodes, node],
+      edges: [...prev.edges, edge],
+    }))
+    setSelectedId(node.id)
+    setSelectedEdgeId(edge.id)
+  }
+
+  function addRootRole() {
+    const node = newOrgChartNode("New role", null, 40 + doc.nodes.length * 24, 40)
     updateDoc((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
     setSelectedId(node.id)
   }
@@ -147,16 +330,18 @@ export default function OrganizationChartPage({ setPage }: Props) {
     if (!selectedId) return
     updateDoc((prev) => ({
       ...prev,
-      nodes: prev.nodes
-        .filter((n) => n.id !== selectedId && n.parentId !== selectedId)
-        .map((n) => (n.parentId === selectedId ? { ...n, parentId: null } : n)),
+      nodes: prev.nodes.filter((n) => n.id !== selectedId),
+      edges: prev.edges.filter((e) => e.fromId !== selectedId && e.toId !== selectedId),
     }))
     setSelectedId(null)
+    setSelectedEdgeId(null)
   }
 
   function resetExample() {
     if (!window.confirm("Replace your org chart with the example layout?")) return
     updateDoc(createExampleOrganizationChart())
+    setLinkFromId(null)
+    setSelectedEdgeId(null)
   }
 
   function shareWithAdmin() {
@@ -177,10 +362,16 @@ export default function OrganizationChartPage({ setPage }: Props) {
 
   const memberById = new Map(members.map((m) => [m.id, m]))
 
-  function openContextMenu(e: React.MouseEvent, target: "node" | "canvas", id?: string) {
+  function openContextMenu(e: React.MouseEvent, target: "node" | "edge" | "canvas", id?: string) {
     e.preventDefault()
     e.stopPropagation()
-    if (id) setSelectedId(id)
+    if (target === "node" && id) {
+      setSelectedId(id)
+      setSelectedEdgeId(null)
+    } else if (target === "edge" && id) {
+      setSelectedEdgeId(id)
+      setSelectedId(null)
+    }
     setContextMenu({ x: e.clientX, y: e.clientY, target, id })
   }
 
@@ -191,9 +382,13 @@ export default function OrganizationChartPage({ setPage }: Props) {
         { id: "rename", label: "Rename (edit in box)" },
         { id: "copy", label: "Copy role" },
         { id: "paste", label: "Paste role", disabled: !clipboardRef.current },
+        { id: "add_line", label: "Add reporting line from here" },
         { id: "add_child", label: "Add child role" },
         { id: "remove", label: "Remove role", danger: true },
       ]
+    }
+    if (contextMenu.target === "edge" && contextMenu.id) {
+      return [{ id: "remove", label: "Remove line", danger: true }]
     }
     return [{ id: "paste", label: "Paste role", disabled: !clipboardRef.current }]
   }, [contextMenu])
@@ -201,7 +396,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
   function handleContextAction(actionId: string) {
     if (!contextMenu) return
     if (contextMenu.target === "node" && contextMenu.id) {
-      const node = doc.nodes.find((n) => n.id === contextMenu.id)
+      const node = nodeById.get(contextMenu.id)
       if (!node) return
       if (actionId === "copy") clipboardRef.current = { ...node }
       if (actionId === "paste" && clipboardRef.current) {
@@ -212,14 +407,19 @@ export default function OrganizationChartPage({ setPage }: Props) {
         updateDoc((prev) => ({ ...prev, nodes: [...prev.nodes, copy] }))
         setSelectedId(copy.id)
       }
-      if (actionId === "add_child") {
+      if (actionId === "add_line") {
         setSelectedId(contextMenu.id)
-        addChild()
+        startLinkFromSelected()
+      }
+      if (actionId === "add_child") {
+        addChild(contextMenu.id)
       }
       if (actionId === "remove") {
         setSelectedId(contextMenu.id)
         removeSelected()
       }
+    } else if (contextMenu.target === "edge" && contextMenu.id && actionId === "remove") {
+      removeEdge(contextMenu.id)
     } else if (actionId === "paste" && clipboardRef.current) {
       const src = clipboardRef.current
       const parent = rootNode
@@ -232,6 +432,18 @@ export default function OrganizationChartPage({ setPage }: Props) {
     }
   }
 
+  const selectedEdge = selectedEdgeId ? doc.edges.find((e) => e.id === selectedEdgeId) ?? null : null
+  const selectedNodeEdges = selectedId ? doc.edges.filter((e) => e.fromId === selectedId || e.toId === selectedId) : []
+
+  const dockTitle = selectedEdge ? "Reporting line" : selected ? "Role" : linkFromId ? "Adding line" : "Properties"
+  const dockSubtitle = selectedEdge
+    ? "Drag endpoints on the chart or edit from/to roles here."
+    : selected
+      ? "Link users, manage reporting lines, and add child roles."
+      : linkFromId
+        ? "Click a target role on the chart, or drag from a connector dot."
+        : "Click a role or line on the chart. Right-click for copy, paste, add line, and remove."
+
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 20px 40px" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
@@ -243,8 +455,8 @@ export default function OrganizationChartPage({ setPage }: Props) {
       </div>
 
       <p style={{ margin: "0 0 16px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
-        Drag roles into your company structure. Link nodes to signed-in Tradesman users and set job titles — future
-        estimates, purchase orders, work orders, scheduling, receipts, and approvals will route through this chart.
+        Drag roles into your company structure. Drag from a role&apos;s connector dot to another role to draw a reporting
+        line, or select a line and drag its endpoints to reconnect. Link nodes to Tradesman users and set job titles.
       </p>
 
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
@@ -256,9 +468,25 @@ export default function OrganizationChartPage({ setPage }: Props) {
           style={{ ...theme.formInput, flex: "1 1 220px", fontWeight: 700 }}
           placeholder="Chart title"
         />
-        <button type="button" onClick={addChild} style={primaryBtn}>
+        <button type="button" onClick={() => addChild()} style={primaryBtn}>
           + Add role
         </button>
+        <button type="button" onClick={addRootRole} style={secondaryBtn}>
+          + Top-level role
+        </button>
+        <button
+          type="button"
+          onClick={startLinkFromSelected}
+          disabled={!selectedId}
+          style={{ ...secondaryBtn, opacity: selectedId ? 1 : 0.55 }}
+        >
+          + Add line
+        </button>
+        {linkFromId ? (
+          <button type="button" onClick={() => setLinkFromId(null)} style={{ ...secondaryBtn, borderColor: "#fecaca", color: "#b91c1c" }}>
+            Cancel line
+          </button>
+        ) : null}
         <button type="button" onClick={() => downloadOrgChartSvg(doc)} style={secondaryBtn}>
           Download SVG
         </button>
@@ -282,8 +510,8 @@ export default function OrganizationChartPage({ setPage }: Props) {
           <div
             ref={canvasRef}
             onPointerMove={onPointerMove}
-            onPointerUp={endDrag}
-            onPointerLeave={endDrag}
+            onPointerUp={(e) => endDrag(e)}
+            onPointerLeave={(e) => endDrag(e)}
             onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
@@ -294,17 +522,100 @@ export default function OrganizationChartPage({ setPage }: Props) {
               overflow: "auto",
             }}
           >
-            <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} aria-hidden>
-              {doc.nodes.map((n) => {
-                if (!n.parentId) return null
-                const parent = doc.nodes.find((p) => p.id === n.parentId)
-                if (!parent) return null
-                const x1 = parent.x + NODE_W / 2
-                const y1 = parent.y + NODE_H
-                const x2 = n.x + NODE_W / 2
-                const y2 = n.y
-                return <line key={`${parent.id}-${n.id}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#94a3b8" strokeWidth={2} />
+            <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} aria-hidden={false}>
+              {wireDrag ? (
+                <line
+                  x1={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.x : wireDrag.anchorX}
+                  y1={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.y : wireDrag.anchorY}
+                  x2={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.anchorX : wireDrag.x}
+                  y2={wireDrag.kind === "reconnect" && wireDrag.end === "from" ? wireDrag.anchorY : wireDrag.y}
+                  stroke="#64748b"
+                  strokeWidth={2.5}
+                  strokeDasharray="7 5"
+                />
+              ) : null}
+              {edgesWithLanes.map(({ edge, laneIndex, laneCount }) => {
+                const from = nodeById.get(edge.fromId)
+                const to = nodeById.get(edge.toId)
+                if (!from || !to) return null
+                const g = orgChartEdgeGeometry(from, to, laneIndex, laneCount)
+                const selected = selectedEdgeId === edge.id
+                const label = edge.label?.trim()
+                const labelW = label ? Math.min(180, Math.max(60, label.length * 6 + 14)) : 0
+                return (
+                  <g key={edge.id}>
+                    <line
+                      x1={g.x1}
+                      y1={g.y1}
+                      x2={g.x2}
+                      y2={g.y2}
+                      stroke="transparent"
+                      strokeWidth={14}
+                      style={{ pointerEvents: "auto", cursor: "pointer" }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedEdgeId(edge.id)
+                        setSelectedId(null)
+                        setLinkFromId(null)
+                      }}
+                      onContextMenu={(e) => openContextMenu(e, "edge", edge.id)}
+                    />
+                    <line
+                      x1={g.x1}
+                      y1={g.y1}
+                      x2={g.x2}
+                      y2={g.y2}
+                      stroke="#64748b"
+                      strokeWidth={selected ? 3.5 : 2}
+                      markerEnd="url(#org-arrow)"
+                      style={{ pointerEvents: "none" }}
+                    />
+                    {label ? (
+                      <g style={{ pointerEvents: "none" }}>
+                        <rect x={g.cx - labelW / 2} y={g.cy - 9} width={labelW} height={18} rx={4} fill="#fff" stroke="#94a3b8" />
+                        <text x={g.cx} y={g.cy + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="#475569">
+                          {label.length > 26 ? `${label.slice(0, 25)}…` : label}
+                        </text>
+                      </g>
+                    ) : null}
+                    {selected ? (
+                      <>
+                        <circle
+                          cx={g.x1}
+                          cy={g.y1}
+                          r={7}
+                          fill="#fff"
+                          stroke="#64748b"
+                          strokeWidth={2}
+                          style={{ pointerEvents: "auto", cursor: "grab" }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            startReconnectWire(edge, "from", e)
+                          }}
+                        />
+                        <circle
+                          cx={g.x2}
+                          cy={g.y2}
+                          r={7}
+                          fill="#fff"
+                          stroke="#64748b"
+                          strokeWidth={2}
+                          style={{ pointerEvents: "auto", cursor: "grab" }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            startReconnectWire(edge, "to", e)
+                          }}
+                        />
+                      </>
+                    ) : null}
+                  </g>
+                )
               })}
+              <defs>
+                <marker id="org-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#64748b" />
+                </marker>
+              </defs>
             </svg>
 
             {doc.nodes.map((n) => (
@@ -313,33 +624,79 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 node={n}
                 linkedLabel={n.linkedUserId ? memberById.get(n.linkedUserId)?.displayName ?? "Linked user" : null}
                 selected={selectedId === n.id}
+                linkSource={linkFromId === n.id}
+                linkMode={Boolean(linkFromId) || Boolean(wireDrag)}
+                wireDropTarget={wireDropTargetId === n.id}
                 members={members}
-                onSelect={() => setSelectedId(n.id)}
+                onSelect={() => handleNodeClick(n.id)}
                 onPatch={(patch) => patchNode(n.id, patch)}
-                onDragStart={(offsetX, offsetY) => setDrag({ id: n.id, offsetX, offsetY })}
+                onDragStart={(offsetX, offsetY) => {
+                  if (linkFromId || wireDrag) return
+                  setDrag({ id: n.id, offsetX, offsetY })
+                }}
+                onStartWire={(e) => startWireFromNode(n.id, e)}
                 onContextMenu={(e) => openContextMenu(e, "node", n.id)}
               />
             ))}
           </div>
         )}
 
-        <DiagramEditorDock
-          title={selected ? "Role" : "Properties"}
-          subtitle={
-            selected
-              ? "Link a Tradesman user and set job title. Selection stays until you pick another role."
-              : "Click a role on the chart to edit it here. Right-click for copy, paste, add child, and remove."
-          }
-        >
-          {selected ? (
-            <OrgRoleEditor
-              node={selected}
-              members={members}
-              linkedLabel={selected.linkedUserId ? memberById.get(selected.linkedUserId)?.displayName ?? null : null}
-              onPatch={(patch) => patchNode(selected.id, patch)}
-              onRemove={removeSelected}
-              onAddChild={addChild}
+        <DiagramEditorDock title={dockTitle} subtitle={dockSubtitle}>
+          {linkFromId ? (
+            <div style={linkBanner}>
+              <div style={{ fontWeight: 700 }}>
+                From: {nodeById.get(linkFromId)?.label ?? "Role"} → click target role or drag a connector dot
+              </div>
+              <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600, marginTop: 8 }}>
+                Line label (optional)
+                <input value={newLineLabel} onChange={(e) => setNewLineLabel(e.target.value)} style={theme.formInput} placeholder="e.g. Reports to" />
+              </label>
+              <button type="button" onClick={() => setLinkFromId(null)} style={{ ...secondaryBtn, marginTop: 8, borderColor: "#fecaca", color: "#b91c1c" }}>
+                Cancel line
+              </button>
+            </div>
+          ) : selectedEdge ? (
+            <OrgEdgeEditor
+              edge={selectedEdge}
+              nodeById={nodeById}
+              allNodes={doc.nodes}
+              onPatch={(patch) => patchEdge(selectedEdge.id, patch)}
+              onRemove={() => removeEdge(selectedEdge.id)}
             />
+          ) : selected ? (
+            <>
+              <OrgRoleEditor
+                node={selected}
+                members={members}
+                linkedLabel={selected.linkedUserId ? memberById.get(selected.linkedUserId)?.displayName ?? null : null}
+                onPatch={(patch) => patchNode(selected.id, patch)}
+                onRemove={removeSelected}
+                onAddChild={addChild}
+                onAddLine={startLinkFromSelected}
+              />
+              {selectedNodeEdges.length > 0 ? (
+                <>
+                  <h3 style={{ margin: "8px 0 0", fontSize: 14, fontWeight: 800 }}>Lines for this role</h3>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {selectedNodeEdges.map((edge) => (
+                      <OrgEdgeEditor
+                        key={edge.id}
+                        edge={edge}
+                        nodeById={nodeById}
+                        allNodes={doc.nodes}
+                        compact
+                        active={selectedEdgeId === edge.id}
+                        onPatch={(patch) => patchEdge(edge.id, patch)}
+                        onRemove={() => removeEdge(edge.id)}
+                        onFocus={() => setSelectedEdgeId(edge.id)}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No reporting lines yet — drag a connector dot or use + Add line.</p>
+              )}
+            </>
           ) : (
             <>
               <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
@@ -372,23 +729,98 @@ export default function OrganizationChartPage({ setPage }: Props) {
   )
 }
 
+function OrgEdgeEditor({
+  edge,
+  nodeById,
+  allNodes,
+  compact,
+  active,
+  onPatch,
+  onRemove,
+  onFocus,
+}: {
+  edge: OrgChartEdge
+  nodeById: Map<string, OrgChartNode>
+  allNodes: OrgChartNode[]
+  compact?: boolean
+  active?: boolean
+  onPatch: (patch: Partial<OrgChartEdge>) => void
+  onRemove: () => void
+  onFocus?: () => void
+}) {
+  const from = nodeById.get(edge.fromId)?.label ?? "Role"
+  const to = nodeById.get(edge.toId)?.label ?? "Role"
+  return (
+    <div
+      style={{
+        padding: compact ? "10px 10px" : "12px 12px",
+        borderRadius: 10,
+        border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+        background: "#fff",
+      }}
+      onClick={onFocus}
+    >
+      <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>{from} → {to}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+          From role
+          <select value={edge.fromId} onChange={(e) => onPatch({ fromId: e.target.value })} style={theme.formInput} onClick={(e) => e.stopPropagation()}>
+            {allNodes.map((n) => (
+              <option key={n.id} value={n.id}>{n.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+          To role
+          <select value={edge.toId} onChange={(e) => onPatch({ toId: e.target.value })} style={theme.formInput} onClick={(e) => e.stopPropagation()}>
+            {allNodes.map((n) => (
+              <option key={n.id} value={n.id}>{n.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+        Line label
+        <input
+          value={edge.label ?? ""}
+          onChange={(e) => onPatch({ label: e.target.value.trim() || undefined })}
+          placeholder="Optional"
+          style={theme.formInput}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </label>
+      <button type="button" onClick={onRemove} style={{ ...secondaryBtn, fontSize: 11, padding: "5px 10px", color: "#b91c1c", borderColor: "#fecaca" }}>
+        Remove line
+      </button>
+    </div>
+  )
+}
+
 function OrgNodeCard({
   node,
   linkedLabel,
   selected,
+  linkSource,
+  linkMode,
+  wireDropTarget,
   members,
   onSelect,
   onPatch,
   onDragStart,
+  onStartWire,
   onContextMenu,
 }: {
   node: OrgChartNode
   linkedLabel: string | null
   selected: boolean
+  linkSource: boolean
+  linkMode: boolean
+  wireDropTarget?: boolean
   members: LinkableOrgUser[]
   onSelect: () => void
   onPatch: (patch: Partial<OrgChartNode>) => void
   onDragStart: (offsetX: number, offsetY: number) => void
+  onStartWire: (e: ReactPointerEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   return (
@@ -400,15 +832,24 @@ function OrgNodeCard({
         width: NODE_W,
         minHeight: NODE_H,
         borderRadius: 10,
-        border: selected ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-        background: "#fff",
-        boxShadow: selected ? "0 4px 14px rgba(249,115,22,0.18)" : "0 2px 8px rgba(15,23,42,0.06)",
+        border: linkSource
+          ? "2px solid #ca8a04"
+          : wireDropTarget
+            ? "2px solid #16a34a"
+            : selected
+              ? `2px solid ${theme.primary}`
+              : `1px solid ${theme.border}`,
+        background: linkSource ? "#fefce8" : wireDropTarget ? "#f0fdf4" : "#fff",
+        boxShadow: selected || linkSource || wireDropTarget ? "0 4px 14px rgba(249,115,22,0.18)" : "0 2px 8px rgba(15,23,42,0.06)",
         padding: "8px 10px",
-        cursor: "grab",
+        cursor: linkMode ? "crosshair" : "grab",
         touchAction: "none",
+        zIndex: selected || linkSource || wireDropTarget ? 2 : 1,
       }}
       onPointerDown={(e) => {
+        if ((e.target as HTMLElement).dataset.wirePort === "out") return
         onSelect()
+        if (linkMode) return
         const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
         onDragStart(e.clientX - rect.left, e.clientY - rect.top)
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -451,8 +892,45 @@ function OrgNodeCard({
         ))}
       </select>
       {linkedLabel ? <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 4 }}>{linkedLabel}</div> : null}
+      {linkSource ? <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 4 }}>Line starts here</div> : null}
+      <button
+        type="button"
+        data-wire-port="out"
+        title="Drag to another role to connect"
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          onStartWire(e)
+          ;(e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId)
+        }}
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: -7,
+          transform: "translateX(-50%)",
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          border: `2px solid ${theme.primary}`,
+          background: "#fff",
+          cursor: "crosshair",
+          padding: 0,
+          zIndex: 3,
+        }}
+      />
     </div>
   )
+}
+
+const linkBanner: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  marginBottom: 12,
+  padding: "10px 14px",
+  borderRadius: 10,
+  background: "#fefce8",
+  border: "1px solid #fde047",
+  fontSize: 13,
 }
 
 const primaryBtn: CSSProperties = {
@@ -484,6 +962,7 @@ function OrgRoleEditor({
   onPatch,
   onRemove,
   onAddChild,
+  onAddLine,
 }: {
   node: OrgChartNode
   members: LinkableOrgUser[]
@@ -491,6 +970,7 @@ function OrgRoleEditor({
   onPatch: (patch: Partial<OrgChartNode>) => void
   onRemove: () => void
   onAddChild: () => void
+  onAddLine: () => void
 }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -527,6 +1007,9 @@ function OrgRoleEditor({
       </label>
       {linkedLabel ? <div style={{ fontSize: 12, color: "#0ea5e9" }}>Linked: {linkedLabel}</div> : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <button type="button" onClick={onAddLine} style={secondaryBtn}>
+          Add reporting line
+        </button>
         <button type="button" onClick={onAddChild} style={primaryBtn}>
           Add child role
         </button>

@@ -37,6 +37,8 @@ type OutboundPayload = {
   replyTo?: string | string[]
   subject?: string
   body?: string
+  /** HTML body for Resend when the composer sends formatted email. */
+  bodyHtml?: string
   userId?: string
   conversationId?: string
   leadId?: string
@@ -273,6 +275,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const toList = [...new Set([primaryTo, ...extraTo].filter(Boolean))]
   const subject = typeof payload.subject === "string" ? payload.subject.trim() : ""
   const body = typeof payload.body === "string" ? payload.body.trim() : ""
+  const bodyHtml = typeof payload.bodyHtml === "string" ? payload.bodyHtml.trim() : ""
   const userId = typeof payload.userId === "string" ? payload.userId.trim() : ""
   const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : ""
   const leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : ""
@@ -280,7 +283,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const attachUrls = coercePublicUrlList(payload.attachmentPublicUrls).slice(0, 15)
   const inlineAttachments = coerceInlineAttachments(payload.attachments)
 
-  if (toList.length === 0 || !subject || !body || !userId) {
+  if (toList.length === 0 || !subject || (!body && !bodyHtml) || !userId) {
     return res.status(400).json({
       error: "to (or toAdditional), subject, body, and userId are required",
     })
@@ -353,8 +356,17 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     from: resendFrom,
     to: toList,
     subject,
-    text: body,
     reply_to: replyToFinal,
+  }
+  if (bodyHtml) resendPayload.html = bodyHtml
+  if (body) resendPayload.text = body
+  else if (bodyHtml) {
+    resendPayload.text = bodyHtml
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
   }
   if (ccList.length) resendPayload.cc = ccList
   if (bccMerged.length) resendPayload.bcc = bccMerged

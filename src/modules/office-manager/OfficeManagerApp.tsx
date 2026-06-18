@@ -15,6 +15,7 @@ import ReportingPage from "../reporting/ReportingPage"
 import BusinessWorkflowPage from "../workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "../org-chart/OrganizationChartPage"
 import OperationsPage from "../operations/OperationsPage"
+import GrowthPage from "../growth/GrowthPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   useOfficeManagerScopeOptional,
@@ -563,6 +564,8 @@ function OfficeManagerAppContent() {
               operationsPurchaseOrders: t("dashboard.quickOperationsPurchaseOrders"),
               operationsInvoicing: t("dashboard.quickOperationsInvoicing"),
               operationsInventory: t("dashboard.quickOperationsInventory"),
+              growth: t("dashboard.quickGrowth"),
+              growthSub: t("dashboard.quickGrowthSub"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -637,6 +640,7 @@ function OfficeManagerAppContent() {
       {hasClients && page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
+      {page === "growth" && <GrowthPage setPage={setPage} />}
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}

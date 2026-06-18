@@ -16,6 +16,7 @@ import ReportingPage from "./modules/reporting/ReportingPage"
 import BusinessWorkflowPage from "./modules/workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
 import OperationsPage from "./modules/operations/OperationsPage"
+import GrowthPage from "./modules/growth/GrowthPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -417,6 +418,8 @@ function MainAppInner() {
               operationsPurchaseOrders: t("dashboard.quickOperationsPurchaseOrders"),
               operationsInvoicing: t("dashboard.quickOperationsInvoicing"),
               operationsInventory: t("dashboard.quickOperationsInventory"),
+              growth: t("dashboard.quickGrowth"),
+              growthSub: t("dashboard.quickGrowthSub"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -496,6 +499,7 @@ function MainAppInner() {
       {page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
+      {page === "growth" && <GrowthPage setPage={setPage} />}
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}

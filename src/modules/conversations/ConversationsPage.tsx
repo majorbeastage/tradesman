@@ -25,6 +25,16 @@ import {
   voicemailPreviewLine,
 } from "../../components/VoicemailEventBlock"
 import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import EmailComposeRich from "../../components/EmailComposeRich"
+import {
+  appendHtmlEmailSignature,
+  htmlToPlainText,
+  loadEmailSignatureFromMetadata,
+  loadStoredEmailSignature,
+  mergeEmailSignatureMetadata,
+  saveStoredEmailSignature,
+  type EmailSignatureDoc,
+} from "../../lib/emailSignature"
 import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
@@ -480,13 +490,23 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   }, [smsComposeMaxChars])
 
   useEffect(() => {
-    try {
-      const s = localStorage.getItem("tradesman_email_signature")
-      if (typeof s === "string") setEmailSignature(s)
-    } catch {
-      /* ignore */
-    }
+    const stored = loadStoredEmailSignature()
+    if (stored) setEmailSignature(stored)
   }, [])
+
+  async function persistEmailSignature(text: string) {
+    const trimmed = text.trim()
+    saveStoredEmailSignature(trimmed)
+    if (!supabase || !userId) return
+    const doc: EmailSignatureDoc = { v: 1, text: trimmed, updated_at: new Date().toISOString() }
+    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    const nextMeta = mergeEmailSignatureMetadata(prevMeta, doc)
+    await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
+  }
 
   useEffect(() => {
     if (!supabase || !userId) return
@@ -494,7 +514,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("voicemail_conversations_display, ai_thread_summary_enabled, display_name")
+        .select("voicemail_conversations_display, ai_thread_summary_enabled, display_name, metadata")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled) return
@@ -504,6 +524,11 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       setAiThreadSummaryEnabled((data as { ai_thread_summary_enabled?: boolean }).ai_thread_summary_enabled === true)
       const dn = (data as { display_name?: string | null }).display_name
       setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
+      const sigDoc = loadEmailSignatureFromMetadata((data as { metadata?: unknown }).metadata)
+      if (sigDoc?.text) {
+        setEmailSignature(sigDoc.text)
+        saveStoredEmailSignature(sigDoc.text)
+      }
     })()
     return () => {
       cancelled = true
@@ -1451,9 +1476,12 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       return
     }
     const subject = replySubject.trim()
-    let body = emailReplyBody.trim()
-    const sig = emailSignature.trim()
-    if (sig) body = `${body}${body ? "\n\n" : ""}--\n${sig}`
+    const bodyHtmlRaw = emailReplyBody.trim()
+    const sigDoc: EmailSignatureDoc | null = emailSignature.trim()
+      ? { v: 1, text: emailSignature.trim() }
+      : null
+    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, sigDoc)
+    const body = htmlToPlainText(bodyHtml)
     if (!subject || !body) {
       alert("Enter a subject and email body.")
       return
@@ -1476,6 +1504,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
           replyTo: emailReplyToOverride.trim() || undefined,
           subject,
           body,
+          ...(bodyHtml.includes("<") ? { bodyHtml } : {}),
           userId,
           conversationId: selectedConversation.id,
           customerId: selectedConversation.customer_id,
@@ -3012,112 +3041,37 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                     })
                   )}
                 </div>
-                <ConvoCollapsible
+                <EmailComposeRich
                   key={`${selectedConversation.id}-compose-${emailComposeMountKey}`}
-                  title="Compose email"
-                  defaultOpen={emailComposeMountKey > 0}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>To</label>
-                    <input
-                      value={emailPrimaryTo}
-                      onChange={(e) => setEmailPrimaryTo(e.target.value)}
-                      placeholder="customer@example.com"
-                      style={theme.formInput}
-                    />
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Additional recipients (To)</label>
-                    <input
-                      value={emailAdditionalTo}
-                      onChange={(e) => setEmailAdditionalTo(e.target.value)}
-                      placeholder="Comma-separated extra To addresses"
-                      style={theme.formInput}
-                    />
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>CC</label>
-                    <input
-                      value={emailCc}
-                      onChange={(e) => setEmailCc(e.target.value)}
-                      placeholder="Optional, comma-separated"
-                      style={theme.formInput}
-                    />
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>BCC</label>
-                    <input
-                      value={emailBcc}
-                      onChange={(e) => setEmailBcc(e.target.value)}
-                      placeholder="Optional (inbox copy may still be added by your channel settings)"
-                      style={theme.formInput}
-                    />
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Reply-To (optional)</label>
-                    <input
-                      value={emailReplyToOverride}
-                      onChange={(e) => setEmailReplyToOverride(e.target.value)}
-                      placeholder="Override where replies go; leave blank to use channel forward inbox"
-                      style={theme.formInput}
-                    />
-                    <input
-                      value={replySubject}
-                      onChange={(e) => setReplySubject(e.target.value)}
-                      placeholder="Email subject"
-                      style={theme.formInput}
-                    />
-                    <textarea
-                      value={emailReplyBody}
-                      onChange={(e) => setEmailReplyBody(e.target.value)}
-                      rows={6}
-                      placeholder="Write your message…"
-                      style={{ ...theme.formInput, resize: "vertical" }}
-                    />
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
-                      Attachments (optional)
-                      <input
-                        type="file"
-                        multiple
-                        onChange={(e) => setEmailComposeFiles(Array.from(e.target.files ?? []))}
-                        style={{ display: "block", marginTop: 6, fontSize: 13 }}
-                      />
-                    </label>
-                    {emailComposeFiles.length > 0 ? (
-                      <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{emailComposeFiles.length} file(s) selected</p>
-                    ) : null}
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
-                      Signature (optional, this browser only)
-                    </label>
-                    <textarea
-                      value={emailSignature}
-                      onChange={(e) => setEmailSignature(e.target.value)}
-                      onBlur={() => {
-                        try {
-                          localStorage.setItem("tradesman_email_signature", emailSignature)
-                        } catch {
-                          /* ignore */
-                        }
-                      }}
-                      rows={3}
-                      placeholder="Appended to every send from this device. Account-wide signatures in MyT coming later."
-                      style={{ ...theme.formInput, resize: "vertical", fontSize: 13 }}
-                    />
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 12, color: "#6b7280" }}>
-                        From address comes from your newest saved email channel in Admin → Communications (or Vercel fallback).
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void sendEmailReply()}
-                        disabled={emailSending}
-                        style={{
-                          padding: "10px 16px",
-                          background: theme.primary,
-                          color: "white",
-                          border: "none",
-                          borderRadius: "6px",
-                          cursor: emailSending ? "wait" : "pointer",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {emailSending ? "Sending..." : "Send email"}
-                      </button>
-                    </div>
-                  </div>
-                </ConvoCollapsible>
+                  defaultExpanded={emailComposeMountKey > 0}
+                  primaryTo={emailPrimaryTo}
+                  onPrimaryToChange={setEmailPrimaryTo}
+                  additionalTo={emailAdditionalTo}
+                  onAdditionalToChange={setEmailAdditionalTo}
+                  cc={emailCc}
+                  onCcChange={setEmailCc}
+                  bcc={emailBcc}
+                  onBccChange={setEmailBcc}
+                  replyTo={emailReplyToOverride}
+                  onReplyToChange={setEmailReplyToOverride}
+                  subject={replySubject}
+                  onSubjectChange={setReplySubject}
+                  bodyHtml={emailReplyBody}
+                  onBodyHtmlChange={setEmailReplyBody}
+                  signatureText={emailSignature}
+                  onSignatureTextChange={setEmailSignature}
+                  onSignatureBlur={() => void persistEmailSignature(emailSignature)}
+                  composeFiles={emailComposeFiles}
+                  onComposeFilesChange={setEmailComposeFiles}
+                  sending={emailSending}
+                  onSend={() => void sendEmailReply()}
+                  footerNote={
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>
+                      From address comes from your newest saved email channel in Admin → Communications (or Vercel fallback).
+                      Signature saves to your profile and this browser.
+                    </span>
+                  }
+                />
               </ConvoCollapsible>
               </div>
 

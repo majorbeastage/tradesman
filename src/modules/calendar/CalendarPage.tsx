@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from "react"
+import { useEffect, useState, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
@@ -43,6 +43,17 @@ import {
   durationMinutesFromJobType,
   readCalendarWorkingHoursFromStorage,
 } from "../../lib/scheduleDurationDefaults"
+import {
+  confirmCalendarOverlapSave,
+  findCalendarScheduleConflicts,
+  readCalendarNoDuplicateTimesSetting,
+  writeCalendarNoDuplicateTimesSetting,
+} from "../../lib/calendarOverlap"
+import {
+  dateWithMinutesFromMidnight,
+  formatTimeInputFromDate,
+  minutesFromColumnY,
+} from "../../lib/calendarGridTime"
 import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -123,6 +134,24 @@ function formatAddCustomerPickerLabel(c: CustomerReceiptPickerRow): string {
 
 function sortJobTypesByName(rows: JobType[]): JobType[] {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+}
+
+function calDayIsoLocal(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+type GridEventDragState = {
+  event: CalendarEvent
+  durationMs: number
+  pointerId: number
+  moved: boolean
+  ghostDayIso: string
+  ghostMinutes: number
+  startX: number
+  startY: number
 }
 
 type CalendarEvent = {
@@ -368,6 +397,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [eventEditJobTypeId, setEventEditJobTypeId] = useState("")
   const [eventJobTypeSaving, setEventJobTypeSaving] = useState(false)
   const [eventScheduleSaving, setEventScheduleSaving] = useState(false)
+  const [eventScheduleError, setEventScheduleError] = useState("")
   const [addMileage, setAddMileage] = useState("")
   const [quoteItemsForReceipt, setQuoteItemsForReceipt] = useState<QuoteItemReceiptRow[]>([])
   const [receiptOverridesDraft, setReceiptOverridesDraft] = useState<Record<string, ReceiptQuoteOverride>>({})
@@ -526,7 +556,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!schedulingSettingsPanelOpen || calendarSettingsItemsWithOrg.length === 0) return
     const next: Record<string, string> = {}
     calendarSettingsItemsWithOrg.forEach((item) => {
-      if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
+      if (item.id === "no_duplicate_times") {
+        next[item.id] = readCalendarNoDuplicateTimesSetting() ? "checked" : "unchecked"
+      } else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
       else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
       else next[item.id] = ""
     })
@@ -710,9 +742,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [timeIncrement, setTimeIncrement] = useState<15 | 60>(() => {
     try { const v = localStorage.getItem("calendar_timeIncrement"); return v === "60" ? 60 : 15 } catch { return 15 }
   })
-  const [noDuplicateTimes] = useState(() => {
-    try { return localStorage.getItem("calendar_noDuplicateTimes") === "true" } catch { return false }
-  })
+  const [gridEventDrag, setGridEventDrag] = useState<GridEventDragState | null>(null)
+  const gridWrapperRef = useRef<HTMLDivElement>(null)
+  const skipNextColumnClickRef = useRef(false)
+  const gridTimeParamsRef = useRef({ dayViewStartHour: DAY_START_HOUR, timeIncrement: 15 as 15 | 60 })
   const [workingHoursEnabled] = useState(() => {
     try { return localStorage.getItem("calendar_workingHoursEnabled") === "true" } catch { return false }
   })
@@ -1576,14 +1609,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function saveEventSchedule() {
     if (!supabase || !selectedEvent?.id) return
+    setEventScheduleError("")
     const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
     if (Number.isNaN(start.getTime())) {
-      alert("Enter a valid date and time.")
+      setEventScheduleError("Enter a valid date and time.")
       return
     }
     const addMinRaw = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
     if (addMinRaw == null) {
-      alert("Enter a valid duration.")
+      setEventScheduleError("Enter a valid duration.")
       return
     }
     const working = readCalendarWorkingHoursFromStorage()
@@ -1593,22 +1627,97 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       workingEnd: working.enabled ? working.end : undefined,
     })
     const end = new Date(start.getTime() + addMin * 60 * 1000)
+    const eventOwnerUserId = selectedEvent.user_id ?? userId
+    if (!eventOwnerUserId) return
+
+    if (readCalendarNoDuplicateTimesSetting()) {
+      try {
+        const conflicts = await findCalendarScheduleConflicts(supabase, {
+          userId: eventOwnerUserId,
+          ranges: [{ s: start, e: end }],
+          excludeEventIds: [selectedEvent.id],
+        })
+        if (conflicts.length > 0 && !confirmCalendarOverlapSave(conflicts)) {
+          setEventScheduleError(
+            "This time overlaps another appointment. Choose a different slot or confirm save anyway when prompted.",
+          )
+          return
+        }
+      } catch (e) {
+        setEventScheduleError(e instanceof Error ? e.message : String(e))
+        return
+      }
+    }
+
     setEventScheduleSaving(true)
     const startIso = start.toISOString()
     const endIso = end.toISOString()
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("calendar_events")
       .update({ start_at: startIso, end_at: endIso })
       .eq("id", selectedEvent.id)
+      .select("id")
     setEventScheduleSaving(false)
     if (error) {
-      alert(error.message ?? String(error))
+      setEventScheduleError(error.message ?? String(error))
+      return
+    }
+    if (!data?.length) {
+      setEventScheduleError("Could not save — this event may no longer be editable.")
       return
     }
     setSelectedEvent((prev) =>
       prev && prev.id === selectedEvent.id ? { ...prev, start_at: startIso, end_at: endIso } : prev,
     )
     loadEvents()
+  }
+
+  async function commitEventTimeChange(ev: CalendarEvent, newStart: Date, durationMs: number): Promise<boolean> {
+    if (!supabase) return false
+    const working = readCalendarWorkingHoursFromStorage()
+    const addMin = clampAppointmentDurationMinutes(Math.max(15, Math.round(durationMs / 60000)), {
+      start: newStart,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
+    const end = new Date(newStart.getTime() + addMin * 60 * 1000)
+    const eventOwnerUserId = ev.user_id ?? userId
+    if (!eventOwnerUserId) return false
+
+    if (readCalendarNoDuplicateTimesSetting()) {
+      try {
+        const conflicts = await findCalendarScheduleConflicts(supabase, {
+          userId: eventOwnerUserId,
+          ranges: [{ s: newStart, e: end }],
+          excludeEventIds: [ev.id],
+        })
+        if (conflicts.length > 0 && !confirmCalendarOverlapSave(conflicts)) return false
+      } catch (e) {
+        alert(e instanceof Error ? e.message : String(e))
+        return false
+      }
+    }
+
+    const startIso = newStart.toISOString()
+    const endIso = end.toISOString()
+    const { data, error } = await supabase
+      .from("calendar_events")
+      .update({ start_at: startIso, end_at: endIso })
+      .eq("id", ev.id)
+      .select("id")
+    if (error) {
+      alert(error.message ?? String(error))
+      return false
+    }
+    if (!data?.length) {
+      alert("Could not move this event — it may no longer be editable.")
+      return false
+    }
+    if (selectedEvent?.id === ev.id) {
+      setSelectedEvent((prev) => (prev && prev.id === ev.id ? { ...prev, start_at: startIso, end_at: endIso } : prev))
+    }
+    loadEvents()
+    return true
   }
 
   async function updateSeriesRecurrence() {
@@ -1651,6 +1760,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         : [selectedEvent.id]
     if (!window.confirm(`Replace ${replaceIds.length} upcoming occurrence(s) with ${newRanges.length} new date(s) using the recurrence settings below?`)) {
       return
+    }
+    if (readCalendarNoDuplicateTimesSetting()) {
+      try {
+        const conflicts = await findCalendarScheduleConflicts(supabase, {
+          userId: owner,
+          ranges: newRanges,
+          excludeEventIds: replaceIds,
+        })
+        if (conflicts.length > 0 && !confirmCalendarOverlapSave(conflicts)) {
+          alert("Series update cancelled — one or more new times overlap existing appointments.")
+          return
+        }
+      } catch (e) {
+        alert(e instanceof Error ? e.message : String(e))
+        return
+      }
     }
     setSeriesRecurrenceSaving(true)
     try {
@@ -1918,6 +2043,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setEventEditStartTime("")
       setEventEditDurationStr("60")
       setEventEditJobTypeId("")
+      setEventScheduleError("")
       return
     }
     const start = new Date(selectedEvent.start_at)
@@ -2136,26 +2262,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
     const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
 
-    if (noDuplicateTimes && newRanges.length > 0) {
-      const windowStart = newRanges[0].s
-      const windowEnd = newRanges[newRanges.length - 1].e
-      const { data: existing } = await supabase
-        .from("calendar_events")
-        .select("id, start_at, end_at")
-        .eq("user_id", eventOwnerUserId)
-        .is("removed_at", null)
-        .lt("start_at", windowEnd.toISOString())
-        .gt("end_at", windowStart.toISOString())
-      const exRows = (existing ?? []) as { start_at: string; end_at: string }[]
-      for (const nr of newRanges) {
-        for (const ex of exRows) {
-          if (intervalsOverlap(nr.s, nr.e, new Date(ex.start_at), new Date(ex.end_at))) {
-            setAddError(
-              "One or more recurring times overlap an existing event. Change the start time, recurrence, or turn off \"Do not allow duplicate times\" under Team management → Settings."
-            )
-            return
-          }
+    if (readCalendarNoDuplicateTimesSetting() && newRanges.length > 0) {
+      try {
+        const conflicts = await findCalendarScheduleConflicts(supabase, {
+          userId: eventOwnerUserId,
+          ranges: newRanges,
+        })
+        if (conflicts.length > 0) {
+          setAddError(
+            `One or more times overlap "${conflicts[0].title?.trim() || "another event"}". Change the start time, recurrence, or turn off "Do not allow duplicate times" under Team management → Settings.`,
+          )
+          return
         }
+      } catch (e) {
+        setAddError(e instanceof Error ? e.message : String(e))
+        return
       }
       for (let i = 0; i < newRanges.length; i++) {
         for (let j = i + 1; j < newRanges.length; j++) {
@@ -2340,12 +2461,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   function openAddItemForDate(d: Date) {
+    openAddItemForSlot(d, 9 * 60)
+  }
+
+  function openAddItemForSlot(day: Date, minutesFromMidnight: number) {
     resetAddForm()
-    const y = d.getFullYear()
-    const m = String(d.getMonth() + 1).padStart(2, "0")
-    const day = String(d.getDate()).padStart(2, "0")
-    setAddStartDate(`${y}-${m}-${day}`)
-    setAddStartTime("09:00")
+    const y = day.getFullYear()
+    const m = String(day.getMonth() + 1).padStart(2, "0")
+    const dd = String(day.getDate()).padStart(2, "0")
+    setAddStartDate(`${y}-${m}-${dd}`)
+    setAddStartTime(formatTimeInputFromDate(dateWithMinutesFromMidnight(day, minutesFromMidnight)))
     setAddTargetUserId(userId)
     setShowAddItem(true)
   }
@@ -2454,6 +2579,103 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     { length: Math.max(1, dayViewEndHour - dayViewStartHour + 1) },
     (_, i) => dayViewStartHour + i
   )
+  gridTimeParamsRef.current = { dayViewStartHour, timeIncrement }
+
+  function resolveGridSlotFromPointer(clientX: number, clientY: number): { day: Date; minutes: number } | null {
+    const root = gridWrapperRef.current
+    if (!root) return null
+    const { dayViewStartHour: startHr, timeIncrement: inc } = gridTimeParamsRef.current
+    const cols = root.querySelectorAll<HTMLElement>("[data-cal-day-column]")
+    for (const col of cols) {
+      const rect = col.getBoundingClientRect()
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue
+      const iso = col.dataset.calDayIso
+      if (!iso) continue
+      const [yy, mm, dd] = iso.split("-").map((n) => parseInt(n, 10))
+      if (!yy || !mm || !dd) continue
+      const day = new Date(yy, mm - 1, dd)
+      const minutes = minutesFromColumnY(clientY - rect.top, startHr, HOUR_HEIGHT, inc)
+      return { day, minutes }
+    }
+    return null
+  }
+
+  function handleDayColumnClick(e: ReactMouseEvent<HTMLDivElement>, calDay: Date) {
+    if (skipNextColumnClickRef.current) {
+      skipNextColumnClickRef.current = false
+      return
+    }
+    if ((e.target as HTMLElement).closest("[data-cal-event]")) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const minutes = minutesFromColumnY(
+      e.clientY - rect.top,
+      dayViewStartHour,
+      HOUR_HEIGHT,
+      timeIncrement,
+    )
+    openAddItemForSlot(calDay, minutes)
+  }
+
+  function beginGridEventPointerDown(e: React.PointerEvent, ev: CalendarEvent, calDay: Date) {
+    e.stopPropagation()
+    const start = new Date(ev.start_at)
+    const end = new Date(ev.end_at)
+    setGridEventDrag({
+      event: ev,
+      durationMs: Math.max(15 * 60 * 1000, end.getTime() - start.getTime()),
+      pointerId: e.pointerId,
+      moved: false,
+      ghostDayIso: calDayIsoLocal(calDay),
+      ghostMinutes: start.getHours() * 60 + start.getMinutes(),
+      startX: e.clientX,
+      startY: e.clientY,
+    })
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  useEffect(() => {
+    if (!gridEventDrag) return
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== gridEventDrag.pointerId) return
+      const dist = Math.hypot(e.clientX - gridEventDrag.startX, e.clientY - gridEventDrag.startY)
+      const moved = dist > 4 || gridEventDrag.moved
+      const slot = resolveGridSlotFromPointer(e.clientX, e.clientY)
+      setGridEventDrag((prev) => {
+        if (!prev || prev.pointerId !== e.pointerId) return prev
+        if (!slot) return moved !== prev.moved ? { ...prev, moved } : prev
+        return {
+          ...prev,
+          moved,
+          ghostDayIso: calDayIsoLocal(slot.day),
+          ghostMinutes: slot.minutes,
+        }
+      })
+    }
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerId !== gridEventDrag.pointerId) return
+      const drag = gridEventDrag
+      setGridEventDrag(null)
+      if (!drag.moved) {
+        setSelectedEvent(drag.event)
+        return
+      }
+      skipNextColumnClickRef.current = true
+      const slot = resolveGridSlotFromPointer(e.clientX, e.clientY)
+      if (!slot) return
+      const newStart = dateWithMinutesFromMidnight(slot.day, slot.minutes)
+      void commitEventTimeChange(drag.event, newStart, drag.durationMs)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- drag session tied to pointer id
+  }, [gridEventDrag])
+
   const addInputStyle: React.CSSProperties = {
     ...theme.formInput,
   }
@@ -2991,7 +3213,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   )
                 })}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", overflow: "hidden", minWidth: isMobile ? "840px" : undefined }}>
+              <div ref={gridWrapperRef} style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", overflow: "hidden", minWidth: isMobile ? "840px" : undefined }}>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {dayViewHours.map((hour) => (
                     <div key={hour} style={{ height: HOUR_HEIGHT, padding: "2px 4px", fontSize: "11px", color: theme.text, background: "#f9fafb", borderBottom: `1px solid ${theme.border}` }}>
@@ -3015,12 +3237,39 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     if (!(s <= calDayEnd && en >= calDayStart)) return false
                     return s < dayEnd && en > dayStart
                   })
+                  const dayIso = calDayIsoLocal(calDayStart)
+                  const ghostActive =
+                    gridEventDrag?.moved &&
+                    gridEventDrag.ghostDayIso === dayIso
+                  const ghostDurMin = gridEventDrag ? Math.max(15, Math.round(gridEventDrag.durationMs / 60000)) : 0
+                  const ghostTopPx = ghostActive
+                    ? ((gridEventDrag!.ghostMinutes - dayViewStartHour * 60) / 60) * HOUR_HEIGHT
+                    : 0
+                  const ghostHeightPx = ghostActive ? Math.max(2, (ghostDurMin / 60) * HOUR_HEIGHT) : 0
                   return (
                     <div
                       key={dayIdx}
-                      onClick={() => openAddItemForDate(calDayStart)}
+                      data-cal-day-column
+                      data-cal-day-iso={dayIso}
+                      onClick={(e) => handleDayColumnClick(e, calDayStart)}
                       style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", borderLeft: `1px solid ${theme.border}`, cursor: "pointer" }}
                     >
+                      {ghostActive ? (
+                        <div
+                          style={{
+                            position: "absolute",
+                            left: 2,
+                            right: 2,
+                            top: ghostTopPx,
+                            height: ghostHeightPx,
+                            borderRadius: 4,
+                            border: `2px dashed ${theme.primary}`,
+                            background: "rgba(59,130,246,0.12)",
+                            pointerEvents: "none",
+                            zIndex: 3,
+                          }}
+                        />
+                      ) : null}
                       {dayEvents.map((ev) => {
                         const start = new Date(ev.start_at)
                         const end = new Date(ev.end_at)
@@ -3030,12 +3279,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                         const durMin = (clipEnd.getTime() - clipStart.getTime()) / (60 * 1000)
                         const topPx = (topMin / 60) * HOUR_HEIGHT
                         const heightPx = Math.max(2, (durMin / 60) * HOUR_HEIGHT)
+                        const dragging = gridEventDrag?.event.id === ev.id && gridEventDrag.moved
                         return (
                           <div
                             key={ev.id}
+                            data-cal-event
+                            onPointerDown={(e) => beginGridEventPointerDown(e, ev, calDayStart)}
                             onClick={(e) => {
                               e.stopPropagation()
-                              setSelectedEvent(ev)
+                              if (gridEventDrag?.moved) return
                             }}
                             style={{
                               position: "absolute",
@@ -3048,10 +3300,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               background: getEventColor(ev),
                               boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                               color: "#fff",
-                              cursor: "pointer",
+                              cursor: gridEventDrag?.event.id === ev.id ? "grabbing" : "grab",
                               fontSize: "11px",
                               overflow: "hidden",
-                              boxSizing: "border-box"
+                              boxSizing: "border-box",
+                              opacity: dragging ? 0.35 : 1,
+                              touchAction: "none",
+                              zIndex: dragging ? 2 : 1,
                             }}
                             title={`${new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} ${ev.title}`}
                           >
@@ -3065,7 +3320,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: "0", border: `1px solid ${theme.border}`, overflowX: "auto" }}>
+            <div ref={gridWrapperRef} style={{ display: "grid", gridTemplateColumns: "72px 1fr", gap: "0", border: `1px solid ${theme.border}`, overflowX: "auto" }}>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {dayViewHours.map((hour) => (
                   <div key={hour} style={{ padding: "4px 8px", fontSize: "12px", fontWeight: 500, background: "#f9fafb", borderBottom: `1px solid ${theme.border}`, height: HOUR_HEIGHT, boxSizing: "border-box", color: theme.text }}>
@@ -3074,9 +3329,27 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 ))}
               </div>
               <div
-                onClick={() => openAddItemForDate(currentDate)}
+                data-cal-day-column
+                data-cal-day-iso={calDayIsoLocal(currentDate)}
+                onClick={(e) => handleDayColumnClick(e, currentDate)}
                 style={{ position: "relative", height: dayViewHours.length * HOUR_HEIGHT, background: "white", cursor: "pointer" }}
               >
+                {gridEventDrag?.moved && gridEventDrag.ghostDayIso === calDayIsoLocal(currentDate) ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 4,
+                      right: 4,
+                      top: ((gridEventDrag.ghostMinutes - dayViewStartHour * 60) / 60) * HOUR_HEIGHT,
+                      height: Math.max(2, (Math.max(15, Math.round(gridEventDrag.durationMs / 60000)) / 60) * HOUR_HEIGHT),
+                      borderRadius: 4,
+                      border: `2px dashed ${theme.primary}`,
+                      background: "rgba(59,130,246,0.12)",
+                      pointerEvents: "none",
+                      zIndex: 3,
+                    }}
+                  />
+                ) : null}
                 {dayViewHours.map((hour, i) => (
                   <div
                     key={hour}
@@ -3116,12 +3389,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       const durMin = (clipEnd.getTime() - clipStart.getTime()) / (60 * 1000)
                       const topPx = (topMin / 60) * HOUR_HEIGHT
                       const heightPx = Math.max(2, (durMin / 60) * HOUR_HEIGHT)
+                      const dragging = gridEventDrag?.event.id === ev.id && gridEventDrag.moved
                       return (
                         <div
                           key={ev.id}
+                          data-cal-event
+                          onPointerDown={(e) => beginGridEventPointerDown(e, ev, currentDate)}
                           onClick={(e) => {
                             e.stopPropagation()
-                            setSelectedEvent(ev)
+                            if (gridEventDrag?.moved) return
                           }}
                           style={{
                             position: "absolute",
@@ -3134,10 +3410,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             background: getEventColor(ev),
                             boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                             color: "#fff",
-                            cursor: "pointer",
+                            cursor: gridEventDrag?.event.id === ev.id ? "grabbing" : "grab",
                             fontSize: "12px",
                             overflow: "hidden",
-                            boxSizing: "border-box"
+                            boxSizing: "border-box",
+                            opacity: dragging ? 0.35 : 1,
+                            touchAction: "none",
+                            zIndex: dragging ? 2 : 1,
                           }}
                           title={ev.title}
                         >
@@ -3221,6 +3500,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     formValues={settingsFormValues}
                     setFormValue={(id, value) => {
                       setSettingsFormValues((prev) => ({ ...prev, [id]: value }))
+                      if (id === "no_duplicate_times") {
+                        writeCalendarNoDuplicateTimesSetting(value === "checked")
+                      }
                       if (id === "__org_all_events") {
                         const next = value === "checked"
                         setShowAllOrgEvents(next)
@@ -3848,6 +4130,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 {eventScheduleSaving ? "Saving…" : "Save date & time"}
               </button>
+              {eventScheduleError ? (
+                <p style={{ margin: "8px 0 0", fontSize: 13, color: "#b91c1c", lineHeight: 1.45 }}>{eventScheduleError}</p>
+              ) : null}
               {showRecurringRemoveChoices && addItemPortalItems.length > 0 ? (
                 <details
                   style={{

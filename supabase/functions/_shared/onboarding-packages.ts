@@ -70,6 +70,7 @@ function fullOperationsTabs(): Record<string, boolean> {
     work_orders: true,
     purchase_orders: true,
     parts_inventory: true,
+    growth: true,
   }
 }
 
@@ -96,6 +97,7 @@ export function portalConfigForPackage(packageId: ProductPackageId): Record<stri
     return {
       tabs: fullOperationsTabs(),
       corporate_package: true,
+      enable_growth_tab: true,
       enable_work_orders_tab: true,
       enable_purchase_orders_tab: true,
       enable_parts_inventory_tab: true,
@@ -113,6 +115,7 @@ export function portalConfigForPackage(packageId: ProductPackageId): Record<stri
     "web-support": false,
     "tech-support": true,
     settings: false,
+    growth: true,
   }
-  return { tabs }
+  return { tabs, enable_growth_tab: true }
 }

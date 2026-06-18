@@ -63,7 +63,25 @@ export const LEGACY_OPERATIONS_TAB_IDS = [
   PARTS_INVENTORY_TAB_ID,
 ] as const
 
+export const GROWTH_TAB_ID = "growth" as const
+
+/** Optional sidebar tabs enabled via portal_config (not in V2 default strip). */
+export const EXTENDED_PORTAL_TAB_IDS = [
+  GROWTH_TAB_ID,
+  "business-workflow",
+  "organization-chart",
+  "reporting",
+] as const
+
 export const OPTIONAL_PORTAL_TAB_IDS = [OPERATIONS_TAB_ID, ...LEGACY_OPERATIONS_TAB_IDS] as const
+
+export function isGrowthTabEnabled(portalConfig: PortalConfig | null | undefined): boolean {
+  if (!portalConfig) return false
+  if (portalConfig.estimate_tools_only_package === true) return false
+  if (portalConfig.enable_growth_tab === false || portalConfig.tabs?.growth === false) return false
+  if (portalConfig.enable_growth_tab === true || portalConfig.tabs?.growth === true) return true
+  return portalConfig.tabs?.customers !== false && portalConfig.tabs?.calendar !== false
+}
 
 export function isLegacyOperationsTabId(tabId: string): boolean {
   return (LEGACY_OPERATIONS_TAB_IDS as readonly string[]).includes(tabId)
@@ -154,6 +172,9 @@ export function isV2DeprecatedPortalTab(tabId: string): boolean {
 
 /** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
 export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
+  if (tabId === GROWTH_TAB_ID) {
+    return isGrowthTabEnabled(portalConfig)
+  }
   if (tabId === OPERATIONS_TAB_ID) {
     return isOperationsPackageEnabled(portalConfig) && portalConfig?.tabs?.operations !== false
   }
@@ -218,8 +239,10 @@ export const TAB_ID_LABELS: Record<string, string> = {
   'web-support': 'Web Support',
   'tech-support': 'Tradesman Help Desk',
   settings: 'Settings',
+  [GROWTH_TAB_ID]: 'Growth',
   'business-workflow': 'My Business Workflow',
   'organization-chart': 'Organization chart',
+  reporting: 'Reporting',
 }
 
 /** Custom item added by admin (id + label) */
@@ -363,6 +386,8 @@ export type PortalConfig = {
   demo_account?: boolean
   /** Onboarding option: rename Estimates sidebar (e.g. "Proposal Tool"). */
   quotes_tab_display_name?: string
+  /** Growth module sidebar tab (Lead acquisition, GBP, attribution, etc.). */
+  enable_growth_tab?: boolean
 }
 
 /** Self-serve `new_user` signups: only these sidebar tabs until an admin widens access in Portal builder. */
@@ -417,6 +442,7 @@ function fullOperationsTabs(): Record<string, boolean> {
     work_orders: false,
     purchase_orders: false,
     parts_inventory: false,
+    growth: true,
   }
 }
 
@@ -429,6 +455,7 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
     return {
       tabs: fullOperationsTabs(),
       corporate_package: true,
+      enable_growth_tab: true,
       enable_operations_tab: true,
       enable_work_orders_tab: true,
       enable_purchase_orders_tab: true,
@@ -454,8 +481,9 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
     "web-support": false,
     "tech-support": true,
     settings: false,
+    growth: true,
   }
-  return { tabs }
+  return { tabs, enable_growth_tab: true }
 }
 
 /** Default portal layout when previewing a role type without picking a specific profile. */
@@ -617,9 +645,20 @@ export function mergeCanonicalOrder(savedOrder: string[] | undefined, canonicalI
   return out
 }
 
+/** Insert Growth after Dashboard when enabled. */
+export function applyGrowthTabOrder(order: string[], portalConfig: PortalConfig): string[] {
+  if (!isGrowthTabEnabled(portalConfig)) return order
+  const out = [...order]
+  if (out.includes(GROWTH_TAB_ID)) return out
+  const di = out.indexOf("dashboard")
+  const insertAt = di >= 0 ? di + 1 : 0
+  out.splice(insertAt, 0, GROWTH_TAB_ID)
+  return out
+}
+
 /** Insert optional Operations hub (or legacy separate tabs) before Estimates. */
 export function applyOptionalPortalTabOrder(order: string[], portalConfig: PortalConfig): string[] {
-  let out = [...order]
+  let out = applyGrowthTabOrder(order, portalConfig)
   const qi = out.indexOf("quotes")
   const insertAt = qi >= 0 ? qi : out.length
   if (isOperationsPackageEnabled(portalConfig)) {
@@ -646,11 +685,17 @@ export function applyOptionalPortalTabOrder(order: string[], portalConfig: Porta
 /** Ordered tab entries for user portal sidebar (default + custom labels). */
 export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
   const customTabs = portalConfig.customTabs ?? []
-  const canonical = [...USER_PORTAL_TAB_IDS, ...OPTIONAL_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const canonical = [
+    ...USER_PORTAL_TAB_IDS,
+    ...OPTIONAL_PORTAL_TAB_IDS,
+    ...EXTENDED_PORTAL_TAB_IDS,
+    ...customTabs.map((t) => t.id),
+  ]
   const order = applyOptionalPortalTabOrder(mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical), portalConfig)
   const labelById = new Map<string, string | null>()
   for (const id of USER_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   for (const id of OPTIONAL_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const id of EXTENDED_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   if (portalConfig.quotes_tab_display_name?.trim()) {
     labelById.set("quotes", portalConfig.quotes_tab_display_name.trim())
   }
@@ -664,11 +709,17 @@ export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ t
 /** Office manager portal: same `sidebarTabOrder` as user config, canonical tabs exclude Settings. */
 export function getOfficePortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
   const customTabs = portalConfig.customTabs ?? []
-  const canonical = [...OFFICE_PORTAL_TAB_IDS, ...OPTIONAL_PORTAL_TAB_IDS, ...customTabs.map((t) => t.id)]
+  const canonical = [
+    ...OFFICE_PORTAL_TAB_IDS,
+    ...OPTIONAL_PORTAL_TAB_IDS,
+    ...EXTENDED_PORTAL_TAB_IDS,
+    ...customTabs.map((t) => t.id),
+  ]
   const order = applyOptionalPortalTabOrder(mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical), portalConfig)
   const labelById = new Map<string, string | null>()
   for (const id of OFFICE_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   for (const id of OPTIONAL_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  for (const id of EXTENDED_PORTAL_TAB_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
   if (portalConfig.quotes_tab_display_name?.trim()) {
     labelById.set("quotes", portalConfig.quotes_tab_display_name.trim())
   }
