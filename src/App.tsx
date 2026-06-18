@@ -50,7 +50,6 @@ import {
   type PortalTab,
 } from "./types/portal-builder"
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
-import DashboardHero from "./components/DashboardHero"
 import DashboardQuickActions from "./components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
 import DashboardReportsPreview from "./components/DashboardReportsPreview"
@@ -210,33 +209,6 @@ function MainAppInner() {
     getPageActionVisible(portalConfig, "calendar", "custom_receipt") &&
     getOmPageActionVisible(portalConfig, "calendar", "custom_receipt")
   const customReceiptQuickLabel = portalConfig?.controlLabels?.custom_receipt?.trim() || null
-
-  const dashboardHeroCopy = useMemo(() => {
-    const base = {
-      welcomeTitle: t("dashboard.welcomeTitle"),
-      welcomeBody1: t("dashboard.welcomeBody1"),
-      welcomeBody2: t("dashboard.welcomeBody2"),
-      pipelineKicker: t("dashboard.kicker.pipeline"),
-      pipelineTitle: t("dashboard.card.pipeline"),
-      pipelineSub: t("dashboard.card.pipelineSub"),
-      commKicker: t("dashboard.kicker.comm"),
-      commTitle: t("dashboard.card.comm"),
-      commSub: t("dashboard.card.commSub"),
-      scheduleKicker: t("dashboard.kicker.schedule"),
-      scheduleTitle: t("dashboard.card.schedule"),
-      scheduleSub: t("dashboard.card.scheduleSub"),
-    }
-    if (!estimateToolsOnlyPackage) return base
-    return {
-      ...base,
-      welcomeTitle: t("dashboard.estimateOnly.welcomeTitle"),
-      welcomeBody1: t("dashboard.estimateOnly.welcomeBody1"),
-      welcomeBody2: t("dashboard.estimateOnly.welcomeBody2"),
-      pipelineKicker: t("dashboard.estimateOnly.kicker"),
-      pipelineTitle: t("dashboard.estimateOnly.title"),
-      pipelineSub: t("dashboard.estimateOnly.sub"),
-    }
-  }, [estimateToolsOnlyPackage, t])
 
   useEffect(() => {
     if (page !== "payments") return
@@ -406,11 +378,6 @@ function MainAppInner() {
             separateBillingProfile={separateBillingProfile}
             paymentsTabAvailable={paymentsTabAvailable}
             onOpenPayments={paymentsTabAvailable ? () => setPage("payments") : undefined}
-          />
-          <DashboardHero
-            isMobile={isMobile}
-            layout={estimateToolsOnlyPackage ? "estimate_tools_only" : "three_cards"}
-            copy={dashboardHeroCopy}
           />
           {!estimateToolsOnlyPackage && authRole !== "new_user" ? (
           <>
