@@ -172,20 +172,140 @@ export type DashboardQuickLinksStoredV1 = {
 }
 
 export type DashboardQuickLinksStored = {
-  v: 2
+  v: 2 | 3
   tile_order?: DashboardQuickLinkId[]
+  /** Explicit rows — each inner array is left-to-right; row length controls auto-resize width. */
+  tile_rows?: DashboardQuickLinkId[][]
   tile_styles?: Partial<Record<string, DashboardTileStyle>>
   tile_scheme?: DashboardTileScheme
+}
+
+export type TileDropTarget =
+  | { kind: "before"; row: number; col: number }
+  | { kind: "append"; row: number }
+  | { kind: "newRow"; afterRow: number }
+
+export function flattenTileRows(rows: DashboardQuickLinkId[][]): DashboardQuickLinkId[] {
+  return rows.flat()
+}
+
+export function orderToDefaultRows(order: DashboardQuickLinkId[], colsPerRow = 4): DashboardQuickLinkId[][] {
+  if (!order.length) return []
+  const rows: DashboardQuickLinkId[][] = []
+  for (let i = 0; i < order.length; i += colsPerRow) {
+    rows.push(order.slice(i, i + colsPerRow))
+  }
+  return rows
+}
+
+function filterRowId(
+  id: unknown,
+  seen: Set<DashboardQuickLinkId>,
+  fourthCalendar: DashboardCoreQuickLinkId,
+): DashboardQuickLinkId | null {
+  if (typeof id !== "string" || !ALL_DASHBOARD_LINK_IDS.has(id as DashboardQuickLinkId)) return null
+  const linkId = id as DashboardQuickLinkId
+  if (linkId === "reporting") return null
+  if (linkId === "team_management" && fourthCalendar === "scheduling_tools") return null
+  if (linkId === "scheduling_tools" && fourthCalendar === "team_management") return null
+  if (seen.has(linkId)) return null
+  seen.add(linkId)
+  return linkId
+}
+
+export function normalizeDashboardTileRows(
+  saved: DashboardQuickLinkId[][] | undefined,
+  fallbackOrder: DashboardQuickLinkId[],
+  fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+): DashboardQuickLinkId[][] {
+  const orderNorm = normalizeDashboardTileOrder(fallbackOrder, fourthCalendar)
+  const seen = new Set<DashboardQuickLinkId>()
+  const rows: DashboardQuickLinkId[][] = []
+
+  if (saved?.length) {
+    for (const row of saved) {
+      if (!Array.isArray(row)) continue
+      const outRow: DashboardQuickLinkId[] = []
+      for (const id of row) {
+        const ok = filterRowId(id, seen, fourthCalendar)
+        if (ok) outRow.push(ok)
+      }
+      if (outRow.length) rows.push(outRow)
+    }
+  }
+
+  for (const id of orderNorm) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    if (rows.length) rows[rows.length - 1].push(id)
+    else rows.push([id])
+  }
+
+  if (rows.length) return rows
+  return orderToDefaultRows(orderNorm)
+}
+
+export function moveTileInRows(
+  rows: DashboardQuickLinkId[][],
+  tileId: DashboardQuickLinkId,
+  target: TileDropTarget,
+): DashboardQuickLinkId[][] {
+  let next = rows.map((r) => r.filter((id) => id !== tileId))
+  next = next.filter((r) => r.length > 0)
+
+  const placeAt = (rowIdx: number, colIdx: number) => {
+    while (next.length <= rowIdx) next.push([])
+    next[rowIdx].splice(colIdx, 0, tileId)
+  }
+
+  switch (target.kind) {
+    case "before":
+      placeAt(target.row, target.col)
+      break
+    case "append":
+      if (target.row < 0 || target.row >= next.length) next.push([tileId])
+      else next[target.row] = [...next[target.row], tileId]
+      break
+    case "newRow":
+      next.splice(target.afterRow + 1, 0, [tileId])
+      break
+  }
+
+  return next.filter((r) => r.length > 0)
+}
+
+export function removeTileFromRows(rows: DashboardQuickLinkId[][], id: DashboardQuickLinkId): DashboardQuickLinkId[][] {
+  return rows.map((r) => r.filter((x) => x !== id)).filter((r) => r.length > 0)
+}
+
+export function appendTileToRows(rows: DashboardQuickLinkId[][], id: DashboardQuickLinkId): DashboardQuickLinkId[][] {
+  const cleaned = removeTileFromRows(rows, id)
+  if (!cleaned.length) return [[id]]
+  const last = cleaned.length - 1
+  return cleaned.map((r, i) => (i === last ? [...r, id] : r))
 }
 
 export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStored | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
-  if (o.v === 2) {
+  if (o.v === 2 || o.v === 3) {
     const ord = o.tile_order
     const parsed = Array.isArray(ord)
       ? ord.filter((x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId))
       : []
+    const rowsRaw = o.tile_rows
+    let tile_rows: DashboardQuickLinkId[][] | undefined
+    if (Array.isArray(rowsRaw)) {
+      tile_rows = rowsRaw
+        .filter((row): row is DashboardQuickLinkId[] => Array.isArray(row))
+        .map((row) =>
+          row.filter(
+            (x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId),
+          ),
+        )
+        .filter((row) => row.length > 0)
+      if (!tile_rows.length) tile_rows = undefined
+    }
     const ts = o.tile_scheme
     const tile_scheme =
       ts === "ember" || ts === "ocean" || ts === "slate" || ts === "paper" ? (ts as DashboardTileScheme) : undefined
@@ -198,7 +318,13 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
         tile_styles[k] = v as DashboardTileStyle
       }
     }
-    return { v: 2, tile_order: parsed.length ? parsed : undefined, tile_scheme, tile_styles }
+    return {
+      v: o.v === 3 ? 3 : 2,
+      tile_order: parsed.length ? parsed : undefined,
+      tile_rows,
+      tile_scheme,
+      tile_styles,
+    }
   }
   if (o.v === 1) {
     const legacy = o as DashboardQuickLinksStoredV1
@@ -263,19 +389,29 @@ export function normalizeDashboardTileOrder(
 export function migrateStoredTileOrder(
   raw: unknown,
   fourthCalendar: DashboardCoreQuickLinkId,
-): { order: DashboardQuickLinkId[]; styles: Partial<Record<string, DashboardTileStyle>>; scheme: DashboardTileScheme } {
+): {
+  order: DashboardQuickLinkId[]
+  rows: DashboardQuickLinkId[][]
+  styles: Partial<Record<string, DashboardTileStyle>>
+  scheme: DashboardTileScheme
+} {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    const order = defaultDashboardTileOrder(fourthCalendar)
     return {
-      order: defaultDashboardTileOrder(fourthCalendar),
+      order,
+      rows: orderToDefaultRows(order),
       styles: {},
       scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
     }
   }
   const o = raw as Record<string, unknown>
-  if (o.v === 2) {
+  if (o.v === 2 || o.v === 3) {
     const parsed = parseDashboardQuickLinks(raw)
+    const order = normalizeDashboardTileOrder(parsed?.tile_order ?? parsed?.tile_rows?.flat(), fourthCalendar)
+    const rows = normalizeDashboardTileRows(parsed?.tile_rows, order, fourthCalendar)
     return {
-      order: normalizeDashboardTileOrder(parsed?.tile_order, fourthCalendar),
+      order: flattenTileRows(rows),
+      rows,
       styles: parsed?.tile_styles ?? {},
       scheme: parsed?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
     }
@@ -286,14 +422,18 @@ export function migrateStoredTileOrder(
     const ts = o.tile_scheme
     const scheme =
       ts === "ember" || ts === "ocean" || ts === "slate" || ts === "paper" ? (ts as DashboardTileScheme) : DEFAULT_DASHBOARD_TILE_SCHEME
+    const order = normalizeDashboardTileOrder([...core, ...optional], fourthCalendar)
     return {
-      order: normalizeDashboardTileOrder([...core, ...optional], fourthCalendar),
+      order,
+      rows: orderToDefaultRows(order),
       styles: {},
       scheme,
     }
   }
+  const order = defaultDashboardTileOrder(fourthCalendar)
   return {
-    order: defaultDashboardTileOrder(fourthCalendar),
+    order,
+    rows: orderToDefaultRows(order),
     styles: {},
     scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
   }
@@ -301,7 +441,7 @@ export function migrateStoredTileOrder(
 
 export function mergeDashboardQuickLinksMetadata(
   prevMeta: Record<string, unknown>,
-  patch: Partial<Pick<DashboardQuickLinksStored, "tile_order" | "tile_styles" | "tile_scheme">> & {
+  patch: Partial<Pick<DashboardQuickLinksStored, "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme">> & {
     optional_order?: DashboardOptionalQuickLinkId[]
   },
   fourthCalendar: DashboardCoreQuickLinkId = "team_management",
@@ -309,21 +449,27 @@ export function mergeDashboardQuickLinksMetadata(
   const existing = parseDashboardQuickLinks(prevMeta.dashboard_quick_links)
   const legacyV1 = prevMeta.dashboard_quick_links as DashboardQuickLinksStoredV1 | undefined
   const migrated = migrateStoredTileOrder(prevMeta.dashboard_quick_links, fourthCalendar)
+  const fallbackOrder =
+    patch.tile_order !== undefined
+      ? normalizeDashboardTileOrder(patch.tile_order, fourthCalendar)
+      : patch.optional_order !== undefined
+        ? normalizeDashboardTileOrder(
+            [
+              ...DEFAULT_DASHBOARD_CORE_ORDER.filter((c) => c !== "team_management" || fourthCalendar !== "scheduling_tools"),
+              ...(fourthCalendar === "scheduling_tools" ? (["scheduling_tools"] as DashboardQuickLinkId[]) : (["team_management"] as DashboardQuickLinkId[])),
+              ...normalizeDashboardOptionalOrder(patch.optional_order),
+            ],
+            fourthCalendar,
+          )
+        : normalizeDashboardTileOrder(existing?.tile_order ?? migrated.order, fourthCalendar)
+  const rows =
+    patch.tile_rows !== undefined
+      ? normalizeDashboardTileRows(patch.tile_rows, fallbackOrder, fourthCalendar)
+      : normalizeDashboardTileRows(existing?.tile_rows, fallbackOrder, fourthCalendar)
   const next: DashboardQuickLinksStored = {
-    v: 2,
-    tile_order:
-      patch.tile_order !== undefined
-        ? normalizeDashboardTileOrder(patch.tile_order, fourthCalendar)
-        : patch.optional_order !== undefined
-          ? normalizeDashboardTileOrder(
-              [
-                ...DEFAULT_DASHBOARD_CORE_ORDER.filter((c) => c !== "team_management" || fourthCalendar !== "scheduling_tools"),
-                ...(fourthCalendar === "scheduling_tools" ? (["scheduling_tools"] as DashboardQuickLinkId[]) : (["team_management"] as DashboardQuickLinkId[])),
-                ...normalizeDashboardOptionalOrder(patch.optional_order),
-              ],
-              fourthCalendar,
-            )
-          : normalizeDashboardTileOrder(existing?.tile_order ?? migrated.order, fourthCalendar),
+    v: 3,
+    tile_rows: rows,
+    tile_order: flattenTileRows(rows),
     tile_styles: patch.tile_styles ?? existing?.tile_styles ?? migrated.styles,
     tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? legacyV1?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
   }

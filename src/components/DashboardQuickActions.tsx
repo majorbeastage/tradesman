@@ -14,18 +14,24 @@ import {
 } from "../types/portal-builder"
 import {
   ALL_DASHBOARD_LINK_IDS,
+  appendTileToRows,
+  flattenTileRows,
   type DashboardOptionalQuickLinkId,
   fontCssForTile,
   mergeDashboardQuickLinksMetadata,
   migrateStoredTileOrder,
+  normalizeDashboardTileRows,
   normalizeDashboardTileOrder,
   operationsQuickLinkPage,
+  orderToDefaultRows,
+  removeTileFromRows,
   thumbnailGlyph,
   type DashboardCoreQuickLinkId,
   type DashboardQuickLinkId,
   type DashboardTileScheme,
   type DashboardTileStyle,
 } from "../lib/dashboardQuickLinksPrefs"
+import DashboardQuickLinkGrid from "./DashboardQuickLinkGrid"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
@@ -33,7 +39,7 @@ import { isOfficeManagerLikeRole } from "../lib/profileRoles"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional } from "../contexts/JobTypesModalContext"
 
-const LS_TILE_ORDER = "tradesman_dashboard_tile_order_v3"
+const LS_TILE_ROWS = "tradesman_dashboard_tile_rows_v4"
 
 export type OptionalQuickLinkId = DashboardQuickLinkId
 
@@ -483,13 +489,23 @@ function Tile({
   )
 }
 
-function parseLegacyLocalTileOrder(raw: string | null, fourth: DashboardCoreQuickLinkId): DashboardQuickLinkId[] | null {
+function parseLegacyLocalTileRows(raw: string | null, fourth: DashboardCoreQuickLinkId): DashboardQuickLinkId[][] | null {
   if (!raw) return null
   try {
     const v = JSON.parse(raw) as unknown
-    if (!Array.isArray(v)) return null
-    const out = v.filter((x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId))
-    return normalizeDashboardTileOrder(out, fourth)
+    if (Array.isArray(v) && v.every((row) => Array.isArray(row))) {
+      const rows = (v as unknown[][])
+        .map((row) =>
+          row.filter((x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId)),
+        )
+        .filter((row) => row.length > 0)
+      return normalizeDashboardTileRows(rows, [], fourth)
+    }
+    if (Array.isArray(v)) {
+      const order = v.filter((x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId))
+      return normalizeDashboardTileRows(orderToDefaultRows(normalizeDashboardTileOrder(order, fourth)), [], fourth)
+    }
+    return null
   } catch {
     return null
   }
@@ -531,19 +547,20 @@ export default function DashboardQuickActions(props: Props) {
     setPage(page)
   }
 
-  const [tileOrder, setTileOrder] = useState<DashboardQuickLinkId[]>(() => {
-    if (typeof window === "undefined") return normalizeDashboardTileOrder(undefined, fourthLinkId)
-    const legacy = parseLegacyLocalTileOrder(localStorage.getItem(LS_TILE_ORDER), fourthLinkId)
-    if (legacy) return legacy
-    const v2 = parseLegacyLocalTileOrder(localStorage.getItem("tradesman_dashboard_optional_link_order_v2"), fourthLinkId)
-    if (v2) return v2
-    return normalizeDashboardTileOrder(undefined, fourthLinkId)
+  const [tileRows, setTileRows] = useState<DashboardQuickLinkId[][]>(() => {
+    if (typeof window === "undefined") return orderToDefaultRows(normalizeDashboardTileOrder(undefined, fourthLinkId))
+    const localRows = parseLegacyLocalTileRows(localStorage.getItem(LS_TILE_ROWS), fourthLinkId)
+    if (localRows?.length) return localRows
+    const legacyOrder = parseLegacyLocalTileRows(localStorage.getItem("tradesman_dashboard_tile_order_v3"), fourthLinkId)
+    if (legacyOrder?.length) return legacyOrder
+    const v2 = parseLegacyLocalTileRows(localStorage.getItem("tradesman_dashboard_optional_link_order_v2"), fourthLinkId)
+    if (v2?.length) return v2
+    return orderToDefaultRows(normalizeDashboardTileOrder(undefined, fourthLinkId))
   })
   const [tileStyles, setTileStyles] = useState<Partial<Record<string, DashboardTileStyle>>>({})
   const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
   const [dragId, setDragId] = useState<DashboardQuickLinkId | null>(null)
-  const [dragOverId, setDragOverId] = useState<DashboardQuickLinkId | null>(null)
   const [styleMenu, setStyleMenu] = useState<{ id: DashboardQuickLinkId; x: number; y: number } | null>(null)
   const [todayOpen, setTodayOpen] = useState(false)
   const [prefsHydrated, setPrefsHydrated] = useState(false)
@@ -551,11 +568,11 @@ export default function DashboardQuickActions(props: Props) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(LS_TILE_ORDER, JSON.stringify(tileOrder))
+      localStorage.setItem(LS_TILE_ROWS, JSON.stringify(tileRows))
     } catch {
       /* ignore */
     }
-  }, [tileOrder])
+  }, [tileRows])
 
   useEffect(() => {
     if (!profileUserId) {
@@ -584,16 +601,16 @@ export default function DashboardQuickActions(props: Props) {
             ? (data.metadata as Record<string, unknown>).dashboard_quick_links
             : null
         const migrated = migrateStoredTileOrder(raw, fourthLinkId)
-        if (migrated.order.length) {
-          setTileOrder(migrated.order)
+        if (migrated.rows.length) {
+          setTileRows(migrated.rows)
           setTileStyles(migrated.styles)
           setPersistNote("cloud")
         } else {
           const loc =
             typeof window !== "undefined"
-              ? parseLegacyLocalTileOrder(localStorage.getItem(LS_TILE_ORDER), fourthLinkId)
+              ? parseLegacyLocalTileRows(localStorage.getItem(LS_TILE_ROWS), fourthLinkId)
               : null
-          if (loc) setTileOrder(loc)
+          if (loc?.length) setTileRows(loc)
         }
         setPrefsHydrated(true)
       })
@@ -620,7 +637,7 @@ export default function DashboardQuickActions(props: Props) {
             : {}
         const nextMeta = mergeDashboardQuickLinksMetadata(
           prevMeta,
-          { tile_order: tileOrder, tile_styles: tileStyles, tile_scheme: "paper" },
+          { tile_rows: tileRows, tile_styles: tileStyles, tile_scheme: "paper" },
           fourthLinkId,
         )
         const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
@@ -634,7 +651,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [tileOrder, tileStyles, profileUserId, prefsHydrated, fourthLinkId])
+  }, [tileRows, tileStyles, profileUserId, prefsHydrated, fourthLinkId])
 
   const linkAvailable = useCallback(
     (id: DashboardQuickLinkId): boolean => {
@@ -661,8 +678,8 @@ export default function DashboardQuickActions(props: Props) {
   )
 
   const visibleTiles = useMemo(
-    () => tileOrder.filter((id) => linkAvailable(id)),
-    [tileOrder, linkAvailable],
+    () => flattenTileRows(tileRows).filter((id) => linkAvailable(id)),
+    [tileRows, linkAvailable],
   )
 
   const paletteAvailable = useMemo(() => {
@@ -679,40 +696,21 @@ export default function DashboardQuickActions(props: Props) {
 
   const onTileDragEnd = useCallback(() => {
     setDragId(null)
-    setDragOverId(null)
   }, [])
 
-  const reorderTiles = useCallback((from: DashboardQuickLinkId, target: DashboardQuickLinkId) => {
+  const onRowsChange = useCallback((rows: DashboardQuickLinkId[][]) => {
     userModifiedRef.current = true
-    setTileOrder((prev) => {
-      const arr = [...prev]
-      const fromIdx = arr.indexOf(from)
-      const toIdx = arr.indexOf(target)
-      if (fromIdx < 0 || toIdx < 0) return prev
-      arr.splice(fromIdx, 1)
-      arr.splice(toIdx, 0, from)
-      return arr
-    })
+    setTileRows(rows)
   }, [])
-
-  const onTileDrop = useCallback(
-    (target: DashboardQuickLinkId) => {
-      if (!dragId || dragId === target) return
-      reorderTiles(dragId, target)
-      setDragId(null)
-      setDragOverId(null)
-    },
-    [dragId, reorderTiles],
-  )
 
   const removeFromBar = useCallback((id: DashboardQuickLinkId) => {
     userModifiedRef.current = true
-    setTileOrder((prev) => prev.filter((x) => x !== id))
+    setTileRows((prev) => removeTileFromRows(prev, id))
   }, [])
 
   const addPaletteId = useCallback((id: DashboardQuickLinkId) => {
     userModifiedRef.current = true
-    setTileOrder((prev) => [...prev.filter((x) => x !== id), id])
+    setTileRows((prev) => appendTileToRows(prev, id))
   }, [])
 
   const patchTileStyle = useCallback((id: DashboardQuickLinkId, patch: Partial<DashboardTileStyle>) => {
@@ -727,31 +725,8 @@ export default function DashboardQuickActions(props: Props) {
 
   const shell = dashShellStyle(isMobile, tileScheme)
 
-  const gridUnified: CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: isMobile
-      ? "repeat(auto-fill, minmax(140px, 1fr))"
-      : "repeat(auto-fill, minmax(160px, 1fr))",
-    gap: isMobile ? 8 : 10,
-    marginTop: customize ? 12 : 14,
-  }
-
   const renderTile = (id: DashboardQuickLinkId) => {
     const isCore = id === "customers" || id === "estimates" || id === "calendar" || id === "team_management" || id === "scheduling_tools"
-    const dragProps = {
-      draggable: customize,
-      onDragStart: () => customize && onTileDragStart(id),
-      onDragEnd: onTileDragEnd,
-      onDragOver: (e: DragEvent) => {
-        e.preventDefault()
-        if (customize && dragId && dragId !== id) setDragOverId(id)
-      },
-      onDragLeave: () => setDragOverId((cur) => (cur === id ? null : cur)),
-      onDrop: (e: DragEvent) => {
-        e.preventDefault()
-        if (customize) onTileDrop(id)
-      },
-    }
     const rm = customize ? () => removeFromBar(id) : undefined
     const tileStyle = tileStyles[id]
     const label = quickLinkLabel(id, labels)
@@ -771,9 +746,7 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
           onClick={() => !customize && go("customers")}
         />
       )
@@ -791,9 +764,7 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
           onClick={() => !customize && go("quotes")}
         />
       )
@@ -811,9 +782,7 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
           onClick={() => !customize && go("calendar")}
         />
       )
@@ -831,9 +800,7 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
           onClick={() => !customize && go("calendar", { id: "team_management", panel: "team_members" })}
         />
       )
@@ -851,9 +818,7 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
           onClick={() => !customize && go("calendar", fourth.suite)}
         />
       )
@@ -870,10 +835,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && onOpenSetupGuide()}
         />
       )
@@ -889,10 +852,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("settings")}
         />
       )
@@ -908,10 +869,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("payments")}
         />
       )
@@ -927,10 +886,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("insurance-options")}
         />
       )
@@ -946,10 +903,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => {
             if (customize) return
             try {
@@ -978,10 +933,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("reporting")}
         />
       )
@@ -997,10 +950,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && jobTypesModal?.openJobTypesModal()}
         />
       )
@@ -1016,10 +967,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && setTodayOpen(true)}
         />
       )
@@ -1035,10 +984,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("calendar", { id: "time_clock" })}
         />
       )
@@ -1054,10 +1001,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => {
             if (customize) return
             queueOpenCustomReceiptModal()
@@ -1078,10 +1023,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("business-workflow")}
         />
       )
@@ -1097,10 +1040,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go("organization-chart")}
         />
       )
@@ -1123,10 +1064,8 @@ export default function DashboardQuickActions(props: Props) {
           customize={customize}
           onRemove={rm}
           removeChipLabel={labels.customizeRemove}
-          tileStyle={tileStyle}
-          dragOver={dragOverId === id}
           onContextMenu={(e) => openStyleMenu(id, e)}
-          {...dragProps}
+          tileStyle={tileStyle}
           onClick={() => !customize && go(operationsQuickLinkPage(id as DashboardOptionalQuickLinkId))}
         />
       )
@@ -1237,7 +1176,7 @@ export default function DashboardQuickActions(props: Props) {
           <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 720, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>
             <span style={{ display: "block", marginTop: 4, opacity: 0.85 }}>
-              Drag tiles to reorder. Right-click a tile for colors, font, and thumbnail. Add as many per row as you like — tiles resize automatically.
+              Drag tiles into rows — drop on blue zones between tiles, at row ends, or on &quot;New row&quot; bands. Tiles in a row share width automatically. Right-click a tile for colors, font, and thumbnail.
             </span>
             {persistNote === "cloud" ? (
               <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
@@ -1247,25 +1186,22 @@ export default function DashboardQuickActions(props: Props) {
           </div>
         ) : null}
 
-        <div
-          style={gridUnified}
-          onDragOver={(e) => customize && e.preventDefault()}
-          onDrop={(e) => {
-            if (!customize || !dragId) return
-            e.preventDefault()
-            userModifiedRef.current = true
-            setTileOrder((prev) => [...prev.filter((x) => x !== dragId), dragId])
-            setDragId(null)
-            setDragOverId(null)
-          }}
-        >
-          {visibleTiles.map((id) => renderTile(id))}
-        </div>
+        <DashboardQuickLinkGrid
+          rows={tileRows}
+          customize={customize}
+          isMobile={isMobile}
+          dragId={dragId}
+          onDragStart={onTileDragStart}
+          onDragEnd={onTileDragEnd}
+          onRowsChange={onRowsChange}
+          renderTile={renderTile}
+          filterVisible={linkAvailable}
+        />
 
         {customize && paletteAvailable.length > 0 ? (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
-            <div style={gridUnified}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: isMobile ? 8 : 10 }}>
               {paletteAvailable.map((id) => (
                 <button
                   key={id}
