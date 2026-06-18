@@ -6,7 +6,15 @@ import { revokeOtherAuthSessions } from "../lib/authSingleSession"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 
-export type UserRole = "user" | "new_user" | "demo_user" | "office_manager" | "admin"
+export type UserRole =
+  | "user"
+  | "new_user"
+  | "demo_user"
+  | "office_manager"
+  | "admin"
+  | "corporate_management"
+  | "corporate_external"
+  | "corporate_internal"
 
 export type ProfileFetchResult = { role: UserRole | null; error?: string }
 

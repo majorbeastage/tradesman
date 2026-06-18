@@ -1,4 +1,6 @@
-/** Optional inbound call screening / auto-attendant (off by default). Stored on profiles.metadata.voice_auto_attendant_v1 */
+/** Server mirror of src/lib/voiceAutoAttendant.ts — keep parse logic aligned. */
+
+import type { SupabaseClient } from "@supabase/supabase-js"
 
 export type VoiceAutoAttendantMode = "off" | "ai_menu" | "recorded_menu"
 
@@ -12,9 +14,7 @@ export type VoiceScreeningStepKind =
 export type VoiceScreeningStep = {
   id: string
   kind: VoiceScreeningStepKind
-  /** Spoken prompt (AI TTS) or transcript reference for recorded mode. Use {service} for prior answer. */
   prompt: string
-  /** Optional audio URL when mode is recorded_menu. */
   recordingUrl?: string
   enabled: boolean
 }
@@ -22,45 +22,23 @@ export type VoiceScreeningStep = {
 export type VoiceAutoAttendantSettings = {
   enabled: boolean
   mode: VoiceAutoAttendantMode
-  /** Screen spam / cold-call patterns before forwarding. */
   spamScreenEnabled: boolean
-  /** Forward qualified callers immediately to forward_to_phone. */
   forwardGoodLeads: boolean
-  /** Send spam / non-responsive callers to voicemail without ringing the owner. */
   spamToVoicemail: boolean
-  /** Ordered IVR questions — speech answers transcribed and logged. */
   menuSteps: VoiceScreeningStep[]
-  /** When caller ID is unknown, show Tradesman business line on forwarded leg. */
   unknownCallerShowTradesmanId: boolean
-  /** Include name + callback number steps in recommended template. */
   collectContactInfo: boolean
 }
 
-let stepIdCounter = 0
-export function newScreeningStepId(): string {
-  stepIdCounter += 1
-  return `step_${Date.now()}_${stepIdCounter}`
-}
-
-export const RECOMMENDED_SCREENING_STEPS: VoiceScreeningStep[] = [
-  {
-    id: "svc",
-    kind: "service_intent",
-    prompt: "Briefly describe what service you are calling about.",
-    enabled: true,
-  },
+const RECOMMENDED: VoiceScreeningStep[] = [
+  { id: "svc", kind: "service_intent", prompt: "Briefly describe what service you are calling about.", enabled: true },
   {
     id: "sched",
     kind: "schedule_timing",
     prompt: "When are you interested in scheduling work for {service}?",
     enabled: true,
   },
-  {
-    id: "name",
-    kind: "caller_name",
-    prompt: "May I have your name please?",
-    enabled: true,
-  },
+  { id: "name", kind: "caller_name", prompt: "May I have your name please?", enabled: true },
   {
     id: "phone",
     kind: "callback_number",
@@ -76,7 +54,7 @@ export const DEFAULT_VOICE_AUTO_ATTENDANT: VoiceAutoAttendantSettings = {
   spamScreenEnabled: true,
   forwardGoodLeads: true,
   spamToVoicemail: true,
-  menuSteps: [...RECOMMENDED_SCREENING_STEPS],
+  menuSteps: [...RECOMMENDED],
   unknownCallerShowTradesmanId: false,
   collectContactInfo: true,
 }
@@ -94,7 +72,7 @@ function parseStep(raw: unknown): VoiceScreeningStep | null {
       : "custom"
   const prompt = typeof o.prompt === "string" ? o.prompt.trim() : ""
   const recordingUrl = typeof o.recordingUrl === "string" ? o.recordingUrl.trim() : ""
-  const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : newScreeningStepId()
+  const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `step_${Math.random().toString(36).slice(2, 9)}`
   if (!prompt && !recordingUrl) return null
   return {
     id,
@@ -118,7 +96,7 @@ function parseLegacyMenuPrompts(raw: unknown): VoiceScreeningStep[] {
 }
 
 export function parseVoiceAutoAttendant(raw: unknown): VoiceAutoAttendantSettings {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_VOICE_AUTO_ATTENDANT, menuSteps: [...RECOMMENDED_SCREENING_STEPS] }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_VOICE_AUTO_ATTENDANT }
   const o = raw as Record<string, unknown>
   const mode =
     o.mode === "ai_menu" || o.mode === "recorded_menu" || o.mode === "off" ? o.mode : DEFAULT_VOICE_AUTO_ATTENDANT.mode
@@ -133,15 +111,14 @@ export function parseVoiceAutoAttendant(raw: unknown): VoiceAutoAttendantSetting
     spamScreenEnabled: o.spamScreenEnabled !== false,
     forwardGoodLeads: o.forwardGoodLeads !== false,
     spamToVoicemail: o.spamToVoicemail !== false,
-    menuSteps: menuSteps.length > 0 ? menuSteps : [...RECOMMENDED_SCREENING_STEPS],
+    menuSteps: menuSteps.length > 0 ? menuSteps : [...RECOMMENDED],
     unknownCallerShowTradesmanId: o.unknownCallerShowTradesmanId === true,
     collectContactInfo: o.collectContactInfo !== false,
   }
 }
 
-/** Resolve spoken prompt text using prior answers (e.g. schedule question references service). */
 export function resolveScreeningPrompt(step: VoiceScreeningStep, prior: Record<string, string>): string {
-  const service = (prior.service_intent || prior.custom || "").trim()
+  const service = (prior.service_intent || "").trim()
   let text = step.prompt.trim()
   if (text.includes("{service}") && service) {
     text = text.replace(/\{service\}/g, service.slice(0, 100))
@@ -155,19 +132,56 @@ export function activeScreeningSteps(settings: VoiceAutoAttendantSettings): Voic
   return settings.menuSteps.filter((s) => s.enabled && (s.prompt.trim() || s.recordingUrl?.trim()))
 }
 
-export function mergeVoiceAutoAttendantMetadata(
-  prev: Record<string, unknown>,
-  patch: Partial<VoiceAutoAttendantSettings>,
-): Record<string, unknown> {
-  const current = parseVoiceAutoAttendant(prev.voice_auto_attendant_v1)
-  return {
-    ...prev,
-    voice_auto_attendant_v1: { ...current, ...patch },
-  }
+export async function loadVoiceAutoAttendantForUser(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<VoiceAutoAttendantSettings> {
+  if (!userId) return { ...DEFAULT_VOICE_AUTO_ATTENDANT }
+  const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  const meta =
+    data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+      ? (data.metadata as Record<string, unknown>)
+      : {}
+  return parseVoiceAutoAttendant(meta.voice_auto_attendant_v1)
 }
 
-export function recommendedStepsWithContact(collectContactInfo: boolean): VoiceScreeningStep[] {
-  const base = RECOMMENDED_SCREENING_STEPS.map((s) => ({ ...s, id: newScreeningStepId() }))
-  if (collectContactInfo) return base
-  return base.filter((s) => s.kind !== "caller_name" && s.kind !== "callback_number")
+export type ScreeningAnswer = {
+  stepId: string
+  kind: VoiceScreeningStepKind
+  question: string
+  answer: string
+}
+
+export function priorAnswersMap(answers: ScreeningAnswer[]): Record<string, string> {
+  const map: Record<string, string> = {}
+  for (const a of answers) {
+    if (a.answer.trim()) map[a.kind] = a.answer.trim()
+  }
+  return map
+}
+
+export function encodeScreeningAnswers(answers: ScreeningAnswer[]): string {
+  return Buffer.from(JSON.stringify(answers)).toString("base64url")
+}
+
+export function decodeScreeningAnswers(raw: string): ScreeningAnswer[] {
+  if (!raw.trim()) return []
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((x) => x && typeof x === "object")
+      .map((x) => {
+        const o = x as Record<string, unknown>
+        const kind = typeof o.kind === "string" ? o.kind : "custom"
+        return {
+          stepId: typeof o.stepId === "string" ? o.stepId : "",
+          kind: kind as VoiceScreeningStepKind,
+          question: typeof o.question === "string" ? o.question : "",
+          answer: typeof o.answer === "string" ? o.answer : "",
+        }
+      })
+  } catch {
+    return []
+  }
 }

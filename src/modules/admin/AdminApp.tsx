@@ -1634,6 +1634,16 @@ function AdminAppInner() {
                         operations_modules: { ...(config.operations_modules ?? {}), inventory: on },
                       }),
                   },
+                  {
+                    key: "team_management" as const,
+                    label: "Team management",
+                    checked: config.operations_modules?.team_management !== false,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        operations_modules: { ...(config.operations_modules ?? {}), team_management: on },
+                      }),
+                  },
                 ] as const
               ).map((row) => (
                 <label

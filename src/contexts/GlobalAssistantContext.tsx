@@ -38,6 +38,9 @@ import {
 } from "../lib/setupGuideState"
 import { useSetupWizardOptional } from "./SetupWizardContext"
 import { getSetupMiniWizardDef } from "../lib/setupGuideWizards"
+import { resolveClientPackage } from "../lib/clientPackageContext"
+import type { PortalConfig } from "../types/portal-builder"
+import type { UserRole } from "./AuthContext"
 
 
 export type HelpDeskChatMessage = {
@@ -96,6 +99,8 @@ type Props = {
   isAdmin?: boolean
   /** Active portal tab — passed into parseContext for menu-aware routing. */
   currentPage?: string
+  portalConfig?: PortalConfig | null
+  accountRole?: UserRole | null
 }
 
 export function GlobalAssistantProvider({
@@ -108,6 +113,8 @@ export function GlobalAssistantProvider({
   availableTabIds,
   isAdmin = false,
   currentPage,
+  portalConfig = null,
+  accountRole = null,
 }: Props) {
   const { setView } = useView()
   const [assistantText, setAssistantText] = useState("")
@@ -181,6 +188,11 @@ export function GlobalAssistantProvider({
     void reloadCustomVocabulary()
   }, [reloadCustomVocabulary, profileUserId])
 
+  const clientPackage = useMemo(
+    () => resolveClientPackage(profileMetadata, portalConfig, accountRole),
+    [profileMetadata, portalConfig, accountRole],
+  )
+
   const parseContext = useMemo<GlobalAssistantParseContext>(
     () => ({
       platform,
@@ -191,8 +203,9 @@ export function GlobalAssistantProvider({
       selectedCustomerName: pageSnapshot.selectedCustomerName,
       selectedQuoteId: pageSnapshot.selectedQuoteId,
       customVocabulary,
+      clientPackage,
     }),
-    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary],
+    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary, clientPackage],
   )
 
   const routingCatalog = useMemo(() => buildAssistantRoutingCatalog(parseContext), [parseContext])

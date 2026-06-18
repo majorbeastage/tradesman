@@ -11,21 +11,17 @@ import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
 
-type LoginType = "user" | "office_manager" | "admin"
-
 type LoginPageProps = {
-  /** Pre-selected login type (from home page). */
-  loginType: LoginType
+  /** When true, admin portal sign-in (separate from contractor login). */
+  isAdminLogin?: boolean
   onSuccess: (role: UserRole) => void
   onBack: () => void
-  /** Full product signup (packages, billing, etc.) — not the minimal login form. */
   onGoToSignup: () => void
 }
 
-export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
+export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
   const { t } = useLocale()
   const { signIn, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
-  const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
   const [mode, setMode] = useState<"signin" | "forgot">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -98,7 +94,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
   }
   const labelStyle: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: theme.text }
 
-  const isAdminLogin = initialLoginType === "admin"
+  const isAdminPortalLogin = isAdminLogin
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: theme.background }}>
@@ -111,7 +107,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
         >
           {t("login.backHome")}
         </button>
-        {!isAdminLogin && (
+        {!isAdminPortalLogin && (
           <div
             style={{
               textAlign: "center",
@@ -126,14 +122,14 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
           </div>
         )}
         <h1 style={{ margin: "0 0 8px", color: theme.text, fontSize: 22 }}>
-          {isAdminLogin
+          {isAdminPortalLogin
             ? t("login.title.admin")
             : mode === "forgot"
               ? t("login.title.forgot")
               : t("login.title.signin")}
         </h1>
         <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
-          {isAdminLogin
+          {isAdminPortalLogin
             ? t("login.sub.admin")
             : mode === "forgot"
               ? t("login.sub.forgot")
@@ -173,20 +169,6 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
                 </p>
               </>
             )}
-          </div>
-        )}
-
-        {!isAdminLogin && mode === "signin" && (
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>{t("login.loginAs")}</label>
-            <select
-              value={loginType}
-              onChange={(e) => setLoginType(e.target.value as LoginType)}
-              style={{ ...inputStyle, marginTop: 0, marginBottom: 0 }}
-            >
-              <option value="user">{t("login.roleUser")}</option>
-              <option value="office_manager">{t("login.roleOfficeManager")}</option>
-            </select>
           </div>
         )}
 
@@ -241,7 +223,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               ? t("login.submit.reset")
               : t("login.submit.signin")}
         </button>
-        {!isAdminLogin && mode === "signin" && (
+        {!isAdminPortalLogin && mode === "signin" && (
           <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
             <button
               type="button"
@@ -252,7 +234,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             </button>
           </p>
         )}
-        {!isAdminLogin && (
+        {!isAdminPortalLogin && (
           <p style={{ marginTop: 16, fontSize: 14, color: theme.text }}>
             {mode === "forgot" ? (
               <button type="button" onClick={() => { setMode("signin"); setError(""); setMessage("") }} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>

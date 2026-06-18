@@ -4,6 +4,7 @@
  */
 
 import { TAB_ID_LABELS } from "../types/portal-builder"
+import type { ClientPackageContext } from "./clientPackageContext"
 
 /** Subset of parse context used for vocabulary / catalog (avoids circular imports). */
 export type AssistantVocabularyContext = {
@@ -11,6 +12,7 @@ export type AssistantVocabularyContext = {
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
   selectedQuoteId?: string | null
+  clientPackage?: ClientPackageContext | null
 }
 
 export function normalizeAssistantPhrase(raw: string): string {
@@ -157,7 +159,9 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push(
     "- **open_specialty_report** = open Estimates and launch the specialty / variance report wizard (Start report) for the estimate on screen.",
   )
-  lines.push("- **My T** / **account** = business phone, forwarding, voicemail (tab `account`).")
+  lines.push("- **My T** / **account** = business phone, forwarding, voicemail, optional call screening (tab `account`).")
+  lines.push("- **Operations** = work orders, POs, inventory, team management (tab `operations`) when the account package includes it.")
+  lines.push("- **Organization chart** / **business workflow** = corporate process tools (`organization-chart`, `business-workflow`).")
   lines.push("- **Leads** = inbound lead inbox; **Conversations** = message threads.")
   lines.push("- **Setup guide** / mini-wizards = in-app configuration (auto-replies, line items, scheduling alerts, etc.).")
   lines.push("")
@@ -192,8 +196,25 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push("| what can I do here, help, explain this screen | explain |")
   lines.push("| customers, calendar, estimates tab, settings | navigate |")
   lines.push("| setup guide, get started | open_setup_guide |")
-  lines.push("| automatic replies, estimate line items, call forwarding | open_mini_wizard |")
+  lines.push("| automatic replies, estimate line items, call forwarding, call screening | open_mini_wizard |")
+  lines.push("| operations, work orders, org chart, business workflow | navigate |")
   lines.push("")
+
+  const pkg = ctx.clientPackage
+  if (pkg) {
+    lines.push("### Account package (routing hints)")
+    lines.push(`- Plan: **${pkg.packageLabel}**.`)
+    if (pkg.isEstimateToolsOnly) {
+      lines.push("- Estimate Tools only — do not suggest Customers, Scheduling, or Operations unless the user explicitly enabled those tabs.")
+    }
+    if (pkg.hasOperations) {
+      lines.push("- Operations tab is available — work orders, inventory, team management.")
+    }
+    if (pkg.isCorporate) {
+      lines.push("- Corporate account — suggest organization chart and business workflow for structure questions.")
+    }
+    lines.push("")
+  }
 
   lines.push("### Disambiguation")
   lines.push('- “open estimate” WITH a person name → create_estimate (not navigate).')

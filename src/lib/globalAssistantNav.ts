@@ -20,6 +20,7 @@ import {
   type AssistantCustomActionPayload,
   type AssistantCustomVocabularyEntry,
 } from "./platformAssistantCustomVocabulary"
+import type { ClientPackageContext } from "./clientPackageContext"
 import {
   buildAssistantSpecialistsCatalogSection,
   parseEstimateLineItemsHandoffIntent,
@@ -103,6 +104,8 @@ export type GlobalAssistantParseContext = {
   selectedQuoteId?: string | null
   /** Admin-trained phrases from platform_settings (live). */
   customVocabulary?: AssistantCustomVocabularyEntry[]
+  /** Resolved product package for this session. */
+  clientPackage?: ClientPackageContext | null
 }
 
 export function customPayloadToGlobalAction(
@@ -633,6 +636,7 @@ export function buildAssistantRoutingCatalog(ctx: GlobalAssistantParseContext): 
     selectedCustomerId: ctx.selectedCustomerId,
     selectedCustomerName: ctx.selectedCustomerName,
     selectedQuoteId: ctx.selectedQuoteId,
+    clientPackage: ctx.clientPackage,
   })
   const custom = buildCustomVocabularyCatalogSection(ctx.customVocabulary ?? [])
   const domain = buildPlatformAssistantDomainTraining(ctx)

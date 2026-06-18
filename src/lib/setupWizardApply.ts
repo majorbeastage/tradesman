@@ -13,6 +13,10 @@ import {
   queueSchedulingAddWizardPrefill,
   type SchedulingAddWizardPrefill,
 } from "./workflowNavigation"
+import {
+  mergeVoiceAutoAttendantMetadata,
+  recommendedStepsWithContact,
+} from "./voiceAutoAttendant"
 
 export type WizardAnswers = Record<string, string>
 
@@ -265,6 +269,39 @@ export async function applySetupMiniWizard(
         ? "Voicemail set to recorded greeting — use My T to upload or record by phone."
         : "Voicemail greeting text saved (text-to-speech for callers)."
     }
+
+    case "myt_call_screening": {
+      const meta = await loadProfileMetadata(supabase, userId)
+      const enabled = yes(answers.enable_screening)
+      const next = mergeVoiceAutoAttendantMetadata(meta, {
+        enabled,
+        mode: enabled ? "ai_menu" : "off",
+        spamScreenEnabled: yes(answers.screen_spam),
+        forwardGoodLeads: true,
+        spamToVoicemail: true,
+        collectContactInfo: yes(answers.collect_contact),
+        menuSteps: recommendedStepsWithContact(yes(answers.collect_contact)),
+      })
+      await saveProfileMetadata(supabase, userId, next)
+      return enabled
+        ? "Call screening enabled — refine the menu under My T → Call screening."
+        : "Call screening left off — forwarding and whisper behave as before."
+    }
+
+    case "operations_team_management":
+      return yes(answers.has_team)
+        ? "Open Operations → Team management to add technicians and calendar policies."
+        : "Team management skipped — you can enable it anytime under Operations."
+
+    case "organization_chart":
+      return yes(answers.open_now)
+        ? "Opening organization chart — add roles and reporting lines on the canvas."
+        : "Organization chart saved for later — use Dashboard quick links or ask the assistant."
+
+    case "business_workflow":
+      return yes(answers.open_now)
+        ? "Opening business workflow — add steps, arrows, and assigned users."
+        : "Business workflow saved for later — use Dashboard quick links or ask the assistant."
 
     default:
       return "Saved."

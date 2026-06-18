@@ -18,6 +18,8 @@ import {
   pickFirstString,
   toTwilioE164,
 } from "./_communications.js"
+import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
+import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
 
 function xmlEscape(value: string): string {
   return value
@@ -113,6 +115,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const q = query.size ? `?${query.toString()}` : ""
   const voicemailActionUrl = `${origin}/api/voicemail-result${q}`
   const transcribeUrl = `${voicemailActionUrl}${q ? "&" : "?"}phase=transcribe`
+
+  /** Optional call screening — only when explicitly enabled; default path unchanged. */
+  if (forwardTo && channel?.user_id && !skipCrmForSelfLeg) {
+    try {
+      const screeningSettings = await loadVoiceAutoAttendantForUser(supabase, channel.user_id)
+      const useScreening =
+        screeningSettings.enabled &&
+        screeningSettings.mode !== "off" &&
+        activeScreeningSteps(screeningSettings).length > 0
+      if (useScreening) {
+        const screeningUrl = buildCallScreeningRedirectUrl(origin, query)
+        console.info("[incoming-call] call_screening_redirect", { callSid, userId: channel.user_id })
+        return sendTwiml(
+          res,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">${xmlEscape(screeningUrl)}</Redirect></Response>`,
+        )
+      }
+    } catch (e) {
+      console.error("[incoming-call] screening check failed — falling back to direct dial", e instanceof Error ? e.message : e)
+    }
+  }
+
   if (!forwardTo) {
     const hasForwardPhone = Boolean(channel?.forward_to_phone?.trim())
     /** Single string for Vercel logs — CRM `skipCrmForSelfLeg` does NOT affect this branch. */

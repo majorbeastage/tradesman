@@ -31,6 +31,7 @@ import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
+import { shouldUseOfficeManagerPortal, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
@@ -66,11 +67,44 @@ import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
+import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId } from "./contexts/PortalViewContext"
+import { PortalViewProvider } from "./contexts/PortalViewContext"
+import type { PortalShell } from "./lib/portalViewRules"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
 import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 
 type View = "home" | "login" | "admin-login" | "demo" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
-type LoginType = "user" | "office_manager" | "admin"
+
+/** Contractor portal (user + office shells) with shared view-as context. */
+function ContractorPortal({
+  initialShell,
+  setView,
+}: {
+  initialShell: PortalShell
+  setView: (v: View) => void
+}) {
+  const [shell, setShell] = useState<PortalShell>(initialShell)
+
+  useEffect(() => {
+    setShell(initialShell)
+  }, [initialShell])
+
+  const handleShellChange = useCallback(
+    (next: PortalShell) => {
+      setShell(next)
+      setView(next === "office" ? "office" : "app")
+    },
+    [setView],
+  )
+
+  return (
+    <ViewProvider setView={setView}>
+      <PortalViewProvider onShellChange={handleShellChange}>
+        {shell === "office" ? <OfficeManagerApp /> : <MainApp />}
+      </PortalViewProvider>
+    </ViewProvider>
+  )
+}
 
 /** Admin portal: amber Train FAB for vocabulary (mic hidden here — use contractor login for voice assistant). */
 function AdminPortalWithAssistantTrain({ setView }: { setView: (v: View) => void }) {
@@ -139,8 +173,11 @@ function MainAppInner() {
   const { page, navigatePage: setPage } = useAppNavigation()
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
-  const { clientId, portalConfig, role: authRole, user } = useAuth()
-  const { tabs: portalTabsFromApi } = usePortalTabs(clientId, "user")
+  const { role: authRole, user } = useAuth()
+  const effectiveUserId = useEffectiveUserId()
+  const effectiveClientId = useEffectiveClientId()
+  const portalConfig = useEffectivePortalConfig()
+  const { tabs: portalTabsFromApi } = usePortalTabs(effectiveClientId, "user")
   const managedByOfficeManager = useManagedByOfficeManager()
   const omCalendarPolicy = useManagedOmCalendarPolicy()
   const managedSchedulingToolsEnabled =
@@ -292,25 +329,27 @@ function MainAppInner() {
     <JobTypesModalProvider>
     <SetupWizardProvider
       setPage={setPage}
-      userId={user?.id ?? null}
+      userId={effectiveUserId || null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
     >
     <GlobalAssistantProvider
       setPage={setPage}
-      profileUserId={user?.id ?? null}
+      profileUserId={effectiveUserId || null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
       platform="user"
       availableTabIds={portalTabs.map((t) => t.tab_id)}
       isAdmin={authRole === "admin"}
       currentPage={page}
+      portalConfig={portalConfig}
+      accountRole={authRole}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal
       open={setupGuideOpen}
       onClose={() => setSetupGuideOpen(false)}
-      userId={user?.id ?? null}
+      userId={effectiveUserId || null}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
       setPage={setPage}
@@ -363,7 +402,7 @@ function MainAppInner() {
         <>
           <h1 style={{ marginBottom: 10, fontSize: "1.75rem", fontWeight: 700, color: theme.text }}>{t("dashboard.title")}</h1>
           <BillingDueDashboardBanner
-            profileUserId={user?.id}
+            profileUserId={effectiveUserId || null}
             separateBillingProfile={separateBillingProfile}
             paymentsTabAvailable={paymentsTabAvailable}
             onOpenPayments={paymentsTabAvailable ? () => setPage("payments") : undefined}
@@ -386,8 +425,8 @@ function MainAppInner() {
             showPaymentsShortcut={paymentsTabAvailable}
             showTimeClockShortcut={showTimeClockShortcut}
             showCustomReceiptShortcut={showCustomReceiptShortcut}
-            profileUserId={user?.id ?? null}
-            dashboardDataUserId={user?.id ?? null}
+            profileUserId={effectiveUserId || null}
+            dashboardDataUserId={effectiveUserId || null}
             labels={{
               customers: t("dashboard.quickCustomers"),
               estimates: t("dashboard.quickEstimates"),
@@ -431,8 +470,8 @@ function MainAppInner() {
           />
           <DashboardTodayWorkPreview
             isMobile={isMobile}
-            dataUserId={user?.id ?? null}
-            reportingAllowed={authRole === "office_manager" || authRole === "admin"}
+            dataUserId={effectiveUserId || null}
+            reportingAllowed={isOfficeManagerLikeRole(authRole)}
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}
             onOpenCalendar={() => setPage("calendar")}
@@ -455,10 +494,10 @@ function MainAppInner() {
               openCalendar: t("dashboard.todayWorkOpenCalendar"),
             }}
           />
-          {(authRole === "office_manager" || authRole === "admin") ? (
+          {isOfficeManagerLikeRole(authRole) ? (
             <DashboardReportsPreview
               isMobile={isMobile}
-              dataUserId={user?.id ?? null}
+              dataUserId={effectiveUserId || null}
               onOpenReporting={() => setPage("reporting")}
               labels={{
                 title: t("dashboard.reportsPreviewTitle"),
@@ -512,7 +551,6 @@ function App() {
   const { refetchProfile } = useAuth()
   const [view, setView] = useState<View>("home")
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
-  const [loginType, setLoginType] = useState<LoginType>("user")
   const [loginError, setLoginError] = useState("")
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
@@ -607,21 +645,20 @@ function App() {
     }
     // Regular login: send to the portal they chose on the home page
     if (view === "login") {
-      if (loginType === "office_manager") setView("office")
+      if (shouldUseOfficeManagerPortal(r)) setView("office")
       else setView("app")
       return
     }
     if (r === "admin") setView("admin")
-    else if (r === "office_manager") setView("office")
+    else if (shouldUseOfficeManagerPortal(r)) setView("office")
     else setView("app")
-  }, [view, loginType, refetchProfile])
+  }, [view, refetchProfile])
 
   if (view === "home") {
     return (
       <HomePage
-        onLogin={() => { setLoginType("user"); setView("login"); setLoginError("") }}
-        onOfficeManagerLogin={() => { setLoginType("office_manager"); setView("login"); setLoginError("") }}
-        onAdminLogin={() => { setLoginType("admin"); setView("admin-login"); setLoginError("") }}
+        onLogin={() => { setView("login"); setLoginError("") }}
+        onAdminLogin={() => { setView("admin-login"); setLoginError("") }}
         onSignup={() => {
           setSignupPackagePreset(null)
           setView("signup")
@@ -683,7 +720,7 @@ function App() {
           </div>
         )}
         <LoginPage
-          loginType={loginType}
+          isAdminLogin={view === "admin-login"}
           onSuccess={handleLoginSuccess}
           onBack={() => { setView("home"); setLoginError("") }}
           onGoToSignup={() => {
@@ -718,19 +755,11 @@ function App() {
     )
   }
 
-  if (view === "office") {
-    return (
-      <ViewProvider setView={setView}>
-        <OfficeManagerApp />
-      </ViewProvider>
-    )
+  if (view === "office" || view === "app") {
+    return <ContractorPortal initialShell={view === "office" ? "office" : "user"} setView={setView} />
   }
 
-  return (
-    <ViewProvider setView={setView}>
-      <MainApp />
-    </ViewProvider>
-  )
+  return null
 }
 
 export default App

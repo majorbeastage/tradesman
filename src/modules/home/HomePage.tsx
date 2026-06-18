@@ -8,7 +8,6 @@ import { PublicLegalNav } from "../public/PublicLegalNav"
 
 type HomePageProps = {
   onLogin: () => void
-  onOfficeManagerLogin: () => void
   onAdminLogin: () => void
   onSignup: () => void
   onAboutUs: () => void
@@ -18,7 +17,7 @@ type HomePageProps = {
 
 const FEATURE_IDS = ["clean", "automation", "leads", "comms", "quotes", "history", "custom"] as const
 
-export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onPricing }: HomePageProps) {
+export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onPricing }: HomePageProps) {
   const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -101,7 +100,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                 cursor: "pointer",
               }}
             >
-              Open User Login to request a new reset
+              Open Login to request a new reset
             </button>
           </div>
         )}
@@ -121,24 +120,6 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
               <span style={{ fontSize: 12, color: theme.text, opacity: 0.7 }}>{t("home.tagline")}</span>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={onAdminLogin}
-            style={{
-              padding: "8px 14px",
-              background: "transparent",
-              border: `1px solid ${theme.border}`,
-              borderRadius: 8,
-              fontSize: 12,
-              color: theme.text,
-              opacity: 0.85,
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            {t("home.adminLogin")}
-          </button>
         </div>
 
         <div
@@ -189,23 +170,7 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
                   cursor: "pointer",
                 }}
               >
-                {t("home.userLogin")}
-              </button>
-              <button
-                type="button"
-                onClick={onOfficeManagerLogin}
-                style={{
-                  padding: "14px 22px",
-                  background: theme.charcoal,
-                  color: "white",
-                  border: "none",
-                  borderRadius: 10,
-                  fontWeight: 700,
-                  fontSize: 15,
-                  cursor: "pointer",
-                }}
-              >
-                {t("home.officeManagerLogin")}
+                {t("home.login")}
               </button>
               <button
                 type="button"
@@ -389,6 +354,26 @@ export default function HomePage({ onLogin, onOfficeManagerLogin, onAdminLogin, 
         </div>
 
         <div style={{ marginTop: "auto", paddingTop: 26 }}>
+          <div style={{ textAlign: "center", marginBottom: 12 }}>
+            <button
+              type="button"
+              onClick={onAdminLogin}
+              style={{
+                padding: "6px 12px",
+                background: "transparent",
+                border: "none",
+                fontSize: 11,
+                color: theme.text,
+                opacity: 0.55,
+                cursor: "pointer",
+                fontWeight: 600,
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              {t("home.adminLogin")}
+            </button>
+          </div>
           <div
             style={{
               borderTop: `1px solid ${theme.border}`,

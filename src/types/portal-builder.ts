@@ -54,7 +54,7 @@ export const PURCHASE_ORDERS_TAB_ID = "purchase_orders"
 export const PARTS_INVENTORY_TAB_ID = "parts_inventory"
 export const OPERATIONS_TAB_ID = "operations"
 
-export type OperationsSubModuleId = "work_orders" | "purchase_orders" | "invoicing" | "inventory"
+export type OperationsSubModuleId = "work_orders" | "purchase_orders" | "invoicing" | "inventory" | "team_management"
 
 /** Legacy sidebar tab ids — deep links still work; sidebar shows unified Operations when enabled. */
 export const LEGACY_OPERATIONS_TAB_IDS = [
@@ -102,10 +102,12 @@ export function operationsSubModuleEnabled(
     return true
   }
   if (sub === "invoicing") return mods?.invoicing !== false
+  if (sub === "team_management") return mods?.team_management !== false
   return true
 }
 
 export function parseOperationsSubTabFromPage(page: string): OperationsSubModuleId {
+  if (page === "operations-team_management") return "team_management"
   if (page === "operations-inventory" || page === "parts_inventory") return "inventory"
   if (page === "operations-invoicing") return "invoicing"
   if (page === "operations-purchase_orders" || page === "purchase_orders") return "purchase_orders"
@@ -436,6 +438,7 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
         purchase_orders: true,
         invoicing: true,
         inventory: true,
+        team_management: true,
       },
     }
   }
@@ -578,11 +581,11 @@ export function mergeCanonicalOrder(savedOrder: string[] | undefined, canonicalI
   return out
 }
 
-/** Insert optional Operations hub (or legacy separate tabs) after Estimates. */
+/** Insert optional Operations hub (or legacy separate tabs) before Estimates. */
 export function applyOptionalPortalTabOrder(order: string[], portalConfig: PortalConfig): string[] {
   let out = [...order]
   const qi = out.indexOf("quotes")
-  const insertAt = qi >= 0 ? qi + 1 : out.length
+  const insertAt = qi >= 0 ? qi : out.length
   if (isOperationsPackageEnabled(portalConfig)) {
     out = out.filter((id) => !isLegacyOperationsTabId(id))
     if (!out.includes(OPERATIONS_TAB_ID)) {

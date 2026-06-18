@@ -9,6 +9,7 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
+import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
@@ -606,7 +607,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setSeriesRecurrenceValues(next)
   }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems])
 
-  const isOfficeManagerOrAdmin = authRole === "office_manager" || authRole === "admin"
+  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(authRole)
   const showTeamManagementEntry = isOfficeManagerOrAdmin
   const managedSchedulingToolsEnabled =
     managedByOfficeManager && (managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true)
@@ -2572,7 +2573,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               {showTeamManagementEntry ? (
                 <button
                   type="button"
-                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
+                  onClick={() => setPage?.("operations-team_management")}
                   style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
                 >
                   Team management

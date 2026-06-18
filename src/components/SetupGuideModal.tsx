@@ -10,118 +10,34 @@ import {
   parseSetupGuideProgress,
 } from "../lib/setupGuideState"
 import { miniWizardsForSetupStep, type SetupMiniWizardDef } from "../lib/setupGuideWizards"
+import { buildSetupGuideSteps, type SetupGuideStep } from "../lib/setupGuideSteps"
+import { resolveClientPackage } from "../lib/clientPackageContext"
+import { useAuth } from "../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { useSetupWizardOptional } from "../contexts/SetupWizardContext"
 
-export type SetupGuideStepId =
-  | "welcome"
-  | "dashboard"
-  | "customers"
-  | "estimates"
-  | "scheduling"
-  | "myt"
-  | "payments"
-  | "finish"
-
-const INITIAL_STEPS: Array<{
-  id: SetupGuideStepId
-  title: string
-  body: string
-  page?: string
-  bullets?: string[]
-  question?: string
-}> = [
-  {
-    id: "welcome",
-    title: "Welcome",
-    body: "This walkthrough introduces the main areas of Tradesman and points you to focused setup wizards inside each tab. You can reopen Setup Guide anytime from Dashboard → Quick Links.",
-    bullets: [
-      "We open each tab behind this panel so you can see where settings live.",
-      "Short wizards inside Customers, Estimates, Scheduling, and My T will handle detailed choices (voice + AI where noted).",
-      "Nothing here locks you in — change settings anytime.",
-    ],
-  },
-  {
-    id: "dashboard",
-    title: "Dashboard",
-    page: "dashboard",
-    body: "Your home base: quick links, today’s work, and the platform assistant (“What would you like to do today?”). Use voice or type to jump to a tab or task.",
-    bullets: [
-      "Quick Links use the paper tile style; Setup Guide stays here for later changes.",
-      "The indigo microphone (bottom-right) talks to the same assistant from any page when enabled.",
-    ],
-    question: "Do you want the floating assistant microphone visible on every page? (You choose at the end of this walkthrough.)",
-  },
-  {
-    id: "customers",
-    title: "Customers",
-    page: "customers",
-    body: "Clients, conversation history, SMS/email from the contact card, and specialty reports. Lead fit and urgency also show on this tab.",
-    bullets: [
-      "Automatic replies — wizard will ask simple questions and map answers to your reply templates.",
-      "Lead filter preferences & Alerts — separate wizards for who you hear from and how you get notified.",
-      "First outbound texts include a compliance footer; the composer shows what will be appended.",
-    ],
-    question: "Will you use automatic text or email replies? (Use the Automatic replies wizard below when it is available.)",
-  },
-  {
-    id: "estimates",
-    title: "Estimates",
-    page: "quotes",
-    body: "Quotes, PDF/email send, scope assistant, and the Estimates Library for reusable content.",
-    bullets: [
-      "Estimate line items — speak or type; AI fills title, description, and cost from what you say.",
-      "Job types — step-by-step wizard (criteria, linked line items, defaults).",
-      "Start Quote guide on new estimates walks job details and customer copy options.",
-    ],
-    question: "Do you already have standard prices or job types to import? (Line items and job type wizards below.)",
-  },
-  {
-    id: "scheduling",
-    title: "Scheduling",
-    page: "calendar",
-    body: "Calendar views, job completion, team assignment (office managers), and customer notifications tied to events.",
-    bullets: [
-      "Alerts wizard — push, email, and SMS preferences for calendar events.",
-      "Receipt template wizard — intro text, logo, and line layout for completion receipts.",
-      "Team management is optional; solo contractors can use Scheduling tools only.",
-    ],
-    question: "Will you schedule jobs yourself or assign work to a team?",
-  },
-  {
-    id: "myt",
-    title: "My T",
-    page: "account",
-    body: "Your Tradesman phone identity: forwarding, voicemail, push/GPS prefs, and profile photo on the mobile app.",
-    bullets: [
-      "Call forwarding — wizard explains forwarding your business line to your cell in plain language.",
-      "Voicemail greeting — record or upload what callers hear; PIN flow for phone updates.",
-      "Push notifications and location sync from My T when you use the native app.",
-    ],
-    question: "Have you set call forwarding and a voicemail greeting yet?",
-  },
-  {
-    id: "payments",
-    title: "Payments",
-    page: "payments",
-    body: "Subscription billing for your Tradesman account and (when enabled) Helcim links to collect from customers.",
-    bullets: [
-      "Payments tab visibility depends on your role and admin configuration.",
-      "Customer payment requests are created from the customer record when collections are enabled.",
-    ],
-    question: "Do you need to collect payments from customers through Tradesman?",
-  },
-  {
-    id: "finish",
-    title: "All set",
-    page: "dashboard",
-    body: "Initial setup is marked complete. Reopen Setup Guide from Quick Links for changes, or use adjustment mode with the AI assistant.",
-    bullets: [
-      "Per-area setup wizards will appear inside each settings panel as we ship them.",
-      "Dashboard assistant and Setup Guide share the same navigation map.",
-    ],
-  },
-]
+function SetupGuideStepper({ stepIndex, steps }: { stepIndex: number; steps: SetupGuideStep[] }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+      {steps.map((s, i) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div
+            title={s.title}
+            style={{
+              width: i === stepIndex ? 12 : 9,
+              height: i === stepIndex ? 12 : 9,
+              borderRadius: "50%",
+              background: i < stepIndex ? "#059669" : i === stepIndex ? theme.primary : "#e2e8f0",
+              border: i === stepIndex ? `2px solid ${theme.primary}` : "none",
+              boxSizing: "border-box",
+            }}
+          />
+          {i < steps.length - 1 ? <div style={{ width: 14, height: 2, background: i < stepIndex ? "#86efac" : "#e2e8f0" }} /> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 const BTN_SECONDARY: React.CSSProperties = {
   padding: "10px 14px",
@@ -156,29 +72,6 @@ type Props = {
   onMetadataPatch: (next: Record<string, unknown>) => void
   setPage: (page: string) => void
   forceInitial?: boolean
-}
-
-function SetupGuideStepper({ stepIndex, steps }: { stepIndex: number; steps: typeof INITIAL_STEPS }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
-      {steps.map((s, i) => (
-        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div
-            title={s.title}
-            style={{
-              width: i === stepIndex ? 12 : 9,
-              height: i === stepIndex ? 12 : 9,
-              borderRadius: "50%",
-              background: i < stepIndex ? "#059669" : i === stepIndex ? theme.primary : "#e2e8f0",
-              border: i === stepIndex ? `2px solid ${theme.primary}` : "none",
-              boxSizing: "border-box",
-            }}
-          />
-          {i < steps.length - 1 ? <div style={{ width: 14, height: 2, background: i < stepIndex ? "#86efac" : "#e2e8f0" }} /> : null}
-        </div>
-      ))}
-    </div>
-  )
 }
 
 function MiniWizardButtons({
@@ -236,6 +129,7 @@ export default function SetupGuideModal({
 }: Props) {
   const ga = useGlobalAssistantOptional()
   const setupWizard = useSetupWizardOptional()
+  const { portalConfig, role: authRole } = useAuth()
   const completed = hasCompletedInitialSetup(profileMetadata)
   const [mode, setMode] = useState<"pick" | "initial" | "adjust">("pick")
   const [stepIndex, setStepIndex] = useState(0)
@@ -267,7 +161,12 @@ export default function SetupGuideModal({
     autoLaunchedStepRef.current = null
   }, [open, completed, forceInitial])
 
-  const step = INITIAL_STEPS[stepIndex]
+  const guideSteps = useMemo(
+    () => buildSetupGuideSteps(resolveClientPackage(profileMetadata, portalConfig, authRole)),
+    [profileMetadata, portalConfig, authRole],
+  )
+
+  const step = guideSteps[stepIndex]
   const stepMiniWizards = step ? miniWizardsForSetupStep(step.id) : []
 
   const persistMeta = useCallback(
@@ -285,7 +184,7 @@ export default function SetupGuideModal({
     setSaving(true)
     try {
       const progress = parseSetupGuideProgress(profileMetadata?.[SETUP_GUIDE_PROGRESS_KEY])
-      const steps = [...(progress.steps_completed ?? []), ...INITIAL_STEPS.map((s) => s.id)]
+      const steps = [...(progress.steps_completed ?? []), ...guideSteps.map((s) => s.id)]
       await persistMeta(
         mergeSetupGuideCompleted(
           {
@@ -375,7 +274,7 @@ export default function SetupGuideModal({
             <h2 style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 800, color: "#0f172a" }}>{headerTitle}</h2>
             {mode === "initial" && step && step.id !== "welcome" && step.id !== "finish" ? (
               <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b" }}>
-                Step {stepIndex + 1} of {INITIAL_STEPS.length}
+                Step {stepIndex + 1} of {guideSteps.length}
               </p>
             ) : null}
           </div>
@@ -412,7 +311,7 @@ export default function SetupGuideModal({
             >
               Set up your profile &amp; workspace
               <span style={{ display: "block", fontSize: 12, fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
-                Walk through Dashboard, Customers, Estimates, Scheduling, My T, and Payments.
+                Walk through Dashboard, Customers, Estimates, Operations (when enabled), Scheduling, My T, and Payments.
               </span>
             </button>
             <button
@@ -437,7 +336,7 @@ export default function SetupGuideModal({
 
         {mode === "initial" && step ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <SetupGuideStepper stepIndex={stepIndex} steps={INITIAL_STEPS} />
+            <SetupGuideStepper stepIndex={stepIndex} steps={guideSteps} />
             <p style={{ margin: 0, fontSize: 14, color: "#1e293b", lineHeight: 1.55 }}>{step.body}</p>
             {step.bullets && step.bullets.length > 0 ? (
               <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
@@ -474,7 +373,7 @@ export default function SetupGuideModal({
                   const next = Math.max(0, stepIndex - 1)
                   setStepIndex(next)
                   setStepHint(null)
-                  goToStepPage(INITIAL_STEPS[next]?.page)
+                  goToStepPage(guideSteps[next]?.page)
                 }}
                 style={{
                   ...BTN_SECONDARY,
@@ -484,14 +383,14 @@ export default function SetupGuideModal({
               >
                 ← Back
               </button>
-              {stepIndex < INITIAL_STEPS.length - 1 ? (
+              {stepIndex < guideSteps.length - 1 ? (
                 <button
                   type="button"
                   onClick={() => {
                     const next = stepIndex + 1
                     setStepIndex(next)
                     setStepHint(null)
-                    goToStepPage(INITIAL_STEPS[next]?.page)
+                    goToStepPage(guideSteps[next]?.page)
                   }}
                   style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
                 >

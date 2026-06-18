@@ -9,6 +9,7 @@ import { useIsMobile } from "../hooks/useIsMobile"
 import { useLocale } from "../i18n/LocaleContext"
 import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
+import PortalViewBar from "../components/PortalViewBar"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -183,6 +184,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
             background: "transparent",
           }}
         >
+          <PortalViewBar />
           {children}
         </main>
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
@@ -6,6 +6,8 @@ import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { saveJobTitleNicknameForProfile } from "../../lib/jobTitleNickname"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
+import { DiagramContextMenu, type DiagramMenuAction } from "../../components/diagram/DiagramContextMenu"
+import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import {
   buildOrgChartShareMailto,
   createExampleOrganizationChart,
@@ -35,6 +37,8 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const [err, setErr] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "canvas"; id?: string } | null>(null)
+  const clipboardRef = useRef<OrgChartNode | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<number | null>(null)
 
@@ -173,6 +177,61 @@ export default function OrganizationChartPage({ setPage }: Props) {
 
   const memberById = new Map(members.map((m) => [m.id, m]))
 
+  function openContextMenu(e: React.MouseEvent, target: "node" | "canvas", id?: string) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (id) setSelectedId(id)
+    setContextMenu({ x: e.clientX, y: e.clientY, target, id })
+  }
+
+  const contextMenuActions = useMemo((): DiagramMenuAction[] => {
+    if (!contextMenu) return []
+    if (contextMenu.target === "node" && contextMenu.id) {
+      return [
+        { id: "rename", label: "Rename (edit in box)" },
+        { id: "copy", label: "Copy role" },
+        { id: "paste", label: "Paste role", disabled: !clipboardRef.current },
+        { id: "add_child", label: "Add child role" },
+        { id: "remove", label: "Remove role", danger: true },
+      ]
+    }
+    return [{ id: "paste", label: "Paste role", disabled: !clipboardRef.current }]
+  }, [contextMenu])
+
+  function handleContextAction(actionId: string) {
+    if (!contextMenu) return
+    if (contextMenu.target === "node" && contextMenu.id) {
+      const node = doc.nodes.find((n) => n.id === contextMenu.id)
+      if (!node) return
+      if (actionId === "copy") clipboardRef.current = { ...node }
+      if (actionId === "paste" && clipboardRef.current) {
+        const src = clipboardRef.current
+        const copy = newOrgChartNode(`${src.label} (copy)`, node.parentId, node.x + 32, node.y + 32)
+        copy.jobTitle = src.jobTitle
+        copy.linkedUserId = src.linkedUserId
+        updateDoc((prev) => ({ ...prev, nodes: [...prev.nodes, copy] }))
+        setSelectedId(copy.id)
+      }
+      if (actionId === "add_child") {
+        setSelectedId(contextMenu.id)
+        addChild()
+      }
+      if (actionId === "remove") {
+        setSelectedId(contextMenu.id)
+        removeSelected()
+      }
+    } else if (actionId === "paste" && clipboardRef.current) {
+      const src = clipboardRef.current
+      const parent = rootNode
+      if (!parent) return
+      const copy = newOrgChartNode(`${src.label} (copy)`, parent.id, parent.x + 40, parent.y + 116)
+      copy.jobTitle = src.jobTitle
+      copy.linkedUserId = src.linkedUserId
+      updateDoc((prev) => ({ ...prev, nodes: [...prev.nodes, copy] }))
+      setSelectedId(copy.id)
+    }
+  }
+
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 20px 40px" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
@@ -216,7 +275,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
         ) : null}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 280px", gap: 16, alignItems: "start" }}>
+      <div style={{ display: "grid", gap: 16 }}>
         {loading ? (
           <p style={{ color: "#64748b" }}>Loading chart…</p>
         ) : (
@@ -225,6 +284,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
+            onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
               minHeight: 640,
@@ -257,37 +317,49 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 onSelect={() => setSelectedId(n.id)}
                 onPatch={(patch) => patchNode(n.id, patch)}
                 onDragStart={(offsetX, offsetY) => setDrag({ id: n.id, offsetX, offsetY })}
+                onContextMenu={(e) => openContextMenu(e, "node", n.id)}
               />
             ))}
           </div>
         )}
 
-        <aside style={{ borderRadius: 12, border: `1px solid ${theme.border}`, background: "#fff", padding: "14px 14px" }}>
-          <h2 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 800 }}>Team job titles</h2>
-          <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            Nickname each signed-in user with a job title. Linked org roles show this title automatically.
-          </p>
-          {members.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No team members loaded yet.</p>
+        <DiagramEditorDock
+          title={selected ? "Role" : "Properties"}
+          subtitle={
+            selected
+              ? "Link a Tradesman user and set job title. Selection stays until you pick another role."
+              : "Click a role on the chart to edit it here. Right-click for copy, paste, add child, and remove."
+          }
+        >
+          {selected ? (
+            <OrgRoleEditor
+              node={selected}
+              members={members}
+              linkedLabel={selected.linkedUserId ? memberById.get(selected.linkedUserId)?.displayName ?? null : null}
+              onPatch={(patch) => patchNode(selected.id, patch)}
+              onRemove={removeSelected}
+              onAddChild={addChild}
+            />
           ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {members.map((m) => (
-                <label key={m.id} style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                  <span style={{ fontWeight: 700, color: theme.text }}>{m.displayName}</span>
-                  <input
-                    defaultValue={m.jobTitle}
-                    placeholder="Job title nickname"
-                    style={theme.formInput}
-                    onBlur={(e) => {
-                      if (e.target.value.trim() !== m.jobTitle) void saveMemberJobTitle(m.id, e.target.value)
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
+            <>
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+                No role selected. Team job titles for signed-in users are listed below for quick nickname edits.
+              </p>
+              <OrgTeamJobTitlesPanel members={members} onSaveTitle={saveMemberJobTitle} />
+            </>
           )}
-        </aside>
+        </DiagramEditorDock>
       </div>
+
+      {contextMenu ? (
+        <DiagramContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          actions={contextMenuActions}
+          onSelect={handleContextAction}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
 
       <details style={{ marginTop: 16 }}>
         <summary style={{ cursor: "pointer", fontWeight: 700, color: "#475569" }}>Preview export</summary>
@@ -308,6 +380,7 @@ function OrgNodeCard({
   onSelect,
   onPatch,
   onDragStart,
+  onContextMenu,
 }: {
   node: OrgChartNode
   linkedLabel: string | null
@@ -316,6 +389,7 @@ function OrgNodeCard({
   onSelect: () => void
   onPatch: (patch: Partial<OrgChartNode>) => void
   onDragStart: (offsetX: number, offsetY: number) => void
+  onContextMenu: (e: React.MouseEvent) => void
 }) {
   return (
     <div
@@ -339,6 +413,7 @@ function OrgNodeCard({
         onDragStart(e.clientX - rect.left, e.clientY - rect.top)
         e.currentTarget.setPointerCapture(e.pointerId)
       }}
+      onContextMenu={onContextMenu}
     >
       <input
         value={node.label}
@@ -400,4 +475,93 @@ const secondaryBtn: CSSProperties = {
   fontWeight: 600,
   fontSize: 13,
   cursor: "pointer",
+}
+
+function OrgRoleEditor({
+  node,
+  members,
+  linkedLabel,
+  onPatch,
+  onRemove,
+  onAddChild,
+}: {
+  node: OrgChartNode
+  members: LinkableOrgUser[]
+  linkedLabel: string | null
+  onPatch: (patch: Partial<OrgChartNode>) => void
+  onRemove: () => void
+  onAddChild: () => void
+}) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+        Role / department
+        <input value={node.label} onChange={(e) => onPatch({ label: e.target.value })} style={theme.formInput} />
+      </label>
+      <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+        Job title
+        <input value={node.jobTitle} onChange={(e) => onPatch({ jobTitle: e.target.value })} style={theme.formInput} />
+      </label>
+      <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+        Linked Tradesman user
+        <select
+          value={node.linkedUserId ?? ""}
+          onChange={(e) => {
+            const id = e.target.value || null
+            const member = members.find((m) => m.id === id)
+            onPatch({
+              linkedUserId: id,
+              jobTitle: member?.jobTitle && !node.jobTitle ? member.jobTitle : node.jobTitle,
+            })
+          }}
+          style={theme.formInput}
+        >
+          <option value="">Link Tradesman user…</option>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.displayName}
+              {m.jobTitle ? ` — ${m.jobTitle}` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {linkedLabel ? <div style={{ fontSize: 12, color: "#0ea5e9" }}>Linked: {linkedLabel}</div> : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <button type="button" onClick={onAddChild} style={primaryBtn}>
+          Add child role
+        </button>
+        <button type="button" onClick={onRemove} style={{ ...secondaryBtn, color: "#b91c1c", borderColor: "#fecaca" }}>
+          Remove role
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function OrgTeamJobTitlesPanel({
+  members,
+  onSaveTitle,
+}: {
+  members: LinkableOrgUser[]
+  onSaveTitle: (memberId: string, jobTitle: string) => void
+}) {
+  if (members.length === 0) return <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No team members loaded yet.</p>
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Team job titles</h3>
+      {members.map((m) => (
+        <label key={m.id} style={{ display: "grid", gap: 4, fontSize: 12 }}>
+          <span style={{ fontWeight: 700, color: theme.text }}>{m.displayName}</span>
+          <input
+            defaultValue={m.jobTitle}
+            placeholder="Job title nickname"
+            style={theme.formInput}
+            onBlur={(e) => {
+              if (e.target.value.trim() !== m.jobTitle) onSaveTitle(m.id, e.target.value)
+            }}
+          />
+        </label>
+      ))}
+    </div>
+  )
 }

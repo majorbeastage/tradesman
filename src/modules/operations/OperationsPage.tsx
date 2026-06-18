@@ -2,9 +2,12 @@ import { useMemo, useState, type CSSProperties } from "react"
 import WorkOrdersPage from "../work-orders/WorkOrdersPage"
 import PurchaseOrdersPage from "../purchase-orders/PurchaseOrdersPage"
 import PartsInventoryPage from "../parts-inventory/PartsInventoryPage"
+import CalendarTeamManagementPanel from "../calendar/CalendarTeamManagementPanel"
 import { theme } from "../../styles/theme"
 import { useLocale } from "../../i18n/LocaleContext"
 import { useAuth } from "../../contexts/AuthContext"
+import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
+import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
 
 export type OperationsPageProps = {
@@ -26,11 +29,20 @@ const subNavBtn = (active: boolean): CSSProperties => ({
 
 export default function OperationsPage({ setPage, initialTab = "work_orders" }: OperationsPageProps) {
   const { t } = useLocale()
-  const { portalConfig } = useAuth()
+  const { portalConfig, user, role } = useAuth()
+  const scopeCtx = useOfficeManagerScopeOptional()
+  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(role)
+  const authUserId = user?.id ?? null
+
   const enabledTabs = useMemo(() => {
-    const all: OperationsSubModuleId[] = ["work_orders", "purchase_orders", "invoicing", "inventory"]
-    return all.filter((id) => operationsSubModuleEnabled(id, portalConfig))
-  }, [portalConfig])
+    const all: OperationsSubModuleId[] = ["work_orders", "purchase_orders", "invoicing", "inventory", "team_management"]
+    return all.filter((id) => {
+      if (id === "team_management") {
+        return isOfficeManagerOrAdmin && operationsSubModuleEnabled(id, portalConfig)
+      }
+      return operationsSubModuleEnabled(id, portalConfig)
+    })
+  }, [portalConfig, isOfficeManagerOrAdmin])
 
   const [tab, setTab] = useState<OperationsSubModuleId>(() =>
     enabledTabs.includes(initialTab) ? initialTab : enabledTabs[0] ?? "work_orders",
@@ -43,6 +55,7 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
     purchase_orders: t("nav.purchase_orders"),
     invoicing: t("nav.invoicing"),
     inventory: t("nav.inventory"),
+    team_management: t("nav.team_management"),
   }
 
   if (enabledTabs.length === 0) {
@@ -53,6 +66,13 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
       </div>
     )
   }
+
+  const roster =
+    scopeCtx?.clients?.length && authUserId
+      ? scopeCtx.clients
+      : authUserId
+        ? [{ userId: authUserId, label: "My account", email: user?.email ?? null, clientId: null, isSelf: true }]
+        : []
 
   return (
     <div style={{ display: "grid", gap: 16, padding: "8px 0 24px" }}>
@@ -74,6 +94,15 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
         {activeTab === "purchase_orders" ? <PurchaseOrdersPage setPage={setPage} embedded /> : null}
         {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
         {activeTab === "invoicing" ? <OperationsInvoicingPanel setPage={setPage} /> : null}
+        {activeTab === "team_management" && authUserId ? (
+          <CalendarTeamManagementPanel
+            officeManagerUserId={authUserId}
+            viewerUserId={authUserId}
+            roster={roster}
+            managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+            onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}
+          />
+        ) : null}
       </div>
     </div>
   )

@@ -8,6 +8,8 @@ export type WorkflowNode = {
   order: number
   /** Box fill / border preset (default white). */
   boxColor?: WorkflowNodeColor
+  /** Org user assigned to this step (approval / routing). */
+  assignedUserId?: string | null
 }
 
 export type WorkflowNodeColor =
@@ -278,6 +280,7 @@ export function parseBusinessWorkflow(raw: unknown): BusinessWorkflowDoc | null 
       y: typeof row.y === "number" && Number.isFinite(row.y) ? row.y : 40,
       order: typeof row.order === "number" && Number.isFinite(row.order) ? row.order : nodes.length,
       boxColor: parseWorkflowNodeColor(row.boxColor),
+      assignedUserId: typeof row.assignedUserId === "string" && row.assignedUserId.trim() ? row.assignedUserId.trim() : null,
     })
   }
   if (!nodes.length) return null

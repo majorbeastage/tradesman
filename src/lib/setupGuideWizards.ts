@@ -12,6 +12,10 @@ export type SetupMiniWizardId =
   | "scheduling_receipt_template"
   | "myt_call_forwarding"
   | "myt_voicemail_greeting"
+  | "myt_call_screening"
+  | "operations_team_management"
+  | "organization_chart"
+  | "business_workflow"
 
 export type SetupMiniWizardDef = {
   id: SetupMiniWizardId
@@ -90,6 +94,34 @@ export const SETUP_MINI_WIZARDS: SetupMiniWizardDef[] = [
     locationHint: "My T → Voicemail greeting",
     summary: "Recorded or text-to-speech greeting for missed calls.",
   },
+  {
+    id: "myt_call_screening",
+    label: "Call screening",
+    page: "account",
+    locationHint: "My T → Call screening",
+    summary: "Optional AI or recorded menu before forwarding — off by default.",
+  },
+  {
+    id: "operations_team_management",
+    label: "Team management",
+    page: "operations-team_management",
+    locationHint: "Operations → Team management",
+    summary: "Technicians, calendar policies, and crew assignments.",
+  },
+  {
+    id: "organization_chart",
+    label: "Organization chart",
+    page: "organization-chart",
+    locationHint: "Dashboard quick link or Organization chart",
+    summary: "Roles and reporting lines for your company.",
+  },
+  {
+    id: "business_workflow",
+    label: "Business workflow",
+    page: "business-workflow",
+    locationHint: "Dashboard quick link or My Business Workflow",
+    summary: "Process map with steps, arrows, and assigned users.",
+  },
 ]
 
 export function miniWizardsForSetupStep(stepId: string): SetupMiniWizardDef[] {
@@ -102,6 +134,10 @@ export function miniWizardsForSetupStep(stepId: string): SetupMiniWizardDef[] {
       return SETUP_MINI_WIZARDS.filter((w) => w.id.startsWith("scheduling_"))
     case "myt":
       return SETUP_MINI_WIZARDS.filter((w) => w.id.startsWith("myt_"))
+    case "operations":
+      return SETUP_MINI_WIZARDS.filter((w) => w.id === "operations_team_management")
+    case "corporate_tools":
+      return SETUP_MINI_WIZARDS.filter((w) => w.id === "organization_chart" || w.id === "business_workflow")
     default:
       return []
   }

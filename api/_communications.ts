@@ -504,6 +504,8 @@ export function buildVoicemailTwiml(params: {
   /** Twilio POSTs here when STT completes (same query string as recordAction + phase=transcribe). */
   transcribeCallback?: string
   routingProfile: UserRoutingProfile | null
+  /** Optional line spoken before the standard greeting (e.g. spam screening). */
+  preambleSay?: string
 }): string {
   const greetingText =
     params.routingProfile?.voicemail_greeting_text?.trim() ||
@@ -513,6 +515,8 @@ export function buildVoicemailTwiml(params: {
     params.routingProfile?.voicemail_greeting_mode === "recorded" && !!recordedUrl
   const useRecordedGreeting = wantsRecorded && twilioPlayLikelySupportedRecordingUrl(recordedUrl)
   const sayAttrs = `voice="Polly.Matthew" language="en-US"`
+  const preamble =
+    params.preambleSay?.trim() ? `<Say ${sayAttrs}>${xmlEscape(params.preambleSay.trim())}</Say>` : ""
   const greetingNode = useRecordedGreeting
     ? `<Play>${xmlEscape(recordedUrl)}</Play>`
     : `<Say ${sayAttrs}>${xmlEscape(greetingText)}</Say>`
@@ -524,6 +528,7 @@ export function buildVoicemailTwiml(params: {
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<Response>` +
+    preamble +
     greetingNode +
     `<Record action="${xmlEscape(params.recordAction)}" method="POST" transcribe="true"${transcribeCb} maxLength="118" />` +
     `</Response>`

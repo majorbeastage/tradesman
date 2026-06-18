@@ -6,6 +6,8 @@
 
 import { TAB_ID_LABELS, USER_PORTAL_TAB_IDS, OFFICE_PORTAL_TAB_IDS } from "../types/portal-builder"
 import { SETUP_MINI_WIZARDS, type SetupMiniWizardDef, type SetupMiniWizardId } from "./setupGuideWizards"
+import type { ClientPackageContext } from "./clientPackageContext"
+import { buildClientPackageAssistantSummary } from "./clientPackageContext"
 
 export type PlatformAssistantPlatform = "user" | "office_manager" | "admin"
 
@@ -161,6 +163,43 @@ export const PLATFORM_PAGE_INTENTS: PlatformPageIntent[] = [
   },
   {
     kind: "page",
+    page: "operations",
+    label: TAB_ID_LABELS.operations ?? "Operations",
+    description: "Work orders, purchase orders, inventory, invoicing, team management",
+    platforms: ["user", "office_manager"],
+    patterns: [
+      /\boperations\b/i,
+      /\bwork\s+orders?\b/i,
+      /\bpurchase\s+orders?\b/i,
+      /\bparts?\s+inventory\b/i,
+      /\binvoicing\b/i,
+      /\bteam\s+management\b/i,
+    ],
+    requiresTab: true,
+  },
+  {
+    kind: "page",
+    page: "organization-chart",
+    label: TAB_ID_LABELS["organization-chart"],
+    description: "Organization chart — roles and reporting lines",
+    platforms: ["user", "office_manager"],
+    patterns: [/\borganization\s+chart\b/i, /\borg\s+chart\b/i, /\breporting\s+lines?\b/i, /\bcompany\s+structure\b/i],
+  },
+  {
+    kind: "page",
+    page: "business-workflow",
+    label: TAB_ID_LABELS["business-workflow"],
+    description: "Business workflow editor — process steps, arrows, assigned users",
+    platforms: ["user", "office_manager"],
+    patterns: [
+      /\bbusiness\s+workflow\b/i,
+      /\bworkflow\s+editor\b/i,
+      /\bprocess\s+map\b/i,
+      /\bmy\s+business\s+workflow\b/i,
+    ],
+  },
+  {
+    kind: "page",
     page: "reporting",
     label: "Reporting",
     description: "Variance reports, inspections, specialty reporting",
@@ -241,6 +280,21 @@ function wizardPatternsForId(id: SetupMiniWizardId): RegExp[] {
       return [/\bcall\s+forward/i, /\bforward\s+calls?\b/i, /\bring\s+my\s+cell\b/i, /\bwhisper\b/i]
     case "myt_voicemail_greeting":
       return [/\bvoicemail\b/i, /\bgreeting\s+recording\b/i, /\bmissed\s+call\s+message\b/i, /\bgreeting\s+text\b/i]
+    case "myt_call_screening":
+      return [
+        /\bcall\s+screen/i,
+        /\bauto[\s-]?attendant\b/i,
+        /\bivr\b/i,
+        /\bscreen\s+calls?\b/i,
+        /\bspam\s+screen/i,
+        /\binbound\s+menu\b/i,
+      ]
+    case "operations_team_management":
+      return [/\bteam\s+management\b/i, /\bassign\s+technicians?\b/i, /\bcrew\s+assign/i, /\btechnician\s+list\b/i]
+    case "organization_chart":
+      return [/\borganization\s+chart\b/i, /\borg\s+chart\b/i, /\bcompany\s+structure\b/i]
+    case "business_workflow":
+      return [/\bbusiness\s+workflow\b/i, /\bprocess\s+map\b/i, /\bworkflow\s+steps?\b/i]
     default:
       return []
   }
@@ -325,11 +379,15 @@ export function buildPlatformAssistantCatalogText(ctx: {
   selectedCustomerId?: string | null
   selectedCustomerName?: string | null
   selectedQuoteId?: string | null
+  clientPackage?: ClientPackageContext | null
 }): string {
   const lines: string[] = []
   lines.push("## Tradesman platform assistant — allowed actions")
   lines.push("")
   lines.push(`Current shell: **${ctx.platform}**${ctx.isAdmin ? " (user is admin)" : ""}.`)
+  if (ctx.clientPackage) {
+    lines.push(`Product package: **${ctx.clientPackage.packageLabel}**${ctx.clientPackage.isCorporate ? " (Corporate)" : ""}.`)
+  }
   if (ctx.currentPage?.trim()) {
     lines.push(`Active tab: **${TAB_ID_LABELS[ctx.currentPage] ?? ctx.currentPage}** (\`${ctx.currentPage}\`). Prefer setup wizards on this tab when the user says “open” or “expand” without naming another area.`)
   }
@@ -390,6 +448,11 @@ export function buildPlatformAssistantCatalogText(ctx: {
   lines.push("- SMS: “text them”, “send a message”, “open SMS”, “reply by text” (opens compose; does not auto-send).")
   lines.push("- Customer: “open customer Johnson”, “find client Smith”; with someone on screen: “this customer”, “for them”.")
   lines.push("- Help: “what can I do here”, “help me on this screen”, “explain this”.")
+
+  if (ctx.clientPackage) {
+    lines.push("")
+    lines.push(buildClientPackageAssistantSummary(ctx.clientPackage))
+  }
 
   lines.push("")
   lines.push("### Not yet supported")

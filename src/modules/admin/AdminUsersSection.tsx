@@ -1,10 +1,16 @@
 import { useState, useEffect, useMemo } from "react"
-import { useAuth } from "../../contexts/AuthContext"
+import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { createUserViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
+import {
+  isManagedUserRole,
+  isOfficeManagerAssignmentRole,
+  labelForProfileRole,
+  PROFILE_ROLE_LABELS,
+} from "../../lib/profileRoles"
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
@@ -50,7 +56,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   const [lastName, setLastName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [role, setRole] = useState<"user" | "new_user" | "demo_user" | "office_manager" | "admin">("user")
+  const [role, setRole] = useState<UserRole>("user")
   const [roleSavingUserId, setRoleSavingUserId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState("")
@@ -171,7 +177,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       })
   }, [userIdsKey])
 
-  const officeManagerCandidates = users.filter((u) => u.role === "office_manager" || u.role === "admin")
+  const officeManagerCandidates = users.filter((u) => isOfficeManagerAssignmentRole(u.role))
 
   async function handleTableRoleChange(userId: string, nextRole: string) {
     if (!supabase) return
@@ -520,7 +526,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       <AdminSettingBlock id="admin:users:add_user_heading">
       <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 16 }}>Add user</h2>
       <p style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
-        All profiles are created here. Choose role: User, New User (onboarding), Office Manager, or Admin.
+        All profiles are created here. Choose role: User, New User, Office Manager, Corporate (Management / External / Internal), or Admin.
       </p>
       <p style={{ color: theme.text, opacity: 0.85, marginBottom: 12, fontSize: 13, lineHeight: 1.5, padding: 12, borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251, 191, 36, 0.12)" }}>
         <strong>Admin role policy (email workflow pending):</strong> Any change that <strong>grants or removes</strong> admin access must be approved by{" "}
@@ -591,16 +597,17 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
           Role
           <select
             value={role}
-            onChange={(e) =>
-              setRole(e.target.value as "user" | "new_user" | "demo_user" | "office_manager" | "admin")
-            }
+            onChange={(e) => setRole(e.target.value as UserRole)}
             style={inputStyle}
           >
-            <option value="user">User</option>
-            <option value="new_user">New User</option>
-            <option value="demo_user">Demo user (data resets on schedule)</option>
-            <option value="office_manager">Office Manager</option>
-            <option value="admin">Admin</option>
+            <option value="user">{PROFILE_ROLE_LABELS.user}</option>
+            <option value="new_user">{PROFILE_ROLE_LABELS.new_user}</option>
+            <option value="demo_user">{PROFILE_ROLE_LABELS.demo_user} (data resets on schedule)</option>
+            <option value="office_manager">{PROFILE_ROLE_LABELS.office_manager}</option>
+            <option value="corporate_management">{PROFILE_ROLE_LABELS.corporate_management}</option>
+            <option value="corporate_external">{PROFILE_ROLE_LABELS.corporate_external}</option>
+            <option value="corporate_internal">{PROFILE_ROLE_LABELS.corporate_internal}</option>
+            <option value="admin">{PROFILE_ROLE_LABELS.admin}</option>
           </select>
         </label>
         </AdminSettingBlock>
@@ -720,11 +727,14 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                       color: theme.text,
                     }}
                   >
-                    <option value="user">user</option>
-                    <option value="new_user">new_user</option>
-                    <option value="demo_user">demo_user</option>
-                    <option value="office_manager">office_manager</option>
-                    <option value="admin">admin</option>
+                    <option value="user">{PROFILE_ROLE_LABELS.user}</option>
+                    <option value="new_user">{PROFILE_ROLE_LABELS.new_user}</option>
+                    <option value="demo_user">{PROFILE_ROLE_LABELS.demo_user}</option>
+                    <option value="office_manager">{PROFILE_ROLE_LABELS.office_manager}</option>
+                    <option value="corporate_management">{PROFILE_ROLE_LABELS.corporate_management}</option>
+                    <option value="corporate_external">{PROFILE_ROLE_LABELS.corporate_external}</option>
+                    <option value="corporate_internal">{PROFILE_ROLE_LABELS.corporate_internal}</option>
+                    <option value="admin">{PROFILE_ROLE_LABELS.admin}</option>
                   </select>
                   {roleSavingUserId === u.id && <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.8 }}>Saving…</span>}
                 </td>
@@ -761,7 +771,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                   )}
                 </td>
                 <td style={{ padding: "12px", color: theme.text }}>
-                  {u.role === "user" || u.role === "new_user" || u.role === "demo_user" ? (
+                  {isManagedUserRole(u.role) ? (
                     <select
                       value={omByUserId[u.id] ?? ""}
                       onChange={(e) => void handleSetOfficeManager(u.id, e.target.value || null)}
@@ -790,7 +800,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                                   : n.first !== "—"
                                     ? n.first
                                     : om.email ?? om.id.slice(0, 8) + "…"
-                              return `${label} (${om.role})`
+                              return `${label} (${labelForProfileRole(om.role)})`
                             })()}
                           </option>
                         ))}

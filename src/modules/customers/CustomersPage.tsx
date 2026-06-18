@@ -269,6 +269,11 @@ function activityRowLabel(item: { kind: "msg" | "ev"; payload: any }): string {
     return item.payload?.sender === "customer" ? "Inbound text" : "Message"
   }
   const ev = item.payload
+  const meta = ev?.metadata && typeof ev.metadata === "object" ? ev.metadata : null
+  if (meta && (meta as { call_screening?: boolean }).call_screening) {
+    const verdict = String((meta as { screening_verdict?: string }).screening_verdict ?? "").replace(/_/g, " ")
+    return verdict ? `Call screening · ${verdict}` : "Call screening"
+  }
   const base = `${ev?.event_type || "Event"} ${ev?.direction || ""}`.trim()
   if (ev?.event_type === "email") {
     const from = formatCommEventEmailFromLabel(ev)

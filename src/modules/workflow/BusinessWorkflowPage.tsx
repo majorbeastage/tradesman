@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
-import { useIsMobile } from "../../hooks/useIsMobile"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
+import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
+import { DiagramContextMenu, type DiagramMenuAction } from "../../components/diagram/DiagramContextMenu"
+import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import {
   WORKFLOW_EDGE_META,
   WORKFLOW_NODE_COLOR_META,
@@ -42,7 +44,6 @@ const APPROVAL_OPTIONS: WorkflowEdgeApproval[] = ["approved", "needs_approval", 
 export default function BusinessWorkflowPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
-  const isMobile = useIsMobile()
   const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createExampleBusinessWorkflow())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -53,6 +54,9 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   const [newArrowApproval, setNewArrowApproval] = useState<WorkflowEdgeApproval>("needs_approval")
   const [newArrowRequirement, setNewArrowRequirement] = useState("")
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null)
+  const [members, setMembers] = useState<LinkableOrgUser[]>([])
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
+  const clipboardRef = useRef<{ kind: "node"; node: WorkflowNode } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<number | null>(null)
 
@@ -73,6 +77,9 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         else setDoc(loadBusinessWorkflowFromMetadata(data?.metadata))
         setLoading(false)
       })
+    void loadLinkableOrgUsers(supabase, userId).then((team) => {
+      if (!cancelled) setMembers(team)
+    })
     return () => {
       cancelled = true
     }
@@ -222,9 +229,106 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     window.location.href = buildShareWithAdminMailto(doc, label)
   }
 
+  function duplicateNode(source: WorkflowNode) {
+    const node = newWorkflowNode(`${source.label} (copy)`, nodes.length, source.x + 28, source.y + 28)
+    node.boxColor = source.boxColor
+    node.assignedUserId = source.assignedUserId ?? null
+    updateDoc((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
+    setSelectedId(node.id)
+    setSelectedEdgeId(null)
+  }
+
+  function pasteNode() {
+    const clip = clipboardRef.current
+    if (!clip || clip.kind !== "node") return
+    duplicateNode(clip.node)
+  }
+
+  function openContextMenu(e: React.MouseEvent, target: "node" | "edge" | "canvas", id?: string) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (target === "node" && id) {
+      setSelectedId(id)
+      setSelectedEdgeId(null)
+    } else if (target === "edge" && id) {
+      setSelectedEdgeId(id)
+      setSelectedId(null)
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, target, id })
+  }
+
+  const contextMenuActions = useMemo((): DiagramMenuAction[] => {
+    if (!contextMenu) return []
+    if (contextMenu.target === "node" && contextMenu.id) {
+      return [
+        { id: "rename", label: "Rename (edit in box)" },
+        { id: "copy", label: "Copy step" },
+        { id: "paste", label: "Paste step", disabled: !clipboardRef.current },
+        { id: "add_arrow", label: "Add arrow from here" },
+        { id: "remove", label: "Remove step", danger: true },
+      ]
+    }
+    if (contextMenu.target === "edge" && contextMenu.id) {
+      return [
+        { id: "copy", label: "Copy requirement label" },
+        { id: "remove", label: "Remove arrow", danger: true },
+      ]
+    }
+    return [{ id: "paste", label: "Paste step", disabled: !clipboardRef.current }]
+  }, [contextMenu])
+
+  function handleContextAction(actionId: string) {
+    if (!contextMenu) return
+    if (contextMenu.target === "node" && contextMenu.id) {
+      const node = nodeById.get(contextMenu.id)
+      if (!node) return
+      if (actionId === "copy") clipboardRef.current = { kind: "node", node }
+      if (actionId === "paste") pasteNode()
+      if (actionId === "add_arrow") {
+        setSelectedId(contextMenu.id)
+        startLinkFromSelected()
+      }
+      if (actionId === "remove") {
+        const id = contextMenu.id
+        updateDoc((prev) => ({
+          ...prev,
+          nodes: prev.nodes.filter((n) => n.id !== id).map((n, i) => ({ ...n, order: i })),
+          edges: prev.edges.filter((e) => e.fromId !== id && e.toId !== id),
+        }))
+        setSelectedId(null)
+        setSelectedEdgeId(null)
+      }
+    } else if (contextMenu.target === "edge" && contextMenu.id) {
+      const edge = doc.edges.find((e) => e.id === contextMenu.id)
+      if (actionId === "copy" && edge?.requirement) {
+        void navigator.clipboard?.writeText(edge.requirement)
+      }
+      if (actionId === "remove") removeEdge(contextMenu.id)
+    } else if (actionId === "paste") {
+      pasteNode()
+    }
+  }
+
+  const selectedNode = selectedId ? nodeById.get(selectedId) ?? null : null
+  const selectedEdge = selectedEdgeId ? doc.edges.find((e) => e.id === selectedEdgeId) ?? null : null
   const selectedNodeEdges = selectedId
     ? doc.edges.filter((e) => e.fromId === selectedId || e.toId === selectedId)
     : []
+
+  const dockTitle = selectedEdge
+    ? "Arrow"
+    : selectedNode
+      ? "Workflow step"
+      : linkFromId
+        ? "Adding arrow"
+        : "Properties"
+  const dockSubtitle = selectedEdge
+    ? "Reconnect endpoints, set approval type, and requirement label."
+    : selectedNode
+      ? "Assign an org user, set box color, and manage arrows for this step."
+      : linkFromId
+        ? "Click a target step on the chart, or cancel below."
+        : "Click a step or arrow on the chart to edit it here. Right-click for copy, paste, and remove."
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 20px 40px" }}>
@@ -286,96 +390,6 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         ) : null}
       </div>
 
-      {linkFromId ? (
-        <div style={linkBanner}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", width: "100%" }}>
-            <span style={{ fontWeight: 700 }}>Adding arrow from:</span> {nodeById.get(linkFromId)?.label ?? "Step"}
-            <span style={{ color: "#64748b" }}>→ click the target step</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", width: "100%", marginTop: 8 }}>
-            <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600, flex: "1 1 160px" }}>
-              Requirement label
-              <input
-                list="wf-requirement-suggestions"
-                value={newArrowRequirement}
-                onChange={(e) => setNewArrowRequirement(e.target.value)}
-                placeholder="e.g. Estimate approval"
-                style={theme.formInput}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600 }}>
-              Arrow type
-              <select
-                value={newArrowApproval}
-                onChange={(e) => setNewArrowApproval(e.target.value as WorkflowEdgeApproval)}
-                style={{ ...theme.formInput, margin: 0, padding: "8px 10px", fontSize: 13 }}
-              >
-                {APPROVAL_OPTIONS.map((k) => (
-                  <option key={k} value={k}>
-                    {WORKFLOW_EDGE_META[k].shortLabel}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <datalist id="wf-requirement-suggestions">
-            {WORKFLOW_REQUIREMENT_SUGGESTIONS.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        </div>
-      ) : null}
-
-      {(selectedId || selectedEdgeId) && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 12,
-            borderRadius: 10,
-            border: `1px solid ${theme.border}`,
-            background: "#fff",
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          {selectedId && nodeById.has(selectedId) ? (
-            <NodeColorEditor
-              node={nodeById.get(selectedId)!}
-              onChange={(boxColor) => patchNode(selectedId, { boxColor })}
-            />
-          ) : null}
-
-          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Arrows</h2>
-          {selectedEdgeId && doc.edges.some((e) => e.id === selectedEdgeId) ? (
-            <EdgeEditor
-              edge={doc.edges.find((e) => e.id === selectedEdgeId)!}
-              nodeById={nodeById}
-              onPatch={(patch) => patchEdge(selectedEdgeId, patch)}
-              onRemove={() => removeEdge(selectedEdgeId)}
-            />
-          ) : selectedId && selectedNodeEdges.length > 0 ? (
-            <div style={{ display: "grid", gap: 10 }}>
-              {selectedNodeEdges.map((edge) => (
-                <EdgeEditor
-                  key={edge.id}
-                  edge={edge}
-                  nodeById={nodeById}
-                  compact
-                  onPatch={(patch) => patchEdge(edge.id, patch)}
-                  onRemove={() => removeEdge(edge.id)}
-                  onFocus={() => setSelectedEdgeId(edge.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-              Select a step to change its box color. Use <strong>+ Add arrow</strong> and set a requirement label (e.g.
-              estimate approval). Click an arrow to edit.
-            </p>
-          )}
-        </div>
-      )}
-
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
         {loading ? (
           <p style={{ color: "#64748b" }}>Loading workflow…</p>
@@ -385,12 +399,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
-            onClick={() => {
-              if (!linkFromId) {
-                setSelectedId(null)
-                setSelectedEdgeId(null)
-              }
-            }}
+            onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
               minHeight: Math.max(640, nodes.length * 88 + 80),
@@ -434,6 +443,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                         setSelectedId(null)
                         setLinkFromId(null)
                       }}
+                      onContextMenu={(e) => openContextMenu(e, "edge", edge.id)}
                     />
                     <line
                       x1={g.x1}
@@ -492,17 +502,125 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                   if (linkFromId) return
                   setDrag({ id: n.id, offsetX, offsetY })
                 }}
+                onContextMenu={(e) => openContextMenu(e, "node", n.id)}
+                assignedLabel={
+                  n.assignedUserId ? members.find((m) => m.id === n.assignedUserId)?.displayName ?? null : null
+                }
               />
             ))}
           </div>
         )}
+
+        <DiagramEditorDock title={dockTitle} subtitle={dockSubtitle}>
+          {linkFromId ? (
+            <div style={linkBanner}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", width: "100%" }}>
+                <span style={{ fontWeight: 700 }}>From:</span> {nodeById.get(linkFromId)?.label ?? "Step"}
+                <span style={{ color: "#64748b" }}>→ click target step on the chart</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", width: "100%", marginTop: 8 }}>
+                <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600, flex: "1 1 160px" }}>
+                  Requirement label
+                  <input
+                    list="wf-requirement-suggestions"
+                    value={newArrowRequirement}
+                    onChange={(e) => setNewArrowRequirement(e.target.value)}
+                    placeholder="e.g. Estimate approval"
+                    style={theme.formInput}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600 }}>
+                  Arrow type
+                  <select
+                    value={newArrowApproval}
+                    onChange={(e) => setNewArrowApproval(e.target.value as WorkflowEdgeApproval)}
+                    style={{ ...theme.formInput, margin: 0, padding: "8px 10px", fontSize: 13 }}
+                  >
+                    {APPROVAL_OPTIONS.map((k) => (
+                      <option key={k} value={k}>
+                        {WORKFLOW_EDGE_META[k].shortLabel}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" onClick={() => setLinkFromId(null)} style={{ ...secondaryBtn, borderColor: "#fecaca", color: "#b91c1c" }}>
+                  Cancel arrow
+                </button>
+              </div>
+            </div>
+          ) : selectedEdge ? (
+            <EdgeEditor
+              edge={selectedEdge}
+              nodeById={nodeById}
+              allNodes={nodes}
+              onPatch={(patch) => patchEdge(selectedEdge.id, patch)}
+              onRemove={() => removeEdge(selectedEdge.id)}
+            />
+          ) : selectedNode ? (
+            <>
+              <NodeColorEditor node={selectedNode} onChange={(boxColor) => patchNode(selectedNode.id, { boxColor })} />
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Assigned org user
+                <select
+                  value={selectedNode.assignedUserId ?? ""}
+                  onChange={(e) => patchNode(selectedNode.id, { assignedUserId: e.target.value || null })}
+                  style={theme.formInput}
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayName}
+                      {m.jobTitle ? ` — ${m.jobTitle}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedNodeEdges.length > 0 ? (
+                <>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Arrows for this step</h3>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {selectedNodeEdges.map((edge) => (
+                      <EdgeEditor
+                        key={edge.id}
+                        edge={edge}
+                        nodeById={nodeById}
+                        allNodes={nodes}
+                        compact
+                        onPatch={(patch) => patchEdge(edge.id, patch)}
+                        onRemove={() => removeEdge(edge.id)}
+                        onFocus={() => setSelectedEdgeId(edge.id)}
+                        active={selectedEdgeId === edge.id}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No arrows yet — use + Add arrow or right-click this step.</p>
+              )}
+            </>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+              Select a workflow step or arrow on the chart. The editor stays open until you select something else.
+            </p>
+          )}
+        </DiagramEditorDock>
       </div>
 
-      {!selectedId && !selectedEdgeId && !isMobile ? (
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-          Select a workflow step or arrow to edit colors and approval requirements above the canvas.
-        </p>
+      {contextMenu ? (
+        <DiagramContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          actions={contextMenuActions}
+          onSelect={handleContextAction}
+          onClose={() => setContextMenu(null)}
+        />
       ) : null}
+
+      <datalist id="wf-requirement-suggestions">
+        {WORKFLOW_REQUIREMENT_SUGGESTIONS.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
 
       <details style={{ marginTop: 16 }}>
         <summary style={{ cursor: "pointer", fontWeight: 700, color: "#475569" }}>Preview export</summary>
@@ -570,32 +688,69 @@ function WorkflowArrowLegend() {
 function EdgeEditor({
   edge,
   nodeById,
+  allNodes,
   compact,
+  active,
   onPatch,
   onRemove,
   onFocus,
 }: {
   edge: WorkflowEdge
   nodeById: Map<string, WorkflowNode>
+  allNodes?: WorkflowNode[]
   compact?: boolean
+  active?: boolean
   onPatch: (patch: Partial<WorkflowEdge>) => void
   onRemove: () => void
   onFocus?: () => void
 }) {
   const from = nodeById.get(edge.fromId)?.label ?? "Step"
   const to = nodeById.get(edge.toId)?.label ?? "Step"
+  const nodeOptions = allNodes ?? [...nodeById.values()]
   return (
     <div
       style={{
         padding: compact ? "10px 10px" : "12px 12px",
         borderRadius: 10,
-        border: `1px solid ${theme.border}`,
+        border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
         background: "#fff",
       }}
       onClick={onFocus}
     >
       <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6, lineHeight: 1.35 }}>
         {from} → {to}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+          From step
+          <select
+            value={edge.fromId}
+            onChange={(e) => onPatch({ fromId: e.target.value })}
+            style={theme.formInput}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {nodeOptions.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+          To step
+          <select
+            value={edge.toId}
+            onChange={(e) => onPatch({ toId: e.target.value })}
+            style={theme.formInput}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {nodeOptions.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <datalist id={`wf-req-${edge.id}`}>
         {WORKFLOW_REQUIREMENT_SUGGESTIONS.map((s) => (
@@ -639,17 +794,21 @@ function WorkflowNodeCard({
   selected,
   linkSource,
   linkMode,
+  assignedLabel,
   onSelect,
   onLabelChange,
   onDragStart,
+  onContextMenu,
 }: {
   node: WorkflowNode
   selected: boolean
   linkSource: boolean
   linkMode: boolean
+  assignedLabel?: string | null
   onSelect: () => void
   onLabelChange: (label: string) => void
   onDragStart: (offsetX: number, offsetY: number) => void
+  onContextMenu: (e: React.MouseEvent) => void
 }) {
   const pres = workflowNodePresentation(node)
   return (
@@ -681,6 +840,7 @@ function WorkflowNodeCard({
         onDragStart(e.clientX - rect.left, e.clientY - rect.top)
         e.currentTarget.setPointerCapture(e.pointerId)
       }}
+      onContextMenu={onContextMenu}
     >
       <input
         value={node.label}
@@ -696,9 +856,11 @@ function WorkflowNodeCard({
           outline: "none",
         }}
       />
-      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
-        {linkSource ? "Arrow starts here — click target" : linkMode ? "Click to connect" : "Drag to move"}
-      </div>
+      {assignedLabel ? (
+        <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 2 }}>{assignedLabel}</div>
+      ) : linkSource ? (
+        <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 2 }}>Arrow starts here — click target</div>
+      ) : null}
     </div>
   )
 }

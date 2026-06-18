@@ -317,6 +317,76 @@ export const SETUP_MINI_WIZARD_FLOWS: Record<SetupMiniWizardId, SetupMiniWizardF
       },
     ],
   },
+  myt_call_screening: {
+    id: "myt_call_screening",
+    title: "Call screening",
+    intro: "Optional menu before your cell rings. When disabled, calls forward exactly as today (whisper unchanged).",
+    questions: [
+      {
+        id: "enable_screening",
+        prompt: "Turn on call screening for your Tradesman business line?",
+        type: "yesno",
+        defaultValue: "no",
+        speakAloud: true,
+      },
+      {
+        id: "screen_spam",
+        prompt: "Screen spam and robocalls before forwarding?",
+        type: "yesno",
+        defaultValue: "yes",
+        speakAloud: true,
+      },
+      {
+        id: "collect_contact",
+        prompt: "Ask callers for name and callback number in the menu?",
+        type: "yesno",
+        defaultValue: "yes",
+        speakAloud: true,
+      },
+    ],
+  },
+  operations_team_management: {
+    id: "operations_team_management",
+    title: "Team management",
+    intro: "Assign technicians and calendar policies from Operations.",
+    questions: [
+      {
+        id: "has_team",
+        prompt: "Will you assign jobs to more than one technician or crew?",
+        type: "yesno",
+        defaultValue: "yes",
+        speakAloud: true,
+      },
+    ],
+  },
+  organization_chart: {
+    id: "organization_chart",
+    title: "Organization chart",
+    intro: "Sketch roles and reporting lines — open the chart when you are ready.",
+    questions: [
+      {
+        id: "open_now",
+        prompt: "Open the organization chart builder now?",
+        type: "yesno",
+        defaultValue: "yes",
+        speakAloud: true,
+      },
+    ],
+  },
+  business_workflow: {
+    id: "business_workflow",
+    title: "Business workflow",
+    intro: "Map repeatable job steps with arrows and assigned users.",
+    questions: [
+      {
+        id: "open_now",
+        prompt: "Open the business workflow editor now?",
+        type: "yesno",
+        defaultValue: "yes",
+        speakAloud: true,
+      },
+    ],
+  },
 }
 
 export function getSetupMiniWizardFlow(id: SetupMiniWizardId): SetupMiniWizardFlow {

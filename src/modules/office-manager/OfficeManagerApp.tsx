@@ -17,9 +17,9 @@ import OrganizationChartPage from "../org-chart/OrganizationChartPage"
 import OperationsPage from "../operations/OperationsPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
-  OfficeManagerScopeProvider,
   useOfficeManagerScopeOptional,
 } from "../../contexts/OfficeManagerScopeContext"
+import { useEffectiveClientId } from "../../contexts/PortalViewContext"
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -370,102 +370,12 @@ function ManagedUserOmToolbarEditor() {
   )
 }
 
-function ManagedUserBar() {
-  const { portalConfig } = useAuth()
+function ManagedUserToolsStrip() {
   const ctx = useOfficeManagerScopeOptional()
-  if (!ctx) return null
-  if (portalConfig?.office_manager_show_working_as_bar !== true) return null
-  const { clients, selectedUserId, setSelectedUserId, loadingClients, loadingPortalConfig, error } = ctx
-  const selected = clients.find((c) => c.userId === selectedUserId)
-  const managedCount = clients.filter((c) => !c.isSelf).length
-
-  if (loadingClients) {
-    return (
-      <p style={{ color: theme.text, marginBottom: 16, fontSize: 14 }}>
-        Loading assigned users…
-      </p>
-    )
-  }
-  if (error) {
-    return (
-      <p style={{ color: "#b91c1c", marginBottom: 16, fontSize: 14 }}>
-        {error}
-      </p>
-    )
-  }
-  if (clients.length === 0) {
-    return (
-      <div
-        style={{
-          marginBottom: 20,
-          padding: 14,
-          background: "#fef3c7",
-          borderRadius: 8,
-          color: "#92400e",
-          fontSize: 14,
-        }}
-      >
-        No users are linked to your office manager account.         An admin can assign them in the app:{" "}
-        <strong>Admin Login → Users &amp; office managers → Office manager</strong> column. Then refresh this page. See{" "}
-        <code>OFFICE-MANAGER.md</code>.
-      </div>
-    )
-  }
-
+  const selected = ctx?.clients.find((c) => c.userId === ctx.selectedUserId)
+  if (!ctx || selected?.isSelf !== false) return null
   return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "flex-start",
-        gap: 12,
-        marginBottom: 20,
-        padding: "12px 14px",
-        background: "white",
-        border: `1px solid ${theme.border}`,
-        borderRadius: 8,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>Working as</span>
-        <select
-          value={selectedUserId ?? ""}
-          onChange={(e) => setSelectedUserId(e.target.value)}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: `1px solid ${theme.border}`,
-            fontSize: 14,
-            minWidth: 220,
-            color: theme.text,
-            background: "white",
-          }}
-        >
-          {clients.map((c) => (
-            <option key={c.userId} value={c.userId}>
-              {c.isSelf ? "Office manager (me)" : c.label}
-            </option>
-          ))}
-        </select>
-        {loadingPortalConfig && (
-          <span style={{ fontSize: 12, color: theme.text, opacity: 0.7 }}>Loading profile…</span>
-        )}
-        {!loadingPortalConfig && selected?.isSelf && (
-          <span style={{ fontSize: 12, color: theme.text, opacity: 0.8 }}>
-            You are viewing your own office manager scope.
-          </span>
-        )}
-        {!loadingPortalConfig && !selected?.isSelf && (
-          <span style={{ fontSize: 12, color: theme.text, opacity: 0.8 }}>
-            Managing selected user data.
-          </span>
-        )}
-      </div>
-      {managedCount === 0 && (
-        <p style={{ margin: 0, fontSize: 12, color: theme.text, opacity: 0.75 }}>
-          No managed users assigned yet. You can still work as office manager (me).
-        </p>
-      )}
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start", marginBottom: 12 }}>
       <ManagedUserTabEditor />
       <ManagedUserOmToolbarEditor />
     </div>
@@ -474,10 +384,11 @@ function ManagedUserBar() {
 
 function OfficeManagerAppContent() {
   const { page, navigatePage: setPage } = useAppNavigation()
-  const { clientId, user, portalConfig, role: authRole } = useAuth()
+  const { user, portalConfig, role: authRole } = useAuth()
+  const effectiveClientId = useEffectiveClientId()
   const isMobile = useIsMobile()
   const { t } = useLocale()
-  const { tabs: portalTabs } = usePortalTabs(clientId, "office_manager")
+  const { tabs: portalTabs } = usePortalTabs(effectiveClientId, "office_manager")
   const scope = useOfficeManagerScopeOptional()
   const hasClients = (scope?.clients.length ?? 0) > 0
   const resolvedPortalTabs = useMemo(() => {
@@ -572,6 +483,8 @@ function OfficeManagerAppContent() {
       availableTabIds={resolvedPortalTabs.map((t) => t.tab_id)}
       isAdmin={authRole === "admin"}
       currentPage={page}
+      portalConfig={portalConfig}
+      accountRole={authRole}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal
@@ -585,7 +498,7 @@ function OfficeManagerAppContent() {
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
-      <ManagedUserBar />
+      <ManagedUserToolsStrip />
 
       {portalConfig?.demo_account === true ? (
         <div
@@ -747,9 +660,5 @@ function OfficeManagerAppRoot() {
 }
 
 export default function OfficeManagerApp() {
-  return (
-    <OfficeManagerScopeProvider>
-      <OfficeManagerAppRoot />
-    </OfficeManagerScopeProvider>
-  )
+  return <OfficeManagerAppRoot />
 }
