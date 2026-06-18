@@ -12,9 +12,12 @@ import { supabase } from "../lib/supabase"
 import type { PortalConfig } from "../types/portal-builder"
 import {
   canUsePortalViewBar,
+  defaultPortalConfigForViewRole,
   defaultViewRoleForAuthRole,
   filterUsersForViewRole,
+  isPortalViewDefaultTarget,
   portalShellForViewRole,
+  PORTAL_VIEW_DEFAULT_USER,
   roleFromProfileRow,
   viewRoleOptionsForAuthRole,
   type ManageableUserRow,
@@ -216,6 +219,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         if (cancelled) return
         setManageableUsers(rows)
         setTargetUserIdState((prev) => {
+          if (isPortalViewDefaultTarget(prev)) return PORTAL_VIEW_DEFAULT_USER
           if (prev && rows.some((r) => r.userId === prev)) return prev
           return authUserId
         })
@@ -239,24 +243,31 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   )
 
   useEffect(() => {
-    if (usersForCurrentViewRole.length === 0) return
-    if (!targetUserId || !usersForCurrentViewRole.some((u) => u.userId === targetUserId)) {
-      const self = usersForCurrentViewRole.find((u) => u.isSelf)
-      setTargetUserIdState(self?.userId ?? usersForCurrentViewRole[0]?.userId ?? authUserId)
+    if (isPortalViewDefaultTarget(targetUserId)) return
+    if (viewRole === authRole && targetUserId === authUserId) return
+    if (targetUserId && usersForCurrentViewRole.some((u) => u.userId === targetUserId)) return
+    if (viewRole === authRole) {
+      setTargetUserIdState(authUserId)
+      return
     }
-  }, [usersForCurrentViewRole, targetUserId, authUserId])
+    setTargetUserIdState(PORTAL_VIEW_DEFAULT_USER)
+  }, [usersForCurrentViewRole, targetUserId, authUserId, viewRole, authRole])
 
   const setViewRole = useCallback(
     (role: UserRole) => {
       if (!viewRoleOptions.includes(role)) return
       setViewRoleState(role)
+      const nextTarget =
+        role === authRole && authUserId ? authUserId : PORTAL_VIEW_DEFAULT_USER
+      setTargetUserIdState(nextTarget)
       try {
         sessionStorage.setItem(STORAGE_VIEW_ROLE, role)
+        sessionStorage.setItem(STORAGE_TARGET_USER, nextTarget)
       } catch {
         /* ignore */
       }
     },
-    [viewRoleOptions],
+    [viewRoleOptions, authRole, authUserId],
   )
 
   const setTargetUserId = useCallback((id: string) => {
@@ -276,7 +287,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
 
   const refreshScopedPortalConfig = useCallback(async () => {
     const uid = targetUserId
-    if (!uid || !supabase) {
+    if (!uid || !supabase || isPortalViewDefaultTarget(uid)) {
       setScopedPortalConfig(null)
       return
     }
@@ -302,6 +313,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const effectivePortalConfig = useMemo(() => {
     if (!showViewBar) return authPortalConfig
     if (targetUserId === authUserId && viewRole === authRole) return authPortalConfig
+    if (isPortalViewDefaultTarget(targetUserId)) return defaultPortalConfigForViewRole(viewRole)
     return scopedPortalConfig ?? authPortalConfig
   }, [showViewBar, targetUserId, authUserId, viewRole, authRole, scopedPortalConfig, authPortalConfig])
 
@@ -361,7 +373,9 @@ export function usePortalView(): PortalViewValue {
 export function useEffectiveUserId(): string {
   const { userId } = useAuth()
   const ctx = useContext(PortalViewContext)
-  if (ctx?.showViewBar && ctx.targetUserId) return ctx.targetUserId
+  if (ctx?.showViewBar && ctx.targetUserId && !isPortalViewDefaultTarget(ctx.targetUserId)) {
+    return ctx.targetUserId
+  }
   return userId
 }
 
@@ -375,7 +389,7 @@ export function useEffectivePortalConfig(): PortalConfig | null {
 export function useEffectiveClientId(): string {
   const { clientId } = useAuth()
   const ctx = useContext(PortalViewContext)
-  if (ctx?.showViewBar && ctx.targetUserId) {
+  if (ctx?.showViewBar && ctx.targetUserId && !isPortalViewDefaultTarget(ctx.targetUserId)) {
     const row = ctx.manageableUsers.find((u) => u.userId === ctx.targetUserId)
     if (row?.clientId) return row.clientId
   }

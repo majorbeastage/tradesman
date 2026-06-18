@@ -1,6 +1,10 @@
 import { theme } from "../styles/theme"
 import { usePortalViewOptional } from "../contexts/PortalViewContext"
-import { labelForViewRoleOption } from "../lib/portalViewRules"
+import {
+  isPortalViewDefaultTarget,
+  labelForViewRoleOption,
+  PORTAL_VIEW_DEFAULT_USER,
+} from "../lib/portalViewRules"
 import type { UserRole } from "../contexts/AuthContext"
 
 /** Top-of-portal bar: preview role type + specific user within org (admin / corp mgr / OM). */
@@ -22,7 +26,9 @@ export default function PortalViewBar() {
     error,
   } = pv
 
-  const selectedUser = usersForCurrentViewRole.find((u) => u.userId === targetUserId)
+  const usingDefault = isPortalViewDefaultTarget(targetUserId)
+  const selectedUser = usingDefault ? null : usersForCurrentViewRole.find((u) => u.userId === targetUserId)
+  const profileSelectValue = usingDefault ? PORTAL_VIEW_DEFAULT_USER : (targetUserId ?? PORTAL_VIEW_DEFAULT_USER)
 
   return (
     <div
@@ -63,10 +69,10 @@ export default function PortalViewBar() {
         ))}
       </select>
       <select
-        value={targetUserId ?? ""}
+        value={profileSelectValue}
         onChange={(e) => setTargetUserId(e.target.value)}
-        disabled={loadingUsers || usersForCurrentViewRole.length === 0}
-        aria-label="Preview specific user"
+        disabled={loadingUsers}
+        aria-label="Preview profile"
         style={{
           padding: "7px 10px",
           borderRadius: 8,
@@ -78,8 +84,13 @@ export default function PortalViewBar() {
           color: theme.text,
         }}
       >
-        {usersForCurrentViewRole.length === 0 ? (
-          <option value="">No users for this role</option>
+        {viewRole !== authRole ? (
+          <option value={PORTAL_VIEW_DEFAULT_USER}>
+            Default — {labelForViewRoleOption(viewRole, false)}
+          </option>
+        ) : null}
+        {usersForCurrentViewRole.length === 0 && viewRole === authRole ? (
+          <option value={authUserId ?? ""}>No users for this role</option>
         ) : (
           usersForCurrentViewRole.map((u) => (
             <option key={u.userId} value={u.userId}>
@@ -97,14 +108,14 @@ export default function PortalViewBar() {
         <span style={{ fontSize: 12, opacity: 0.75 }}>Loading profile…</span>
       ) : null}
       {error ? <span style={{ fontSize: 12, color: "#b91c1c" }}>{error}</span> : null}
+      {!loadingPortalConfig && usingDefault && viewRole !== authRole ? (
+        <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
+          Default <strong>{labelForViewRoleOption(viewRole, false)}</strong> layout — tabs match a fresh account of this type.
+        </span>
+      ) : null}
       {!loadingPortalConfig && selectedUser && selectedUser.userId !== authUserId ? (
         <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
           Previewing <strong>{selectedUser.label}</strong>&apos;s portal — tabs and permissions match their profile.
-        </span>
-      ) : null}
-      {viewRole !== authRole ? (
-        <span style={{ fontSize: 12, opacity: 0.8 }}>
-          Role lens: <strong>{labelForViewRoleOption(viewRole, false)}</strong>
         </span>
       ) : null}
     </div>

@@ -1,5 +1,17 @@
 import type { UserRole } from "../contexts/AuthContext"
+import { getDefaultPortalConfigForViewRole, type PortalConfig } from "../types/portal-builder"
 import { labelForProfileRole, PROFILE_ROLE_LABELS } from "./profileRoles"
+
+/** Session value: preview the default portal layout for the selected role (no specific profile). */
+export const PORTAL_VIEW_DEFAULT_USER = "__role_default__"
+
+export function isPortalViewDefaultTarget(id: string | null | undefined): boolean {
+  return !id || id === PORTAL_VIEW_DEFAULT_USER
+}
+
+export function defaultPortalConfigForViewRole(viewRole: UserRole): PortalConfig {
+  return getDefaultPortalConfigForViewRole(viewRole)
+}
 
 /** Contractor portal shell — user vs office-manager layout. */
 export type PortalShell = "user" | "office"

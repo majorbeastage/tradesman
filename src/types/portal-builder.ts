@@ -458,6 +458,42 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
   return { tabs }
 }
 
+/** Default portal layout when previewing a role type without picking a specific profile. */
+export function getDefaultPortalConfigForViewRole(viewRole: string): PortalConfig {
+  switch (viewRole) {
+    case "new_user":
+      return getDefaultPortalConfigForNewUser()
+    case "demo_user":
+      return {
+        tabs: {
+          dashboard: true,
+          leads: false,
+          conversations: false,
+          quotes: true,
+          calendar: true,
+          customers: true,
+          payments: false,
+          account: true,
+          "web-support": false,
+          "tech-support": true,
+          settings: false,
+        },
+        demo_account: true,
+      }
+    case "corporate_management":
+      return getPortalConfigForProductPackage("corporate")
+    case "office_manager":
+      return getPortalConfigForProductPackage("office_manager_entry")
+    case "corporate_external":
+    case "corporate_internal":
+    case "user":
+    case "admin":
+      return getPortalConfigForProductPackage("base")
+    default:
+      return getPortalConfigForProductPackage("base")
+  }
+}
+
 export type UpgradeNewUserOptions = {
   /** Keep Customers & Scheduling hidden after role moves from new_user → user. */
   preserveEstimateToolsOnlyTier?: boolean
