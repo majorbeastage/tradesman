@@ -21,7 +21,9 @@
     "icons:generate": "node scripts/generate-app-icons.mjs",
     "legal:static-html": "node scripts/generate-static-legal-html.mjs",
     "legal:sync-ssr": "node scripts/sync-legal-pages-ssr.mjs",
-    "test:report-parser": "npx tsx scripts/specialty-report-parser-scrape.ts"
+    "test:report-parser": "npx tsx scripts/specialty-report-parser-scrape.ts",
+    "supabase:login": "npx --yes supabase@2.92.1 login",
+    "supabase:deploy:resend-inbound": "npx --yes supabase@2.92.1 functions deploy resend-inbound --project-ref othemzceycphhuwojxge --use-api"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
@@ -57,7 +59,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "sharp": "^0.34.5",
-    "supabase": "^2.84.0",
+    "supabase": "^2.107.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^5.4.11"

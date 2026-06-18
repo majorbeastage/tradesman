@@ -19,6 +19,7 @@ import {
 import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResolve.js"
 import { isPhoneSmsOptedOut } from "./_smsOptOut.js"
 import { DEMO_COMM_BLOCK_MESSAGE, isDemoRestrictedUser } from "./_demoAccountRestrictions.js"
+import { extractBareEmailFromFormattedFrom } from "./_emailThreadHeaders.js"
 
 /**
  * Single Hobby-plan function for outbound email (Resend) + SMS (Twilio / webhook).
@@ -333,13 +334,21 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     })
   }
 
+  const businessReplyTo =
+    extractBareEmailFromFormattedFrom(resendFrom) || normalizeEmail(rawFrom)
+
   const bccMerged: string[] = [...userBccList]
   if (copyInbox && !toList.includes(copyInbox) && !ccList.includes(copyInbox) && !bccMerged.includes(copyInbox)) {
     bccMerged.push(copyInbox)
   }
 
+  /** Hub model: replies go to the business @tradesman-us.com address, not the personal forward inbox. */
   const replyToFinal =
-    clientReplyToList.length > 0 ? clientReplyToList : copyInbox ? [copyInbox] : undefined
+    clientReplyToList.length > 0
+      ? clientReplyToList
+      : businessReplyTo
+        ? [businessReplyTo]
+        : undefined
 
   const resendPayload: Record<string, unknown> = {
     from: resendFrom,
@@ -413,6 +422,14 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     })
   }
 
+  let resendSendId = ""
+  try {
+    const parsed = JSON.parse(detail) as { id?: string }
+    if (typeof parsed.id === "string") resendSendId = parsed.id.trim()
+  } catch {
+    /* ignore */
+  }
+
   try {
     await logCommunicationEvent(supabase, {
       user_id: userId,
@@ -422,6 +439,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       channel_id: dbChannel?.id ?? null,
       event_type: "email",
       direction: "outbound",
+      external_id: resendSendId || null,
       subject,
       body,
       unread: false,
@@ -430,6 +448,8 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
         from: resendFrom,
         provider: dbChannel?.provider ?? "resend",
         reply_to: replyToFinal,
+        business_reply_to: businessReplyTo || undefined,
+        resend_send_id: resendSendId || undefined,
         cc: ccList.length ? ccList : undefined,
         bcc: bccMerged.length ? bccMerged : undefined,
       },

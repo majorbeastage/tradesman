@@ -16,6 +16,10 @@ import {
   type InboundCommunicationChannel as CommunicationChannel,
 } from "../_shared/inbound-email-channel.ts"
 import {
+  extractMessageIdsFromHeaders,
+  findConversationIdByEmailThread,
+} from "../_shared/email-thread-resolve.ts"
+import {
   forwardHeadersForTradesmanCopy,
   normalizeResendHeaderMap,
   shouldSkipForwardCopy,
@@ -282,6 +286,7 @@ async function logCommunicationEvent(
     customer_id?: string | null
     conversation_id?: string | null
     channel_id?: string | null
+    route_id?: string | null
     event_type: "email"
     direction: "inbound"
     external_id?: string | null
@@ -454,6 +459,44 @@ Deno.serve(async (req) => {
   }
 
   const type = typeof payload.type === "string" ? payload.type : ""
+  if (type === "email.bounced" || type === "email.delivered" || type === "email.delivery_delayed") {
+    const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : {}
+    const sendId =
+      typeof data.email_id === "string"
+        ? data.email_id
+        : typeof data.id === "string"
+          ? data.id
+          : ""
+    if (sendId) {
+      const { data: rows } = await supabase
+        .from("communication_events")
+        .select("id, metadata")
+        .eq("event_type", "email")
+        .eq("direction", "outbound")
+        .or(`external_id.eq.${sendId},metadata->>resend_send_id.eq.${sendId}`)
+        .limit(3)
+      for (const row of rows ?? []) {
+        const meta =
+          row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+            ? (row.metadata as Record<string, unknown>)
+            : {}
+        await supabase
+          .from("communication_events")
+          .update({
+            metadata: {
+              ...meta,
+              delivery_status: type.replace("email.", ""),
+              delivery_updated_at: new Date().toISOString(),
+            },
+          })
+          .eq("id", row.id)
+      }
+    }
+    return json(200, { ok: true, handled: type, sendId: sendId || null })
+  }
+
   if (type !== "email.received") {
     return json(200, { ok: true, ignored: true, type: type || null })
   }
@@ -506,6 +549,7 @@ Deno.serve(async (req) => {
   }
   const channel = resolved.channel
   const matchedTo = resolved.matchedTo
+  const departmentKey = resolved.departmentKey ?? null
 
   const fromHeader = typeof received.from === "string" ? received.from : ""
   const fromEmail = fromHeader ? parseEmailAddressFromHeader(fromHeader) : ""
@@ -519,6 +563,11 @@ Deno.serve(async (req) => {
   const bodyForMessage = textRaw || (htmlRaw ? stripHtml(htmlRaw) : "(empty body)")
 
   const headerMap = normalizeResendHeaderMap(received.headers)
+  const threadMessageIds = [...extractMessageIdsFromHeaders(headerMap)]
+  if (typeof received.message_id === "string" && received.message_id.trim()) {
+    threadMessageIds.push(received.message_id.trim())
+  }
+
   const suppressInbound = shouldSuppressInboundEmail({
     subject,
     headers: headerMap,
@@ -541,10 +590,19 @@ Deno.serve(async (req) => {
   let conversationId = ""
   let previousCustomer = false
   try {
+    const threadedConversationId = await findConversationIdByEmailThread(
+      supabase,
+      channel.user_id,
+      threadMessageIds,
+    )
     const customer = await getOrCreateCustomerByEmail(supabase, channel.user_id, fromEmail)
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
-    conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+    if (threadedConversationId) {
+      conversationId = threadedConversationId
+    } else {
+      conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+    }
   } catch (err) {
     return json(500, {
       error: err instanceof Error ? err.message : String(err),
@@ -571,6 +629,7 @@ Deno.serve(async (req) => {
     customer_id: customerId,
     conversation_id: conversationId,
     channel_id: channel.id,
+    route_id: resolved.routeId ?? null,
     event_type: "email",
     direction: "inbound",
     external_id: received.id,
@@ -583,6 +642,10 @@ Deno.serve(async (req) => {
       to: matchedTo,
       resend_email_id: received.id,
       provider: "resend-inbound-supabase",
+      ...(resolved.routeId ? { route_id: resolved.routeId } : {}),
+      ...(departmentKey ? { department_key: departmentKey, routed_via: "department" } : {}),
+      ...(threadMessageIds.length ? { in_reply_to: threadMessageIds } : {}),
+      message_id: typeof received.message_id === "string" ? received.message_id : undefined,
     },
   })
 
@@ -628,6 +691,7 @@ Deno.serve(async (req) => {
     conversationId,
     customerId,
     matchedTo,
+    departmentKey,
     forwardToConfigured: Boolean(forwardTo),
     ...forwardResult,
   })

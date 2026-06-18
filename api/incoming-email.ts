@@ -3,7 +3,6 @@
  * Supabase Edge Function `resend-inbound` instead (see supabase/functions/resend-inbound).
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { Resend } from "resend"
 import { Webhook } from "svix"
 import {
   createServiceSupabase,
@@ -27,6 +26,8 @@ import {
   shouldSkipForwardCopy,
   shouldSuppressInboundEmail,
 } from "./_inbound-email-loop-guard.js"
+import { extractMessageIdsFromHeaders } from "./_emailThreadHeaders.js"
+import { findConversationIdByEmailThread } from "./_emailThreadResolve.js"
 
 /** Required for Svix signature verification (raw body). */
 export const config = {
@@ -118,24 +119,7 @@ function normalizeToAddress(value: string): string {
   return addr
 }
 
-/** RESEND_ZOHO_FORWARD_JSON e.g. {"joe@tradesman-us.com":"joe@zoho.com","sales@tradesman-us.com":"sales@zoho.com"} */
-function parseZohoForwardMap(): Record<string, string> | null {
-  const raw = firstEnv("RESEND_ZOHO_FORWARD_JSON")
-  if (!raw) return null
-  try {
-    const o = JSON.parse(raw) as Record<string, unknown>
-    const out: Record<string, string> = {}
-    for (const [k, v] of Object.entries(o)) {
-      const key = normalizeToAddress(String(k))
-      const val = typeof v === "string" ? v.trim() : ""
-      if (key && val) out[key] = val
-    }
-    return Object.keys(out).length > 0 ? out : null
-  } catch {
-    return null
-  }
-}
-
+/** Resend may return To as plain email or RFC display form "Name <addr@domain>". */
 async function fetchResendReceivedEmail(apiKey: string, emailId: string): Promise<ResendReceivedPayload | null> {
   const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -188,9 +172,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       ok: true,
       route: "incoming-email",
-      hint: "Configure Resend webhook (email.received) to POST here. Set RESEND_WEBHOOK_SECRET and RESEND_API_KEY on Vercel.",
-      zohoForward:
-        "Optional: RESEND_ZOHO_FORWARD_JSON map tradesman-us.com addresses → Zoho inboxes; RESEND_ZOHO_FORWARD_FROM (or RESEND_FROM_EMAIL) must be a verified sender. Run supabase/resend-inbound-email-dedupe.sql to avoid duplicate forwards on webhook retries.",
+      hint: "Configure Resend webhook (email.received) to POST here. Prefer Supabase Edge resend-inbound. Set RESEND_WEBHOOK_SECRET and RESEND_API_KEY.",
+      deprecated:
+        "RESEND_ZOHO_FORWARD_JSON skip-Tradesman path is deprecated — all inbound mail stores in Tradesman first; optional forward uses channel forward_to_email.",
     })
   }
 
@@ -238,69 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? received.to.map((t) => normalizeToAddress(String(t))).filter(Boolean)
     : extractToList(received as unknown as Record<string, unknown>)
 
-  const zohoMap = parseZohoForwardMap()
-  if (zohoMap) {
-    const zohoTargets: string[] = []
-    const matchedLocal: string[] = []
-    for (const addr of toList) {
-      const dest = zohoMap[addr]
-      if (dest) {
-        if (!zohoTargets.includes(dest)) zohoTargets.push(dest)
-        if (!matchedLocal.includes(addr)) matchedLocal.push(addr)
-      }
-    }
-    if (zohoTargets.length > 0) {
-      const forwardFrom = pickFirstString(firstEnv("RESEND_ZOHO_FORWARD_FROM"), firstEnv("RESEND_FROM_EMAIL"))
-      if (!forwardFrom) {
-        return res.status(500).json({
-          error: "Set RESEND_ZOHO_FORWARD_FROM or RESEND_FROM_EMAIL to a verified domain address for Zoho forwarding.",
-        })
-      }
-      try {
-        let dedupeClient: ReturnType<typeof createServiceSupabase> | null = null
-        try {
-          dedupeClient = createServiceSupabase()
-        } catch {
-          dedupeClient = null
-        }
-        if (dedupeClient) {
-          const { error: dedupeErr } = await dedupeClient.from("resend_inbound_email_ids").insert({ email_id: received.id })
-          if (dedupeErr?.code === "23505") {
-            return res.status(200).json({ ok: true, duplicate: true, path: "zoho_forward" })
-          }
-          if (dedupeErr && !/resend_inbound_email_ids|does not exist/i.test(String(dedupeErr.message))) {
-            console.warn("[incoming-email] zoho dedupe:", dedupeErr.message)
-          }
-        }
-        const resend = new Resend(apiKey)
-        const { data: fwdData, error: fwdErr } = await resend.emails.receiving.forward({
-          emailId: received.id,
-          to: zohoTargets.length === 1 ? zohoTargets[0] : zohoTargets,
-          from: forwardFrom,
-        })
-        if (fwdErr) {
-          return res.status(502).json({
-            error: "Resend receiving.forward failed",
-            message: fwdErr.message,
-            emailId: received.id,
-          })
-        }
-        return res.status(200).json({
-          ok: true,
-          zohoForward: true,
-          matchedTo: matchedLocal,
-          zohoTargets,
-          forwardFrom,
-          resend: fwdData,
-        })
-      } catch (e) {
-        return res.status(500).json({
-          error: "zoho_forward_failed",
-          message: e instanceof Error ? e.message : String(e),
-        })
-      }
-    }
-  }
+  /* RESEND_ZOHO_FORWARD_JSON early-exit removed in v2 — Zoho staff mail uses @mail.tradesman-us.com; platform stores first. */
 
   const supabase = createServiceSupabase()
 
@@ -334,6 +256,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const channel = resolved.channel
   const matchedTo = resolved.matchedTo
+  const departmentKey = resolved.departmentKey ?? null
 
   const fromHeader = typeof received.from === "string" ? received.from : ""
   const fromEmail = fromHeader ? parseEmailAddressFromHeader(fromHeader) : ""
@@ -347,6 +270,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const bodyForMessage = textRaw || (htmlRaw ? stripHtml(htmlRaw) : "(empty body)")
 
   const headerMap = normalizeResendHeaderMap(received.headers)
+  const threadMessageIds = [...extractMessageIdsFromHeaders(headerMap)]
+  if (typeof received.message_id === "string" && received.message_id.trim()) {
+    threadMessageIds.push(received.message_id.trim())
+  }
+
   const suppressInbound = shouldSuppressInboundEmail({
     subject,
     headers: headerMap,
@@ -369,23 +297,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let leadId: string | null = null
   let previousCustomer = false
   try {
+    const threadedConversationId = await findConversationIdByEmailThread(
+      supabase,
+      channel.user_id,
+      threadMessageIds,
+    )
     const customer = await getOrCreateCustomerByEmail(supabase, channel.user_id, fromEmail)
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
     const inboundContact = classifyInboundEmailContact(fromEmail)
     const isPromotionalContact = inboundContact.hubKind === "promotional"
-    const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customerId)
-    if (inConversations) {
-      conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
-    } else if (!isPromotionalContact) {
-      const title = subject && subject !== "(no subject)" ? `Email: ${subject.slice(0, 80)}` : `Inbound email from ${fromEmail}`
-      leadId = await ensureOpenLeadForInbound(
-        supabase,
-        channel.user_id,
-        customerId,
-        title,
-        "Auto-created from inbound email."
-      )
+    if (threadedConversationId) {
+      conversationId = threadedConversationId
+    } else {
+      const inConversations = await customerHasOpenConversation(supabase, channel.user_id, customerId)
+      if (inConversations) {
+        conversationId = await getOrCreateConversation(supabase, channel.user_id, customerId, "email")
+      } else if (!isPromotionalContact) {
+        const deptLabel = departmentKey ? ` [${departmentKey}]` : ""
+        const title =
+          subject && subject !== "(no subject)"
+            ? `Email${deptLabel}: ${subject.slice(0, 80)}`
+            : `Inbound email${deptLabel} from ${fromEmail}`
+        leadId = await ensureOpenLeadForInbound(
+          supabase,
+          channel.user_id,
+          customerId,
+          title,
+          "Auto-created from inbound email.",
+        )
+      }
     }
   } catch (err) {
     return res.status(500).json({
@@ -417,6 +358,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       to: matchedTo,
       resend_email_id: received.id,
       provider: "resend-inbound",
+      ...(resolved.routeId ? { route_id: resolved.routeId } : {}),
+      ...(departmentKey ? { department_key: departmentKey, routed_via: "department" } : {}),
+      ...(threadMessageIds.length ? { in_reply_to: threadMessageIds } : {}),
+      message_id: typeof received.message_id === "string" ? received.message_id : undefined,
     },
   })
 

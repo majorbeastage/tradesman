@@ -471,6 +471,7 @@ export function endUserHasSeparateBillingPortal(portalConfig: PortalConfig | nul
 /** Ordered list for portal builder + Account page visibility */
 export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "profile", label: "Business profile (email, name, website, primary phone)" },
+  { id: "tradesman_email", label: "Tradesman business email (@tradesman-us.com)" },
   { id: "business_address", label: "Business address" },
   { id: "service_area", label: "Service radius (miles from business address)" },
   { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },

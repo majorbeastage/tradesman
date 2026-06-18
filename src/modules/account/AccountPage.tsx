@@ -19,6 +19,7 @@ import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../..
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
+import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
@@ -254,6 +255,7 @@ export function AccountProfilePanel({
   const [recordingPreviewUrl, setRecordingPreviewUrl] = useState("")
   const [foldOpen, setFoldOpen] = useState({
     profile: false,
+    tradesman_email: false,
     business_address: false,
     service_area: false,
     mobile_app: false,
@@ -799,6 +801,18 @@ export function AccountProfilePanel({
                 <TeamMemberInvitesPanel ownerUserId={user.id} />
               </div>
             ) : null}
+            </Fragment>
+              )
+              if (sectionId === "tradesman_email") return (
+            <Fragment key={sectionId}>
+            <AccountFold
+              title={t("account.section.tradesmanEmailTitle")}
+              subtitle={t("account.section.tradesmanEmailSub")}
+              open={foldOpen.tradesman_email}
+              onToggle={toggleFold("tradesman_email")}
+            >
+              <TradesmanEmailSettingsPanel profileUserId={profileUserId} />
+            </AccountFold>
             </Fragment>
               )
               if (sectionId === "business_address") return (
