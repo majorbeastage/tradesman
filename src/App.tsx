@@ -665,6 +665,11 @@ function App() {
           loginType={loginType}
           onSuccess={handleLoginSuccess}
           onBack={() => { setView("home"); setLoginError("") }}
+          onGoToSignup={() => {
+            setSignupPackagePreset(null)
+            setView("signup")
+            setLoginError("")
+          }}
         />
       </>
     )

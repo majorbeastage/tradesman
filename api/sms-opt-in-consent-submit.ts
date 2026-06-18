@@ -5,18 +5,11 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { firstEnv } from "./_communications.js"
+import { parseAdminEmailRecipients } from "./_adminOpsNotify.js"
 import { buildSmsOptInConsentFormPdfBytes, smsOptInConsentFormFilename } from "./_smsOptInConsentFormPdf.js"
 
-const DEFAULT_NOTIFY = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
-
 function parseNotifyRecipients(): string[] {
-  const raw = firstEnv("SMS_OPT_IN_NOTIFY_EMAIL", "ADMIN_SIGNUP_NOTIFY_EMAIL").trim()
-  if (!raw) return [...DEFAULT_NOTIFY]
-  const parts = raw
-    .split(/[,;]+/g)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.includes("@"))
-  return parts.length > 0 ? [...new Set(parts)] : [...DEFAULT_NOTIFY]
+  return parseAdminEmailRecipients("SMS_OPT_IN_NOTIFY_EMAIL", "ADMIN_SIGNUP_NOTIFY_EMAIL")
 }
 
 function clip(s: unknown, max: number): string {

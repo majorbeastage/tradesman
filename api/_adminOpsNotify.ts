@@ -5,10 +5,15 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
 import { sendFcmNotification } from "./_fcmV1Node.js"
 
-const DEFAULT_OPS_INBOXES = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
+const DEFAULT_OPS_INBOXES = ["admin@tradesman-us.com"]
 
-export function parseAdminEmailRecipients(): string[] {
-  const raw = firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL").trim()
+/**
+ * Ops alert inboxes. Pass env var names in priority order; first non-empty wins.
+ * Default inbox: admin@tradesman-us.com (comma-separate ADMIN_SIGNUP_NOTIFY_EMAIL to override).
+ */
+export function parseAdminEmailRecipients(...envKeys: string[]): string[] {
+  const keys = envKeys.length > 0 ? envKeys : ["ADMIN_SIGNUP_NOTIFY_EMAIL", "HELP_DESK_TICKET_NOTIFY_EMAIL"]
+  const raw = keys.map((k) => firstEnv(k).trim()).find(Boolean) ?? ""
   if (!raw) return [...DEFAULT_OPS_INBOXES]
   const parts = raw
     .split(/[,;]+/g)

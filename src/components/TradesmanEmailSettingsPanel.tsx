@@ -11,6 +11,7 @@ import {
   PLATFORM_DEPARTMENT_KEYS,
   departmentEmailAddress,
 } from "../lib/platformEmailDepartments"
+import { CustomEmailDomainPanel } from "./CustomEmailDomainPanel"
 import { useLocale } from "../i18n/LocaleContext"
 
 type Props = {
@@ -380,16 +381,15 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
         style={{
           padding: 14,
           borderRadius: 10,
-          border: `1px dashed ${theme.border}`,
+          border: `1px solid ${theme.border}`,
           background: "#f8fafc",
           display: "grid",
-          gap: 8,
-          opacity: 0.92,
+          gap: 10,
         }}
       >
         <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{t("account.tradesmanEmail.optionB")}</div>
         <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.optionBDetail")}</p>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{t("account.tradesmanEmail.optionBComing")}</span>
+        <CustomEmailDomainPanel profileUserId={profileUserId} hasPrimaryTradesmanAddress={Boolean(claimedSlug)} />
       </div>
 
       {message ? <p style={{ margin: 0, fontSize: 13, color: "#0f766e", fontWeight: 600 }}>{message}</p> : null}

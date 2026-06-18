@@ -18,6 +18,53 @@ function randomPassword(): string {
   return out
 }
 
+async function recordOpsDemoProvisionedCustomerEvent(params: {
+  email: string
+  displayName: string
+  userId: string
+  ticketId?: string | null
+  businessName?: string | null
+}): Promise<void> {
+  const site = Deno.env.get("VITE_SITE_URL")?.trim() || Deno.env.get("VERCEL_URL")?.trim()
+  const secret =
+    Deno.env.get("COMPLETE_SIGNUP_NOTIFY_SECRET")?.trim() || Deno.env.get("ADMIN_SIGNUP_NOTIFY_SECRET")?.trim()
+  if (!site || !secret) return
+  const base = site.startsWith("http") ? site.replace(/\/+$/, "") : `https://${site.replace(/\/+$/, "")}`
+  const subject = `Demo provisioned: ${params.displayName} (${params.email})`
+  const body = [
+    "A Tradesman demo account was provisioned.",
+    "",
+    `Email: ${params.email}`,
+    `Display name: ${params.displayName}`,
+    `User id: ${params.userId}`,
+    params.businessName ? `Business: ${params.businessName}` : "",
+    params.ticketId ? `Ticket id: ${params.ticketId}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+  try {
+    await fetch(`${base}/api/platform-tools?__route=record-ops-customer-event`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-tradesman-signup-notify-secret": secret,
+      },
+      body: JSON.stringify({
+        kind: "demo_provisioned",
+        externalId: `demo-provisioned:${params.userId}`,
+        email: params.email,
+        displayName: params.displayName,
+        signupUserId: params.userId,
+        ticketId: params.ticketId ?? null,
+        subject,
+        body,
+      }),
+    })
+  } catch (e) {
+    console.warn("[provision-demo] ops customer event", e instanceof Error ? e.message : e)
+  }
+}
+
 async function deleteDemoUser(admin: ReturnType<typeof createClient>, uid: string): Promise<void> {
   try {
     await admin.rpc("purge_trial_user_data", { p_user_id: uid })
@@ -263,6 +310,14 @@ Deno.serve(async (req) => {
   } else {
     emailError = "RESEND_API_KEY or RESEND_FROM_EMAIL not set on Edge"
   }
+
+  await recordOpsDemoProvisionedCustomerEvent({
+    email,
+    displayName,
+    userId: uid,
+    ticketId: body.ticket_id ?? null,
+    businessName: body.business_name ?? null,
+  })
 
   return new Response(
     JSON.stringify({

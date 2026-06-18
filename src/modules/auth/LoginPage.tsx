@@ -18,16 +18,17 @@ type LoginPageProps = {
   loginType: LoginType
   onSuccess: (role: UserRole) => void
   onBack: () => void
+  /** Full product signup (packages, billing, etc.) — not the minimal login form. */
+  onGoToSignup: () => void
 }
 
-export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack }: LoginPageProps) {
+export default function LoginPage({ loginType: initialLoginType, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
   const { t } = useLocale()
-  const { signIn, signUp, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
+  const { signIn, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
   const [loginType, setLoginType] = useState<LoginType>(initialLoginType)
-  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin")
+  const [mode, setMode] = useState<"signin" | "forgot">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -67,27 +68,11 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
       setError(t("login.err.passwordRequired"))
       return
     }
-    if (mode === "signup") {
-      if (password.length < 6) {
-        setError(t("login.err.passwordShort"))
-        return
-      }
-      if (password !== confirmPassword) {
-        setError(t("login.err.passwordMismatch"))
-        return
-      }
-    }
     setSubmitting(true)
     try {
-      if (mode === "signin") {
-        const { error: err } = await signIn(email.trim(), password)
-        if (err) setError(err.message)
-        else setMessage(t("login.msg.signingIn"))
-      } else {
-        const { error: err } = await signUp(email.trim(), password)
-        if (err) setError(err.message)
-        else setMessage(t("login.msg.confirmEmail"))
-      }
+      const { error: err } = await signIn(email.trim(), password)
+      if (err) setError(err.message)
+      else setMessage(t("login.msg.signingIn"))
     } finally {
       setSubmitting(false)
     }
@@ -145,18 +130,14 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             ? t("login.title.admin")
             : mode === "forgot"
               ? t("login.title.forgot")
-              : mode === "signin"
-                ? t("login.title.signin")
-                : t("login.title.signup")}
+              : t("login.title.signin")}
         </h1>
         <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
           {isAdminLogin
             ? t("login.sub.admin")
             : mode === "forgot"
               ? t("login.sub.forgot")
-              : mode === "signin"
-                ? t("login.sub.signin")
-                : t("login.sub.signup")}
+              : t("login.sub.signin")}
         </p>
 
         {accountAccessBlocked && (
@@ -228,27 +209,13 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             label={t("login.password")}
             value={password}
             onChange={setPassword}
-            autoComplete={mode === "signin" ? "current-password" : "new-password"}
+            autoComplete="current-password"
             placeholder="••••••••"
             revealLabelShow={t("login.showPassword")}
             revealLabelHide={t("login.hidePassword")}
             labelStyle={labelStyle}
             inputStyle={inputStyle}
             name="password"
-          />
-        )}
-        {mode === "signup" && !isAdminLogin && (
-          <PasswordFieldWithReveal
-            label={t("login.confirmPassword")}
-            value={confirmPassword}
-            onChange={setConfirmPassword}
-            autoComplete="new-password"
-            placeholder="••••••••"
-            revealLabelShow={t("login.showPassword")}
-            revealLabelHide={t("login.hidePassword")}
-            labelStyle={labelStyle}
-            inputStyle={inputStyle}
-            name="confirmPassword"
           />
         )}
         {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
@@ -272,9 +239,7 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
             ? t("login.submit.wait")
             : mode === "forgot"
               ? t("login.submit.reset")
-              : mode === "signin"
-                ? t("login.submit.signin")
-                : t("login.submit.signup")}
+              : t("login.submit.signin")}
         </button>
         {!isAdminLogin && mode === "signin" && (
           <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
@@ -293,18 +258,11 @@ export default function LoginPage({ loginType: initialLoginType, onSuccess, onBa
               <button type="button" onClick={() => { setMode("signin"); setError(""); setMessage("") }} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
                 {t("login.backSignIn")}
               </button>
-            ) : mode === "signin" ? (
-              <>
-                {t("login.noAccount")}{" "}
-                <button type="button" onClick={() => setMode("signup")} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                  {t("login.signUpCta")}
-                </button>
-              </>
             ) : (
               <>
-                {t("login.haveAccount")}{" "}
-                <button type="button" onClick={() => setMode("signin")} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                  {t("login.signInCta")}
+                {t("login.noAccount")}{" "}
+                <button type="button" onClick={onGoToSignup} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
+                  {t("login.signUpCta")}
                 </button>
               </>
             )}

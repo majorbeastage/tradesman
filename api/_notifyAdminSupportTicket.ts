@@ -7,18 +7,8 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv } from "./_communications.js"
-
-const DEFAULT_OPS_INBOXES = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
-
-function parseAdminRecipients(): string[] {
-  const raw = firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL", "HELP_DESK_TICKET_NOTIFY_EMAIL").trim()
-  if (!raw) return [...DEFAULT_OPS_INBOXES]
-  const parts = raw
-    .split(/[,;]+/g)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.includes("@"))
-  return parts.length > 0 ? [...new Set(parts)] : [...DEFAULT_OPS_INBOXES]
-}
+import { notifyAdminOps } from "./_adminOpsNotify.js"
+import { recordAdminOpsCustomerEvent } from "./_adminOpsCustomerEvent.js"
 
 const TYPE_LABEL: Record<string, string> = {
   web: "Web support",
@@ -69,15 +59,13 @@ export async function handleNotifyAdminSupportTicket(req: VercelRequest, res: Ve
     return
   }
 
-  const apiKey = firstEnv("RESEND_API_KEY")
-  const from = firstEnv("RESEND_FROM_EMAIL")
-  if (!apiKey || !from) {
+  if (!firstEnv("RESEND_API_KEY") || !firstEnv("RESEND_FROM_EMAIL")) {
     res.status(200).json({ ok: true, notifyDisabled: true, hint: "Set RESEND_API_KEY and RESEND_FROM_EMAIL on Vercel" })
     return
   }
 
-  const adminRecipients = parseAdminRecipients()
   const typeLabel = TYPE_LABEL[type] ?? type
+  const subject = `[${ticket.ticket_number ?? "TICKET"}] New ${typeLabel}`
   const text = [
     `New ${typeLabel} ticket submitted.`,
     "",
@@ -97,27 +85,34 @@ export async function handleNotifyAdminSupportTicket(req: VercelRequest, res: Ve
     .filter(Boolean)
     .join("\n")
 
-  try {
-    const sendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: adminRecipients,
-        subject: `[${ticket.ticket_number ?? "TICKET"}] New ${typeLabel}`,
-        text,
-      }),
-    })
-    if (!sendRes.ok) {
-      const t = await sendRes.text()
-      console.error("[notify-admin-support-ticket] Resend", sendRes.status, t)
-      res.status(502).json({ error: "Resend rejected the send" })
-      return
-    }
-    console.info("[notify-admin-support-ticket] emailed", { ticketId, type, to: adminRecipients })
-    res.status(200).json({ ok: true, emailed: true })
-  } catch (e) {
-    console.error("[notify-admin-support-ticket]", e instanceof Error ? e.message : e)
-    res.status(502).json({ error: "Resend request failed" })
+  const result = await notifyAdminOps({
+    service,
+    subject,
+    text,
+    pushTitle: `New ${typeLabel}`,
+    pushBody: `${ticket.name ?? ticket.email ?? ticket.ticket_number ?? "Ticket"} · ${ticket.title ?? ""}`.trim(),
+  })
+
+  if (!result.email.ok && result.email.disabled !== true) {
+    res.status(502).json({ error: result.email.error ?? "Resend rejected the send" })
+    return
   }
+
+  const ticketEmail = String(ticket.email ?? "").trim()
+  let customerEvent: Awaited<ReturnType<typeof recordAdminOpsCustomerEvent>> | undefined
+  if (ticketEmail.includes("@")) {
+    customerEvent = await recordAdminOpsCustomerEvent(service, {
+      kind: type === "demo" ? "demo_request" : "support_ticket",
+      externalId: `support-ticket:${ticketId}`,
+      email: ticketEmail,
+      displayName: typeof ticket.name === "string" ? ticket.name : null,
+      subject,
+      body: text,
+      ticketId,
+      phone: typeof ticket.phone === "string" ? ticket.phone : null,
+    })
+  }
+
+  console.info("[notify-admin-support-ticket]", { ticketId, type, customerEvent, push: result.push })
+  res.status(200).json({ ok: true, emailed: result.email.ok, push: result.push, customerEvent })
 }

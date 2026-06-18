@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv, normalizePhone } from "./_communications.js"
+import { parseAdminEmailRecipients } from "./_adminOpsNotify.js"
 
 export type SmsKeywordKind = "stop" | "start" | "help"
 
@@ -86,14 +87,7 @@ export async function isPhoneSmsOptedOut(
 }
 
 function parseAdminRecipients(): string[] {
-  const raw = firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL", "ADMIN_SMS_OPS_EMAIL").trim()
-  const defaults = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
-  if (!raw) return [...defaults]
-  const parts = raw
-    .split(/[,;]+/g)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.includes("@"))
-  return parts.length > 0 ? [...new Set(parts)] : [...defaults]
+  return parseAdminEmailRecipients("ADMIN_SIGNUP_NOTIFY_EMAIL", "ADMIN_SMS_OPS_EMAIL")
 }
 
 /**

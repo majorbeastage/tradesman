@@ -1,6 +1,5 @@
 import { theme } from "../styles/theme"
 import {
-  SIGNUP_SUPPORT_CONTACT_NAME,
   SIGNUP_SUPPORT_PHONE_DISPLAY,
   signupSupportLineConfigured,
   signupSupportTelHref,
@@ -11,14 +10,15 @@ type Props = {
   compact?: boolean
 }
 
-/** Call Justin Montgomery’s advertised Twilio line during signup. Hidden until env is configured. */
+/** Signup onboarding phone support callout. Hidden until a dialable line is configured. */
 export default function SignupSupportCallout({ compact }: Props) {
   if (!signupSupportLineConfigured()) return null
 
   return (
     <div
       style={{
-        marginBottom: compact ? 16 : 18,
+        marginTop: compact ? 20 : 24,
+        marginBottom: 0,
         padding: compact ? "12px 14px" : "14px 16px",
         borderRadius: 12,
         border: `1px solid rgba(14, 165, 233, 0.35)`,
@@ -29,9 +29,8 @@ export default function SignupSupportCallout({ compact }: Props) {
       <p style={{ margin: "0 0 8px", fontSize: compact ? 14 : 15, fontWeight: 800, color: theme.text }}>
         Prefer to talk with someone?
       </p>
-      <p style={{ margin: "0 0 12px", fontSize: compact ? 13 : 14, color: "#475569" }}>
-        Call <strong>{SIGNUP_SUPPORT_CONTACT_NAME}</strong> directly on our support line — onboarding help before and during
-        signup.
+      <p style={{ margin: "0 0 12px", fontSize: compact ? 13 : 14, color: theme.text, lineHeight: 1.55 }}>
+        Call our support line directly — onboarding help before and during signup.
       </p>
       <a
         href={signupSupportTelHref()}

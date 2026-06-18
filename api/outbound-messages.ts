@@ -10,6 +10,7 @@ import {
   pickFirstString,
   pickSupabaseAnonKeyForServer,
   pickSupabaseUrlForServer,
+  resolveOutboundEmailFromAddress,
   toTwilioE164,
 } from "./_communications.js"
 import {
@@ -301,10 +302,8 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
   }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
-  const rawFrom =
-    (typeof dbChannel?.public_address === "string" && dbChannel.public_address.trim()
-      ? dbChannel.public_address.trim()
-      : "") || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM")
+  const outboundFrom = await resolveOutboundEmailFromAddress(supabase, userId, dbChannel)
+  const rawFrom = outboundFrom || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM")
   const envFromDisplay = firstEnv("RESEND_FROM_NAME", "RESEND_FROM_DISPLAY_NAME")
   const resendFrom = buildResendFromField(rawFrom, dbChannel?.friendly_name ?? null, envFromDisplay)
   const resendApiKey = firstEnv("RESEND_API_KEY")

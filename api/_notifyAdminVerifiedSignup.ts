@@ -6,20 +6,9 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createClient } from "@supabase/supabase-js"
 import { createServiceSupabase, firstEnv } from "./_communications.js"
 import { notifyAdminOps } from "./_adminOpsNotify.js"
+import { recordAdminOpsCustomerEvent } from "./_adminOpsCustomerEvent.js"
 
 const META_KEY = "verified_signup_admin_notified_at"
-
-const DEFAULT_OPS_INBOXES = ["admin@tradesman-us.com", "admin@mail.tradesman-us.com"]
-
-function parseAdminRecipients(): string[] {
-  const raw = firstEnv("ADMIN_SIGNUP_NOTIFY_EMAIL").trim()
-  if (!raw) return [...DEFAULT_OPS_INBOXES]
-  const parts = raw
-    .split(/[,;]+/g)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.includes("@"))
-  return parts.length > 0 ? [...new Set(parts)] : [...DEFAULT_OPS_INBOXES]
-}
 
 type ProfileRow = {
   id: string
@@ -98,18 +87,15 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     return
   }
 
-  const adminRecipients = parseAdminRecipients()
-  const apiKey = firstEnv("RESEND_API_KEY")
-  const from = firstEnv("RESEND_FROM_EMAIL")
-
-  if (!apiKey || !from) {
+  if (!firstEnv("RESEND_API_KEY") || !firstEnv("RESEND_FROM_EMAIL")) {
     res.status(200).json({ ok: true, notifyDisabled: true, hint: "Set RESEND_API_KEY and RESEND_FROM_EMAIL on Vercel" })
     return
   }
 
-  /** Profile still missing (trigger lag): still email ops so signups are not silent. */
+  /** Profile still missing (trigger lag): still alert ops so signups are not silent. */
   if (!profile) {
     const emailStr = String(u.email ?? "")
+    const subject = `Email verified — profile missing: ${emailStr || u.id}`
     const text = [
       "A user verified their email in Supabase, but no profiles row was found yet after retries.",
       "Check trigger / complete-signup and profiles table.",
@@ -117,42 +103,25 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
       `Auth email: ${emailStr}`,
       `User id: ${u.id}`,
     ].join("\n")
-    let pushResult: Awaited<ReturnType<typeof notifyAdminOps>>["push"] | undefined
-    try {
-      const sendRes = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from,
-          to: adminRecipients,
-          subject: `Email verified — profile missing: ${emailStr || u.id}`,
-          text,
-        }),
+
+    const ops = await notifyAdminOps({
+      service,
+      subject,
+      text,
+      pushTitle: "Verified signup (profile pending)",
+      pushBody: `${emailStr || u.id} verified — profile not found yet`,
+    })
+    if (emailStr) {
+      await recordAdminOpsCustomerEvent(service, {
+        kind: "signup_verified",
+        externalId: `signup-verified:${u.id}`,
+        email: emailStr,
+        subject,
+        body: text,
+        signupUserId: u.id,
       })
-      if (!sendRes.ok) {
-        const t = await sendRes.text()
-        console.error("[notify-admin-verified-signup] Resend (no profile)", sendRes.status, t)
-        res.status(502).json({ error: "Resend rejected the send" })
-        return
-      }
-      console.info("[notify-admin-verified-signup] emailed (profile pending)", { to: adminRecipients, userId: u.id })
-      const ops = await notifyAdminOps({
-        service,
-        subject: `Email verified — profile missing: ${emailStr || u.id}`,
-        text,
-        pushTitle: "Verified signup (profile pending)",
-        pushBody: `${emailStr || u.id} verified — profile not found yet`,
-      })
-      pushResult = ops.push
-      if (pushResult.attempted) {
-        console.info("[notify-admin-verified-signup] push (profile pending)", pushResult)
-      }
-    } catch (e) {
-      console.error("[notify-admin-verified-signup]", e instanceof Error ? e.message : e)
-      res.status(502).json({ error: "Resend request failed" })
-      return
     }
-    res.status(200).json({ ok: true, emailed: true, profilePending: true, push: pushResult?.push })
+    res.status(200).json({ ok: true, emailed: ops.email.ok, profilePending: true, push: ops.push })
     return
   }
 
@@ -184,6 +153,7 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
 
   const emailStr = String(row.email ?? u.email ?? "")
   const displayStr = String(row.display_name ?? "").trim() || emailStr
+  const subject = `Email verified — new user: ${displayStr} (${emailStr})`
   const text = [
     "A user verified their email and signed in to Tradesman.",
     "",
@@ -196,28 +166,16 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     `Address: ${[row.address_line_1, row.address_city, row.address_state, row.address_zip].filter(Boolean).join(", ") || "(none)"}`,
   ].join("\n")
 
-  let sendRes: Response
-  try {
-    sendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: adminRecipients,
-        subject: `Email verified — new user: ${displayStr} (${emailStr})`,
-        text,
-      }),
-    })
-  } catch (e) {
-    console.error("[notify-admin-verified-signup]", e instanceof Error ? e.message : e)
-    res.status(502).json({ error: "Resend request failed" })
-    return
-  }
+  const ops = await notifyAdminOps({
+    service,
+    subject,
+    text,
+    pushTitle: "New verified signup",
+    pushBody: `${displayStr} verified email · ${productPackageLine}`,
+  })
 
-  if (!sendRes.ok) {
-    const t = await sendRes.text()
-    console.error("[notify-admin-verified-signup] Resend", sendRes.status, t)
-    res.status(502).json({ error: "Resend rejected the send" })
+  if (!ops.email.ok && ops.email.disabled !== true) {
+    res.status(502).json({ error: ops.email.error ?? "Resend rejected the send" })
     return
   }
 
@@ -229,23 +187,29 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
     return
   }
 
-  console.info("[notify-admin-verified-signup] emailed", { to: adminRecipients, userId: u.id })
-
-  const pushResult = await notifyAdminOps({
-    service,
-    subject: `Email verified — new user: ${displayStr} (${emailStr})`,
-    text,
-    pushTitle: "New verified signup",
-    pushBody: `${displayStr} verified email · ${productPackageLine}`,
+  const customerEvent = await recordAdminOpsCustomerEvent(service, {
+    kind: "signup_verified",
+    externalId: `signup-verified:${u.id}`,
+    email: emailStr,
+    displayName: displayStr,
+    subject,
+    body: text,
+    signupUserId: u.id,
+    phone: row.primary_phone ?? null,
   })
-  if (pushResult.push.attempted) {
-    console.info("[notify-admin-verified-signup] push", pushResult.push)
-  }
+
+  console.info("[notify-admin-verified-signup]", {
+    userId: u.id,
+    email: emailStr,
+    push: ops.push,
+    customerEvent,
+  })
 
   res.status(200).json({
     ok: true,
-    emailed: true,
-    push: pushResult.push,
-    emailDisabled: pushResult.email.disabled === true,
+    emailed: ops.email.ok,
+    push: ops.push,
+    customerEvent,
+    emailDisabled: ops.email.disabled === true,
   })
 }

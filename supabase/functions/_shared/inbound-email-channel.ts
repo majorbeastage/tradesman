@@ -71,15 +71,17 @@ async function lookupPlatformEmailRoute(
   emailAddress: string
 ): Promise<PlatformEmailRouteRow | null> {
   const parsed = parsePlatformRootEmailAddress(emailAddress)
-  if (!parsed || parsed.domain !== PLATFORM_EMAIL_ROOT_DOMAIN) return null
+  if (!parsed) return null
 
-  const { data, error } = await supabase
+  let q = supabase
     .from("platform_email_routes")
     .select("id, account_id, local_part, domain, forward_to_email, channel_id, route_kind, department_key")
     .eq("domain", parsed.domain)
     .ilike("local_part", escapeIlikeExact(parsed.localPart))
-    .limit(1)
-    .maybeSingle()
+  if (parsed.domain !== PLATFORM_EMAIL_ROOT_DOMAIN) {
+    q = q.not("verified_at", "is", null)
+  }
+  const { data, error } = await q.limit(1).maybeSingle()
 
   if (error && !String(error.message || "").includes("platform_email_routes")) throw error
   return (data as PlatformEmailRouteRow | null) ?? null
@@ -91,10 +93,34 @@ async function ensureEmailChannelForPlatformRoute(
   matchedTo: string
 ): Promise<InboundCommunicationChannel | null> {
   if (!route.account_id) return null
-  if (route.route_kind !== "customer_primary" && route.route_kind !== "department") return null
+  if (
+    route.route_kind !== "customer_primary" &&
+    route.route_kind !== "department" &&
+    route.route_kind !== "customer_custom"
+  ) {
+    return null
+  }
 
   const publicAddress = matchedTo.trim().toLowerCase()
   const forwardTo = route.forward_to_email?.trim() || null
+
+  if (route.route_kind === "customer_custom" && route.channel_id) {
+    const { data: customCh, error: customErr } = await supabase
+      .from("client_communication_channels")
+      .select("id, user_id, channel_kind, public_address, forward_to_email, email_enabled, active")
+      .eq("id", route.channel_id)
+      .maybeSingle()
+    if (customErr) throw customErr
+    if (
+      customCh?.id &&
+      customCh.active &&
+      customCh.channel_kind === "email" &&
+      customCh.email_enabled === true &&
+      customCh.user_id === route.account_id
+    ) {
+      return customCh as InboundCommunicationChannel
+    }
+  }
 
   if (route.route_kind === "department" && route.channel_id) {
     const { data: deptChannel, error: deptErr } = await supabase

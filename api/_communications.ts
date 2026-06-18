@@ -609,14 +609,16 @@ async function lookupPlatformEmailRoute(
   emailAddress: string,
 ): Promise<PlatformEmailRouteRow | null> {
   const parsed = parsePlatformRootEmailAddress(emailAddress)
-  if (!parsed || parsed.domain !== PLATFORM_EMAIL_ROOT_DOMAIN) return null
-  const { data, error } = await supabase
+  if (!parsed) return null
+  let q = supabase
     .from("platform_email_routes")
     .select("id, account_id, local_part, domain, forward_to_email, channel_id, route_kind, department_key")
     .eq("domain", parsed.domain)
     .ilike("local_part", escapeIlikeExact(parsed.localPart))
-    .limit(1)
-    .maybeSingle()
+  if (parsed.domain !== PLATFORM_EMAIL_ROOT_DOMAIN) {
+    q = q.not("verified_at", "is", null)
+  }
+  const { data, error } = await q.limit(1).maybeSingle()
   if (error && !String(error.message || "").includes("platform_email_routes")) throw error
   return (data as PlatformEmailRouteRow | null) ?? null
 }
@@ -627,11 +629,35 @@ async function ensureEmailChannelForPlatformRoute(
   matchedTo: string,
 ): Promise<CommunicationChannel | null> {
   if (!route.account_id) return null
-  if (route.route_kind !== "customer_primary" && route.route_kind !== "department") return null
+  if (
+    route.route_kind !== "customer_primary" &&
+    route.route_kind !== "department" &&
+    route.route_kind !== "customer_custom"
+  ) {
+    return null
+  }
   const publicAddress = matchedTo.trim().toLowerCase()
   const forwardTo = route.forward_to_email?.trim() || null
   const channelSelect =
     "id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active"
+
+  if (route.route_kind === "customer_custom" && route.channel_id) {
+    const { data: customCh, error: customErr } = await supabase
+      .from("client_communication_channels")
+      .select(channelSelect)
+      .eq("id", route.channel_id)
+      .maybeSingle()
+    if (customErr) throw customErr
+    if (
+      customCh?.id &&
+      customCh.active &&
+      customCh.channel_kind === "email" &&
+      customCh.email_enabled === true &&
+      customCh.user_id === route.account_id
+    ) {
+      return customCh as CommunicationChannel
+    }
+  }
 
   if (route.route_kind === "department" && route.channel_id) {
     const { data: deptChannel, error: deptErr } = await supabase
@@ -872,6 +898,42 @@ export async function getPrimaryEmailChannelForUser(
   /** Prefer the most recently updated row that has a sender address (avoids stale helpdesk@ rows left after you switch to joe@). */
   const withPublic = rows.find((r) => typeof r.public_address === "string" && r.public_address.trim() !== "")
   return (withPublic ?? rows[0]) ?? null
+}
+
+/** When Option B custom domain is preferred, use that address for outbound From/Reply-To without changing the channel row. */
+export async function resolveOutboundEmailFromAddress(
+  supabase: SupabaseClient,
+  userId: string,
+  channel: CommunicationChannel | null,
+): Promise<string> {
+  const fallback =
+    (typeof channel?.public_address === "string" && channel.public_address.trim()) || ""
+  if (!userId) return fallback
+
+  const { data: profile } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  const meta =
+    profile?.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
+      ? (profile.metadata as Record<string, unknown>)
+      : {}
+  const routeId = typeof meta.email_outbound_route_id === "string" ? meta.email_outbound_route_id.trim() : ""
+  if (!routeId) return fallback
+
+  const { data: route } = await supabase
+    .from("platform_email_routes")
+    .select("local_part, domain, verified_at, route_kind")
+    .eq("id", routeId)
+    .eq("account_id", userId)
+    .maybeSingle()
+
+  if (
+    route?.verified_at &&
+    route.route_kind === "customer_custom" &&
+    typeof route.local_part === "string" &&
+    typeof route.domain === "string"
+  ) {
+    return `${route.local_part.trim().toLowerCase()}@${route.domain.trim().toLowerCase()}`
+  }
+  return fallback
 }
 
 /** Updates `customers.last_activity_at` when a communication event is recorded (distinct from row `updated_at`). */

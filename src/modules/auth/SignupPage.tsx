@@ -587,7 +587,6 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             {resendHint ? (
               <p style={{ margin: "0 0 14px", fontSize: 14, color: resendHint.includes("sent") ? "#059669" : "#b91c1c" }}>{resendHint}</p>
             ) : null}
-            <SignupSupportCallout compact />
             <div
               style={{
                 marginTop: 8,
@@ -604,6 +603,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
               signups is enabled; Authentication → Emails → templates; Project Settings → Auth → SMTP (custom SMTP is often required for
               reliable delivery). The confirmation link must match your <strong>Site URL</strong> and allowed redirect URLs.
             </div>
+            <SignupSupportCallout compact />
           </div>
           <div style={{ maxWidth: 520, margin: "0 auto", padding: "0 8px" }}>
             <PublicLegalNav borderTop={false} />
@@ -637,8 +637,6 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         <p style={{ color: theme.text, opacity: 0.85, margin: "0 0 20px", lineHeight: 1.55, fontSize: 14 }}>
           Required fields are marked. Email verification may be required before your first login, depending on your project settings.
         </p>
-
-        <SignupSupportCallout />
 
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "grid", gap: 14, color: theme.text }}>
           <label style={labelStyle}>
@@ -1024,6 +1022,8 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             </button>
           )}
         </form>
+
+        <SignupSupportCallout />
       </div>
       <div style={{ maxWidth: 520, margin: "0 auto", padding: "0 8px" }}>
         <PublicLegalNav borderTop={false} />

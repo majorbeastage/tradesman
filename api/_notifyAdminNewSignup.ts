@@ -5,6 +5,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { createServiceSupabase, firstEnv } from "./_communications.js"
 import { notifyAdminOps } from "./_adminOpsNotify.js"
+import { recordAdminOpsCustomerEvent } from "./_adminOpsCustomerEvent.js"
 
 const PRODUCT_PACKAGE_LABEL: Record<string, string> = {
   base: "Base Package — $124.99/mo",
@@ -79,10 +80,22 @@ export async function handleNotifyAdminNewSignup(req: VercelRequest, res: Vercel
     pushBody: `${displayStr} · ${pkg}`,
   })
 
-  console.info("[notify-admin-new-signup]", { userId, email: emailStr, push: result.push })
+  const customerEvent = await recordAdminOpsCustomerEvent(service, {
+    kind: "signup_submitted",
+    externalId: `signup-submitted:${userId}`,
+    email: emailStr,
+    displayName: displayStr,
+    subject: `New signup submitted: ${displayStr} (${emailStr})`,
+    body: text,
+    signupUserId: userId,
+    phone: body.primary_phone?.trim() || null,
+  })
+
+  console.info("[notify-admin-new-signup]", { userId, email: emailStr, push: result.push, customerEvent })
   res.status(200).json({
     ok: true,
     email: result.email,
     push: result.push,
+    customerEvent,
   })
 }

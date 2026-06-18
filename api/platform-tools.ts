@@ -39,6 +39,13 @@ import { handleNotifyAdminNewSignup } from "./_notifyAdminNewSignup.js"
 import { handleSendOnboardingWelcome } from "./_sendOnboardingWelcomeHandler.js"
 import { handleNotifyAdminSupportTicket } from "./_notifyAdminSupportTicket.js"
 import { handleNotifyClientSmsDisclosure } from "./_clientPostVerifySmsDisclosureEmail.js"
+import { handleRecordOpsCustomerEvent } from "./_recordOpsCustomerEvent.js"
+import {
+  handlePlatformEmailDomainClaim,
+  handlePlatformEmailDomainRegister,
+  handlePlatformEmailDomainStatus,
+  handlePlatformEmailDomainVerify,
+} from "./_platformEmailDomain.js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
@@ -1771,12 +1778,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return
   }
 
+  if (req.method === "GET" && route === "platform-email-domain-status") {
+    await handlePlatformEmailDomainStatus(req, res)
+    return
+  }
+
   if (req.method === "GET") {
     res.status(200).json({
       ok: true,
       route: "platform-tools",
       getHtml: ["legal-html", "sms-consent", "privacy-policy", "terms-conditions"],
-      getJson: ["public-lead-config"],
+      getJson: ["public-lead-config", "platform-email-domain-status"],
       post: [
         "public-lead",
         "ai-summarize",
@@ -1796,6 +1808,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "ai-summarize-customer-event",
         "platform-assistant-route",
         "platform-assistant-vocabulary-train",
+        "platform-email-domain-register",
+        "platform-email-domain-verify",
+        "platform-email-domain-claim",
+        "record-ops-customer-event",
       ],
     })
     return
@@ -1848,6 +1864,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "notify-client-sms-disclosure") {
       await handleNotifyClientSmsDisclosure(req, res)
+      return
+    }
+    if (route === "platform-email-domain-register") {
+      await handlePlatformEmailDomainRegister(req, res)
+      return
+    }
+    if (route === "platform-email-domain-verify") {
+      await handlePlatformEmailDomainVerify(req, res)
+      return
+    }
+    if (route === "platform-email-domain-claim") {
+      await handlePlatformEmailDomainClaim(req, res)
+      return
+    }
+    if (route === "record-ops-customer-event") {
+      await handleRecordOpsCustomerEvent(req, res)
       return
     }
     if (route === "estimate-legal-draft") {

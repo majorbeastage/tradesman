@@ -1335,12 +1335,10 @@ export default function AdminCommunicationsSection({ mode, selectedUserId, selec
                 <code style={{ fontSize: 11 }}>RESEND_*</code> env vars on Vercel if routing works.
               </p>
               <p style={{ margin: "8px 0 0", opacity: 0.85, fontSize: 12, lineHeight: 1.55 }}>
-                <strong>MX on Resend → Zoho inboxes:</strong> on Vercel set{" "}
-                <code style={{ fontSize: 11 }}>RESEND_ZOHO_FORWARD_JSON</code> to a JSON object mapping each public address to a Zoho address, e.g.{" "}
-                <code style={{ fontSize: 11 }}>{`{"joe@tradesman-us.com":"joe@zoho.com"}`}</code>. Set{" "}
-                <code style={{ fontSize: 11 }}>RESEND_ZOHO_FORWARD_FROM</code> (or <code style={{ fontSize: 11 }}>RESEND_FROM_EMAIL</code>) to a verified sender. Point the same{" "}
-                <code style={{ fontSize: 11 }}>email.received</code> webhook here; matching messages forward via Resend&apos;s receiving API and skip Tradesman routing. Optional: run{" "}
-                <code style={{ fontSize: 11 }}>supabase/resend-inbound-email-dedupe.sql</code> for retry deduplication.
+                <strong>Inbound v2 (store first):</strong> mail to a customer&apos;s Tradesman or verified custom domain is stored in Conversations first. Optional copy forward uses each channel&apos;s{" "}
+                <strong>Forward to email</strong> field (myT → Account → Tradesman business email). Legacy{" "}
+                <code style={{ fontSize: 11 }}>RESEND_ZOHO_FORWARD_JSON</code> skip-Tradesman forwarding is deprecated — staff use{" "}
+                <code style={{ fontSize: 11 }}>@mail.tradesman-us.com</code> on Zoho separately.
               </p>
               <p style={{ margin: "10px 0 0", padding: "10px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, lineHeight: 1.55 }}>
                 <strong style={{ color: "#9a3412" }}>Must match exactly:</strong> the <strong>To</strong> address on the inbound message (as Resend reports it) must equal this user&apos;s{" "}
