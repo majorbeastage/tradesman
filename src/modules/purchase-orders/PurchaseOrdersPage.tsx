@@ -11,9 +11,9 @@ import {
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
 
-type Props = { setPage: (page: string) => void }
+type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
-export default function PurchaseOrdersPage({ setPage }: Props) {
+export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [orders, setOrders] = useState<PurchaseOrderRecord[]>([])
@@ -63,12 +63,14 @@ export default function PurchaseOrdersPage({ setPage }: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "16px 20px 40px" }}>
-      <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Purchase Orders</h1>
-      <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
-        Create purchase orders for your parts department. Future releases will tie POs to estimates, work orders, and
-        org-chart approvals.
-      </p>
+    <div style={{ maxWidth: 960, margin: embedded ? 0 : "0 auto", padding: embedded ? 0 : "16px 20px 40px" }}>
+      {!embedded ? <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Purchase Orders</h1> : null}
+      {!embedded ? (
+        <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
+          Create purchase orders for your parts department. Future releases will tie POs to estimates, work orders, and
+          org-chart approvals.
+        </p>
+      ) : null}
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
 
       <section style={card}>
@@ -116,7 +118,7 @@ export default function PurchaseOrdersPage({ setPage }: Props) {
         )}
       </section>
 
-      <button type="button" onClick={() => setPage("dashboard")} style={{ ...secondaryBtn, marginTop: 16 }}>
+      <button type="button" onClick={() => setPage?.("dashboard")} style={{ ...secondaryBtn, marginTop: 16 }}>
         ← Dashboard
       </button>
     </div>

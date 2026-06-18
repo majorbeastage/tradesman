@@ -52,12 +52,65 @@ export type CustomFieldDependency = {
 export const WORK_ORDERS_TAB_ID = "work_orders"
 export const PURCHASE_ORDERS_TAB_ID = "purchase_orders"
 export const PARTS_INVENTORY_TAB_ID = "parts_inventory"
+export const OPERATIONS_TAB_ID = "operations"
 
-export const OPTIONAL_PORTAL_TAB_IDS = [
+export type OperationsSubModuleId = "work_orders" | "purchase_orders" | "invoicing" | "inventory"
+
+/** Legacy sidebar tab ids — deep links still work; sidebar shows unified Operations when enabled. */
+export const LEGACY_OPERATIONS_TAB_IDS = [
   WORK_ORDERS_TAB_ID,
   PURCHASE_ORDERS_TAB_ID,
   PARTS_INVENTORY_TAB_ID,
 ] as const
+
+export const OPTIONAL_PORTAL_TAB_IDS = [OPERATIONS_TAB_ID, ...LEGACY_OPERATIONS_TAB_IDS] as const
+
+export function isLegacyOperationsTabId(tabId: string): boolean {
+  return (LEGACY_OPERATIONS_TAB_IDS as readonly string[]).includes(tabId)
+}
+
+export function isOperationsPackageEnabled(portalConfig: PortalConfig | null | undefined): boolean {
+  if (!portalConfig) return false
+  if (portalConfig.enable_operations_tab === true) return true
+  if (portalConfig.corporate_package === true) return true
+  return (
+    portalConfig.enable_work_orders_tab === true ||
+    portalConfig.enable_purchase_orders_tab === true ||
+    portalConfig.enable_parts_inventory_tab === true
+  )
+}
+
+export function operationsSubModuleEnabled(
+  sub: OperationsSubModuleId,
+  portalConfig: PortalConfig | null | undefined,
+): boolean {
+  if (!isOperationsPackageEnabled(portalConfig)) return false
+  const mods = portalConfig?.operations_modules
+  if (sub === "work_orders") {
+    if (mods?.work_orders === false) return false
+    if (portalConfig?.enable_work_orders_tab === false && portalConfig?.enable_operations_tab !== true) return false
+    return true
+  }
+  if (sub === "purchase_orders") {
+    if (mods?.purchase_orders === false) return false
+    if (portalConfig?.enable_purchase_orders_tab === false && portalConfig?.enable_operations_tab !== true) return false
+    return true
+  }
+  if (sub === "inventory") {
+    if (mods?.inventory === false) return false
+    if (portalConfig?.enable_parts_inventory_tab === false && portalConfig?.enable_operations_tab !== true) return false
+    return true
+  }
+  if (sub === "invoicing") return mods?.invoicing !== false
+  return true
+}
+
+export function parseOperationsSubTabFromPage(page: string): OperationsSubModuleId {
+  if (page === "operations-inventory" || page === "parts_inventory") return "inventory"
+  if (page === "operations-invoicing") return "invoicing"
+  if (page === "operations-purchase_orders" || page === "purchase_orders") return "purchase_orders"
+  return "work_orders"
+}
 
 export const USER_PORTAL_TAB_IDS = [
   'dashboard',
@@ -99,14 +152,20 @@ export function isV2DeprecatedPortalTab(tabId: string): boolean {
 
 /** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
 export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
-  if (tabId === WORK_ORDERS_TAB_ID) {
-    return portalConfig?.enable_work_orders_tab === true && portalConfig?.tabs?.work_orders !== false
+  if (tabId === OPERATIONS_TAB_ID) {
+    return isOperationsPackageEnabled(portalConfig) && portalConfig?.tabs?.operations !== false
   }
-  if (tabId === PURCHASE_ORDERS_TAB_ID) {
-    return portalConfig?.enable_purchase_orders_tab === true && portalConfig?.tabs?.purchase_orders !== false
-  }
-  if (tabId === PARTS_INVENTORY_TAB_ID) {
-    return portalConfig?.enable_parts_inventory_tab === true && portalConfig?.tabs?.parts_inventory !== false
+  if (isLegacyOperationsTabId(tabId)) {
+    if (isOperationsPackageEnabled(portalConfig)) return false
+    if (tabId === WORK_ORDERS_TAB_ID) {
+      return portalConfig?.enable_work_orders_tab === true && portalConfig?.tabs?.work_orders !== false
+    }
+    if (tabId === PURCHASE_ORDERS_TAB_ID) {
+      return portalConfig?.enable_purchase_orders_tab === true && portalConfig?.tabs?.purchase_orders !== false
+    }
+    if (tabId === PARTS_INVENTORY_TAB_ID) {
+      return portalConfig?.enable_parts_inventory_tab === true && portalConfig?.tabs?.parts_inventory !== false
+    }
   }
   if (!isV2DeprecatedPortalTab(tabId)) {
     return portalConfig?.tabs?.[tabId] !== false
@@ -145,9 +204,10 @@ export const TAB_ID_LABELS: Record<string, string> = {
   leads: 'Leads',
   conversations: 'Conversations',
   quotes: 'Estimates Tool',
+  [OPERATIONS_TAB_ID]: 'Operations',
   [WORK_ORDERS_TAB_ID]: 'Work Orders',
   [PURCHASE_ORDERS_TAB_ID]: 'Purchase Orders',
-  [PARTS_INVENTORY_TAB_ID]: 'Parts & Materials',
+  [PARTS_INVENTORY_TAB_ID]: 'Inventory',
   calendar: 'Scheduling',
   customers: 'Customers',
   payments: 'Payments',
@@ -282,8 +342,13 @@ export type PortalConfig = {
    */
   customer_pay_only_after_estimate_sent?: boolean
   /**
-   * Onboarding option: show Work Orders tab between Estimates and Scheduling.
-   * Requires `tabs.work_orders` not false when enabled.
+   * Unified Operations hub (Work Orders, POs, Invoicing, Inventory) between Estimates and Scheduling.
+   */
+  enable_operations_tab?: boolean
+  /** Submodule toggles inside Operations (default on when Operations is enabled). */
+  operations_modules?: Partial<Record<OperationsSubModuleId, boolean>>
+  /**
+   * Legacy onboarding flags — still honored; any true enables Operations in the sidebar.
    */
   enable_work_orders_tab?: boolean
   /** Onboarding option: show Purchase Orders tab (optional, after Work Orders when enabled). */
@@ -346,9 +411,10 @@ function fullOperationsTabs(): Record<string, boolean> {
     "web-support": false,
     "tech-support": true,
     settings: false,
-    work_orders: true,
-    purchase_orders: true,
-    parts_inventory: true,
+    operations: true,
+    work_orders: false,
+    purchase_orders: false,
+    parts_inventory: false,
   }
 }
 
@@ -361,9 +427,16 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
     return {
       tabs: fullOperationsTabs(),
       corporate_package: true,
+      enable_operations_tab: true,
       enable_work_orders_tab: true,
       enable_purchase_orders_tab: true,
       enable_parts_inventory_tab: true,
+      operations_modules: {
+        work_orders: true,
+        purchase_orders: true,
+        invoicing: true,
+        inventory: true,
+      },
     }
   }
   const tabs: Record<string, boolean> = {
@@ -477,6 +550,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },
   { id: "business_hours", label: "Timezone & business hours" },
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
+  { id: "call_screening", label: "Optional call screening / auto-attendant (AI or recorded menu)" },
   { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
   { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
   { id: "ai_automations", label: "AI automations (master toggle for AI options on other tabs)" },
@@ -504,11 +578,18 @@ export function mergeCanonicalOrder(savedOrder: string[] | undefined, canonicalI
   return out
 }
 
-/** Insert optional onboarding tabs after Estimates (work orders → purchase orders → parts inventory). */
+/** Insert optional Operations hub (or legacy separate tabs) after Estimates. */
 export function applyOptionalPortalTabOrder(order: string[], portalConfig: PortalConfig): string[] {
-  const out = [...order]
+  let out = [...order]
   const qi = out.indexOf("quotes")
   const insertAt = qi >= 0 ? qi + 1 : out.length
+  if (isOperationsPackageEnabled(portalConfig)) {
+    out = out.filter((id) => !isLegacyOperationsTabId(id))
+    if (!out.includes(OPERATIONS_TAB_ID)) {
+      out.splice(insertAt, 0, OPERATIONS_TAB_ID)
+    }
+    return out
+  }
   const optional: { enabled: boolean; id: string }[] = [
     { enabled: portalConfig.enable_work_orders_tab === true, id: WORK_ORDERS_TAB_ID },
     { enabled: portalConfig.enable_purchase_orders_tab === true, id: PURCHASE_ORDERS_TAB_ID },

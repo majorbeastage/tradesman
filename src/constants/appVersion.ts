@@ -31,6 +31,7 @@
  * **2.0.1** — Estimate workspace: Start Quote guide, scope assistant (OpenAI line suggestions), Conversations label, collapsible customer/templates, status cues.
  * **2.1.0** — Setup Guide wizard (initial + adjustment modes), dashboard platform assistant with voice, global indigo assistant FAB, paper quick-link theme, help desk menu playback fix.
  * **2.2.0** — Eight interactive setup mini-wizards (auto-replies, lead filters, line items, job types, scheduling alerts, receipt template, call forwarding, voicemail) with voice/TTS; platform assistant routes to wizards; shared speech input.
+ * **2.3.0** — Unified Operations hub (Work Orders, POs, Invoicing, Inventory), dashboard quick-link fixes, optional call-screening settings (metadata only; whisper/forward unchanged), Business Workflow editor layout, admin mobile nav + Operations provisioning.
  *
  * @see CopyrightVersionFooter
  */

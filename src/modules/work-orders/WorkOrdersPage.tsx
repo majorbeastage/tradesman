@@ -16,10 +16,11 @@ import {
 import { queueQuotesCustomerPrefill } from "../../lib/workflowNavigation"
 
 type Props = {
-  setPage: (page: string) => void
+  setPage?: (page: string) => void
+  embedded?: boolean
 }
 
-export default function WorkOrdersPage({ setPage }: Props) {
+export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
@@ -68,12 +69,16 @@ export default function WorkOrdersPage({ setPage }: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "16px 20px 40px" }}>
-      <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800, color: theme.text }}>Work Orders</h1>
-      <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
-        Create a work order from a fully signed estimate or proposal. Use your own work order number or let Tradesman
-        generate one.
-      </p>
+    <div style={{ maxWidth: 960, margin: embedded ? 0 : "0 auto", padding: embedded ? 0 : "16px 20px 40px" }}>
+      {!embedded ? (
+        <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800, color: theme.text }}>Work Orders</h1>
+      ) : null}
+      {!embedded ? (
+        <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
+          Create a work order from a fully signed estimate or proposal. Use your own work order number or let Tradesman
+          generate one.
+        </p>
+      ) : null}
 
       {err ? <p style={{ color: "#b91c1c", fontSize: 13, marginBottom: 12 }}>{err}</p> : null}
 
@@ -150,13 +155,13 @@ export default function WorkOrdersPage({ setPage }: Props) {
                         style={secondaryBtn}
                         onClick={() => {
                           queueQuotesCustomerPrefill(o.customer_id!)
-                          setPage("quotes")
+                          setPage?.("quotes")
                         }}
                       >
                         Open estimate
                       </button>
                     ) : null}
-                    <button type="button" style={secondaryBtn} onClick={() => setPage("calendar")}>
+                    <button type="button" style={secondaryBtn} onClick={() => setPage?.("calendar")}>
                       Scheduling
                     </button>
                   </div>

@@ -14,9 +14,7 @@ import InsuranceOptionsPage from "../insurance/InsuranceOptionsPage"
 import ReportingPage from "../reporting/ReportingPage"
 import BusinessWorkflowPage from "../workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "../org-chart/OrganizationChartPage"
-import WorkOrdersPage from "../work-orders/WorkOrdersPage"
-import PurchaseOrdersPage from "../purchase-orders/PurchaseOrdersPage"
-import PartsInventoryPage from "../parts-inventory/PartsInventoryPage"
+import OperationsPage from "../operations/OperationsPage"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   OfficeManagerScopeProvider,
@@ -34,6 +32,7 @@ import {
   getPageActionVisible,
   getPortalTabListForConfig,
   isPortalTabVisibleInV2,
+  parseOperationsSubTabFromPage,
   USER_PORTAL_TAB_IDS,
   TAB_ID_LABELS,
   type PortalConfig,
@@ -507,9 +506,26 @@ function OfficeManagerAppContent() {
   }, [page, setPage])
 
   useEffect(() => {
+    if (page === "work_orders") setPage("operations-work_orders")
+    else if (page === "purchase_orders") setPage("operations-purchase_orders")
+    else if (page === "parts_inventory") setPage("operations-inventory")
+  }, [page, setPage])
+
+  useEffect(() => {
     const cfg = scope?.scopedPortalConfig ?? portalConfig
+    if (page === "operations" || page.startsWith("operations-")) {
+      if (!isPortalTabVisibleInV2("operations", cfg)) setPage("dashboard")
+      return
+    }
     if (!isPortalTabVisibleInV2(page, cfg)) {
-      if (page === "leads" || page === "conversations" || page === "web-support" || page === "work_orders" || page === "purchase_orders" || page === "parts_inventory") {
+      if (
+        page === "leads" ||
+        page === "conversations" ||
+        page === "web-support" ||
+        page === "work_orders" ||
+        page === "purchase_orders" ||
+        page === "parts_inventory"
+      ) {
         setPage("dashboard")
       }
     }
@@ -629,6 +645,11 @@ function OfficeManagerAppContent() {
               businessWorkflow: t("dashboard.quickBusinessWorkflow"),
               businessWorkflowSub: t("dashboard.quickBusinessWorkflowSub"),
               organizationChart: t("dashboard.quickOrganizationChart"),
+              operations: t("dashboard.quickOperations"),
+              operationsWorkOrders: t("dashboard.quickOperationsWorkOrders"),
+              operationsPurchaseOrders: t("dashboard.quickOperationsPurchaseOrders"),
+              operationsInvoicing: t("dashboard.quickOperationsInvoicing"),
+              operationsInventory: t("dashboard.quickOperationsInventory"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -693,9 +714,9 @@ function OfficeManagerAppContent() {
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}
       {hasClients && page === "quotes" && <QuotesPage setPage={setPage} />}
-      {hasClients && page === "work_orders" && <WorkOrdersPage setPage={setPage} />}
-      {hasClients && page === "purchase_orders" && <PurchaseOrdersPage setPage={setPage} />}
-      {hasClients && page === "parts_inventory" && <PartsInventoryPage setPage={setPage} />}
+      {hasClients && (page === "operations" || page.startsWith("operations-")) && (
+        <OperationsPage setPage={setPage} initialTab={parseOperationsSubTabFromPage(page)} />
+      )}
       {hasClients && page === "calendar" && <CalendarPage setPage={setPage} />}
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}

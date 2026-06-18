@@ -15,9 +15,7 @@ import InsuranceOptionsPage from "./modules/insurance/InsuranceOptionsPage"
 import ReportingPage from "./modules/reporting/ReportingPage"
 import BusinessWorkflowPage from "./modules/workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
-import WorkOrdersPage from "./modules/work-orders/WorkOrdersPage"
-import PurchaseOrdersPage from "./modules/purchase-orders/PurchaseOrdersPage"
-import PartsInventoryPage from "./modules/parts-inventory/PartsInventoryPage"
+import OperationsPage from "./modules/operations/OperationsPage"
 import HomePage from "./modules/home/HomePage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -46,6 +44,7 @@ import {
   getPageActionVisible,
   getOmPageActionVisible,
   isPortalTabVisibleInV2,
+  parseOperationsSubTabFromPage,
   type PortalConfig,
   type PortalTab,
 } from "./types/portal-builder"
@@ -217,8 +216,25 @@ function MainAppInner() {
   }, [page, setPage])
 
   useEffect(() => {
+    if (page === "work_orders") setPage("operations-work_orders")
+    else if (page === "purchase_orders") setPage("operations-purchase_orders")
+    else if (page === "parts_inventory") setPage("operations-inventory")
+  }, [page, setPage])
+
+  useEffect(() => {
+    if (page === "operations" || page.startsWith("operations-")) {
+      if (!isPortalTabVisibleInV2("operations", portalConfig)) setPage("dashboard")
+      return
+    }
     if (!isPortalTabVisibleInV2(page, portalConfig)) {
-      if (page === "leads" || page === "conversations" || page === "web-support" || page === "work_orders" || page === "purchase_orders" || page === "parts_inventory") {
+      if (
+        page === "leads" ||
+        page === "conversations" ||
+        page === "web-support" ||
+        page === "work_orders" ||
+        page === "purchase_orders" ||
+        page === "parts_inventory"
+      ) {
         setPage("dashboard")
       }
     }
@@ -390,6 +406,11 @@ function MainAppInner() {
               businessWorkflow: t("dashboard.quickBusinessWorkflow"),
               businessWorkflowSub: t("dashboard.quickBusinessWorkflowSub"),
               organizationChart: t("dashboard.quickOrganizationChart"),
+              operations: t("dashboard.quickOperations"),
+              operationsWorkOrders: t("dashboard.quickOperationsWorkOrders"),
+              operationsPurchaseOrders: t("dashboard.quickOperationsPurchaseOrders"),
+              operationsInvoicing: t("dashboard.quickOperationsInvoicing"),
+              operationsInventory: t("dashboard.quickOperationsInventory"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
@@ -459,9 +480,9 @@ function MainAppInner() {
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
       {page === "quotes" && <QuotesPage setPage={setPage} />}
-      {page === "work_orders" && <WorkOrdersPage setPage={setPage} />}
-      {page === "purchase_orders" && <PurchaseOrdersPage setPage={setPage} />}
-      {page === "parts_inventory" && <PartsInventoryPage setPage={setPage} />}
+      {(page === "operations" || page.startsWith("operations-")) && (
+        <OperationsPage setPage={setPage} initialTab={parseOperationsSubTabFromPage(page)} />
+      )}
       {page === "calendar" && <CalendarPage setPage={setPage} />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}

@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy portal builder — use AdminApp → Portal & access panel instead.
+ * Kept for reference; not linked from the app shell.
+ */
 import { useState } from "react"
 import { theme } from "../../styles/theme"
 import AdminCustomFieldsSection from "./AdminCustomFieldsSection"

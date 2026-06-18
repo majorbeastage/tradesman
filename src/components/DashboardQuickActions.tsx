@@ -7,11 +7,17 @@ import {
   type QueuedCalendarSuite,
 } from "../lib/workflowNavigation"
 import { supabase } from "../lib/supabase"
+import { useAuth } from "../contexts/AuthContext"
+import {
+  isOperationsPackageEnabled,
+  operationsSubModuleEnabled,
+} from "../types/portal-builder"
 import {
   ALL_DASHBOARD_OPTIONAL_IDS,
   DASHBOARD_PALETTE_ONLY_IDS,
   mergeDashboardQuickLinksMetadata,
   normalizeDashboardOptionalOrder,
+  operationsQuickLinkPage,
   parseDashboardQuickLinks,
   type DashboardOptionalQuickLinkId,
   type DashboardTileScheme,
@@ -59,6 +65,11 @@ type Props = {
     businessWorkflow: string
     businessWorkflowSub: string
     organizationChart: string
+    operations: string
+    operationsWorkOrders: string
+    operationsPurchaseOrders: string
+    operationsInvoicing: string
+    operationsInventory: string
     customizeHint: string
     customizeDone: string
     customizePaletteTitle: string
@@ -457,6 +468,19 @@ export default function DashboardQuickActions(props: Props) {
     onOpenSetupGuide,
   } = props
   const ga = useGlobalAssistantOptional()
+  const { portalConfig } = useAuth()
+
+  const operationsQuickLinkVisible = useCallback(
+    (id: DashboardOptionalQuickLinkId): boolean => {
+      if (id === "operations") return isOperationsPackageEnabled(portalConfig)
+      if (id === "operations_work_orders") return operationsSubModuleEnabled("work_orders", portalConfig)
+      if (id === "operations_purchase_orders") return operationsSubModuleEnabled("purchase_orders", portalConfig)
+      if (id === "operations_invoicing") return operationsSubModuleEnabled("invoicing", portalConfig)
+      if (id === "operations_inventory") return operationsSubModuleEnabled("inventory", portalConfig)
+      return true
+    },
+    [portalConfig],
+  )
   const jobTypesModal = useJobTypesModalOptional()
   const fourth = resolveFourthCalendarState(props, labels)
   const tileScheme: DashboardTileScheme = "paper"
@@ -569,10 +593,15 @@ export default function DashboardQuickActions(props: Props) {
       { id: "setup_guide", show: Boolean(onOpenSetupGuide) },
       { id: "business_workflow", show: true },
       { id: "organization_chart", show: true },
+      { id: "operations", show: operationsQuickLinkVisible("operations") },
+      { id: "operations_work_orders", show: operationsQuickLinkVisible("operations_work_orders") },
+      { id: "operations_purchase_orders", show: operationsQuickLinkVisible("operations_purchase_orders") },
+      { id: "operations_invoicing", show: operationsQuickLinkVisible("operations_invoicing") },
+      { id: "operations_inventory", show: operationsQuickLinkVisible("operations_inventory") },
     ]
     const visSet = new Set(vis.filter((x) => x.show).map((x) => x.id))
     return optionalOrder.filter((id) => visSet.has(id))
-  }, [optionalOrder, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, showSettingsShortcut, onOpenSetupGuide])
+  }, [optionalOrder, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, showSettingsShortcut, onOpenSetupGuide, operationsQuickLinkVisible])
 
   const paletteAvailable = useMemo(() => {
     const onBar = new Set(optionalTiles)
@@ -581,9 +610,10 @@ export default function DashboardQuickActions(props: Props) {
       if (id === "payments" && !showPaymentsShortcut) return false
       if (id === "time_clock" && !props.showTimeClockShortcut) return false
       if (id === "custom_receipt" && !props.showCustomReceiptShortcut) return false
+      if (id.startsWith("operations") && !operationsQuickLinkVisible(id)) return false
       return true
     })
-  }, [optionalTiles, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut])
+  }, [optionalTiles, props.showCustomReceiptShortcut, props.showTimeClockShortcut, showPaymentsShortcut, operationsQuickLinkVisible])
 
   const onOptionalDragStart = useCallback((id: DashboardOptionalQuickLinkId) => {
     setDragId(id)
@@ -862,6 +892,29 @@ export default function DashboardQuickActions(props: Props) {
         />
       )
     }
+    if (id.startsWith("operations")) {
+      const opLabels: Record<string, string> = {
+        operations: labels.operations,
+        operations_work_orders: labels.operationsWorkOrders,
+        operations_purchase_orders: labels.operationsPurchaseOrders,
+        operations_invoicing: labels.operationsInvoicing,
+        operations_inventory: labels.operationsInventory,
+      }
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          label={opLabels[id] ?? labels.operations}
+          accent="#0369a1"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          {...dragProps}
+          onClick={() => !customize && go(operationsQuickLinkPage(id))}
+        />
+      )
+    }
     return null
   }
 
@@ -1073,6 +1126,16 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.businessWorkflow
     case "organization_chart":
       return labels.organizationChart
+    case "operations":
+      return labels.operations
+    case "operations_work_orders":
+      return labels.operationsWorkOrders
+    case "operations_purchase_orders":
+      return labels.operationsPurchaseOrders
+    case "operations_invoicing":
+      return labels.operationsInvoicing
+    case "operations_inventory":
+      return labels.operationsInventory
     case "setup_guide":
       return labels.setupGuide
     default:

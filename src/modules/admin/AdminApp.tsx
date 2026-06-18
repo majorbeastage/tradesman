@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useView } from "../../contexts/ViewContext"
+import { useIsMobile } from "../../hooks/useIsMobile"
 import { AdminVisibilityProvider } from "../../contexts/AdminVisibilityContext"
 import { AdminSettingBlock, AdminVisibilityFooter } from "../../components/admin/AdminSettingChrome"
 import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
@@ -521,6 +522,8 @@ export default function AdminApp() {
 }
 
 function AdminAppInner() {
+  const isMobile = useIsMobile()
+  const [adminNavOpen, setAdminNavOpen] = useState(false)
   const { user, signOut, clientId } = useAuth()
   const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
@@ -557,6 +560,10 @@ function AdminAppInner() {
   const [adminPanel, setAdminPanel] = useState<
     "ops" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
+
+  useEffect(() => {
+    if (isMobile) setAdminNavOpen(false)
+  }, [adminPanel, isMobile])
 
   useEffect(() => {
     try {
@@ -1080,9 +1087,48 @@ function AdminAppInner() {
   const visibleTabs = getVisibleTabs(config)
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", minHeight: "100vh", position: "relative" }}>
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setAdminNavOpen((o) => !o)}
+          style={{
+            position: "fixed",
+            top: 10,
+            left: 10,
+            zIndex: 50,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            fontWeight: 700,
+            fontSize: 13,
+            cursor: "pointer",
+          }}
+        >
+          {adminNavOpen ? "Close" : "Admin menu"}
+        </button>
+      ) : null}
       {/* Admin sidebar */}
-      <aside style={{ width: 260, background: theme.charcoalSmoke, padding: 20, color: "white", flexShrink: 0 }}>
+      <aside
+        style={{
+          width: 260,
+          background: theme.charcoalSmoke,
+          padding: 20,
+          color: "white",
+          flexShrink: 0,
+          ...(isMobile
+            ? {
+                position: "fixed",
+                inset: 0,
+                zIndex: 40,
+                transform: adminNavOpen ? "translateX(0)" : "translateX(-105%)",
+                transition: "transform 0.2s ease",
+                overflowY: "auto",
+              }
+            : {}),
+        }}
+      >
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>Admin</h2>
         <AdminSettingBlock id="admin:sidebar:nav" variant="dark">
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
@@ -1401,7 +1447,7 @@ function AdminAppInner() {
         </AdminSettingBlock>
       </aside>
 
-      <main style={{ flex: 1, padding: 24, background: theme.background, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
+      <main style={{ flex: 1, padding: isMobile ? "48px 16px 24px" : 24, background: theme.background, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
         {adminPanel === "ops" ? (
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
         ) : adminPanel === "users" ? (
@@ -1516,101 +1562,104 @@ function AdminAppInner() {
             <AdminSettingBlock id="admin:portal:onboarding_modules">
               <h2 style={{ fontSize: 16, margin: "0 0 12px", color: theme.text }}>Onboarding module options</h2>
               <p style={{ margin: "0 0 14px", fontSize: 13, color: theme.text, opacity: 0.85, maxWidth: 640 }}>
-                Enable optional modules when onboarding a customer. Work Orders appears between Estimates and Scheduling when turned on.
+                Enable the unified <strong>Operations</strong> hub (Work Orders, Purchase Orders, Invoicing, Inventory) between Estimates and Scheduling.
+                Corporate package includes all modules.
               </p>
-              <label
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
-                  marginBottom: 12,
-                  cursor: "pointer",
-                  color: theme.text,
-                  fontSize: 14,
-                  lineHeight: 1.45,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  style={{ marginTop: 3 }}
-                  checked={config.enable_work_orders_tab === true}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      enable_work_orders_tab: e.target.checked ? true : false,
-                      tabs: {
-                        ...config.tabs,
-                        work_orders: e.target.checked ? true : false,
-                      },
-                    })
-                  }
-                />
-                <span>
-                  Show <strong>Work Orders</strong> tab between Estimates and Scheduling
-                </span>
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
-                  marginBottom: 12,
-                  cursor: "pointer",
-                  color: theme.text,
-                  fontSize: 14,
-                  lineHeight: 1.45,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  style={{ marginTop: 3 }}
-                  checked={config.enable_purchase_orders_tab === true}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      enable_purchase_orders_tab: e.target.checked ? true : false,
-                      tabs: {
-                        ...config.tabs,
-                        purchase_orders: e.target.checked ? true : false,
-                      },
-                    })
-                  }
-                />
-                <span>
-                  Show <strong>Purchase Orders</strong> tab (optional — parts department)
-                </span>
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
-                  marginBottom: 12,
-                  cursor: "pointer",
-                  color: theme.text,
-                  fontSize: 14,
-                  lineHeight: 1.45,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  style={{ marginTop: 3 }}
-                  checked={config.enable_parts_inventory_tab === true}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      enable_parts_inventory_tab: e.target.checked ? true : false,
-                      tabs: {
-                        ...config.tabs,
-                        parts_inventory: e.target.checked ? true : false,
-                      },
-                    })
-                  }
-                />
-                <span>
-                  Show <strong>Parts &amp; Materials Inventory</strong> tab (optional)
-                </span>
-              </label>
+              {(
+                [
+                  {
+                    key: "master" as const,
+                    label: "Show Operations tab",
+                    checked: config.enable_operations_tab === true || config.enable_work_orders_tab === true || config.enable_purchase_orders_tab === true || config.enable_parts_inventory_tab === true,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        enable_operations_tab: on ? true : false,
+                        enable_work_orders_tab: on ? true : false,
+                        enable_purchase_orders_tab: on ? true : false,
+                        enable_parts_inventory_tab: on ? true : false,
+                        tabs: {
+                          ...config.tabs,
+                          operations: on ? true : false,
+                          work_orders: false,
+                          purchase_orders: false,
+                          parts_inventory: false,
+                        },
+                        operations_modules: {
+                          work_orders: true,
+                          purchase_orders: true,
+                          invoicing: true,
+                          inventory: true,
+                          ...(config.operations_modules ?? {}),
+                        },
+                      }),
+                  },
+                  {
+                    key: "work_orders" as const,
+                    label: "Work Orders",
+                    checked: config.operations_modules?.work_orders !== false,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        operations_modules: { ...(config.operations_modules ?? {}), work_orders: on },
+                      }),
+                  },
+                  {
+                    key: "purchase_orders" as const,
+                    label: "Purchase Orders",
+                    checked: config.operations_modules?.purchase_orders !== false,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        operations_modules: { ...(config.operations_modules ?? {}), purchase_orders: on },
+                      }),
+                  },
+                  {
+                    key: "invoicing" as const,
+                    label: "Invoicing",
+                    checked: config.operations_modules?.invoicing !== false,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        operations_modules: { ...(config.operations_modules ?? {}), invoicing: on },
+                      }),
+                  },
+                  {
+                    key: "inventory" as const,
+                    label: "Inventory",
+                    checked: config.operations_modules?.inventory !== false,
+                    onChange: (on: boolean) =>
+                      setConfig({
+                        ...config,
+                        operations_modules: { ...(config.operations_modules ?? {}), inventory: on },
+                      }),
+                  },
+                ] as const
+              ).map((row) => (
+                <label
+                  key={row.key}
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "flex-start",
+                    marginBottom: 12,
+                    marginLeft: row.key === "master" ? 0 : 18,
+                    cursor: "pointer",
+                    color: theme.text,
+                    fontSize: 14,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    style={{ marginTop: 3 }}
+                    checked={row.checked}
+                    disabled={row.key !== "master" && !(config.enable_operations_tab === true || config.enable_work_orders_tab === true)}
+                    onChange={(e) => row.onChange(e.target.checked)}
+                  />
+                  <span>{row.label}</span>
+                </label>
+              ))}
               <label style={{ display: "grid", gap: 6, maxWidth: 420, color: theme.text, fontSize: 14 }}>
                 Estimates tab display name (optional)
                 <input

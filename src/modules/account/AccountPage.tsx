@@ -20,6 +20,7 @@ import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
+import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
@@ -261,6 +262,7 @@ export function AccountProfilePanel({
     mobile_app: false,
     business_hours: false,
     call_forwarding: false,
+    call_screening: false,
     voicemail_bundle: false,
     ai_automations: false,
   })
@@ -1096,6 +1098,18 @@ export function AccountProfilePanel({
                 )}
               </div>
             </div>
+            </AccountFold>
+            </Fragment>
+              )
+              if (sectionId === "call_screening") return (
+            <Fragment key={sectionId}>
+            <AccountFold
+              title={t("account.fold.callScreeningTitle")}
+              subtitle={t("account.fold.callScreeningSub")}
+              open={foldOpen.call_screening}
+              onToggle={toggleFold("call_screening")}
+            >
+              <CallScreeningSettingsPanel profileUserId={profileUserId} />
             </AccountFold>
             </Fragment>
               )

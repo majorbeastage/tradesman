@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useIsMobile } from "../../hooks/useIsMobile"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import {
@@ -41,6 +42,7 @@ const APPROVAL_OPTIONS: WorkflowEdgeApproval[] = ["approved", "needs_approval", 
 export default function BusinessWorkflowPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
+  const isMobile = useIsMobile()
   const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createExampleBusinessWorkflow())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -324,7 +326,57 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         </div>
       ) : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 280px", gap: 16, alignItems: "start" }}>
+      {(selectedId || selectedEdgeId) && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: 12,
+            borderRadius: 10,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          {selectedId && nodeById.has(selectedId) ? (
+            <NodeColorEditor
+              node={nodeById.get(selectedId)!}
+              onChange={(boxColor) => patchNode(selectedId, { boxColor })}
+            />
+          ) : null}
+
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Arrows</h2>
+          {selectedEdgeId && doc.edges.some((e) => e.id === selectedEdgeId) ? (
+            <EdgeEditor
+              edge={doc.edges.find((e) => e.id === selectedEdgeId)!}
+              nodeById={nodeById}
+              onPatch={(patch) => patchEdge(selectedEdgeId, patch)}
+              onRemove={() => removeEdge(selectedEdgeId)}
+            />
+          ) : selectedId && selectedNodeEdges.length > 0 ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {selectedNodeEdges.map((edge) => (
+                <EdgeEditor
+                  key={edge.id}
+                  edge={edge}
+                  nodeById={nodeById}
+                  compact
+                  onPatch={(patch) => patchEdge(edge.id, patch)}
+                  onRemove={() => removeEdge(edge.id)}
+                  onFocus={() => setSelectedEdgeId(edge.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+              Select a step to change its box color. Use <strong>+ Add arrow</strong> and set a requirement label (e.g.
+              estimate approval). Click an arrow to edit.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
         {loading ? (
           <p style={{ color: "#64748b" }}>Loading workflow…</p>
         ) : (
@@ -444,45 +496,13 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
             ))}
           </div>
         )}
-
-        <aside style={sidePanel}>
-          {selectedId && nodeById.has(selectedId) ? (
-            <NodeColorEditor
-              node={nodeById.get(selectedId)!}
-              onChange={(boxColor) => patchNode(selectedId, { boxColor })}
-            />
-          ) : null}
-
-          <h2 style={{ margin: selectedId ? "16px 0 10px" : "0 0 10px", fontSize: 15, fontWeight: 800 }}>Arrows</h2>
-          {selectedEdgeId && doc.edges.some((e) => e.id === selectedEdgeId) ? (
-            <EdgeEditor
-              edge={doc.edges.find((e) => e.id === selectedEdgeId)!}
-              nodeById={nodeById}
-              onPatch={(patch) => patchEdge(selectedEdgeId, patch)}
-              onRemove={() => removeEdge(selectedEdgeId)}
-            />
-          ) : selectedId && selectedNodeEdges.length > 0 ? (
-            <div style={{ display: "grid", gap: 10 }}>
-              {selectedNodeEdges.map((edge) => (
-                <EdgeEditor
-                  key={edge.id}
-                  edge={edge}
-                  nodeById={nodeById}
-                  compact
-                  onPatch={(patch) => patchEdge(edge.id, patch)}
-                  onRemove={() => removeEdge(edge.id)}
-                  onFocus={() => setSelectedEdgeId(edge.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-              Select a step to change its box color. Use <strong>+ Add arrow</strong> and set a requirement label (e.g.
-              estimate approval). Click an arrow to edit.
-            </p>
-          )}
-        </aside>
       </div>
+
+      {!selectedId && !selectedEdgeId && !isMobile ? (
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+          Select a workflow step or arrow to edit colors and approval requirements above the canvas.
+        </p>
+      ) : null}
 
       <details style={{ marginTop: 16 }}>
         <summary style={{ cursor: "pointer", fontWeight: 700, color: "#475569" }}>Preview export</summary>
@@ -681,13 +701,6 @@ function WorkflowNodeCard({
       </div>
     </div>
   )
-}
-
-const sidePanel: CSSProperties = {
-  borderRadius: 12,
-  border: `1px solid ${theme.border}`,
-  background: "#fff",
-  padding: "14px 14px",
 }
 
 const linkBanner: CSSProperties = {

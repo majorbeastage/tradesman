@@ -6,9 +6,9 @@ import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { loadPartsInventoryFromProfile, upsertPartsInventoryItem, type PartsInventoryItem } from "../../lib/partsInventory"
 
-type Props = { setPage: (page: string) => void }
+type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
-export default function PartsInventoryPage({ setPage }: Props) {
+export default function PartsInventoryPage({ setPage, embedded }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [items, setItems] = useState<PartsInventoryItem[]>([])
@@ -63,12 +63,14 @@ export default function PartsInventoryPage({ setPage }: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "16px 20px 40px" }}>
-      <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Parts &amp; Materials Inventory</h1>
-      <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
-        Track parts and materials for your shop. Optional module — enable during onboarding when a parts department will
-        use Tradesman.
-      </p>
+    <div style={{ maxWidth: 960, margin: embedded ? 0 : "0 auto", padding: embedded ? 0 : "16px 20px 40px" }}>
+      {!embedded ? <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Inventory</h1> : null}
+      {!embedded ? (
+        <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
+          Track parts and materials for your shop. Optional module — enable during onboarding when a parts department will
+          use Tradesman.
+        </p>
+      ) : null}
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
 
       <section style={card}>
@@ -126,7 +128,7 @@ export default function PartsInventoryPage({ setPage }: Props) {
         )}
       </section>
 
-      <button type="button" onClick={() => setPage("dashboard")} style={{ ...secondaryBtn, marginTop: 16 }}>
+      <button type="button" onClick={() => setPage?.("dashboard")} style={{ ...secondaryBtn, marginTop: 16 }}>
         ← Dashboard
       </button>
     </div>

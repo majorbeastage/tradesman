@@ -13,6 +13,11 @@ export type DashboardOptionalQuickLinkId =
   | "custom_receipt"
   | "business_workflow"
   | "organization_chart"
+  | "operations"
+  | "operations_work_orders"
+  | "operations_purchase_orders"
+  | "operations_invoicing"
+  | "operations_inventory"
 
 export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>([
   "setup_guide",
@@ -27,10 +32,17 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
   "custom_receipt",
   "business_workflow",
   "organization_chart",
+  "operations",
+  "operations_work_orders",
+  "operations_purchase_orders",
+  "operations_invoicing",
+  "operations_inventory",
 ])
 
 /** Shortcuts users can add from customize mode when not already on the bar. */
 export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
+  "setup_guide",
+  "settings",
   "customer_payments_soon",
   "payments",
   "insurance",
@@ -40,6 +52,11 @@ export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
   "custom_receipt",
   "business_workflow",
   "organization_chart",
+  "operations",
+  "operations_work_orders",
+  "operations_purchase_orders",
+  "operations_invoicing",
+  "operations_inventory",
 ]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [
@@ -81,7 +98,8 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
 }
 
 export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLinkId[] | undefined): DashboardOptionalQuickLinkId[] {
-  const base = saved?.length ? [...saved] : [...DEFAULT_DASHBOARD_OPTIONAL_ORDER]
+  const hasSaved = Boolean(saved?.length)
+  const base = hasSaved ? [...saved!] : [...DEFAULT_DASHBOARD_OPTIONAL_ORDER]
   const seen = new Set<DashboardOptionalQuickLinkId>()
   const out: DashboardOptionalQuickLinkId[] = []
   for (const id of base) {
@@ -90,8 +108,10 @@ export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLin
     seen.add(id)
     out.push(id)
   }
-  for (const id of DEFAULT_DASHBOARD_OPTIONAL_ORDER) {
-    if (!seen.has(id)) out.push(id)
+  if (!hasSaved) {
+    for (const id of DEFAULT_DASHBOARD_OPTIONAL_ORDER) {
+      if (!seen.has(id)) out.push(id)
+    }
   }
   return out
 }
@@ -110,4 +130,21 @@ export function mergeDashboardQuickLinksMetadata(
     tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
   }
   return { ...prevMeta, dashboard_quick_links: next }
+}
+
+export function operationsQuickLinkPage(id: DashboardOptionalQuickLinkId): string {
+  switch (id) {
+    case "operations":
+      return "operations"
+    case "operations_work_orders":
+      return "operations-work_orders"
+    case "operations_purchase_orders":
+      return "operations-purchase_orders"
+    case "operations_invoicing":
+      return "operations-invoicing"
+    case "operations_inventory":
+      return "operations-inventory"
+    default:
+      return "operations"
+  }
 }
