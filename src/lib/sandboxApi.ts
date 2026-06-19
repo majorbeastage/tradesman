@@ -73,7 +73,13 @@ export async function provisionSandboxAccount(params: {
   email: string
   name: string
   businessName?: string
-}): Promise<{ ok: boolean; error?: string; password?: string; emailed?: boolean }> {
+}): Promise<{
+  ok: boolean
+  error?: string
+  password?: string
+  embedSlug?: string
+  emailed?: boolean
+}> {
   const base = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, "")
   const anon = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
   if (!base || !anon) return { ok: false, error: "Sandbox service is not configured." }
@@ -109,7 +115,7 @@ export async function provisionSandboxAccount(params: {
     }
   }
   window.clearTimeout(timer)
-  let json: { error?: string; password?: string; emailed?: boolean } = {}
+  let json: { error?: string; password?: string; embedSlug?: string; emailed?: boolean } = {}
   try {
     json = (await res.json()) as typeof json
   } catch {
@@ -122,7 +128,7 @@ export async function provisionSandboxAccount(params: {
         : ""
     return { ok: false, error: (json.error ?? `Sandbox service error (${res.status})`) + statusHint }
   }
-  return { ok: true, password: json.password, emailed: json.emailed }
+  return { ok: true, password: json.password, embedSlug: json.embedSlug, emailed: json.emailed }
 }
 
 function parseApiError(raw: string, status: number): string {

@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
     id: uid,
     email,
     display_name: displayName,
-    role: "sandbox_user",
+    role: "office_manager",
     portal_config,
     metadata: profileMeta,
     embed_lead_enabled: true,

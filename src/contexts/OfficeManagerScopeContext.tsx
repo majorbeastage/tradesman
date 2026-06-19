@@ -1,4 +1,4 @@
-import { type ReactNode } from "react"
+import { type ReactNode, useMemo } from "react"
 import {
   usePortalViewOptional,
   useEffectiveUserId,
@@ -34,13 +34,17 @@ export function OfficeManagerScopeProvider({ children }: { children: ReactNode }
 export function useOfficeManagerScopeOptional(): OfficeScopeValue | null {
   const pv = usePortalViewOptional()
   if (!pv) return null
-  const clients: ManagedClientRow[] = pv.manageableUsers.map((u) => ({
-    userId: u.userId,
-    label: u.label,
-    email: u.email,
-    clientId: u.clientId,
-    isSelf: u.isSelf,
-  }))
+  const clients = useMemo(
+    () =>
+      pv.manageableUsers.map((u) => ({
+        userId: u.userId,
+        label: u.label,
+        email: u.email,
+        clientId: u.clientId,
+        isSelf: u.isSelf,
+      })),
+    [pv.manageableUsers],
+  )
   return {
     clients,
     selectedUserId: pv.targetUserId,

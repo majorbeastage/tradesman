@@ -370,6 +370,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return userId ? [userId] : []
   }, [scopeCtx?.clients, userId])
 
+  const orgClientIdsKey = useMemo(
+    () => (scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean).sort().join(","),
+    [scopeCtx?.clients],
+  )
+
   // Add item form
   const [addTitle, setAddTitle] = useState("")
   const [addStartDate, setAddStartDate] = useState("")
@@ -2169,7 +2174,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!userId) return
     setLoading(true)
     void loadEvents().then(() => setLoading(false))
-  }, [userId, currentDate, view, jobTypes.length, showAllOrgEvents, scopeCtx?.clients])
+  }, [userId, currentDate, view, jobTypes.length, showAllOrgEvents, orgClientIdsKey])
 
   useEffect(() => {
     if (!userId) return
@@ -2219,7 +2224,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         for (const row of data as UserCalendarPreference[]) next[row.owner_user_id] = row
         setPrefByUserId(next)
       })
-  }, [scopeCtx?.clients])
+  }, [orgClientIdsKey, supabase])
 
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return

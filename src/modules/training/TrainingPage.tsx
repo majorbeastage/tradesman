@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
+import { supabase } from "../../lib/supabase"
 import { provisionSandboxAccount } from "../../lib/sandboxApi"
+import { queueSandboxLogin } from "../../lib/sandboxLogin"
 
 type TrainingPageProps = {
   onBack: () => void
@@ -16,6 +18,9 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [emailed, setEmailed] = useState(false)
+  const [sandboxPassword, setSandboxPassword] = useState("")
+  const [embedSlug, setEmbedSlug] = useState("")
+  const [loginBusy, setLoginBusy] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -40,8 +45,29 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
       return
     }
     setEmailed(result.emailed === true)
+    setSandboxPassword(result.password ?? "")
+    setEmbedSlug(result.embedSlug ?? "")
     setDone(true)
   }
+
+  async function goToSandboxLogin() {
+    setLoginBusy(true)
+    setError(null)
+    try {
+      if (supabase) await supabase.auth.signOut()
+      queueSandboxLogin(email.trim())
+      onLogin()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not sign out of your current session.")
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const ctaUrl =
+    typeof window !== "undefined" && embedSlug
+      ? `${window.location.origin}/cta/${encodeURIComponent(embedSlug)}`
+      : ""
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", color: theme.text }}>
@@ -72,9 +98,9 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
             lineHeight: 1.55,
           }}
         >
-          <strong>Not the 24-hour demo.</strong> The short demo blocks all communications. The training sandbox uses fake
-          phone numbers and emails only — nothing goes to real customers — but the CRM behaves like production, including
-          your public lead capture link.
+          <strong>Use a different email</strong> from your live Tradesman account if you have one. After creating the
+          sandbox, we sign you out of any current session so you can log in as the practice business — not your regular
+          account.
         </div>
 
         {done ? (
@@ -89,23 +115,47 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
             <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Sandbox ready</h2>
             <p style={{ margin: "0 0 12px", lineHeight: 1.6 }}>
               {emailed
-                ? "Check your email for login details and your lead capture link."
-                : "Your account was created. If email did not arrive, contact support or sign in if you already have the password."}
+                ? "We also emailed these details (check spam). Save the password below — you need it to sign in."
+                : "Save the login below. Email may not have sent; use these credentials on the next screen."}
             </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+              <label style={labelStyle}>
+                Sandbox email
+                <input readOnly value={email} onFocus={(e) => e.target.select()} style={inputStyle} />
+              </label>
+              {sandboxPassword ? (
+                <label style={labelStyle}>
+                  Temporary password
+                  <input readOnly value={sandboxPassword} onFocus={(e) => e.target.select()} style={inputStyle} />
+                </label>
+              ) : null}
+              {ctaUrl ? (
+                <label style={labelStyle}>
+                  Lead capture link (live during sandbox)
+                  <input readOnly value={ctaUrl} onFocus={(e) => e.target.select()} style={inputStyle} />
+                </label>
+              ) : null}
+            </div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#166534", lineHeight: 1.5 }}>
+              Click below to <strong>sign out of your regular account</strong> (if logged in) and open the login screen
+              with this email prefilled. Paste the temporary password and sign in.
+            </p>
+            {error ? <div style={{ color: "#b91c1c", fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
             <button
               type="button"
-              onClick={onLogin}
+              disabled={loginBusy}
+              onClick={() => void goToSandboxLogin()}
               style={{
                 padding: "10px 18px",
                 borderRadius: 8,
                 border: "none",
-                background: theme.primary,
+                background: loginBusy ? "#94a3b8" : theme.primary,
                 color: "#fff",
                 fontWeight: 700,
-                cursor: "pointer",
+                cursor: loginBusy ? "wait" : "pointer",
               }}
             >
-              Go to sign in
+              {loginBusy ? "Signing out…" : "Sign out & open sandbox login"}
             </button>
           </div>
         ) : (
@@ -119,7 +169,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} style={inputStyle} />
             </label>
             <label style={labelStyle}>
-              Work email
+              Email for this sandbox (not your live account email)
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
             </label>
             {error ? <div style={{ color: "#b91c1c", fontSize: 13 }}>{error}</div> : null}

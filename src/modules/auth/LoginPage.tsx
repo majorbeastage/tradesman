@@ -7,6 +7,7 @@ import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/h
 import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } from "../../constants/supportLinks"
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
+import { readSandboxLoginEmail, clearSandboxLoginEmail } from "../../lib/sandboxLogin"
 import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
@@ -28,13 +29,22 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [sandboxLoginHint, setSandboxLoginHint] = useState(false)
+
+  useEffect(() => {
+    const pref = readSandboxLoginEmail()
+    if (pref) {
+      setEmail(pref)
+      setSandboxLoginHint(true)
+    }
+  }, [])
 
   const didRedirect = useRef(false)
   useEffect(() => {
-    if (!user || !role || didRedirect.current) return
+    if (sandboxLoginHint || !user || !role || didRedirect.current) return
     didRedirect.current = true
     onSuccess(role)
-  }, [user, role, onSuccess])
+  }, [user, role, onSuccess, sandboxLoginHint])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -68,7 +78,11 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
     try {
       const { error: err } = await signIn(email.trim(), password)
       if (err) setError(err.message)
-      else setMessage(t("login.msg.signingIn"))
+      else {
+        clearSandboxLoginEmail()
+        setSandboxLoginHint(false)
+        setMessage(t("login.msg.signingIn"))
+      }
     } finally {
       setSubmitting(false)
     }
@@ -171,6 +185,24 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
             )}
           </div>
         )}
+
+        {sandboxLoginHint && mode === "signin" ? (
+          <div
+            style={{
+              margin: "0 0 16px",
+              padding: "12px 14px",
+              borderRadius: 8,
+              background: "#e0f2fe",
+              border: "1px solid #7dd3fc",
+              color: "#0c4a6e",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Training sandbox login.</strong> Enter the temporary password from the sandbox screen (or your email).
+            This is a separate practice account — not your regular Tradesman login.
+          </div>
+        ) : null}
 
         <label style={labelStyle}>
           {t("login.email")}
