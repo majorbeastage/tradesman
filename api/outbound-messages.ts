@@ -284,6 +284,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   const customerId = typeof payload.customerId === "string" ? payload.customerId.trim() : ""
   const attachUrls = coercePublicUrlList(payload.attachmentPublicUrls).slice(0, 15)
   const inlineAttachments = coerceInlineAttachments(payload.attachments)
+  const requireAttachments = payload.requireAttachments === true
 
   if (toList.length === 0 || !subject || (!body && !bodyHtml) || !userId) {
     return res.status(400).json({
@@ -307,6 +308,9 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
   }
   if (await isSandboxUser(supabase, userId)) {
+    const attachmentCount =
+      (Array.isArray(inlineAttachments) ? inlineAttachments.length : 0) +
+      (Array.isArray(attachUrls) ? attachUrls.length : 0)
     const sim = await simulateSandboxOutboundEmail(supabase, {
       userId,
       customerId: customerId || null,
@@ -316,12 +320,17 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
       subject,
       body: body || (bodyHtml ? bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : ""),
       bodyHtml: bodyHtml || undefined,
+      attachmentCount: attachmentCount > 0 ? attachmentCount : requireAttachments ? 1 : 0,
+      attachmentNames: Array.isArray(inlineAttachments)
+        ? inlineAttachments.map((a) => a.filename).filter(Boolean)
+        : [],
     })
     return res.status(200).json({
       ok: true,
       provider: "sandbox",
       simulated: true,
       to: toList,
+      attachmentCount: attachmentCount > 0 ? attachmentCount : requireAttachments ? 1 : 0,
       ...sim,
     })
   }
@@ -407,7 +416,6 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
     }
   }
   if (resendAttachments.length > 15) resendAttachments.splice(15)
-  const requireAttachments = payload.requireAttachments === true
   if (requireAttachments && resendAttachments.length === 0) {
     return res.status(502).json({
       error: "Email attachments could not be prepared.",

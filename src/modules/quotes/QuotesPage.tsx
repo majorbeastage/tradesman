@@ -6,6 +6,7 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { filterRealUserIds, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional, type OpenJobTypesModalOptions } from "../../contexts/JobTypesModalContext"
@@ -630,7 +631,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
         setVarianceAssigneeOptions([{ userId, label: "Me (this account)" }])
         return
       }
-      const ids = clients.map((c) => c.userId).filter(Boolean)
+      const ids = filterRealUserIds(clients.map((c) => c.userId).filter(Boolean))
+      if (ids.length === 0) {
+        setVarianceAssigneeOptions([{ userId, label: "Me (this account)" }])
+        return
+      }
       const { data, error } = await supabase.from("profiles").select("id, display_name, metadata").in("id", ids)
       if (cancelled) return
       if (error || !data) {
@@ -1631,26 +1636,28 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     if (!calendarTargetUserId || !supabase) return
+    const dataUserId = resolveSandboxDataUserId(calendarTargetUserId, authUserId || userId)
     void supabase
       .from("user_calendar_preferences")
       .select("auto_assign_enabled")
-      .eq("owner_user_id", calendarTargetUserId)
+      .eq("owner_user_id", dataUserId)
       .maybeSingle()
       .then(({ data }) => {
         const enabled = ((data as { auto_assign_enabled?: boolean | null } | null)?.auto_assign_enabled) !== false
         setAutoAssignEnabled(enabled)
         setAssignToScopedUser(enabled)
       })
-  }, [calendarTargetUserId])
+  }, [calendarTargetUserId, authUserId, userId])
 
   useEffect(() => {
     if (!showAddToCalendar || !supabase || !calendarTargetUserId) return
+    const dataUserId = resolveSandboxDataUserId(calendarTargetUserId, authUserId || userId)
     void (async () => {
       let rows: CalendarPickerJobType[] = []
       let q = await supabase
         .from("job_types")
         .select("id, name, duration_minutes, materials_list, track_mileage")
-        .eq("user_id", calendarTargetUserId)
+        .eq("user_id", dataUserId)
         .order("name")
       rows = (q.data ?? []) as CalendarPickerJobType[]
       let err = q.error
@@ -1659,7 +1666,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const q2 = await supabase
           .from("job_types")
           .select("id, name, duration_minutes, materials_list")
-          .eq("user_id", calendarTargetUserId)
+          .eq("user_id", dataUserId)
           .order("name")
         rows = (q2.data ?? []) as CalendarPickerJobType[]
         err = q2.error
@@ -1668,13 +1675,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const q3 = await supabase
           .from("job_types")
           .select("id, name, duration_minutes")
-          .eq("user_id", calendarTargetUserId)
+          .eq("user_id", dataUserId)
           .order("name")
         rows = (q3.data ?? []) as CalendarPickerJobType[]
       }
       setJobTypes(rows)
     })()
-  }, [showAddToCalendar, calendarTargetUserId, supabase])
+  }, [showAddToCalendar, calendarTargetUserId, supabase, authUserId, userId])
 
   useEffect(() => {
     if (!showAddToCalendar) return
@@ -3800,12 +3807,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const raw = await res.text()
       if (!res.ok) throw new Error(raw.slice(0, 400))
       let attachmentCount = 0
+      let simulated = false
       try {
-        const parsed = JSON.parse(raw) as { attachmentCount?: number; logWarning?: string }
+        const parsed = JSON.parse(raw) as { attachmentCount?: number; logWarning?: string; simulated?: boolean }
         if (typeof parsed.attachmentCount === "number") attachmentCount = parsed.attachmentCount
+        if (parsed.simulated === true) simulated = true
         if (parsed.logWarning) console.warn("[quote-email]", parsed.logWarning)
       } catch {
         /* ignore */
+      }
+      if (simulated) {
+        alert(
+          "Training sandbox: email was simulated (nothing was sent). In your live account, the estimate PDF is attached automatically.",
+        )
+        setBottomActionEmailOpen(false)
+        return
       }
       if (attachmentCount < 1) {
         throw new Error("Email was sent but the estimate PDF could not be attached. Try again or use Download.")

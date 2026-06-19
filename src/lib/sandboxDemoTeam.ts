@@ -46,6 +46,17 @@ export function isSandboxDemoUserId(id: string | null | undefined): boolean {
   return Boolean(id && id.startsWith(SANDBOX_DEMO_USER_ID_PREFIX))
 }
 
+/** Real Supabase auth user IDs only — excludes sandbox demo persona IDs. */
+export function filterRealUserIds(ids: string[]): string[] {
+  return ids.filter((id) => id && !isSandboxDemoUserId(id))
+}
+
+/** Map sandbox demo preview IDs to the signed-in user for DB reads/writes. */
+export function resolveSandboxDataUserId(scopedId: string | null | undefined, authUserId: string): string {
+  if (!scopedId || isSandboxDemoUserId(scopedId)) return authUserId
+  return scopedId
+}
+
 export function parseSandboxDemoTeam(raw: unknown): SandboxDemoTeamMember[] {
   if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_SANDBOX_DEMO_TEAM
   const out: SandboxDemoTeamMember[] = []

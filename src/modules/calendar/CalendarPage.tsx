@@ -8,6 +8,7 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { filterRealUserIds, isSandboxDemoUserId, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
@@ -365,13 +366,19 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   const teamMapUserIds = useMemo(() => {
     if (scopeCtx?.clients?.length) {
-      return Array.from(new Set(scopeCtx.clients.map((c) => c.userId).filter(Boolean)))
+      const ids = filterRealUserIds(
+        Array.from(new Set(scopeCtx.clients.map((c) => c.userId).filter(Boolean))),
+      )
+      if (ids.length > 0) return ids
     }
     return userId ? [userId] : []
   }, [scopeCtx?.clients, userId])
 
   const orgClientIdsKey = useMemo(
-    () => (scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean).sort().join(","),
+    () =>
+      filterRealUserIds((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean))
+        .sort()
+        .join(","),
     [scopeCtx?.clients],
   )
 
@@ -973,7 +980,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   async function loadEvents() {
     if (!userId || !supabase) return
     const client = supabase
-    const orgUserIds = Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean)))
+    const orgUserIds = filterRealUserIds(
+      Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean))),
+    )
     const canViewOrgEvents = showAllOrgEvents && orgUserIds.length > 0
     setLoadError("")
     const start = new Date(currentDate)
@@ -1632,7 +1641,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       workingEnd: working.enabled ? working.end : undefined,
     })
     const end = new Date(start.getTime() + addMin * 60 * 1000)
-    const eventOwnerUserId = selectedEvent.user_id ?? userId
+    const eventOwnerUserId = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
     if (!eventOwnerUserId) return
 
     if (readCalendarNoDuplicateTimesSetting()) {
@@ -1686,7 +1695,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       workingEnd: working.enabled ? working.end : undefined,
     })
     const end = new Date(newStart.getTime() + addMin * 60 * 1000)
-    const eventOwnerUserId = ev.user_id ?? userId
+    const eventOwnerUserId = resolveSandboxDataUserId(ev.user_id ?? userId, authUserId || userId)
     if (!eventOwnerUserId) return false
 
     if (readCalendarNoDuplicateTimesSetting()) {
@@ -1752,7 +1761,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const durationMs = addMin * 60 * 1000
     const starts = computeOccurrenceStarts(start, series)
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
-    const owner = selectedEvent.user_id ?? userId
+    const owner = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
     const scopeId = selectedEvent.recurrence_series_id
     const legacyIds = selectedLegacyRecurringIds
     const replaceIds = scopeId
@@ -1901,7 +1910,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function handleCalendarEntityFileChange(files: FileList | null) {
     if (!files?.length || !supabase || !selectedEvent?.id) return
-    const owner = selectedEvent.user_id ?? userId
+    const owner = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
     if (!owner) return
     const file = files[0]
     setCalendarEventEntityUploadBusy(true)
@@ -1952,10 +1961,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function loadUserPreference(ownerUserId: string): Promise<UserCalendarPreference | null> {
     if (!ownerUserId || !supabase) return null
+    if (isSandboxDemoUserId(ownerUserId)) return null
+    const resolved = resolveSandboxDataUserId(ownerUserId, authUserId || userId)
     const { data, error } = await supabase
       .from("user_calendar_preferences")
       .select("owner_user_id, ribbon_color, auto_assign_enabled")
-      .eq("owner_user_id", ownerUserId)
+      .eq("owner_user_id", resolved)
       .maybeSingle()
     if (error) {
       return null
@@ -2209,7 +2220,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [showAddItem, addTargetUserId, authUserId])
 
   useEffect(() => {
-    const ids = Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean)))
+    const ids = filterRealUserIds(
+      Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean))),
+    )
     if (!supabase || ids.length === 0) {
       setPrefByUserId({})
       return
@@ -2228,7 +2241,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
-    const selectedTarget = addTargetUserId || userId
+    const selectedTarget = resolveSandboxDataUserId(addTargetUserId || userId, authUserId || userId)
     setAddError("")
     const start = parseLocalDateTime(addStartDate, addStartTime)
     if (Number.isNaN(start.getTime())) {
@@ -2265,7 +2278,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
-    const eventOwnerUserId = addAssignToSelectedUser ? selectedTarget : (authUserId || selectedTarget)
+    const eventOwnerUserId = addAssignToSelectedUser
+      ? selectedTarget
+      : resolveSandboxDataUserId(authUserId || selectedTarget, authUserId || userId)
 
     if (readCalendarNoDuplicateTimesSetting() && newRanges.length > 0) {
       try {
@@ -5069,7 +5084,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       disabled={calendarEventActionBusy}
                       onClick={async () => {
                         if (!supabase || !selectedEvent.id) return
-                        const owner = selectedEvent.user_id ?? userId
+                        const owner = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
                         const scopeId = selectedEvent.recurrence_series_id
                         const legacyIds = selectedLegacyRecurringIds
                         if (!scopeId && (!legacyIds || legacyIds.length < 2)) return

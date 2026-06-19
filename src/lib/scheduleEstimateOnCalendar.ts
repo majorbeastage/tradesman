@@ -11,7 +11,13 @@ import { parseLocalDateTime } from "./parseLocalDateTime"
 import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
 import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
+import { isSandboxDemoUserId } from "./sandboxDemoTeam"
 import type { PortalSettingItem } from "../types/portal-builder"
+
+function resolveCalendarOwnerUserId(candidate: string, authUserId: string): string {
+  if (isSandboxDemoUserId(candidate)) return authUserId
+  return candidate.trim() || authUserId
+}
 
 export type ScheduleEstimateOnCalendarInput = {
   supabase: SupabaseClient
@@ -97,8 +103,10 @@ export async function scheduleEstimateOnCalendar(
   const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
   const noDup = readCalendarNoDuplicateTimesSetting()
-  const selectedTarget = input.targetUserId || input.userId
-  const eventOwnerUserId = input.assignToScopedUser ? selectedTarget : input.authUserId || selectedTarget
+  const selectedTarget = resolveCalendarOwnerUserId(input.targetUserId || input.userId, input.authUserId)
+  const eventOwnerUserId = input.assignToScopedUser
+    ? selectedTarget
+    : resolveCalendarOwnerUserId(input.authUserId, input.authUserId) || selectedTarget
   if (noDup && newRanges.length > 0) {
     try {
       const conflicts = await findCalendarScheduleConflicts(input.supabase, {
@@ -120,7 +128,7 @@ export async function scheduleEstimateOnCalendar(
     }
   }
 
-  const targetUserId = input.assignToScopedUser ? selectedTarget : input.authUserId || selectedTarget
+  const targetUserId = input.assignToScopedUser ? selectedTarget : resolveCalendarOwnerUserId(input.authUserId, input.authUserId) || selectedTarget
   const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
   const jtRow = input.jobTypeId ? input.jobTypes.find((j) => j.id === input.jobTypeId) : null
   const materialsFromJobType =

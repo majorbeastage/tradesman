@@ -500,6 +500,8 @@ export async function simulateSandboxOutboundEmail(
     subject: string
     body: string
     bodyHtml?: string
+    attachmentCount?: number
+    attachmentNames?: string[]
   },
 ): Promise<{ ok: true; simulated: true; eventId: string | null; inboundReplyAt?: string }> {
   const eventId = await insertCommunicationEventReturningId(supabase, {
@@ -517,6 +519,8 @@ export async function simulateSandboxOutboundEmail(
       to: params.to,
       body_html: params.bodyHtml ?? undefined,
       provider: "sandbox",
+      attachment_count: params.attachmentCount ?? 0,
+      attachment_names: params.attachmentNames ?? [],
     },
   })
 
