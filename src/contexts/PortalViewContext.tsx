@@ -23,6 +23,12 @@ import {
   type ManageableUserRow,
   type PortalShell,
 } from "../lib/portalViewRules"
+import {
+  isSandboxDemoUserId,
+  parseSandboxDemoTeam,
+  sandboxDemoMemberById,
+  sandboxDemoTeamToManageableRows,
+} from "../lib/sandboxDemoTeam"
 
 const STORAGE_VIEW_ROLE = "tradesman_portal_view_role"
 const STORAGE_TARGET_USER = "tradesman_portal_target_user"
@@ -175,6 +181,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     readStoredTargetUser(authUserId),
   )
   const [manageableUsers, setManageableUsers] = useState<ManageableUserRow[]>([])
+  const [sandboxDemoTeam, setSandboxDemoTeam] = useState(() => parseSandboxDemoTeam(null))
   const [scopedPortalConfig, setScopedPortalConfig] = useState<PortalConfig | null>(null)
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [loadingPortalConfig, setLoadingPortalConfig] = useState(false)
@@ -216,6 +223,22 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
             },
           ]
         }
+        if (authPortalConfig?.sandbox_account === true && supabase) {
+          const { data: metaRow } = await supabase
+            .from("profiles")
+            .select("metadata")
+            .eq("id", authUserId)
+            .maybeSingle()
+          const meta =
+            metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+              ? (metaRow.metadata as Record<string, unknown>)
+              : {}
+          const team = parseSandboxDemoTeam(meta.sandbox_demo_team)
+          setSandboxDemoTeam(team)
+          rows = [...rows, ...sandboxDemoTeamToManageableRows(team)]
+        } else {
+          setSandboxDemoTeam(parseSandboxDemoTeam(null))
+        }
         if (cancelled) return
         setManageableUsers(rows)
         setTargetUserIdState((prev) => {
@@ -235,7 +258,20 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [authUserId, authRole, session?.access_token, user?.email])
+  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account])
+
+  useEffect(() => {
+    if (!isSandboxDemoUserId(targetUserId)) return
+    const member = sandboxDemoMemberById(sandboxDemoTeam, targetUserId)
+    if (!member || !viewRoleOptions.includes(member.role)) return
+    if (viewRole === member.role) return
+    setViewRoleState(member.role)
+    try {
+      sessionStorage.setItem(STORAGE_VIEW_ROLE, member.role)
+    } catch {
+      /* ignore */
+    }
+  }, [targetUserId, sandboxDemoTeam, viewRole, viewRoleOptions])
 
   const usersForCurrentViewRole = useMemo(
     () => filterUsersForViewRole(manageableUsers, viewRole),
@@ -291,6 +327,11 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       setScopedPortalConfig(null)
       return
     }
+    if (isSandboxDemoUserId(uid)) {
+      const member = sandboxDemoMemberById(sandboxDemoTeam, uid)
+      setScopedPortalConfig(defaultPortalConfigForViewRole(member?.role ?? "user"))
+      return
+    }
     if (uid === authUserId && !showViewBar) {
       setScopedPortalConfig(authPortalConfig)
       return
@@ -304,7 +345,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
     const raw = data.portal_config
     setScopedPortalConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
-  }, [targetUserId, authUserId, showViewBar, authPortalConfig])
+  }, [targetUserId, authUserId, showViewBar, authPortalConfig, sandboxDemoTeam])
 
   useEffect(() => {
     void refreshScopedPortalConfig()
@@ -374,6 +415,7 @@ export function useEffectiveUserId(): string {
   const { userId } = useAuth()
   const ctx = useContext(PortalViewContext)
   if (ctx?.showViewBar && ctx.targetUserId && !isPortalViewDefaultTarget(ctx.targetUserId)) {
+    if (isSandboxDemoUserId(ctx.targetUserId)) return userId
     return ctx.targetUserId
   }
   return userId

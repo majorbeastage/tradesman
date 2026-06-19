@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { createServiceSupabase, pickSupabaseAnonKeyForServer, pickSupabaseUrlForServer } from "./_communications.js"
 import { isSandboxUser } from "./_sandboxEnvironment.js"
 import {
+  ensureSandboxProfile,
   injectSandboxLead,
   sandboxTrafficTick,
   seedSandboxWorkspace,
@@ -70,6 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await assertSandbox(sb, userId)
 
     switch (action) {
+      case "repair_profile": {
+        const profileRepaired = await ensureSandboxProfile(sb, userId)
+        return res.status(200).json({ ok: true, profileRepaired })
+      }
       case "seed": {
         const force = body.force === true
         const companyName = typeof body.companyName === "string" ? body.companyName : undefined

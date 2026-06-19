@@ -1,6 +1,6 @@
 /**
- * Same automatic-replies UX as Conversations (profile metadata: conversationsAutomaticRepliesValues).
- * Used from Conversations-like hubs (e.g. Customers) without duplicating the entire page.
+ * Automatic replies — per intake channel (phone / text / email) with clear outbound response.
+ * Used from Customers and Conversations hubs.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../lib/supabase"
@@ -16,6 +16,20 @@ import { carryConversationAutoRepliesToQuoteValues } from "../lib/automaticRepli
 import { MessagingComplianceGuardrailsCard } from "./MessagingComplianceGuardrailsCard"
 import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
 import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
+import {
+  AUTO_REPLY_INTAKE_CHANNELS,
+  buildAutoReplySummary,
+  defaultFlowForIntake,
+  flattenPrimaryFlowForLegacy,
+  formatSummaryLabel,
+  hydrateFlowsFromLegacyFlat,
+  INTAKE_CHANNEL_DESCRIPTIONS,
+  outboundForFlow,
+  OUTBOUND_OPTIONS_FOR_INTAKE,
+  parseAutomaticRepliesSourceFlows,
+  type AutoReplyIntakeChannel,
+  type AutoReplyChannelFlow,
+} from "../lib/automaticRepliesChannels"
 
 const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
@@ -30,9 +44,31 @@ export type ConversationAutoRepliesModalProps = {
   userId: string | null
   portalConfig: PortalConfig | null
   aiAutomationsEnabled: boolean
-  /** Hide “Carry over these settings to Quotes tab” (Customers hub primary comms). */
   hideCarryOverToQuotes?: boolean
   guideWizardId?: SetupMiniWizardId
+}
+
+function flowItemsForChannel(
+  allItems: PortalSettingItem[],
+  intake: AutoReplyIntakeChannel,
+  flow: AutoReplyChannelFlow,
+): PortalSettingItem[] {
+  const outbound = outboundForFlow(intake, flow)
+  const skipIds = new Set(["conv_auto_reply_enabled", "conv_auto_reply_method"])
+  return allItems.filter((item) => !skipIds.has(item.id)).filter((item) => {
+    if (item.id.startsWith("conv_auto_phone_") && outbound !== "Phone call") return false
+    if (
+      (item.id === "conv_auto_reply_message" ||
+        item.id === "conv_auto_reply_ai" ||
+        item.id === "conv_auto_reply_ai_require_approval" ||
+        item.id === "conv_auto_reply_ai_brief") &&
+      outbound !== "Text message" &&
+      outbound !== "Email"
+    ) {
+      return false
+    }
+    return true
+  })
 }
 
 export default function ConversationAutoRepliesModal({
@@ -48,23 +84,20 @@ export default function ConversationAutoRepliesModal({
     () => getControlItemsForUser(portalConfig, "conversations", "automatic_replies", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
   )
-  const conversationSourceOptions = useMemo(() => {
-    const methodItem = automaticRepliesItems.find((i) => i.id === "conv_auto_reply_method")
-    return methodItem?.options?.length ? methodItem.options : ["Email", "Text message", "Phone call"]
-  }, [automaticRepliesItems])
 
-  const [autoRepliesFormValues, setAutoRepliesFormValues] = useState<Record<string, string>>({})
-  const [conversationsAutoRepliesProfile, setConversationsAutoRepliesProfile] = useState<Record<string, string>>({})
-  const [conversationSourceFlowConfigs, setConversationSourceFlowConfigs] = useState<Record<string, Record<string, string>>>(
-    {},
+  const [channelFlows, setChannelFlows] = useState<Record<AutoReplyIntakeChannel, AutoReplyChannelFlow>>(() =>
+    parseAutomaticRepliesSourceFlows(null),
   )
-  const [expandedConversationSourceKey, setExpandedConversationSourceKey] = useState<string | null>(null)
+  const [expandedChannel, setExpandedChannel] = useState<AutoReplyIntakeChannel | null>("Phone call")
+  const [legacyFlatLoaded, setLegacyFlatLoaded] = useState<Record<string, string>>({})
   const [autoRepliesRecordingBusy, setAutoRepliesRecordingBusy] = useState(false)
   const [autoRepliesUploading, setAutoRepliesUploading] = useState(false)
   const [autoRepliesRecordingSupported, setAutoRepliesRecordingSupported] = useState(false)
   const autoRepliesMediaRecorderRef = useRef<MediaRecorder | null>(null)
   const autoRepliesRecordedChunksRef = useRef<Blob[]>([])
   const autoRepliesMediaStreamRef = useRef<MediaStream | null>(null)
+
+  const summary = useMemo(() => buildAutoReplySummary(channelFlows), [channelFlows])
 
   useEffect(() => {
     setAutoRepliesRecordingSupported(
@@ -77,59 +110,45 @@ export default function ConversationAutoRepliesModal({
     let cancelled = false
     void (async () => {
       const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-      if (cancelled) return
-      if (error || !data) return
+      if (cancelled || error || !data) return
       const meta =
         data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
           ? (data.metadata as Record<string, unknown>)
           : {}
-      const raw = meta.conversationsAutomaticRepliesValues
-      const saved =
-        raw && typeof raw === "object" && !Array.isArray(raw)
-          ? Object.fromEntries(
-              Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
-            )
+      const rawLegacy = meta.conversationsAutomaticRepliesValues
+      const legacy =
+        rawLegacy && typeof rawLegacy === "object" && !Array.isArray(rawLegacy)
+          ? Object.fromEntries(Object.entries(rawLegacy as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")]))
           : {}
-      setConversationsAutoRepliesProfile(saved)
-      const sourceRaw = meta.conversationsAutomaticRepliesSourceFlows
-      const sourceSaved =
-        sourceRaw && typeof sourceRaw === "object" && !Array.isArray(sourceRaw)
-          ? Object.fromEntries(
-              Object.entries(sourceRaw as Record<string, unknown>).map(([k, v]) => [
-                k,
-                v && typeof v === "object" && !Array.isArray(v)
-                  ? Object.fromEntries(
-                      Object.entries(v as Record<string, unknown>).map(([ik, iv]) => [ik, typeof iv === "string" ? iv : String(iv ?? "")]),
-                    )
-                  : {},
-              ]),
-            )
-          : {}
-      setConversationSourceFlowConfigs(sourceSaved)
+      let flows = parseAutomaticRepliesSourceFlows(meta)
+      flows = hydrateFlowsFromLegacyFlat(flows, legacy)
+      setChannelFlows(flows)
+      setLegacyFlatLoaded(legacy)
     })()
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, open])
 
-  useEffect(() => {
-    if (!open || automaticRepliesItems.length === 0) return
-    const base: Record<string, string> = {}
-    for (const item of automaticRepliesItems) {
-      const saved = conversationsAutoRepliesProfile[item.id]
-      if (item.type === "checkbox") {
-        base[item.id] = saved === "checked" || saved === "unchecked" ? saved : item.defaultChecked ? "checked" : "unchecked"
-      } else if (item.type === "dropdown" && item.options?.length) {
-        base[item.id] = saved && item.options.includes(saved) ? saved : item.options[0]
-      } else {
-        base[item.id] = saved ?? ""
-      }
+  function patchChannel(intake: AutoReplyIntakeChannel, patch: Partial<AutoReplyChannelFlow>) {
+    setChannelFlows((prev) => ({
+      ...prev,
+      [intake]: { ...prev[intake], ...patch },
+    }))
+  }
+
+  function setChannelFormValue(intake: AutoReplyIntakeChannel, id: string, value: string) {
+    patchChannel(intake, { [id]: value })
+  }
+
+  function isChannelItemVisible(intake: AutoReplyIntakeChannel, item: PortalSettingItem): boolean {
+    const flow = channelFlows[intake]
+    const formValues = {
+      ...flow,
+      conv_auto_reply_method: intake,
+      conv_auto_reply_enabled: flow.conv_auto_reply_enabled ?? "unchecked",
     }
-    setAutoRepliesFormValues(base)
-  }, [open, automaticRepliesItems, conversationsAutoRepliesProfile])
-
-  function isAutomaticRepliesItemVisible(item: PortalSettingItem): boolean {
-    return isPortalSettingDependencyVisible(item, automaticRepliesItems, autoRepliesFormValues)
+    return isPortalSettingDependencyVisible(item, automaticRepliesItems, formValues)
   }
 
   async function closeAutomaticRepliesModal() {
@@ -146,27 +165,17 @@ export default function ConversationAutoRepliesModal({
       row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
-    prevMeta.conversationsAutomaticRepliesValues = { ...autoRepliesFormValues }
-    prevMeta.conversationsAutomaticRepliesSourceFlows = { ...conversationSourceFlowConfigs }
+    prevMeta.conversationsAutomaticRepliesSourceFlows = { ...channelFlows }
+    prevMeta.conversationsAutomaticRepliesValues = {
+      ...legacyFlatLoaded,
+      ...flattenPrimaryFlowForLegacy(channelFlows),
+    }
     const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
     if (error) {
       alert(error.message)
       return
     }
-    setConversationsAutoRepliesProfile({ ...autoRepliesFormValues })
     onClose()
-  }
-
-  function saveCurrentConversationSourceFlow() {
-    const source = (autoRepliesFormValues.conv_auto_reply_method || conversationSourceOptions[0] || "Email").trim()
-    if (!source) return
-    const next: Record<string, string> = {}
-    for (const item of automaticRepliesItems) {
-      next[item.id] = autoRepliesFormValues[item.id] ?? ""
-    }
-    next.conv_auto_reply_method = source
-    setConversationSourceFlowConfigs((prev) => ({ ...prev, [source]: next }))
-    setExpandedConversationSourceKey(source)
   }
 
   async function carryOverAutoRepliesToQuotesProfile() {
@@ -174,9 +183,10 @@ export default function ConversationAutoRepliesModal({
       alert("Sign in to save.")
       return
     }
+    const flat = flattenPrimaryFlowForLegacy(channelFlows)
     const quoteItems = getControlItemsForUser(portalConfig, "quotes", "auto_response_options", { aiAutomationsEnabled })
     const idSet = new Set(quoteItems.map((i) => i.id))
-    const merged = carryConversationAutoRepliesToQuoteValues(autoRepliesFormValues, idSet)
+    const merged = carryConversationAutoRepliesToQuoteValues(flat, idSet)
     const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
     if (loadErr) {
       alert(loadErr.message)
@@ -189,9 +199,7 @@ export default function ConversationAutoRepliesModal({
     const prevQ = prevMeta.quotesAutomaticRepliesValues
     const existing =
       prevQ && typeof prevQ === "object" && !Array.isArray(prevQ)
-        ? Object.fromEntries(
-            Object.entries(prevQ as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
-          )
+        ? Object.fromEntries(Object.entries(prevQ as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")]))
         : {}
     prevMeta.quotesAutomaticRepliesValues = { ...existing, ...merged }
     const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
@@ -199,7 +207,7 @@ export default function ConversationAutoRepliesModal({
       alert(error.message)
       return
     }
-    alert("Copied these settings to Quotes → Automatic replies. Open Quotes to review; custom text fields there stay empty until you fill them.")
+    alert("Copied these settings to Quotes → Automatic replies.")
   }
 
   async function uploadConversationsAutoVoiceBlob(blob: Blob, extension: string, contentType: string) {
@@ -210,8 +218,7 @@ export default function ConversationAutoRepliesModal({
       const { error: uploadError } = await supabase.storage.from(VOICEMAIL_GREETING_BUCKET).upload(filePath, blob, { upsert: true, contentType })
       if (uploadError) throw uploadError
       const { data } = supabase.storage.from(VOICEMAIL_GREETING_BUCKET).getPublicUrl(filePath)
-      const publicUrl = data.publicUrl
-      setAutoRepliesFormValues((prev) => ({ ...prev, conv_auto_phone_recording_url: publicUrl }))
+      patchChannel("Phone call", { conv_auto_phone_recording_url: data.publicUrl })
     } catch (err) {
       alert(formatAppError(err))
     } finally {
@@ -261,6 +268,13 @@ export default function ConversationAutoRepliesModal({
 
   if (!open) return null
 
+  const phoneFlow = channelFlows["Phone call"]
+  const showPhoneRecording =
+    phoneFlow.conv_auto_reply_enabled === "checked" &&
+    outboundForFlow("Phone call", phoneFlow) === "Phone call" &&
+    phoneFlow.conv_auto_phone_allow_automation === "checked" &&
+    phoneFlow.conv_auto_phone_delivery === "Record in app"
+
   return (
     <>
       <div
@@ -274,18 +288,18 @@ export default function ConversationAutoRepliesModal({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          width: "90%",
-          maxWidth: "520px",
-          maxHeight: "90vh",
+          width: "94%",
+          maxWidth: "680px",
+          maxHeight: "92vh",
           overflow: "auto",
           background: "white",
-          borderRadius: "8px",
+          borderRadius: "10px",
           padding: "24px",
           boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
           zIndex: 9999,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <h3 style={{ margin: 0, color: theme.text, fontSize: "18px" }}>
             {portalConfig?.controlLabels?.automatic_replies ?? "Automatic replies"}
           </h3>
@@ -300,162 +314,232 @@ export default function ConversationAutoRepliesModal({
             </button>
           </div>
         </div>
-        <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
-          Preferences are saved to your profile. Outbound automation (send, call, AI) runs on the server when those features are enabled for your account.
+
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6b7280", lineHeight: 1.55 }}>
+          Configure what happens <strong>when a customer contacts you</strong> (intake) and <strong>how Tradesman responds</strong> (outbound).
+          Each channel is independent — for example, missed calls can text back while emails stay manual.
         </p>
+
         <MessagingComplianceGuardrailsCard />
-        <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Core automatic reply settings</summary>
-          <div style={{ marginTop: 10 }}>
-            <PortalSettingItemsForm
-              items={automaticRepliesItems}
-              formValues={autoRepliesFormValues}
-              setFormValue={(id, value) => setAutoRepliesFormValues((prev) => ({ ...prev, [id]: value }))}
-              isItemVisible={isAutomaticRepliesItemVisible}
-            />
+
+        <div
+          style={{
+            marginTop: 14,
+            marginBottom: 16,
+            border: `1px solid ${theme.border}`,
+            borderRadius: 8,
+            overflow: "hidden",
+            fontSize: 13,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 120px",
+              gap: 8,
+              padding: "8px 12px",
+              background: "#f1f5f9",
+              fontWeight: 700,
+              color: "#475569",
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            <span>When customer contacts you</span>
+            <span>We automatically respond</span>
+            <span>Status</span>
           </div>
-        </details>
-        <details style={{ marginTop: 12, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Save source flow</summary>
-          <div style={{ marginTop: 10 }}>
-            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Save a full automatic-reply setup by contact method, then switch methods to apply saved flows.
-            </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <label style={{ fontSize: 12, color: theme.text }}>
-                Contact method
-                <select
-                  value={autoRepliesFormValues.conv_auto_reply_method ?? conversationSourceOptions[0]}
-                  onChange={(e) => {
-                    const source = e.target.value
-                    setAutoRepliesFormValues((prev) => {
-                      const saved = conversationSourceFlowConfigs[source]
-                      if (!saved) return { ...prev, conv_auto_reply_method: source }
-                      return { ...prev, ...saved, conv_auto_reply_method: source }
-                    })
-                  }}
-                  style={{ ...theme.formInput, marginTop: 4, minWidth: 180 }}
-                >
-                  {conversationSourceOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          {summary.map((row) => (
+            <div
+              key={row.intake}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 120px",
+                gap: 8,
+                padding: "10px 12px",
+                borderTop: `1px solid ${theme.border}`,
+                alignItems: "center",
+                background: row.enabled ? "#f0fdf4" : "#fff",
+              }}
+            >
+              <span style={{ fontWeight: 600, color: theme.text }}>{row.intake}</span>
+              <span style={{ color: "#334155" }}>{formatSummaryLabel(row)}</span>
+              <span style={{ fontWeight: 700, color: row.enabled ? "#059669" : "#94a3b8", fontSize: 12 }}>
+                {row.enabled ? "On" : "Off"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {AUTO_REPLY_INTAKE_CHANNELS.map((intake) => {
+          const flow = channelFlows[intake]
+          const expanded = expandedChannel === intake
+          const enabled = flow.conv_auto_reply_enabled === "checked"
+          const outbound = outboundForFlow(intake, flow)
+          const channelItems = flowItemsForChannel(automaticRepliesItems, intake, flow)
+
+          return (
+            <div
+              key={intake}
+              style={{
+                marginBottom: 10,
+                border: `1px solid ${expanded ? theme.primary : theme.border}`,
+                borderRadius: 8,
+                background: expanded ? "#fafafa" : "#fff",
+              }}
+            >
               <button
                 type="button"
-                onClick={saveCurrentConversationSourceFlow}
+                onClick={() => setExpandedChannel((prev) => (prev === intake ? null : intake))}
                 style={{
-                  padding: "8px 12px",
-                  borderRadius: 6,
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "12px 14px",
                   border: "none",
-                  background: theme.primary,
-                  color: "#fff",
-                  fontWeight: 600,
+                  background: "transparent",
                   cursor: "pointer",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
                 }}
               >
-                Save source flow
+                <div>
+                  <div style={{ fontWeight: 700, color: theme.text, fontSize: 14 }}>{intake}</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{INTAKE_CHANNEL_DESCRIPTIONS[intake]}</div>
+                </div>
+                <span style={{ fontSize: 12, fontWeight: 700, color: enabled ? "#059669" : "#94a3b8", whiteSpace: "nowrap" }}>
+                  {enabled ? formatSummaryLabel({ intake, enabled, outbound }) : "Off"} {expanded ? "▾" : "▸"}
+                </span>
               </button>
-            </div>
-            {Object.keys(conversationSourceFlowConfigs).length > 0 ? (
-              <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#334155" }}>Saved source flows</p>
-                {Object.entries(conversationSourceFlowConfigs).map(([source, cfg]) => {
-                  const expanded = expandedConversationSourceKey === source
-                  return (
-                    <div key={source} style={{ border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff" }}>
+
+              {expanded ? (
+                <div style={{ padding: "0 14px 14px", borderTop: `1px solid ${theme.border}` }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0", cursor: "pointer", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={(e) =>
+                        patchChannel(intake, { conv_auto_reply_enabled: e.target.checked ? "checked" : "unchecked" })
+                      }
+                    />
+                    Send automatic reply for {intake.toLowerCase()}s
+                  </label>
+
+                  {enabled ? (
+                    <>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 12 }}>
+                        Respond using
+                        <select
+                          value={outbound}
+                          onChange={(e) => patchChannel(intake, { conv_auto_reply_outbound: e.target.value })}
+                          style={{ ...theme.formInput, display: "block", marginTop: 4, minWidth: 220 }}
+                        >
+                          {OUTBOUND_OPTIONS_FOR_INTAKE[intake].map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt === "None" ? "Do not respond automatically" : opt}
+                            </option>
+                          ))}
+                        </select>
+                        <span style={{ display: "block", marginTop: 4, fontWeight: 400, color: "#64748b", lineHeight: 1.45 }}>
+                          {intake === "Phone call" && outbound === "Text message"
+                            ? "Typical setup: missed call → immediate text-back (requires SMS consent below)."
+                            : intake === "Text message" && outbound === "Text message"
+                              ? "Customer texts you → you text back automatically."
+                              : intake === "Email" && outbound === "Email"
+                                ? "Customer emails you → auto-reply email (optional)."
+                                : "Choose how Tradesman should reach back out."}
+                        </span>
+                      </label>
+
+                      {intake === "Phone call" && outbound === "Text message" ? (
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 8,
+                            marginBottom: 12,
+                            cursor: "pointer",
+                            fontSize: 12,
+                            lineHeight: 1.45,
+                            color: "#334155",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={flow.conv_auto_sms_consent_on_call !== "unchecked"}
+                            onChange={(e) =>
+                              patchChannel(intake, { conv_auto_sms_consent_on_call: e.target.checked ? "checked" : "unchecked" })
+                            }
+                            style={{ marginTop: 2 }}
+                          />
+                          <span>
+                            <strong>Record SMS opt-in when customer calls</strong> — required before text-back. Saves consent on the
+                            customer profile (phone call / verbal agreement).
+                          </span>
+                        </label>
+                      ) : null}
+
+                      {outbound !== "None" ? (
+                        <PortalSettingItemsForm
+                          items={channelItems}
+                          formValues={{ ...flow, conv_auto_reply_method: intake }}
+                          setFormValue={(id, value) => setChannelFormValue(intake, id, value)}
+                          isItemVisible={(item) => isChannelItemVisible(intake, item)}
+                        />
+                      ) : null}
+
                       <button
                         type="button"
-                        onClick={() => setExpandedConversationSourceKey((prev) => (prev === source ? null : source))}
+                        onClick={() => patchChannel(intake, defaultFlowForIntake(intake))}
                         style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "8px 10px",
-                          border: "none",
-                          background: "transparent",
-                          fontWeight: 700,
-                          color: theme.text,
+                          marginTop: 8,
+                          padding: "6px 10px",
+                          borderRadius: 6,
+                          border: `1px solid ${theme.border}`,
+                          background: "#fff",
+                          fontSize: 11,
                           cursor: "pointer",
+                          color: "#64748b",
                         }}
                       >
-                        {expanded ? "▾" : "▸"} {source}
+                        Reset {intake.toLowerCase()} defaults
                       </button>
-                      {expanded ? (
-                        <div style={{ padding: "0 10px 10px", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-                          <div>Auto reply: {(cfg.conv_auto_reply_enabled ?? "unchecked") === "checked" ? "On" : "Off"}</div>
-                          <div>AI enabled: {(cfg.conv_auto_reply_ai ?? "unchecked") === "checked" ? "On" : "Off"}</div>
-                          <div>
-                            Template: {(cfg.conv_auto_reply_message ?? "").trim() ? (cfg.conv_auto_reply_message ?? "").trim().slice(0, 140) : "(empty)"}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : null}
-          </div>
-        </details>
-        {autoRepliesFormValues.conv_auto_reply_method === "Phone call" &&
-          autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" && (
-            <details style={{ marginTop: 14, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff", padding: "10px 12px" }}>
-              <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.text }}>Phone call automation details</summary>
-              <div style={{ marginTop: 10, fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
-                <strong style={{ color: theme.text }}>Prerecorded / AI-assisted voice:</strong> when calls are placed, the platform will play an introductory notice such as
-                &quot;This is a prerecorded message&quot; before your content (required for automated outreach; exact wording may follow your counsel and carrier rules).
-              </div>
-            </details>
-          )}
-        {autoRepliesFormValues.conv_auto_phone_delivery === "Record in app" &&
-          autoRepliesFormValues.conv_auto_phone_allow_automation === "checked" &&
-          autoRepliesFormValues.conv_auto_reply_method === "Phone call" && (
-            <div style={{ marginTop: 14 }}>
-              <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: theme.text }}>Record in browser</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                {!autoRepliesRecordingBusy ? (
-                  <button
-                    type="button"
-                    disabled={!autoRepliesRecordingSupported || autoRepliesUploading}
-                    onClick={() => void startAutoRepliesRecording()}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: 6,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      cursor: autoRepliesRecordingSupported && !autoRepliesUploading ? "pointer" : "not-allowed",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      color: theme.text,
-                    }}
-                  >
-                    {autoRepliesUploading ? "Uploading…" : "Start recording"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => stopAutoRepliesRecording()}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: 6,
-                      border: `1px solid #fca5a5`,
-                      background: "#fef2f2",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      color: "#b91c1c",
-                    }}
-                  >
-                    Stop &amp; upload
-                  </button>
-                )}
-              </div>
-              {autoRepliesFormValues.conv_auto_phone_recording_url?.trim() ? (
-                <p style={{ margin: "10px 0 0", fontSize: 12, color: "#059669" }}>Recording URL saved in the field above.</p>
+                    </>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-          )}
+          )
+        })}
+
+        {showPhoneRecording ? (
+          <div style={{ marginTop: 14, padding: 12, border: `1px solid ${theme.border}`, borderRadius: 8 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: theme.text }}>Record phone auto-reply message</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {!autoRepliesRecordingBusy ? (
+                <button
+                  type="button"
+                  disabled={!autoRepliesRecordingSupported || autoRepliesUploading}
+                  onClick={() => void startAutoRepliesRecording()}
+                  style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}
+                >
+                  {autoRepliesUploading ? "Uploading…" : "Start recording"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => stopAutoRepliesRecording()}
+                  style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "#fef2f2", cursor: "pointer", fontWeight: 600, fontSize: 13, color: "#b91c1c" }}
+                >
+                  Stop &amp; upload
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null}
+
         {!hideCarryOverToQuotes ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
             <button
@@ -476,11 +560,9 @@ export default function ConversationAutoRepliesModal({
             >
               Carry over these settings to Quotes tab
             </button>
-            <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Copies toggles and methods to <strong>Quotes → Automatic replies</strong>. Quote custom message fields stay empty; “Require approval” for AI email/SMS on Quotes defaults to on.
-            </p>
           </div>
         ) : null}
+
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
           <button
             type="button"

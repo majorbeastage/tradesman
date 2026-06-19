@@ -5,6 +5,7 @@ import { activateDemoSession, demoAccessBlockReason } from "../lib/demoAccountLi
 import { revokeOtherAuthSessions } from "../lib/authSingleSession"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
+import { mergeSandboxPortalConfig } from "../lib/sandboxPortalConfig"
 
 export type UserRole =
   | "user"
@@ -157,7 +158,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? (data.metadata as Record<string, unknown>)
               : {}
-          const portalCfg = (data?.portal_config as PortalConfig) ?? null
+          const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
+          const portalCfg =
+            meta.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+              ? mergeSandboxPortalConfig(portalCfgRaw)
+              : portalCfgRaw
           const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
           if (demoBlock) {
             setAccessBlockedMessage(demoBlock)
@@ -165,12 +170,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             void sb.auth.signOut()
             return
           }
-          if (!error && data?.role) setRole(data.role as UserRole)
-          else setRole("user")
+          if (!error && data?.role) {
+            const roleRaw = data.role as UserRole
+            setRole(
+              (meta.sandbox_account === true || portalCfg?.sandbox_account === true) && roleRaw === "new_user"
+                ? "corporate_management"
+                : roleRaw,
+            )
+          } else setRole("user")
         }
         if (!cancelled && data?.client_id) setClientId(data.client_id as string)
         else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
-        if (!cancelled) setPortalConfig((data?.portal_config as PortalConfig) ?? null)
+        if (!cancelled) {
+          const meta2 =
+            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+              ? (data.metadata as Record<string, unknown>)
+              : {}
+          const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
+          const portalCfg =
+            meta2.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+              ? mergeSandboxPortalConfig(portalCfgRaw)
+              : portalCfgRaw
+          setPortalConfig(portalCfg)
+        }
         if (!cancelled) {
           const meta = (data as { metadata?: unknown })?.metadata
           const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
@@ -221,7 +243,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
         ? (data.metadata as Record<string, unknown>)
         : {}
-    const portalCfg = (data?.portal_config as PortalConfig) ?? null
+    const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
+    const portalCfg =
+      meta.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+        ? mergeSandboxPortalConfig(portalCfgRaw)
+        : portalCfgRaw
     const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
     if (demoBlock) {
       setAccessBlockedMessage(demoBlock)
@@ -234,11 +260,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(fallback)
       return { role: fallback, error: error.message }
     }
-    const roleFromDb = (data?.role as UserRole) ?? "user"
+    const roleRaw = (data?.role as UserRole) ?? "user"
+    const roleFromDb =
+      (meta.sandbox_account === true || portalCfg?.sandbox_account === true) && roleRaw === "new_user"
+        ? "corporate_management"
+        : roleRaw
     setRole(roleFromDb)
     if (data?.client_id) setClientId(data.client_id as string)
     else setClientId(DEFAULT_CLIENT_ID)
-    setPortalConfig((data?.portal_config as PortalConfig) ?? null)
+    setPortalConfig(portalCfg)
     const url = meta.profile_photo_url
     setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
     return { role: roleFromDb }

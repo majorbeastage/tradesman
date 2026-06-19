@@ -13,6 +13,7 @@ import {
   queueSchedulingAddWizardPrefill,
   type SchedulingAddWizardPrefill,
 } from "./workflowNavigation"
+import { defaultFlowForIntake, flattenPrimaryFlowForLegacy } from "./automaticRepliesChannels"
 import {
   mergeVoiceAutoAttendantMetadata,
   recommendedStepsWithContact,
@@ -63,20 +64,39 @@ export async function applySetupMiniWizard(
 
   switch (wizardId) {
     case "customers_auto_replies": {
-      const vals =
-        meta.conversationsAutomaticRepliesValues && typeof meta.conversationsAutomaticRepliesValues === "object"
-          ? { ...(meta.conversationsAutomaticRepliesValues as Record<string, string>) }
-          : {}
-      vals.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
-      vals.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
-      const ch = (answers.channels ?? "Email, Text message").toLowerCase()
-      if (ch.includes("text") || ch.includes("sms")) vals.conv_auto_reply_method = "Text message"
-      else if (ch.includes("phone") || ch.includes("call")) vals.conv_auto_reply_method = "Phone call"
-      else vals.conv_auto_reply_method = "Email"
-      meta.conversationsAutomaticRepliesValues = vals
+      const phone = defaultFlowForIntake("Phone call")
+      const sms = defaultFlowForIntake("Text message")
+      const email = defaultFlowForIntake("Email")
+      const ch = (answers.channels ?? "Text message").toLowerCase()
+      if (ch.includes("text") || ch.includes("sms")) {
+        sms.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
+        sms.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
+      } else if (ch.includes("phone") || ch.includes("call")) {
+        phone.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
+        phone.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
+      } else if (ch.includes("email")) {
+        email.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
+        email.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
+      } else {
+        phone.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
+        sms.conv_auto_reply_enabled = yes(answers.use_auto_replies) ? "checked" : "unchecked"
+        phone.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
+        sms.conv_auto_reply_ai = yes(answers.use_ai_drafts) ? "checked" : "unchecked"
+      }
+      meta.conversationsAutomaticRepliesSourceFlows = {
+        "Phone call": phone,
+        "Text message": sms,
+        Email: email,
+      }
+      meta.conversationsAutomaticRepliesValues = {
+        ...(typeof meta.conversationsAutomaticRepliesValues === "object" && meta.conversationsAutomaticRepliesValues
+          ? (meta.conversationsAutomaticRepliesValues as Record<string, string>)
+          : {}),
+        ...flattenPrimaryFlowForLegacy({ "Phone call": phone, "Text message": sms, Email: email }),
+      }
       await saveProfileMetadata(supabase, userId, meta)
       return yes(answers.use_auto_replies)
-        ? "Automatic replies enabled with your channel and AI preferences."
+        ? "Automatic replies enabled per channel — open Automatic replies under Customers to review."
         : "Automatic replies left off — you can turn them on anytime under Customers."
     }
 

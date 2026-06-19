@@ -21,7 +21,9 @@ type Props = {
   filterVisible: (id: DashboardQuickLinkId) => boolean
 }
 
-const CELL_MIN = 72
+const TILE_HEIGHT = 80
+const TILE_HEIGHT_MOBILE = 76
+const MIN_COL_WIDTH = 136
 
 export default function DashboardQuickLinkGrid({
   grid,
@@ -35,7 +37,8 @@ export default function DashboardQuickLinkGrid({
   renderTile,
   filterVisible,
 }: Props) {
-  const gap = isMobile ? 6 : 8
+  const gap = isMobile ? 8 : 10
+  const tileHeight = isMobile ? TILE_HEIGHT_MOBILE : TILE_HEIGHT
 
   const dropOnSlot = (slotIndex: number) => {
     if (!dragId) return
@@ -47,7 +50,7 @@ export default function DashboardQuickLinkGrid({
     onDragEnd()
   }
 
-  const slotHandlers = (slotIndex: number, hasTile: boolean) =>
+  const slotHandlers = (slotIndex: number) =>
     customize
       ? {
           onDragOver: (e: DragEvent) => {
@@ -59,16 +62,44 @@ export default function DashboardQuickLinkGrid({
             e.stopPropagation()
             dropOnSlot(slotIndex)
           },
-          ...(hasTile
-            ? {}
-            : {
-                onDragOver: (e: DragEvent) => {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = "move"
-                },
-              }),
         }
       : {}
+
+  if (!customize) {
+    const filled = grid
+      .map((id, slotIndex) => ({ id, slotIndex }))
+      .filter((s): s is { id: DashboardQuickLinkId; slotIndex: number } => s.id != null && filterVisible(s.id))
+
+    return (
+      <div
+        style={{
+          marginTop: 14,
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? MIN_COL_WIDTH - 8 : MIN_COL_WIDTH}px, 1fr))`,
+          gap,
+          width: "100%",
+        }}
+      >
+        {filled.map(({ id, slotIndex }) => (
+          <div
+            key={`${id}-${slotIndex}`}
+            style={{ height: tileHeight, minWidth: 0, display: "flex" }}
+            className="tm-dash-grid-tile-wrap"
+          >
+            {renderTile(id)}
+          </div>
+        ))}
+        <style>{`
+          .tm-dash-grid-tile-wrap .tm-dash-tile {
+            width: 100%;
+            height: 100%;
+            min-height: 0 !important;
+            flex: 1;
+          }
+        `}</style>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -82,33 +113,30 @@ export default function DashboardQuickLinkGrid({
     >
       {Array.from({ length: DASHBOARD_GRID_SLOT_COUNT }, (_, slotIndex) => {
         const id = grid[slotIndex] ?? null
-        const showTile = id != null && (customize || filterVisible(id))
+        const showTile = id != null
         const isDragSource = dragFromSlot === slotIndex
         const isDropTarget = Boolean(dragId && dragFromSlot !== slotIndex)
-
-        const emptySlot = !showTile
 
         return (
           <div
             key={slotIndex}
             data-dash-grid-slot={slotIndex}
-            {...slotHandlers(slotIndex, Boolean(showTile))}
+            {...slotHandlers(slotIndex)}
             style={{
-              aspectRatio: "1",
-              minHeight: isMobile ? CELL_MIN - 8 : CELL_MIN,
+              height: tileHeight,
               width: "100%",
               position: "relative",
-              borderRadius: 12,
-              outline: customize && isDropTarget && dragId ? "2px dashed rgba(14, 165, 233, 0.55)" : undefined,
-              outlineOffset: customize && isDropTarget ? 2 : undefined,
-              opacity: isDragSource ? 0.45 : 1,
+              borderRadius: 10,
+              background: !showTile ? "rgba(148, 163, 184, 0.05)" : undefined,
+              outline: isDropTarget && dragId ? "2px dashed rgba(14, 165, 233, 0.45)" : undefined,
+              outlineOffset: isDropTarget ? 1 : undefined,
+              opacity: isDragSource ? 0.5 : 1,
               transition: "opacity 0.15s ease, outline 0.12s ease",
-              visibility: emptySlot && !customize ? "hidden" : undefined,
             }}
           >
             {showTile ? (
               <div
-                draggable={customize}
+                draggable
                 onDragStart={(e: DragEvent) => {
                   if (!id) return
                   e.dataTransfer.setData("text/plain", id)
@@ -117,39 +145,33 @@ export default function DashboardQuickLinkGrid({
                 }}
                 onDragEnd={() => onDragEnd()}
                 style={{
-                  position: "absolute",
-                  inset: 0,
+                  height: "100%",
                   display: "flex",
-                  cursor: customize ? (isDragSource ? "grabbing" : "grab") : undefined,
+                  cursor: isDragSource ? "grabbing" : "grab",
                 }}
+                className="tm-dash-grid-tile-wrap"
               >
-                <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
-                  <div style={{ flex: 1, minHeight: 0, display: "flex", width: "100%" }} className="tm-dash-grid-tile-wrap">
-                    {renderTile(id)}
-                  </div>
-                </div>
+                {renderTile(id)}
               </div>
-            ) : customize ? (
+            ) : (
               <div
                 style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: 12,
-                  border: "2px dashed rgba(148, 163, 184, 0.55)",
-                  background: "rgba(148, 163, 184, 0.06)",
+                  height: "100%",
+                  borderRadius: 10,
+                  border: "1px dashed rgba(148, 163, 184, 0.4)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 10,
-                  fontWeight: 700,
-                  color: "#64748b",
-                  textAlign: "center",
+                  fontWeight: 600,
+                  color: "#94a3b8",
                   padding: 4,
+                  textAlign: "center",
                 }}
               >
-                Drop here
+                Drop
               </div>
-            ) : null}
+            )}
           </div>
         )
       })}

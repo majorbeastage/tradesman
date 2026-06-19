@@ -229,6 +229,7 @@ export const OFFICE_PORTAL_TAB_IDS = [
   'quotes',
   'calendar',
   'payments',
+  'settings',
   'account',
   'web-support',
   'tech-support',

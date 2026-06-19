@@ -3,7 +3,7 @@
 import { supabase } from "./supabase"
 import { dispatchSandboxTrafficEvent } from "./sandboxTrafficEvents"
 
-export type SandboxApiAction = "seed" | "inject_lead" | "tick" | "set_live_traffic" | "reset"
+export type SandboxApiAction = "seed" | "inject_lead" | "tick" | "set_live_traffic" | "reset" | "repair_profile"
 
 async function sandboxFetch(action: SandboxApiAction, body: Record<string, unknown> = {}): Promise<Response> {
   const session = supabase ? (await supabase.auth.getSession()).data.session : null
@@ -25,6 +25,18 @@ async function sandboxFetch(action: SandboxApiAction, body: Record<string, unkno
       ...body,
     }),
   })
+}
+
+export async function repairSandboxProfile(): Promise<boolean> {
+  const res = await sandboxFetch("repair_profile")
+  const raw = await res.text()
+  if (!res.ok) throw new Error(parseApiError(raw, res.status))
+  try {
+    const json = JSON.parse(raw) as { profileRepaired?: boolean }
+    return json.profileRepaired === true
+  } catch {
+    return false
+  }
 }
 
 export async function seedSandboxWorkspace(force = false): Promise<{ profileRepaired?: boolean; customerCount?: number }> {

@@ -8,7 +8,12 @@ import {
   normalizePhone,
 } from "./_communications.js"
 import { isSandboxProfileRow } from "./_sandboxEnvironment.js"
-import { SANDBOX_PORTAL_CONFIG, SANDBOX_PROFILE_ROLE } from "./_sandboxPortalConfig.js"
+import { DEFAULT_SANDBOX_DEMO_TEAM } from "./_sandboxDemoTeam.js"
+import {
+  mergeSandboxPortalConfigRecord,
+  SANDBOX_DASHBOARD_QUICK_LINKS,
+  SANDBOX_PROFILE_ROLE,
+} from "./_sandboxPortalConfig.js"
 
 export const SANDBOX_ZIP = "99901"
 export const SANDBOX_CITY = "Tradesman Demo"
@@ -130,7 +135,7 @@ export type SeedSandboxResult = {
   profileRepaired?: boolean
 }
 
-/** Fix role/portal_config when sandbox was created before corporate defaults or trigger left new_user. */
+/** Fix role/portal_config — sandbox always gets full corporate manager access. */
 export async function ensureSandboxProfile(
   supabase: SupabaseClient,
   userId: string,
@@ -144,29 +149,39 @@ export async function ensureSandboxProfile(
 
   const pc =
     prof?.portal_config && typeof prof.portal_config === "object" && !Array.isArray(prof.portal_config)
-      ? { ...(prof.portal_config as Record<string, unknown>) }
+      ? (prof.portal_config as Record<string, unknown>)
+      : {}
+  const prevMeta =
+    prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+      ? { ...(prof.metadata as Record<string, unknown>) }
       : {}
   const role = String(prof?.role ?? "")
-  const needsRoleFix = role === "new_user" || role === "user" || role === "office_manager"
+  const nextPortal = mergeSandboxPortalConfigRecord(pc)
+  const needsQuickLinks = !prevMeta.dashboard_quick_links
+  const needsDemoTeam = !prevMeta.sandbox_demo_team
+  const needsRoleFix = role !== SANDBOX_PROFILE_ROLE
   const needsPortalFix =
     pc.sandbox_account !== true ||
     pc.corporate_package !== true ||
-    pc.enable_operations_tab !== true
+    pc.enable_operations_tab !== true ||
+    (pc.tabs as Record<string, boolean> | undefined)?.settings !== true
 
-  if (!needsRoleFix && !needsPortalFix) return false
+  if (!needsRoleFix && !needsPortalFix && !needsQuickLinks && !needsDemoTeam) return false
+
+  const nextMeta = {
+    ...prevMeta,
+    sandbox_account: true,
+    demo_account: false,
+    ...(needsQuickLinks ? { dashboard_quick_links: SANDBOX_DASHBOARD_QUICK_LINKS } : {}),
+    ...(needsDemoTeam ? { sandbox_demo_team: DEFAULT_SANDBOX_DEMO_TEAM } : {}),
+  }
 
   await supabase
     .from("profiles")
     .update({
       role: SANDBOX_PROFILE_ROLE,
-      portal_config: { ...SANDBOX_PORTAL_CONFIG, ...pc, sandbox_account: true, demo_account: false },
-      metadata: {
-        ...(prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
-          ? (prof.metadata as Record<string, unknown>)
-          : {}),
-        sandbox_account: true,
-        demo_account: false,
-      },
+      portal_config: nextPortal,
+      metadata: nextMeta,
       updated_at: new Date().toISOString(),
     })
     .eq("id", userId)

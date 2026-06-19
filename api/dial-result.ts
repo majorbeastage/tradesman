@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions"
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
   buildVoicemailTwiml,
@@ -13,6 +14,8 @@ import {
   normalizePhone,
   pickFirstString,
 } from "./_communications.js"
+import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
+import { resolveAutoReplyForIntake } from "./_automaticRepliesChannels.js"
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -107,6 +110,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           unread: true,
           metadata: { from, to, dial_call_status: dialCallStatus, provider: channel.provider },
         })
+        if (customer?.customerId && from) {
+          const sideEffects = (async () => {
+            try {
+              const { data: prof } = await supabase
+                .from("profiles")
+                .select("metadata")
+                .eq("id", channel!.user_id!)
+                .maybeSingle()
+              const phoneFlow = resolveAutoReplyForIntake(prof?.metadata, "Phone call")
+              if (phoneFlow?.settings.conv_auto_sms_consent_on_call !== "unchecked") {
+                await recordSmsConsentFromInboundCall(supabase, channel!.user_id!, customer.customerId)
+              }
+              await runMissedCallAutoTextBack(supabase, {
+                userId: channel!.user_id!,
+                customerId: customer.customerId,
+                customerPhone: from,
+                conversationId,
+                leadId,
+                dialCallStatus,
+              })
+            } catch (e) {
+              console.warn("[dial-result] missed call auto text-back", e instanceof Error ? e.message : e)
+            }
+          })()
+          try {
+            waitUntil(sideEffects)
+          } catch {
+            void sideEffects
+          }
+        }
       }
       return sendTwiml(
         res,

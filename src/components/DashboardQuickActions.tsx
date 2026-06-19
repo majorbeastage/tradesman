@@ -312,6 +312,7 @@ function Tile({
   dimmed,
   draggable,
   primaryRow,
+  uniformGrid,
   onDragStart,
   onDragOver,
   onDrop,
@@ -333,6 +334,7 @@ function Tile({
   dimmed?: boolean
   draggable?: boolean
   primaryRow?: boolean
+  uniformGrid?: boolean
   customize?: boolean
   onRemove?: () => void
   removeChipLabel?: string
@@ -344,13 +346,15 @@ function Tile({
   onContextMenu?: (e: React.MouseEvent) => void
   dragOver?: boolean
 }) {
+  const gridCompact = uniformGrid ? true : compact
+  const gridPrimary = uniformGrid ? false : Boolean(primaryRow)
   const effectiveAccent = tileStyle?.accent ?? accent
-  const labelColor = tileStyle?.labelColor ?? tileLabelColor(scheme, Boolean(primaryRow))
-  const optionalArrowColor = tileArrowColor(scheme, Boolean(primaryRow), effectiveAccent)
+  const labelColor = tileStyle?.labelColor ?? tileLabelColor(scheme, gridPrimary)
+  const optionalArrowColor = tileArrowColor(scheme, gridPrimary, effectiveAccent)
   const btn: CSSProperties = {
     ...tileButtonStyle(scheme, {
-      primaryRow: Boolean(primaryRow),
-      compact,
+      primaryRow: gridPrimary,
+      compact: gridCompact,
       disabled,
       dimmed,
     }),
@@ -427,20 +431,20 @@ function Tile({
         aria-hidden
         style={{
           position: "absolute",
-          top: primaryRow ? 10 : 11,
-          right: primaryRow ? 10 : 11,
-          width: primaryRow ? 34 : 28,
-          height: primaryRow ? 34 : 28,
+          top: gridPrimary ? 10 : 11,
+          right: gridPrimary ? 10 : 11,
+          width: gridPrimary ? 34 : 28,
+          height: gridPrimary ? 34 : 28,
           borderRadius: thumb ? 8 : "50%",
           background: thumb
             ? "rgba(255,255,255,0.92)"
             : `linear-gradient(145deg, ${effectiveAccent}35, ${effectiveAccent}14)`,
           border: thumb ? `1px solid ${effectiveAccent}44` : `1px solid ${effectiveAccent}55`,
-          boxShadow: primaryRow ? `0 0 18px ${effectiveAccent}38` : `0 0 12px ${effectiveAccent}22`,
+          boxShadow: gridPrimary ? `0 0 18px ${effectiveAccent}38` : `0 0 12px ${effectiveAccent}22`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: thumb ? (primaryRow ? 18 : 15) : undefined,
+          fontSize: thumb ? (gridPrimary ? 18 : 15) : undefined,
           lineHeight: 1,
         }}
       >
@@ -466,11 +470,11 @@ function Tile({
         style={{
           marginTop: 2,
           paddingRight: 22,
-          fontSize: compact ? 14 : 15,
+          fontSize: gridCompact ? 14 : 15,
           fontWeight: 800,
           color: labelColor,
           lineHeight: 1.25,
-          letterSpacing: primaryRow ? -0.02 : undefined,
+          letterSpacing: gridPrimary ? -0.02 : undefined,
         }}
       >
         {label}
@@ -479,7 +483,7 @@ function Tile({
             style={{
               display: "block",
               marginTop: 4,
-              fontSize: compact ? 10 : 11,
+              fontSize: gridCompact ? 10 : 11,
               fontWeight: 600,
               color: labelColor,
               opacity: 0.82,
@@ -757,6 +761,7 @@ export default function DashboardQuickActions(props: Props) {
     const label = quickLinkLabel(id, labels)
     const accentDefault =
       id === "customers" || id === "estimates" || id === "calendar" || isCore ? theme.primary : "#6366f1"
+    const uniformGrid = true
 
     if (id === "customers") {
       return (
@@ -764,6 +769,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -782,6 +788,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -800,6 +807,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -818,6 +826,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -836,6 +845,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -855,6 +865,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.setupGuide}
           accent="#6366f1"
           customize={customize}
@@ -872,6 +883,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.settings}
           accent="#475569"
           customize={customize}
@@ -889,6 +901,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.payments}
           accent={theme.primary}
           customize={customize}
@@ -906,6 +919,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.insurance}
           accent={theme.primary}
           customize={customize}
@@ -923,6 +937,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.customerPaymentsSoon}
           accent="#0ea5e9"
           customize={customize}
@@ -953,6 +968,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.reporting}
           accent={theme.primary}
           customize={customize}
@@ -970,6 +986,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.growth}
           sublabel={labels.growthSub}
           accent="#16a34a"
@@ -988,6 +1005,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.jobTypes}
           accent="#0ea5e9"
           customize={customize}
@@ -1005,6 +1023,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.todayTodo}
           accent="#8b5cf6"
           customize={customize}
@@ -1022,6 +1041,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.timeClock}
           accent="#334155"
           customize={customize}
@@ -1039,6 +1059,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.customReceipt}
           accent="#059669"
           customize={customize}
@@ -1060,6 +1081,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.businessWorkflow}
           sublabel={labels.businessWorkflowSub}
           accent="#7c3aed"
@@ -1078,6 +1100,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={labels.organizationChart}
           accent="#0d9488"
           customize={customize}
@@ -1102,6 +1125,7 @@ export default function DashboardQuickActions(props: Props) {
           key={id}
           scheme={tileScheme}
           compact={isMobile}
+          uniformGrid={uniformGrid}
           label={opLabels[id] ?? labels.operations}
           accent="#0369a1"
           customize={customize}
@@ -1219,8 +1243,8 @@ export default function DashboardQuickActions(props: Props) {
           <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 720, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>
             <span style={{ display: "block", marginTop: 4, opacity: 0.85 }}>
-              Fixed 5×5 grid — drag any tile into any slot, or drop palette shortcuts onto an empty cell. Right-click a
-              tile for colors and style.
+              Drag tiles to reorder. Drop shortcuts from the chips below onto empty slots. Right-click a tile for colors
+              and style.
             </span>
             {persistNote === "cloud" ? (
               <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
@@ -1246,26 +1270,34 @@ export default function DashboardQuickActions(props: Props) {
         {customize && paletteAvailable.length > 0 ? (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: isMobile ? 8 : 10 }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                padding: "2px 0 4px",
+              }}
+            >
               {paletteAvailable.map((id) => (
                 <button
                   key={id}
                   type="button"
-                  draggable={customize}
+                  draggable
                   onDragStart={() => onTileDragStart(id, null)}
                   onDragEnd={onTileDragEnd}
                   onClick={() => addPaletteId(id)}
                   style={{
-                    minHeight: isMobile ? 72 : 76,
-                    padding: "12px 14px",
-                    borderRadius: 12,
-                    border: `1px dashed rgba(51,65,85,0.45)`,
-                    background: "rgba(255,255,255,0.35)",
-                    cursor: customize ? "grab" : "pointer",
+                    flex: "0 0 auto",
+                    padding: "8px 14px",
+                    borderRadius: 999,
+                    border: "1px dashed rgba(51,65,85,0.35)",
+                    background: "rgba(255,255,255,0.55)",
+                    cursor: "grab",
                     textAlign: "left",
                     fontWeight: 700,
-                    fontSize: compactFont(isMobile),
+                    fontSize: 12,
                     color: "#0f172a",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   + {quickLinkLabel(id, labels)}
@@ -1289,10 +1321,6 @@ export default function DashboardQuickActions(props: Props) {
       ) : null}
     </section>
   )
-}
-
-function compactFont(isMobile: boolean) {
-  return isMobile ? 13 : 14
 }
 
 function quickLinkLabel(id: DashboardQuickLinkId, labels: Props["labels"]): string {

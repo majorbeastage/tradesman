@@ -8,6 +8,7 @@ import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } fro
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { readSandboxLoginEmail, clearSandboxLoginEmail } from "../../lib/sandboxLogin"
+import { repairSandboxProfile } from "../../lib/sandboxApi"
 import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
@@ -22,7 +23,7 @@ type LoginPageProps = {
 
 export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
   const { t } = useLocale()
-  const { signIn, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
+  const { signIn, user, role, refetchProfile, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
   const [mode, setMode] = useState<"signin" | "forgot">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -79,9 +80,22 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       const { error: err } = await signIn(email.trim(), password)
       if (err) setError(err.message)
       else {
+        const wasSandboxLogin = sandboxLoginHint
         clearSandboxLoginEmail()
         setSandboxLoginHint(false)
         setMessage(t("login.msg.signingIn"))
+        if (wasSandboxLogin) {
+          try {
+            await repairSandboxProfile()
+          } catch {
+            /* best effort */
+          }
+          const { role: freshRole } = await refetchProfile()
+          if (freshRole) {
+            didRedirect.current = true
+            onSuccess(freshRole)
+          }
+        }
       }
     } finally {
       setSubmitting(false)

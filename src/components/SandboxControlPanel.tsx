@@ -4,12 +4,22 @@ import { theme } from "../styles/theme"
 import { parseSandboxMeta, isSandboxProfile } from "../lib/sandboxEnvironment"
 import {
   injectSandboxLead,
+  repairSandboxProfile,
   resetSandboxWorkspace,
   sandboxTrafficTick,
   seedSandboxWorkspace,
   setSandboxLiveTraffic,
 } from "../lib/sandboxApi"
 import { onSandboxTraffic } from "../lib/sandboxTrafficEvents"
+import ConversationAutoRepliesModal from "./ConversationAutoRepliesModal"
+import { useEffectivePortalConfig, useEffectiveUserId, usePortalViewOptional } from "../contexts/PortalViewContext"
+import { useScopedAiAutomationsEnabled } from "../hooks/useScopedAiAutomationsEnabled"
+import {
+  isSandboxDemoUserId,
+  parseSandboxDemoTeam,
+  type SandboxDemoTeamMember,
+} from "../lib/sandboxDemoTeam"
+import { labelForProfileRole } from "../lib/profileRoles"
 
 function useSandboxTrainingControls(
   profileUserId: string | null,
@@ -32,6 +42,22 @@ function useSandboxTrainingControls(
     typeof window !== "undefined" && ctaSlug
       ? `${window.location.origin}/cta/${encodeURIComponent(ctaSlug)}`
       : ""
+
+  useEffect(() => {
+    if (!active || !profileUserId || profileUserId !== user?.id) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const repaired = await repairSandboxProfile()
+        if (repaired && !cancelled) await refetchProfile()
+      } catch {
+        /* best effort */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [active, profileUserId, user?.id, refetchProfile])
 
   useEffect(() => {
     if (!active || !profileUserId || profileUserId !== user?.id) return
@@ -94,7 +120,9 @@ function useSandboxTrainingControls(
   }
 }
 
-type SandboxTrainingState = ReturnType<typeof useSandboxTrainingControls>
+type SandboxTrainingState = ReturnType<typeof useSandboxTrainingControls> & {
+  profileMetadata?: Record<string, unknown> | null
+}
 
 const SandboxTrainingContext = createContext<SandboxTrainingState | null>(null)
 
@@ -118,7 +146,11 @@ export function SandboxTrainingProvider({
   children,
 }: ProviderProps) {
   const state = useSandboxTrainingControls(profileUserId, profileMetadata, portalConfig, authRole)
-  return <SandboxTrainingContext.Provider value={state}>{children}</SandboxTrainingContext.Provider>
+  return (
+    <SandboxTrainingContext.Provider value={{ ...state, profileMetadata }}>
+      {children}
+    </SandboxTrainingContext.Provider>
+  )
 }
 
 const btnPrimary: React.CSSProperties = {
@@ -141,6 +173,75 @@ const btnSecondary: React.CSSProperties = {
   fontWeight: 600,
   fontSize: 12,
   cursor: "pointer",
+}
+
+type SandboxBannerTab = "traffic" | "intake" | "team"
+
+const tabBtn = (active: boolean): React.CSSProperties => ({
+  padding: "6px 12px",
+  borderRadius: 999,
+  border: active ? "2px solid #0284c7" : `1px solid ${theme.border}`,
+  background: active ? "#fff" : "rgba(255,255,255,0.55)",
+  color: active ? "#0c4a6e" : "#475569",
+  fontWeight: active ? 800 : 600,
+  fontSize: 12,
+  cursor: "pointer",
+})
+
+function SandboxDemoTeamPanel({
+  team,
+  activeDemoId,
+  onPreview,
+  onResetSelf,
+}: {
+  team: SandboxDemoTeamMember[]
+  activeDemoId: string | null
+  onPreview: (member: SandboxDemoTeamMember) => void
+  onResetSelf: () => void
+}) {
+  return (
+    <div>
+      <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.5, color: "#334155" }}>
+        Fictional team members for training — preview how the portal looks for office managers and field staff. Your
+        sample customer data stays the same; only the layout and tabs change.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {team.map((member) => {
+          const active = activeDemoId === member.id
+          return (
+            <div
+              key={member.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: active ? "2px solid #0284c7" : `1px solid ${theme.border}`,
+                background: active ? "#f0f9ff" : "#fff",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>{member.label}</div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                  {member.title ?? labelForProfileRole(member.role)} · {member.email}
+                </div>
+              </div>
+              <button type="button" style={active ? btnPrimary : btnSecondary} onClick={() => onPreview(member)}>
+                {active ? "Previewing" : "Preview as"}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {activeDemoId ? (
+        <button type="button" style={{ ...btnSecondary, marginTop: 10 }} onClick={onResetSelf}>
+          Back to corporate manager (you)
+        </button>
+      ) : null}
+    </div>
+  )
 }
 
 function SandboxControlsBody({
@@ -300,25 +401,108 @@ export function SandboxTrainingBanner({
   setPage?: (page: string) => void
 }) {
   const state = useSandboxTrainingContext()
+  const { userId } = useAuth()
+  const portalConfig = useEffectivePortalConfig()
+  const effectiveUserId = useEffectiveUserId()
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(effectiveUserId || userId)
+  const portalView = usePortalViewOptional()
+  const [tab, setTab] = useState<SandboxBannerTab>("traffic")
+  const [showAutoReplies, setShowAutoReplies] = useState(false)
+
+  const demoTeam = useMemo(
+    () => parseSandboxDemoTeam(state?.profileMetadata?.sandbox_demo_team),
+    [state?.profileMetadata?.sandbox_demo_team],
+  )
+
   if (!state?.active) return null
 
+  const activeDemoId =
+    portalView?.targetUserId && isSandboxDemoUserId(portalView.targetUserId) ? portalView.targetUserId : null
+
+  const previewDemoMember = (member: SandboxDemoTeamMember) => {
+    if (!portalView) return
+    if (portalView.viewRoleOptions.includes(member.role)) {
+      portalView.setViewRole(member.role)
+    }
+    portalView.setTargetUserId(member.id)
+  }
+
+  const resetDemoPreview = () => {
+    if (!portalView || !userId) return
+    portalView.setViewRole("corporate_management")
+    portalView.setTargetUserId(userId)
+  }
+
   return (
-    <div
-      style={{
-        marginBottom: 12,
-        padding: "12px 14px",
-        borderRadius: 10,
-        background: "linear-gradient(135deg,#e0f2fe,#f0f9ff)",
-        border: "1px solid #7dd3fc",
-        color: "#0c4a6e",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-        <strong style={{ fontSize: 15 }}>Training sandbox controls</strong>
-        <span style={{ fontSize: 11, color: "#0369a1" }}>Corporate manager · full Operations access</span>
+    <>
+      <div
+        style={{
+          marginBottom: 12,
+          padding: "12px 14px",
+          borderRadius: 10,
+          background: "linear-gradient(135deg,#e0f2fe,#f0f9ff)",
+          border: "1px solid #7dd3fc",
+          color: "#0c4a6e",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+          <strong style={{ fontSize: 15 }}>Training sandbox</strong>
+          <span style={{ fontSize: 11, color: "#0369a1" }}>Corporate manager · full Operations access</span>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          <button type="button" style={tabBtn(tab === "traffic")} onClick={() => setTab("traffic")}>
+            Live traffic
+          </button>
+          <button
+            type="button"
+            style={tabBtn(tab === "intake")}
+            onClick={() => {
+              setTab("intake")
+              setShowAutoReplies(true)
+            }}
+          >
+            Intake &amp; auto-replies
+          </button>
+          <button type="button" style={tabBtn(tab === "team")} onClick={() => setTab("team")}>
+            Demo team
+          </button>
+        </div>
+
+        {tab === "traffic" ? <SandboxControlsBody {...state} setPage={setPage} /> : null}
+        {tab === "intake" ? (
+          <div style={{ fontSize: 12, lineHeight: 1.55, color: "#334155" }}>
+            <p style={{ margin: "0 0 10px" }}>
+              Set what happens when customers <strong>call</strong>, <strong>text</strong>, or <strong>email</strong> — including
+              missed-call text-back and SMS opt-in on inbound calls.
+            </p>
+            <button type="button" style={btnPrimary} onClick={() => setShowAutoReplies(true)}>
+              Open intake settings
+            </button>
+            <button type="button" style={{ ...btnSecondary, marginLeft: 8 }} onClick={() => setPage?.("customers")}>
+              Go to Customers
+            </button>
+          </div>
+        ) : null}
+        {tab === "team" ? (
+          <SandboxDemoTeamPanel
+            team={demoTeam}
+            activeDemoId={activeDemoId}
+            onPreview={previewDemoMember}
+            onResetSelf={resetDemoPreview}
+          />
+        ) : null}
       </div>
-      <SandboxControlsBody {...state} setPage={setPage} />
-    </div>
+
+      <ConversationAutoRepliesModal
+        open={showAutoReplies}
+        onClose={() => setShowAutoReplies(false)}
+        userId={effectiveUserId || userId || null}
+        portalConfig={portalConfig}
+        aiAutomationsEnabled={aiAutomationsEnabled}
+        hideCarryOverToQuotes
+      />
+    </>
   )
 }
 

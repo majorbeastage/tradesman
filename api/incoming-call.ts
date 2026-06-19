@@ -20,6 +20,8 @@ import {
 } from "./_communications.js"
 import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
+import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
+import { resolveAutoReplyForIntake } from "./_automaticRepliesChannels.js"
 
 function xmlEscape(value: string): string {
   return value
@@ -97,6 +99,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         previous_customer: customer?.previousCustomer ?? false,
         metadata: { from, to, provider: channel.provider },
       })
+      if (customer?.customerId && from) {
+        const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", channel.user_id).maybeSingle()
+        const phoneFlow = resolveAutoReplyForIntake(prof?.metadata, "Phone call")
+        if (phoneFlow?.settings.conv_auto_sms_consent_on_call !== "unchecked") {
+          await recordSmsConsentFromInboundCall(supabase, channel.user_id, customer.customerId)
+        }
+        if (!forwardTo) {
+          await runMissedCallAutoTextBack(supabase, {
+            userId: channel.user_id,
+            customerId: customer.customerId,
+            customerPhone: from,
+            conversationId,
+            leadId,
+            dialCallStatus: "no-answer",
+          })
+        }
+      }
     } catch (e) {
       console.error("[incoming-call] deferred CRM failed", e instanceof Error ? e.message : e)
     }
