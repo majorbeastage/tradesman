@@ -66,12 +66,21 @@ export const LEGACY_OPERATIONS_TAB_IDS = [
 export const GROWTH_TAB_ID = "growth" as const
 
 /** Optional sidebar tabs enabled via portal_config (not in V2 default strip). */
-export const EXTENDED_PORTAL_TAB_IDS = [
-  GROWTH_TAB_ID,
+export const EXTENDED_PORTAL_TAB_IDS = [GROWTH_TAB_ID] as const
+
+/**
+ * Routes that exist in the app but are not left-nav items — reach via dashboard quick links,
+ * setup guide, or assistant navigation unless an admin explicitly sets tabs[id] = true.
+ */
+export const DASHBOARD_ONLY_PORTAL_TAB_IDS = [
   "business-workflow",
   "organization-chart",
   "reporting",
 ] as const
+
+export function isDashboardOnlyPortalTab(tabId: string): boolean {
+  return (DASHBOARD_ONLY_PORTAL_TAB_IDS as readonly string[]).includes(tabId)
+}
 
 export const OPTIONAL_PORTAL_TAB_IDS = [OPERATIONS_TAB_ID, ...LEGACY_OPERATIONS_TAB_IDS] as const
 
@@ -172,6 +181,9 @@ export function isV2DeprecatedPortalTab(tabId: string): boolean {
 
 /** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
 export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
+  if (isDashboardOnlyPortalTab(tabId)) {
+    return portalConfig?.tabs?.[tabId] === true
+  }
   if (tabId === GROWTH_TAB_ID) {
     return isGrowthTabEnabled(portalConfig)
   }

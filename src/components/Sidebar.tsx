@@ -21,7 +21,13 @@ type SidebarProps = {
 const DEFAULT_TABS = [...V2_SIDEBAR_DEFAULT_TAB_IDS]
 
 /** Shown on the dashboard only — keep off the left nav (including portal-configured tabs). */
-const SIDEBAR_EXCLUDED_TAB_IDS = new Set(["insurance-options", "tech-support"])
+const SIDEBAR_EXCLUDED_TAB_IDS = new Set([
+  "insurance-options",
+  "tech-support",
+  "business-workflow",
+  "organization-chart",
+  "reporting",
+])
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const { t } = useLocale()
