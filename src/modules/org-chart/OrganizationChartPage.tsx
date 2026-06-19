@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
@@ -15,6 +15,7 @@ import {
 } from "../../lib/diagramWire"
 import { DiagramContextMenu, type DiagramMenuAction } from "../../components/diagram/DiagramContextMenu"
 import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
+import WireEndpointHandle from "../../components/diagram/WireEndpointHandle"
 import {
   buildOrgChartShareMailto,
   createExampleOrganizationChart,
@@ -278,21 +279,20 @@ export default function OrganizationChartPage({ setPage }: Props) {
     setSelectedId(nodeId)
   }
 
-  function startReconnectWire(edge: OrgChartEdge, end: "from" | "to", _e: ReactPointerEvent) {
+  function startReconnectWire(edge: OrgChartEdge, end: "from" | "to", grabX: number, grabY: number) {
     if (!canvasRef.current) return
     const from = nodeById.get(edge.fromId)
     const to = nodeById.get(edge.toId)
     if (!from || !to) return
     const anchor = end === "from" ? connectorIn(to, NODE_W) : connectorOut(from, NODE_W, NODE_H)
-    const g = orgChartEdgeGeometry(from, to, 0, 1)
     setWireDrag({
       kind: "reconnect",
       edgeId: edge.id,
       end,
       anchorX: anchor.x,
       anchorY: anchor.y,
-      x: end === "from" ? g.x1 : g.x2,
-      y: end === "from" ? g.y1 : g.y2,
+      x: grabX,
+      y: grabY,
     })
     setSelectedEdgeId(edge.id)
     setSelectedId(null)
@@ -578,36 +578,6 @@ export default function OrganizationChartPage({ setPage }: Props) {
                         </text>
                       </g>
                     ) : null}
-                    {selected ? (
-                      <>
-                        <circle
-                          cx={g.x1}
-                          cy={g.y1}
-                          r={7}
-                          fill="#fff"
-                          stroke="#64748b"
-                          strokeWidth={2}
-                          style={{ pointerEvents: "auto", cursor: "grab" }}
-                          onPointerDown={(e) => {
-                            e.stopPropagation()
-                            startReconnectWire(edge, "from", e)
-                          }}
-                        />
-                        <circle
-                          cx={g.x2}
-                          cy={g.y2}
-                          r={7}
-                          fill="#fff"
-                          stroke="#64748b"
-                          strokeWidth={2}
-                          style={{ pointerEvents: "auto", cursor: "grab" }}
-                          onPointerDown={(e) => {
-                            e.stopPropagation()
-                            startReconnectWire(edge, "to", e)
-                          }}
-                        />
-                      </>
-                    ) : null}
                   </g>
                 )
               })}
@@ -638,6 +608,42 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 onContextMenu={(e) => openContextMenu(e, "node", n.id)}
               />
             ))}
+
+            {edgesWithLanes.map(({ edge, laneIndex, laneCount }) => {
+              const from = nodeById.get(edge.fromId)
+              const to = nodeById.get(edge.toId)
+              if (!from || !to) return null
+              const g = orgChartEdgeGeometry(from, to, laneIndex, laneCount)
+              const selected = selectedEdgeId === edge.id
+              return (
+                <Fragment key={`org-handles-${edge.id}`}>
+                  <WireEndpointHandle
+                    x={g.x1}
+                    y={g.y1}
+                    stroke="#64748b"
+                    selected={selected}
+                    title="Drag to attach line start to another role"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      startReconnectWire(edge, "from", g.x1, g.y1)
+                      canvasRef.current?.setPointerCapture(e.pointerId)
+                    }}
+                  />
+                  <WireEndpointHandle
+                    x={g.x2}
+                    y={g.y2}
+                    stroke="#64748b"
+                    selected={selected}
+                    title="Drag to attach line end to another role"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      startReconnectWire(edge, "to", g.x2, g.y2)
+                      canvasRef.current?.setPointerCapture(e.pointerId)
+                    }}
+                  />
+                </Fragment>
+              )
+            })}
           </div>
         )}
 
