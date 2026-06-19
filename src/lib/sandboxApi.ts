@@ -78,26 +78,50 @@ export async function provisionSandboxAccount(params: {
   const anon = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
   if (!base || !anon) return { ok: false, error: "Sandbox service is not configured." }
 
-  const res = await fetch(`${base}/functions/v1/provision-sandbox`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${anon}`,
-      apikey: anon,
-    },
-    body: JSON.stringify({
-      email: params.email.trim(),
-      name: params.name.trim(),
-      business_name: params.businessName?.trim() || null,
-    }),
-  })
+  const ac = new AbortController()
+  const timer = window.setTimeout(() => ac.abort(), 45_000)
+  let res: Response
+  try {
+    res = await fetch(`${base}/functions/v1/provision-sandbox`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${anon}`,
+        apikey: anon,
+      },
+      body: JSON.stringify({
+        email: params.email.trim(),
+        name: params.name.trim(),
+        business_name: params.businessName?.trim() || null,
+      }),
+      signal: ac.signal,
+    })
+  } catch (e) {
+    window.clearTimeout(timer)
+    const aborted = e instanceof Error && e.name === "AbortError"
+    return {
+      ok: false,
+      error: aborted
+        ? "Sandbox creation timed out after 45 seconds. Try again — if it keeps failing, contact support."
+        : e instanceof Error
+          ? e.message
+          : "Network error while creating sandbox.",
+    }
+  }
+  window.clearTimeout(timer)
   let json: { error?: string; password?: string; emailed?: boolean } = {}
   try {
     json = (await res.json()) as typeof json
   } catch {
     /* ignore */
   }
-  if (!res.ok) return { ok: false, error: json.error ?? `Sandbox service error (${res.status})` }
+  if (!res.ok) {
+    const statusHint =
+      res.status === 404
+        ? " The training sandbox service is not deployed yet — contact support or try again in a few minutes."
+        : ""
+    return { ok: false, error: (json.error ?? `Sandbox service error (${res.status})`) + statusHint }
+  }
   return { ok: true, password: json.password, emailed: json.emailed }
 }
 

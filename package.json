@@ -23,7 +23,8 @@
     "legal:sync-ssr": "node scripts/sync-legal-pages-ssr.mjs",
     "test:report-parser": "npx tsx scripts/specialty-report-parser-scrape.ts",
     "supabase:login": "npx --yes supabase@2.92.1 login",
-    "supabase:deploy:resend-inbound": "npx --yes supabase@2.92.1 functions deploy resend-inbound --project-ref othemzceycphhuwojxge --use-api"
+    "supabase:deploy:resend-inbound": "npx --yes supabase@2.92.1 functions deploy resend-inbound --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:provision-sandbox": "npx --yes supabase@2.92.1 functions deploy provision-sandbox --project-ref othemzceycphhuwojxge --use-api"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

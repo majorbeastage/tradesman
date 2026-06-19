@@ -123,6 +123,12 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
             </label>
             {error ? <div style={{ color: "#b91c1c", fontSize: 13 }}>{error}</div> : null}
+            {submitting ? (
+              <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+                Creating your sandbox… usually <strong>5–15 seconds</strong>. We email your login and lead-capture link when
+                ready.
+              </div>
+            ) : null}
             <button
               type="submit"
               disabled={submitting}
