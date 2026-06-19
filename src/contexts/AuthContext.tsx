@@ -6,6 +6,16 @@ import { revokeOtherAuthSessions } from "../lib/authSingleSession"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 import { mergeSandboxPortalConfig } from "../lib/sandboxPortalConfig"
+import { parseSandboxMeta, SANDBOX_META_KEY } from "../lib/sandboxEnvironment"
+
+function shouldMergeSandboxPortalConfig(
+  meta: Record<string, unknown>,
+  portalCfgRaw: PortalConfig | null,
+): boolean {
+  if (meta.sandbox_account === true || portalCfgRaw?.sandbox_account === true) return true
+  if (typeof meta.sandbox_expires_at === "string" && meta.sandbox_expires_at.trim()) return true
+  return parseSandboxMeta(meta[SANDBOX_META_KEY]) != null
+}
 
 export type UserRole =
   | "user"
@@ -160,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               : {}
           const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
           const portalCfg =
-            meta.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+            shouldMergeSandboxPortalConfig(meta, portalCfgRaw)
               ? mergeSandboxPortalConfig(portalCfgRaw)
               : portalCfgRaw
           const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
@@ -173,7 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!error && data?.role) {
             const roleRaw = data.role as UserRole
             setRole(
-              (meta.sandbox_account === true || portalCfg?.sandbox_account === true) && roleRaw === "new_user"
+              shouldMergeSandboxPortalConfig(meta, portalCfg) && roleRaw === "new_user"
                 ? "corporate_management"
                 : roleRaw,
             )
@@ -188,7 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               : {}
           const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
           const portalCfg =
-            meta2.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+            shouldMergeSandboxPortalConfig(meta2, portalCfgRaw)
               ? mergeSandboxPortalConfig(portalCfgRaw)
               : portalCfgRaw
           setPortalConfig(portalCfg)
@@ -245,7 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : {}
     const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
     const portalCfg =
-      meta.sandbox_account === true || portalCfgRaw?.sandbox_account === true
+      shouldMergeSandboxPortalConfig(meta, portalCfgRaw)
         ? mergeSandboxPortalConfig(portalCfgRaw)
         : portalCfgRaw
     const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
@@ -262,7 +272,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const roleRaw = (data?.role as UserRole) ?? "user"
     const roleFromDb =
-      (meta.sandbox_account === true || portalCfg?.sandbox_account === true) && roleRaw === "new_user"
+      shouldMergeSandboxPortalConfig(meta, portalCfg) && roleRaw === "new_user"
         ? "corporate_management"
         : roleRaw
     setRole(roleFromDb)

@@ -333,7 +333,7 @@ function MainAppInner() {
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
     <SandboxTrainingProvider
-      profileUserId={effectiveUserId || null}
+      profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       portalConfig={portalConfig}
       authRole={authRole}

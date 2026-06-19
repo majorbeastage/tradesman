@@ -80,21 +80,18 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       const { error: err } = await signIn(email.trim(), password)
       if (err) setError(err.message)
       else {
-        const wasSandboxLogin = sandboxLoginHint
         clearSandboxLoginEmail()
         setSandboxLoginHint(false)
         setMessage(t("login.msg.signingIn"))
-        if (wasSandboxLogin) {
-          try {
-            await repairSandboxProfile()
-          } catch {
-            /* best effort */
-          }
-          const { role: freshRole } = await refetchProfile()
-          if (freshRole) {
-            didRedirect.current = true
-            onSuccess(freshRole)
-          }
+        try {
+          await repairSandboxProfile()
+        } catch {
+          /* best effort */
+        }
+        const { role: freshRole } = await refetchProfile()
+        if (freshRole) {
+          didRedirect.current = true
+          onSuccess(freshRole)
         }
       }
     } finally {

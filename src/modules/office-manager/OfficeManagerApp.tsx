@@ -20,7 +20,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import {
   useOfficeManagerScopeOptional,
 } from "../../contexts/OfficeManagerScopeContext"
-import { useEffectiveClientId } from "../../contexts/PortalViewContext"
+import { useEffectiveClientId, useEffectivePortalConfig } from "../../contexts/PortalViewContext"
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -387,7 +387,8 @@ function ManagedUserToolsStrip() {
 
 function OfficeManagerAppContent() {
   const { page, navigatePage: setPage } = useAppNavigation()
-  const { user, portalConfig, role: authRole } = useAuth()
+  const { user, role: authRole } = useAuth()
+  const portalConfig = useEffectivePortalConfig()
   const effectiveClientId = useEffectiveClientId()
   const isMobile = useIsMobile()
   const { t } = useLocale()
@@ -501,7 +502,7 @@ function OfficeManagerAppContent() {
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
     <SandboxTrainingProvider
-      profileUserId={scope?.selectedUserId ?? user?.id ?? null}
+      profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       portalConfig={portalConfig}
       authRole={authRole}

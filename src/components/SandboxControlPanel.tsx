@@ -20,6 +20,7 @@ import {
   type SandboxDemoTeamMember,
 } from "../lib/sandboxDemoTeam"
 import { labelForProfileRole } from "../lib/profileRoles"
+import { supabase } from "../lib/supabase"
 
 function useSandboxTrainingControls(
   profileUserId: string | null,
@@ -61,16 +62,30 @@ function useSandboxTrainingControls(
 
   useEffect(() => {
     if (!active || !profileUserId || profileUserId !== user?.id) return
-    if (seeded) return
     let cancelled = false
     void (async () => {
       setBusy(true)
       try {
-        const result = await seedSandboxWorkspace(false)
+        let customerCount = 0
+        if (supabase) {
+          const { count } = await supabase
+            .from("customers")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", profileUserId)
+          customerCount = count ?? 0
+        }
+        const needsSeed = !seeded || customerCount === 0
+        if (!needsSeed) return
+
+        const result = await seedSandboxWorkspace(customerCount === 0 && seeded)
         if (!cancelled) {
           setSeeded(true)
           setCustomerHint(result.customerCount ?? 12)
-          setNote("Loaded sample customers plus leads and calendar jobs.")
+          setNote(
+            result.customerCount
+              ? `Loaded ${result.customerCount} sample customers plus leads and calendar jobs.`
+              : "Loaded sample customers plus leads and calendar jobs.",
+          )
           if (result.profileRepaired) await refetchProfile()
         }
       } catch (e) {

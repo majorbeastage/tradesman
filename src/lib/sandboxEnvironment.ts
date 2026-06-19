@@ -38,8 +38,10 @@ export function isSandboxProfile(
 ): boolean {
   if (portalConfig?.sandbox_account === true) return true
   if (metadata?.sandbox_account === true) return true
+  if (typeof metadata?.sandbox_expires_at === "string" && metadata.sandbox_expires_at.trim()) return true
   if (role === "sandbox_user") return true
-  return parseSandboxMeta(metadata?.[SANDBOX_META_KEY]) != null && metadata?.sandbox_account !== false
+  if (parseSandboxMeta(metadata?.[SANDBOX_META_KEY]) != null) return true
+  return false
 }
 
 export function mergeSandboxMeta(

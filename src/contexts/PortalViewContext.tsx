@@ -196,6 +196,21 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   }, [authRole, viewRoleOptions])
 
   useEffect(() => {
+    if (!authUserId || authPortalConfig?.sandbox_account !== true) return
+    setTargetUserIdState((prev) => {
+      if (isSandboxDemoUserId(prev)) return prev
+      if (prev === authUserId) return prev
+      if (isPortalViewDefaultTarget(prev)) return authUserId
+      return prev
+    })
+    try {
+      sessionStorage.setItem(STORAGE_TARGET_USER, authUserId)
+    } catch {
+      /* ignore */
+    }
+  }, [authUserId, authPortalConfig?.sandbox_account])
+
+  useEffect(() => {
     if (!authUserId) {
       setManageableUsers([])
       return
@@ -354,6 +369,9 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const effectivePortalConfig = useMemo(() => {
     if (!showViewBar) return authPortalConfig
     if (targetUserId === authUserId && viewRole === authRole) return authPortalConfig
+    if (isPortalViewDefaultTarget(targetUserId) && viewRole === authRole && authPortalConfig) {
+      return authPortalConfig
+    }
     if (isPortalViewDefaultTarget(targetUserId)) return defaultPortalConfigForViewRole(viewRole)
     return scopedPortalConfig ?? authPortalConfig
   }, [showViewBar, targetUserId, authUserId, viewRole, authRole, scopedPortalConfig, authPortalConfig])

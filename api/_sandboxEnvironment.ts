@@ -11,6 +11,7 @@ export function isSandboxProfileRow(row: SandboxProfileRow | null | undefined): 
   if (row.role === "sandbox_user") return true
   if (row.portal_config?.sandbox_account === true) return true
   if (row.metadata?.sandbox_account === true) return true
+  if (typeof row.metadata?.sandbox_expires_at === "string" && row.metadata.sandbox_expires_at.trim()) return true
   const meta = row.metadata?.sandbox_workspace_v1
   if (meta && typeof meta === "object") return true
   return false
