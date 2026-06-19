@@ -1,204 +1,136 @@
-import { Fragment, type DragEvent, type ReactNode } from "react"
-import {
-  moveTileInRows,
-  type DashboardQuickLinkId,
-  type TileDropTarget,
-} from "../lib/dashboardQuickLinksPrefs"
+import { type DragEvent, type ReactNode } from "react"
+import { moveTileInOrder, type DashboardQuickLinkId } from "../lib/dashboardQuickLinksPrefs"
 
 type Props = {
-  rows: DashboardQuickLinkId[][]
+  order: DashboardQuickLinkId[]
   customize: boolean
   isMobile: boolean
   dragId: DashboardQuickLinkId | null
   onDragStart: (id: DashboardQuickLinkId) => void
   onDragEnd: () => void
-  onRowsChange: (rows: DashboardQuickLinkId[][]) => void
+  onOrderChange: (order: DashboardQuickLinkId[]) => void
   renderTile: (id: DashboardQuickLinkId) => ReactNode
   filterVisible: (id: DashboardQuickLinkId) => boolean
 }
 
-function DropZone({
-  target,
-  active,
-  horizontal,
-  onDrop,
-  label,
-}: {
-  target: TileDropTarget
-  active: boolean
-  horizontal?: boolean
-  onDrop: (target: TileDropTarget) => void
-  label?: string
-}) {
-  const hot = active
-  return (
-    <div
-      role="presentation"
-      onDragOver={(e: DragEvent) => {
-        e.preventDefault()
-        e.stopPropagation()
-        e.dataTransfer.dropEffect = "move"
-      }}
-      onDrop={(e: DragEvent) => {
-        e.preventDefault()
-        e.stopPropagation()
-        onDrop(target)
-      }}
-      style={
-        horizontal
-          ? {
-              alignSelf: "stretch",
-              width: hot ? 24 : 8,
-              minWidth: hot ? 24 : 8,
-              margin: "0 1px",
-              borderRadius: 8,
-              flexShrink: 0,
-              background: hot ? "rgba(14, 165, 233, 0.14)" : "transparent",
-              border: hot ? "2px dashed rgba(14, 165, 233, 0.75)" : "1px dashed transparent",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 11,
-              fontWeight: 800,
-              color: "#0369a1",
-              transition: "width 0.12s ease",
-            }
-          : {
-              width: "100%",
-              height: hot ? 26 : 8,
-              minHeight: hot ? 26 : 8,
-              margin: "2px 0",
-              borderRadius: 8,
-              background: hot ? "rgba(14, 165, 233, 0.12)" : "transparent",
-              border: hot ? "2px dashed rgba(14, 165, 233, 0.65)" : "1px dashed transparent",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#0369a1",
-              transition: "height 0.12s ease",
-            }
-      }
-    >
-      {hot && label ? label : null}
-    </div>
-  )
-}
-
 export default function DashboardQuickLinkGrid({
-  rows,
+  order,
   customize,
   isMobile,
   dragId,
   onDragStart,
   onDragEnd,
-  onRowsChange,
+  onOrderChange,
   renderTile,
   filterVisible,
 }: Props) {
+  const ids = customize ? order : order.filter(filterVisible)
   const gap = isMobile ? 8 : 10
-  const minTile = isMobile ? 110 : 128
-  const dragging = Boolean(dragId)
+  const minCol = isMobile ? 136 : 152
 
-  const applyDrop = (target: TileDropTarget) => {
+  const applyDrop = (beforeId: DashboardQuickLinkId | null) => {
     if (!dragId) return
-    onRowsChange(moveTileInRows(rows, dragId, target))
+    onOrderChange(moveTileInOrder(order, dragId, beforeId))
     onDragEnd()
   }
 
-  const renderRow = (rowIdx: number, ids: DashboardQuickLinkId[]) => {
-    if (!ids.length) return null
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "stretch",
-          gap: customize ? 0 : gap,
-          width: "100%",
-        }}
-      >
-        {customize ? (
-          <DropZone target={{ kind: "before", row: rowIdx, col: 0 }} active={dragging} horizontal onDrop={applyDrop} />
-        ) : null}
-        {ids.map((id, col) => (
-          <Fragment key={id}>
-            <div
-              draggable={customize}
-              onDragStart={
-                customize
-                  ? (e: DragEvent) => {
-                      e.dataTransfer.setData("text/plain", id)
-                      e.dataTransfer.effectAllowed = "move"
-                      onDragStart(id)
-                    }
-                  : undefined
-              }
-              onDragEnd={customize ? onDragEnd : undefined}
-              style={{
-                flex: "1 1 0",
-                minWidth: minTile,
-                maxWidth: "100%",
-                opacity: dragId === id ? 0.45 : 1,
-                cursor: customize ? "grab" : undefined,
-              }}
-            >
-              {renderTile(id)}
-            </div>
-            {customize ? (
-              <DropZone
-                target={{ kind: "before", row: rowIdx, col: col + 1 }}
-                active={dragging}
-                horizontal
-                onDrop={applyDrop}
-              />
-            ) : null}
-          </Fragment>
-        ))}
-        {customize ? (
-          <DropZone target={{ kind: "append", row: rowIdx }} active={dragging} horizontal onDrop={applyDrop} label="+" />
-        ) : null}
-      </div>
-    )
-  }
-
-  const visibleRows = rows
-    .map((row, rowIdx) => ({
-      rowIdx,
-      row,
-      ids: customize ? row : row.filter(filterVisible),
-    }))
-    .filter(({ ids }) => ids.length > 0)
-
-  if (!customize) {
-    return (
-      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap }}>
-        {visibleRows.map(({ rowIdx, ids }) => (
-          <div key={`r-${rowIdx}-${ids.join("-")}`}>{renderRow(rowIdx, ids)}</div>
-        ))}
-      </div>
-    )
-  }
+  const dragHandlers = (id: DashboardQuickLinkId) =>
+    customize
+      ? {
+          draggable: true as const,
+          onDragStart: (e: DragEvent) => {
+            e.dataTransfer.setData("text/plain", id)
+            e.dataTransfer.effectAllowed = "move"
+            onDragStart(id)
+          },
+          onDragEnd: () => onDragEnd(),
+          onDragOver: (e: DragEvent) => {
+            e.preventDefault()
+            e.stopPropagation()
+            e.dataTransfer.dropEffect = "move"
+          },
+          onDrop: (e: DragEvent) => {
+            e.preventDefault()
+            e.stopPropagation()
+            applyDrop(id)
+          },
+        }
+      : {}
 
   return (
-    <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }} onDragOver={(e) => e.preventDefault()}>
-      <DropZone target={{ kind: "newRow", afterRow: -1 }} active={dragging} onDrop={applyDrop} label="New row above" />
-      {visibleRows.length === 0 ? (
-        <DropZone target={{ kind: "newRow", afterRow: -1 }} active={dragging} onDrop={applyDrop} label="Drop tile here" />
-      ) : (
-        visibleRows.map(({ rowIdx, ids }, visIdx) => (
-          <div key={`cr-${rowIdx}-${ids.join("-")}`}>
-            {renderRow(rowIdx, ids)}
-            <DropZone
-              target={{ kind: "newRow", afterRow: rowIdx }}
-              active={dragging}
-              onDrop={applyDrop}
-              label={visIdx === visibleRows.length - 1 ? "New row below" : undefined}
-            />
+    <div
+      style={{
+        marginTop: 14,
+        display: "grid",
+        gridTemplateColumns: `repeat(auto-fill, minmax(${minCol}px, 1fr))`,
+        gap,
+      }}
+      onDragOver={
+        customize
+          ? (e: DragEvent) => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = "move"
+            }
+          : undefined
+      }
+      onDrop={
+        customize
+          ? (e: DragEvent) => {
+              if ((e.target as HTMLElement).closest("[data-dash-tile-slot]")) return
+              e.preventDefault()
+              applyDrop(null)
+            }
+          : undefined
+      }
+    >
+      {ids.map((id) => {
+        const isDragSource = dragId === id
+        const isDropTarget = Boolean(dragId && dragId !== id)
+        return (
+          <div
+            key={id}
+            data-dash-tile-slot
+            {...dragHandlers(id)}
+            style={{
+              opacity: isDragSource ? 0.45 : 1,
+              cursor: customize ? (isDragSource ? "grabbing" : "grab") : undefined,
+              borderRadius: 12,
+              outline: isDropTarget && dragId ? "2px dashed rgba(14, 165, 233, 0.55)" : undefined,
+              outlineOffset: isDropTarget ? 2 : undefined,
+              transition: "opacity 0.15s ease, outline 0.12s ease",
+            }}
+          >
+            {renderTile(id)}
           </div>
-        ))
-      )}
+        )
+      })}
+      {customize && dragId ? (
+        <div
+          role="presentation"
+          onDragOver={(e: DragEvent) => {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = "move"
+          }}
+          onDrop={(e: DragEvent) => {
+            e.preventDefault()
+            applyDrop(null)
+          }}
+          style={{
+            minHeight: isMobile ? 72 : 88,
+            borderRadius: 12,
+            border: "2px dashed rgba(14, 165, 233, 0.45)",
+            background: "rgba(14, 165, 233, 0.06)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 12,
+            fontWeight: 700,
+            color: "#0369a1",
+          }}
+        >
+          Drop here
+        </div>
+      ) : null}
     </div>
   )
 }

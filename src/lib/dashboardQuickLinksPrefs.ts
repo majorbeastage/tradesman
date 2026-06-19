@@ -288,6 +288,37 @@ export function appendTileToRows(rows: DashboardQuickLinkId[][], id: DashboardQu
   return cleaned.map((r, i) => (i === last ? [...r, id] : r))
 }
 
+/** Flat order helpers — dashboard UI uses a single draggable list. */
+export function moveTileInOrder(
+  order: DashboardQuickLinkId[],
+  dragId: DashboardQuickLinkId,
+  beforeId: DashboardQuickLinkId | null,
+): DashboardQuickLinkId[] {
+  const next = order.filter((id) => id !== dragId)
+  if (beforeId === null) return [...next, dragId]
+  const idx = next.indexOf(beforeId)
+  if (idx < 0) return [...next, dragId]
+  next.splice(idx, 0, dragId)
+  return next
+}
+
+export function removeTileFromOrder(order: DashboardQuickLinkId[], id: DashboardQuickLinkId): DashboardQuickLinkId[] {
+  return order.filter((x) => x !== id)
+}
+
+export function addTileToOrder(order: DashboardQuickLinkId[], id: DashboardQuickLinkId): DashboardQuickLinkId[] {
+  if (order.includes(id)) return order
+  return [...order, id]
+}
+
+export function orderFromTileRows(rows: DashboardQuickLinkId[][] | undefined): DashboardQuickLinkId[] {
+  return flattenTileRows(rows ?? [])
+}
+
+export function tileRowsFromOrder(order: DashboardQuickLinkId[]): DashboardQuickLinkId[][] {
+  return order.length ? [order] : []
+}
+
 export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStored | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
