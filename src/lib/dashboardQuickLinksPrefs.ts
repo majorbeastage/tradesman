@@ -176,15 +176,105 @@ export type DashboardQuickLinksStoredV1 = {
 
 export type DashboardGridColumns = 2 | 3 | 4 | 5 | "auto"
 
+export const DASHBOARD_GRID_COLS = 5
+export const DASHBOARD_GRID_ROWS = 5
+export const DASHBOARD_GRID_SLOT_COUNT = DASHBOARD_GRID_COLS * DASHBOARD_GRID_ROWS
+
+export type DashboardTileGridSlot = DashboardQuickLinkId | null
+
 export type DashboardQuickLinksStored = {
-  v: 2 | 3
+  v: 2 | 3 | 4
+  /** Fixed 5×5 layout — index 0–24 row-major; null = empty slot. */
+  tile_grid?: DashboardTileGridSlot[]
   tile_order?: DashboardQuickLinkId[]
-  /** Explicit rows — each inner array is left-to-right; row length controls auto-resize width. */
+  /** @deprecated use tile_grid */
   tile_rows?: DashboardQuickLinkId[][]
-  /** Desktop column count when using flat order layout (2–5 or auto-fill). */
+  /** @deprecated use tile_grid */
   grid_columns?: DashboardGridColumns
   tile_styles?: Partial<Record<string, DashboardTileStyle>>
   tile_scheme?: DashboardTileScheme
+}
+
+export function emptyDashboardTileGrid(): DashboardTileGridSlot[] {
+  return Array.from({ length: DASHBOARD_GRID_SLOT_COUNT }, () => null)
+}
+
+export function orderToTileGrid(order: DashboardQuickLinkId[]): DashboardTileGridSlot[] {
+  const grid = emptyDashboardTileGrid()
+  order.slice(0, DASHBOARD_GRID_SLOT_COUNT).forEach((id, i) => {
+    grid[i] = id
+  })
+  return grid
+}
+
+export function tileGridToOrder(grid: DashboardTileGridSlot[]): DashboardQuickLinkId[] {
+  return grid.filter((x): x is DashboardQuickLinkId => x != null)
+}
+
+export function normalizeDashboardTileGrid(
+  saved: DashboardTileGridSlot[] | undefined,
+  fallbackOrder: DashboardQuickLinkId[],
+  fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+): DashboardTileGridSlot[] {
+  const grid = emptyDashboardTileGrid()
+  const seen = new Set<DashboardQuickLinkId>()
+
+  if (Array.isArray(saved) && saved.length === DASHBOARD_GRID_SLOT_COUNT) {
+    for (let i = 0; i < DASHBOARD_GRID_SLOT_COUNT; i++) {
+      const ok = filterRowId(saved[i], seen, fourthCalendar)
+      if (ok) grid[i] = ok
+    }
+  }
+
+  for (const id of fallbackOrder) {
+    if (seen.has(id)) continue
+    const idx = grid.findIndex((x) => x === null)
+    if (idx < 0) break
+    grid[idx] = id
+    seen.add(id)
+  }
+  return grid
+}
+
+export function swapGridSlots(
+  grid: DashboardTileGridSlot[],
+  fromSlot: number,
+  toSlot: number,
+): DashboardTileGridSlot[] {
+  if (fromSlot === toSlot) return grid
+  if (fromSlot < 0 || toSlot < 0 || fromSlot >= DASHBOARD_GRID_SLOT_COUNT || toSlot >= DASHBOARD_GRID_SLOT_COUNT) {
+    return grid
+  }
+  const next = [...grid]
+  const tmp = next[fromSlot]
+  next[fromSlot] = next[toSlot]
+  next[toSlot] = tmp
+  return next
+}
+
+export function placeTileInGridSlot(
+  grid: DashboardTileGridSlot[],
+  tileId: DashboardQuickLinkId,
+  slotIndex: number,
+): DashboardTileGridSlot[] {
+  if (slotIndex < 0 || slotIndex >= DASHBOARD_GRID_SLOT_COUNT) return grid
+  const next = grid.map((x) => (x === tileId ? null : x))
+  next[slotIndex] = tileId
+  return next
+}
+
+export function removeTileIdFromGrid(grid: DashboardTileGridSlot[], id: DashboardQuickLinkId): DashboardTileGridSlot[] {
+  return grid.map((x) => (x === id ? null : x))
+}
+
+export function addTileToFirstEmptyGridSlot(
+  grid: DashboardTileGridSlot[],
+  id: DashboardQuickLinkId,
+): DashboardTileGridSlot[] {
+  if (grid.includes(id)) return grid
+  const idx = grid.findIndex((x) => x === null)
+  if (idx < 0) return grid
+  return placeTileInGridSlot(grid, id, idx)
 }
 
 export type TileDropTarget =
@@ -326,7 +416,18 @@ export function tileRowsFromOrder(order: DashboardQuickLinkId[]): DashboardQuick
 export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStored | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
-  if (o.v === 2 || o.v === 3) {
+  if (o.v === 2 || o.v === 3 || o.v === 4) {
+    const gridRaw = o.tile_grid
+    let tile_grid: DashboardTileGridSlot[] | undefined
+    if (Array.isArray(gridRaw) && gridRaw.length === DASHBOARD_GRID_SLOT_COUNT) {
+      tile_grid = gridRaw.map((x) =>
+        x === null || x === undefined
+          ? null
+          : typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId)
+            ? (x as DashboardQuickLinkId)
+            : null,
+      )
+    }
     const ord = o.tile_order
     const parsed = Array.isArray(ord)
       ? ord.filter((x): x is DashboardQuickLinkId => typeof x === "string" && ALL_DASHBOARD_LINK_IDS.has(x as DashboardQuickLinkId))
@@ -360,7 +461,8 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
       }
     }
     return {
-      v: o.v === 3 ? 3 : 2,
+      v: o.v === 4 ? 4 : o.v === 3 ? 3 : 2,
+      tile_grid,
       tile_order: parsed.length ? parsed : undefined,
       tile_rows,
       grid_columns,
@@ -434,31 +536,36 @@ export function migrateStoredTileOrder(
 ): {
   order: DashboardQuickLinkId[]
   rows: DashboardQuickLinkId[][]
+  grid: DashboardTileGridSlot[]
   styles: Partial<Record<string, DashboardTileStyle>>
   scheme: DashboardTileScheme
   gridColumns: DashboardGridColumns
 } {
+  const fallbackOrder = defaultDashboardTileOrder(fourthCalendar)
+  const defaultGrid = orderToTileGrid(fallbackOrder)
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    const order = defaultDashboardTileOrder(fourthCalendar)
     return {
-      order,
-      rows: orderToDefaultRows(order),
+      order: fallbackOrder,
+      rows: orderToDefaultRows(fallbackOrder),
+      grid: defaultGrid,
       styles: {},
       scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
-      gridColumns: "auto",
+      gridColumns: 5,
     }
   }
   const o = raw as Record<string, unknown>
-  if (o.v === 2 || o.v === 3) {
+  if (o.v === 2 || o.v === 3 || o.v === 4) {
     const parsed = parseDashboardQuickLinks(raw)
     const order = normalizeDashboardTileOrder(parsed?.tile_order ?? parsed?.tile_rows?.flat(), fourthCalendar)
     const rows = normalizeDashboardTileRows(parsed?.tile_rows, order, fourthCalendar)
+    const grid = normalizeDashboardTileGrid(parsed?.tile_grid ?? orderToTileGrid(flattenTileRows(rows)), order, fourthCalendar)
     return {
-      order: flattenTileRows(rows),
+      order: tileGridToOrder(grid),
       rows,
+      grid,
       styles: parsed?.tile_styles ?? {},
       scheme: parsed?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
-      gridColumns: parsed?.grid_columns ?? "auto",
+      gridColumns: 5,
     }
   }
   if (o.v === 1) {
@@ -471,24 +578,27 @@ export function migrateStoredTileOrder(
     return {
       order,
       rows: orderToDefaultRows(order),
+      grid: orderToTileGrid(order),
       styles: {},
       scheme,
-      gridColumns: "auto",
+      gridColumns: 5,
     }
   }
-  const order = defaultDashboardTileOrder(fourthCalendar)
   return {
-    order,
-    rows: orderToDefaultRows(order),
+    order: fallbackOrder,
+    rows: orderToDefaultRows(fallbackOrder),
+    grid: defaultGrid,
     styles: {},
     scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
-    gridColumns: "auto",
+    gridColumns: 5,
   }
 }
 
 export function mergeDashboardQuickLinksMetadata(
   prevMeta: Record<string, unknown>,
-  patch: Partial<Pick<DashboardQuickLinksStored, "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme" | "grid_columns">> & {
+  patch: Partial<
+    Pick<DashboardQuickLinksStored, "tile_grid" | "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme" | "grid_columns">
+  > & {
     optional_order?: DashboardOptionalQuickLinkId[]
   },
   fourthCalendar: DashboardCoreQuickLinkId = "team_management",
@@ -509,15 +619,14 @@ export function mergeDashboardQuickLinksMetadata(
             fourthCalendar,
           )
         : normalizeDashboardTileOrder(existing?.tile_order ?? migrated.order, fourthCalendar)
-  const rows =
-    patch.tile_rows !== undefined
-      ? normalizeDashboardTileRows(patch.tile_rows, fallbackOrder, fourthCalendar)
-      : normalizeDashboardTileRows(existing?.tile_rows, fallbackOrder, fourthCalendar)
+  const grid =
+    patch.tile_grid !== undefined
+      ? normalizeDashboardTileGrid(patch.tile_grid, fallbackOrder, fourthCalendar)
+      : normalizeDashboardTileGrid(existing?.tile_grid ?? migrated.grid, fallbackOrder, fourthCalendar)
   const next: DashboardQuickLinksStored = {
-    v: 3,
-    tile_rows: rows,
-    tile_order: flattenTileRows(rows),
-    grid_columns: patch.grid_columns ?? existing?.grid_columns ?? migrated.gridColumns,
+    v: 4,
+    tile_grid: grid,
+    tile_order: tileGridToOrder(grid),
     tile_styles: patch.tile_styles ?? existing?.tile_styles ?? migrated.styles,
     tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? legacyV1?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
   }

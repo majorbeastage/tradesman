@@ -20,6 +20,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
   const [emailed, setEmailed] = useState(false)
   const [sandboxPassword, setSandboxPassword] = useState("")
   const [embedSlug, setEmbedSlug] = useState("")
+  const [seededCustomers, setSeededCustomers] = useState<number | null>(null)
   const [loginBusy, setLoginBusy] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -47,6 +48,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
     setEmailed(result.emailed === true)
     setSandboxPassword(result.password ?? "")
     setEmbedSlug(result.embedSlug ?? "")
+    setSeededCustomers(result.customerCount ?? null)
     setDone(true)
   }
 
@@ -117,6 +119,9 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               {emailed
                 ? "We also emailed these details (check spam). Save the password below — you need it to sign in."
                 : "Save the login below. Email may not have sent; use these credentials on the next screen."}
+              {seededCustomers != null && seededCustomers > 0
+                ? ` Sample customers (${seededCustomers}) are already loaded — after sign-in, use the blue training banner at the top to add more or change how often new ones arrive.`
+                : " After sign-in, use the blue training banner at the top of the dashboard to load sample customers and control live incoming traffic."}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               <label style={labelStyle}>

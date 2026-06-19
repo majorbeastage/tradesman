@@ -27,11 +27,16 @@ async function sandboxFetch(action: SandboxApiAction, body: Record<string, unkno
   })
 }
 
-export async function seedSandboxWorkspace(force = false): Promise<void> {
+export async function seedSandboxWorkspace(force = false): Promise<{ profileRepaired?: boolean; customerCount?: number }> {
   const res = await sandboxFetch("seed", force ? { force: true } : {})
   const raw = await res.text()
   if (!res.ok) throw new Error(parseApiError(raw, res.status))
   dispatchSandboxTrafficEvent()
+  try {
+    return JSON.parse(raw) as { profileRepaired?: boolean; customerCount?: number }
+  } catch {
+    return {}
+  }
 }
 
 export async function injectSandboxLead(scenarioIndex?: number): Promise<{ scenario: string; channel: string }> {
@@ -79,6 +84,7 @@ export async function provisionSandboxAccount(params: {
   password?: string
   embedSlug?: string
   emailed?: boolean
+  customerCount?: number
 }> {
   const base = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, "")
   const anon = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
@@ -115,7 +121,13 @@ export async function provisionSandboxAccount(params: {
     }
   }
   window.clearTimeout(timer)
-  let json: { error?: string; password?: string; embedSlug?: string; emailed?: boolean } = {}
+  let json: {
+    error?: string
+    password?: string
+    embedSlug?: string
+    emailed?: boolean
+    customerCount?: number
+  } = {}
   try {
     json = (await res.json()) as typeof json
   } catch {
@@ -128,7 +140,7 @@ export async function provisionSandboxAccount(params: {
         : ""
     return { ok: false, error: (json.error ?? `Sandbox service error (${res.status})`) + statusHint }
   }
-  return { ok: true, password: json.password, embedSlug: json.embedSlug, emailed: json.emailed }
+  return { ok: true, password: json.password, embedSlug: json.embedSlug, emailed: json.emailed, customerCount: json.customerCount }
 }
 
 function parseApiError(raw: string, status: number): string {

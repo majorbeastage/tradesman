@@ -128,11 +128,28 @@ Deno.serve(async (req) => {
       settings: true,
       growth: true,
       reporting: true,
+      operations: true,
+      work_orders: true,
+      purchase_orders: true,
+      parts_inventory: true,
       "business-workflow": true,
       "organization-chart": true,
     },
     sandbox_account: true,
     demo_account: false,
+    corporate_package: true,
+    enable_growth_tab: true,
+    enable_operations_tab: true,
+    enable_work_orders_tab: true,
+    enable_purchase_orders_tab: true,
+    enable_parts_inventory_tab: true,
+    operations_modules: {
+      work_orders: true,
+      purchase_orders: true,
+      invoicing: true,
+      inventory: true,
+      team_management: true,
+    },
   }
 
   const profileMeta = {
@@ -144,7 +161,7 @@ Deno.serve(async (req) => {
       v: 1,
       companyName,
       liveTrafficEnabled: true,
-      liveTrafficIntervalMinutes: 3,
+      liveTrafficIntervalMinutes: 2,
       embedLeadSlug: embedSlug,
     },
     service_address_zip: "99901",
@@ -152,17 +169,63 @@ Deno.serve(async (req) => {
     service_address_state: "TX",
   }
 
-  await admin.from("profiles").upsert({
-    id: uid,
-    email,
-    display_name: displayName,
-    role: "office_manager",
-    portal_config,
-    metadata: profileMeta,
-    embed_lead_enabled: true,
-    embed_lead_slug: embedSlug,
-    updated_at: new Date().toISOString(),
-  })
+  const { error: profileErr } = await admin.from("profiles").upsert(
+    {
+      id: uid,
+      email,
+      display_name: displayName,
+      role: "corporate_management",
+      portal_config,
+      metadata: profileMeta,
+      embed_lead_enabled: true,
+      embed_lead_slug: embedSlug,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  )
+
+  if (profileErr) {
+    const { error: updateErr } = await admin
+      .from("profiles")
+      .update({
+        email,
+        display_name: displayName,
+        role: "corporate_management",
+        portal_config,
+        metadata: profileMeta,
+        embed_lead_enabled: true,
+        embed_lead_slug: embedSlug,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", uid)
+    if (updateErr) {
+      return new Response(JSON.stringify({ error: updateErr.message || profileErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+  }
+
+  let seedSummary: { customerCount?: number; leadCount?: number } = {}
+  const siteUrl = (Deno.env.get("VITE_SITE_URL") || Deno.env.get("SITE_URL") || "https://tradesman-us.vercel.app").replace(
+    /\/+$/,
+    "",
+  )
+  try {
+    const seedRes = await fetch(`${siteUrl}/api/sandbox-simulator`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "seed", userId: uid }),
+    })
+    if (seedRes.ok) {
+      const seedJson = (await seedRes.json()) as { customerCount?: number; leadCount?: number }
+      seedSummary = { customerCount: seedJson.customerCount, leadCount: seedJson.leadCount }
+    } else {
+      console.warn("[provision-sandbox] seed failed", await seedRes.text())
+    }
+  } catch (e) {
+    console.warn("[provision-sandbox] seed error", e)
+  }
 
   const resendKey = Deno.env.get("RESEND_API_KEY")?.trim()
   const resendFrom = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
@@ -177,12 +240,11 @@ Deno.serve(async (req) => {
       "Your Tradesman training sandbox is ready.",
       "",
       `1. Open: ${loginUrl}`,
-      "2. Sign in with Office Manager Login",
+      "2. Sign in with Corporate Manager Login",
       `   Email: ${email}`,
       `   Temporary password: ${password}`,
       "",
-      "This is a full training environment with fictional customers and simulated texts/emails.",
-      "New leads can appear automatically while you explore — watch them flow from Leads to Customers.",
+      "Sample customers, leads, and jobs are loaded automatically. New leads can appear every few minutes while you explore.",
       "",
       `Your public lead capture link (works in sandbox): ${ctaUrl}`,
       "",
@@ -219,6 +281,9 @@ Deno.serve(async (req) => {
       emailed,
       emailError: emailed ? undefined : emailError || "Email not sent",
       password,
+      seeded: seedSummary.customerCount != null,
+      customerCount: seedSummary.customerCount,
+      leadCount: seedSummary.leadCount,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   )

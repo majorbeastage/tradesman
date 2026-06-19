@@ -23,7 +23,7 @@ export function parseSandboxMeta(raw: unknown): SandboxWorkspaceMeta | null {
     v: 1,
     companyName: typeof o.companyName === "string" ? o.companyName : undefined,
     seededAt: typeof o.seededAt === "string" ? o.seededAt : undefined,
-    liveTrafficEnabled: o.liveTrafficEnabled === true,
+    liveTrafficEnabled: o.liveTrafficEnabled !== false,
     liveTrafficIntervalMinutes:
       typeof o.liveTrafficIntervalMinutes === "number" ? o.liveTrafficIntervalMinutes : undefined,
     lastTrafficAt: typeof o.lastTrafficAt === "string" ? o.lastTrafficAt : undefined,

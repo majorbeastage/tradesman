@@ -59,7 +59,7 @@ import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import HelpDeskChatPanel from "./components/HelpDeskChatPanel"
-import SandboxControlPanel from "./components/SandboxControlPanel"
+import SandboxControlPanel, { SandboxTrainingBanner, SandboxTrainingProvider } from "./components/SandboxControlPanel"
 import { isSandboxProfile } from "./lib/sandboxEnvironment"
 import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "./contexts/SetupWizardContext"
@@ -332,12 +332,13 @@ function MainAppInner() {
     />
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
-    <SandboxControlPanel
+    <SandboxTrainingProvider
       profileUserId={effectiveUserId || null}
       profileMetadata={profileMetadata}
       portalConfig={portalConfig}
       authRole={authRole}
-    />
+    >
+    <SandboxControlPanel />
     <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
       {authRole === "demo_user" || portalConfig?.demo_account === true ? (
         <div
@@ -357,21 +358,7 @@ function MainAppInner() {
       ) : null}
 
       {isSandboxProfile(portalConfig, profileMetadata, authRole) ? (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "10px 14px",
-            borderRadius: 8,
-            background: "#e0f2fe",
-            border: "1px solid #7dd3fc",
-            color: "#0c4a6e",
-            fontSize: 14,
-            lineHeight: 1.45,
-          }}
-        >
-          <strong>Training sandbox</strong> — Fictional customers and simulated comms. New leads can arrive while you
-          work; use the control panel (bottom right) or your CTA link to watch the full flow.
-        </div>
+        <SandboxTrainingBanner setPage={setPage} />
       ) : null}
 
       {connectionStatus !== "ok" && (
@@ -538,6 +525,7 @@ function MainAppInner() {
         </div>
       )}
     </AppLayout>
+    </SandboxTrainingProvider>
     </GlobalAssistantProvider>
     </SetupWizardProvider>
     </JobTypesModalProvider>

@@ -7,6 +7,8 @@ import {
   logCommunicationEvent,
   normalizePhone,
 } from "./_communications.js"
+import { isSandboxProfileRow } from "./_sandboxEnvironment.js"
+import { SANDBOX_PORTAL_CONFIG, SANDBOX_PROFILE_ROLE } from "./_sandboxPortalConfig.js"
 
 export const SANDBOX_ZIP = "99901"
 export const SANDBOX_CITY = "Tradesman Demo"
@@ -125,6 +127,50 @@ export type SeedSandboxResult = {
   eventCount: number
   embedSlug: string
   companyName: string
+  profileRepaired?: boolean
+}
+
+/** Fix role/portal_config when sandbox was created before corporate defaults or trigger left new_user. */
+export async function ensureSandboxProfile(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("role, metadata, portal_config")
+    .eq("id", userId)
+    .maybeSingle()
+  if (!isSandboxProfileRow(prof as Parameters<typeof isSandboxProfileRow>[0])) return false
+
+  const pc =
+    prof?.portal_config && typeof prof.portal_config === "object" && !Array.isArray(prof.portal_config)
+      ? { ...(prof.portal_config as Record<string, unknown>) }
+      : {}
+  const role = String(prof?.role ?? "")
+  const needsRoleFix = role === "new_user" || role === "user" || role === "office_manager"
+  const needsPortalFix =
+    pc.sandbox_account !== true ||
+    pc.corporate_package !== true ||
+    pc.enable_operations_tab !== true
+
+  if (!needsRoleFix && !needsPortalFix) return false
+
+  await supabase
+    .from("profiles")
+    .update({
+      role: SANDBOX_PROFILE_ROLE,
+      portal_config: { ...SANDBOX_PORTAL_CONFIG, ...pc, sandbox_account: true, demo_account: false },
+      metadata: {
+        ...(prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+          ? (prof.metadata as Record<string, unknown>)
+          : {}),
+        sandbox_account: true,
+        demo_account: false,
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId)
+  return true
 }
 
 /** Idempotent seed — skips if sandbox_workspace_v1.seededAt already set unless force=true. */
@@ -135,6 +181,8 @@ export async function seedSandboxWorkspace(
 ): Promise<SeedSandboxResult> {
   const companyName = opts?.companyName?.trim() || SANDBOX_COMPANY
   const embedSlug = slugForSandbox(userId)
+
+  const profileRepaired = await ensureSandboxProfile(supabase, userId)
 
   const { data: prof } = await supabase.from("profiles").select("metadata, display_name").eq("id", userId).maybeSingle()
   const prevMeta =
@@ -161,13 +209,16 @@ export async function seedSandboxWorkspace(
       .from("leads")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
-    return {
-      ok: true,
-      customerCount: custCount ?? 0,
-      leadCount: leadCount ?? 0,
-      eventCount: 0,
-      embedSlug: slug,
-      companyName,
+    if ((custCount ?? 0) > 0) {
+      return {
+        ok: true,
+        customerCount: custCount ?? 0,
+        leadCount: leadCount ?? 0,
+        eventCount: 0,
+        embedSlug: slug,
+        companyName,
+        profileRepaired,
+      }
     }
   }
 
@@ -295,6 +346,7 @@ export async function seedSandboxWorkspace(
     eventCount,
     embedSlug,
     companyName,
+    profileRepaired,
   }
 }
 
