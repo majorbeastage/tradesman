@@ -520,7 +520,14 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       })
     }
 
-    setLeads(rows)
+    setLeads((prev) => {
+      const byId = new Map(prev.map((l) => [l.id, l]))
+      return rows.map((r) => {
+        const prior = byId.get(r.id)
+        if (!prior?.customers?.display_name || r.customers?.display_name) return r
+        return { ...r, customers: { ...prior.customers, ...r.customers } }
+      })
+    })
   }
 
   function leadFitBadgeEl(fit: LeadFit) {
@@ -684,8 +691,11 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   }, [userId])
 
   useSandboxTrafficRefresh(useCallback(() => {
-    void loadLeads()
-  }, [userId]))
+    void (async () => {
+      await loadLeads()
+      if (selectedLeadId) await openLead(selectedLeadId)
+    })()
+  }, [userId, selectedLeadId]))
 
   useEffect(() => {
     if (!supabase || !userId) return
@@ -2203,6 +2213,9 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                 padding: "8px" as const,
                 color: isRowSelected ? selectedRowText : undefined,
                 fontWeight: isRowSelected ? (600 as const) : (400 as const),
+                verticalAlign: "top" as const,
+                overflow: "hidden" as const,
+                maxWidth: 0,
               }
               return (
                 <Fragment key={lead.id}>
@@ -2217,8 +2230,8 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                     <td style={cellBase}>{lead.customers?.display_name}</td>
                     <td style={cellBase}>{phone}</td>
                     <td style={cellBase}>{lead.title ?? "—"}</td>
-                    <td style={{ ...cellBase, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={lead.description ?? ""}>
-                      {(lead.description ?? "").trim() ? `${String(lead.description).slice(0, 80)}${String(lead.description).length > 80 ? "…" : ""}` : "—"}
+                    <td style={{ ...cellBase, whiteSpace: "nowrap", textOverflow: "ellipsis" }} title={lead.description ?? ""}>
+                      {(lead.description ?? "").trim() ? String(lead.description) : "—"}
                     </td>
                     <td style={cellBase}>{lead.status ?? "—"}</td>
                     <td style={{ ...cellBase, verticalAlign: "middle" }}>

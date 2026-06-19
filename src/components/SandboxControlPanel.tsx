@@ -319,7 +319,7 @@ function SandboxControlsBody({
       </label>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
-        <span style={{ fontWeight: 600, color: "#64748b" }}>Interval:</span>
+        <span style={{ fontWeight: 700, color: "#1e293b", fontSize: 13 }}>Interval:</span>
         {[1, 2, 3, 5, 8].map((m) => (
           <button
             key={m}
@@ -330,13 +330,15 @@ function SandboxControlsBody({
               void setSandboxLiveTraffic(liveTraffic, m)
             }}
             style={{
-              padding: "4px 8px",
-              borderRadius: 6,
-              border: intervalMin === m ? "2px solid #0ea5e9" : `1px solid ${theme.border}`,
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: intervalMin === m ? "2px solid #0284c7" : "1px solid #94a3b8",
+              background: intervalMin === m ? "#e0f2fe" : "#fff",
+              cursor: busy ? "not-allowed" : "pointer",
+              fontSize: 13,
+              fontWeight: 800,
+              color: intervalMin === m ? "#0c4a6e" : "#1e293b",
+              minWidth: 40,
             }}
           >
             {m}m

@@ -558,15 +558,17 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
     }
     if (await isSandboxUser(supabase, userId)) {
+      const sandboxBody = rawBody.trim()
+      if (!to || !sandboxBody) return res.status(400).json({ error: "to and body are required" })
       const sim = await simulateSandboxOutboundSms(supabase, {
         userId,
         customerId: customerIdForCompliance || null,
         conversationId: conversationId || null,
         leadId: leadIdSms || null,
         to,
-        body,
+        body: sandboxBody,
       })
-      return res.status(200).json({ ok: true, provider: "sandbox", simulated: true, to, ...sim })
+      return res.status(200).json({ ok: true, provider: "sandbox", simulated: true, to, body: sandboxBody, ...sim })
     }
     const resolved = await resolveFirstSmsComplianceForOutbound(supabase, userId, customerIdForCompliance || null)
     complianceVariant = resolved.variant
