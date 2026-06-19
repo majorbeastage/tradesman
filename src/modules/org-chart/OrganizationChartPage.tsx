@@ -10,12 +10,13 @@ import {
   canvasPointFromEvent,
   connectorIn,
   connectorOut,
-  hitTestDiagramNode,
+  resolveWireDropTarget,
   type WireDragState,
 } from "../../lib/diagramWire"
 import { DiagramContextMenu, type DiagramMenuAction } from "../../components/diagram/DiagramContextMenu"
 import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import WireEndpointHandle from "../../components/diagram/WireEndpointHandle"
+import DiagramWireDragBanner from "../../components/diagram/DiagramWireDragBanner"
 import {
   buildOrgChartShareMailto,
   createExampleOrganizationChart,
@@ -55,6 +56,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const [drag, setDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null)
   const [wireDrag, setWireDrag] = useState<WireDragState | null>(null)
   const [wireDropTargetId, setWireDropTargetId] = useState<string | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
   const clipboardRef = useRef<OrgChartNode | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -134,6 +136,27 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const nodeById = useMemo(() => new Map(doc.nodes.map((n) => [n.id, n])), [doc.nodes])
   const edgesWithLanes = useMemo(() => orgChartEdgesWithLanes(doc.edges), [doc.edges])
 
+  const activeWireEdge = useMemo(
+    () => (wireDrag?.kind === "reconnect" ? doc.edges.find((e) => e.id === wireDrag.edgeId) ?? null : null),
+    [wireDrag, doc.edges],
+  )
+
+  const isWireDropAllowed = useCallback(
+    (nodeId: string) => {
+      if (!wireDrag) return false
+      if (wireDrag.kind === "new") return nodeId !== wireDrag.fromId
+      if (!activeWireEdge) return true
+      if (wireDrag.end === "from") return nodeId !== activeWireEdge.toId
+      return nodeId !== activeWireEdge.fromId
+    },
+    [wireDrag, activeWireEdge],
+  )
+
+  const resolveDropAt = useCallback(
+    (x: number, y: number) => resolveWireDropTarget(doc.nodes, x, y, NODE_W, NODE_H, isWireDropAllowed),
+    [doc.nodes, isWireDropAllowed],
+  )
+
   const patchNode = useCallback(
     (id: string, patch: Partial<OrgChartNode>) => {
       updateDoc((prev) => ({
@@ -167,7 +190,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
       if (wireDrag && canvasRef.current) {
         const pt = canvasPointFromEvent(e, canvasRef.current)
         setWireDrag((prev) => (prev ? { ...prev, x: pt.x, y: pt.y } : prev))
-        setWireDropTargetId(hitTestDiagramNode(doc.nodes, pt.x, pt.y, NODE_W, NODE_H))
+        setWireDropTargetId(resolveDropAt(pt.x, pt.y))
         return
       }
       if (!drag || !canvasRef.current) return
@@ -176,7 +199,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
       const y = Math.max(8, e.clientY - rect.top - drag.offsetY)
       patchNode(drag.id, { x, y })
     },
-    [drag, wireDrag, doc.nodes, patchNode],
+    [drag, wireDrag, patchNode, resolveDropAt],
   )
 
   const completeWireDrag = useCallback(
@@ -230,7 +253,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
     (e?: ReactPointerEvent) => {
       if (wireDrag && canvasRef.current && e) {
         const pt = canvasPointFromEvent(e, canvasRef.current)
-        completeWireDrag(hitTestDiagramNode(doc.nodes, pt.x, pt.y, NODE_W, NODE_H))
+        completeWireDrag(resolveDropAt(pt.x, pt.y))
         return
       }
       if (wireDrag) {
@@ -239,7 +262,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
       }
       setDrag(null)
     },
-    [wireDrag, doc.nodes, completeWireDrag],
+    [wireDrag, completeWireDrag, resolveDropAt],
   )
 
   const selected = selectedId ? nodeById.get(selectedId) ?? null : null
@@ -522,6 +545,17 @@ export default function OrganizationChartPage({ setPage }: Props) {
               overflow: "auto",
             }}
           >
+            {wireDrag ? (
+              <DiagramWireDragBanner
+                message={
+                  wireDrag.kind === "new"
+                    ? "Drop on any role box to connect"
+                    : wireDrag.end === "from"
+                      ? "Drop on the role where this line should start"
+                      : "Drop on the role this line should point to"
+                }
+              />
+            ) : null}
             <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} aria-hidden={false}>
               {wireDrag ? (
                 <line
@@ -540,6 +574,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 if (!from || !to) return null
                 const g = orgChartEdgeGeometry(from, to, laneIndex, laneCount)
                 const selected = selectedEdgeId === edge.id
+                const hovered = hoveredEdgeId === edge.id
                 const label = edge.label?.trim()
                 const labelW = label ? Math.min(180, Math.max(60, label.length * 6 + 14)) : 0
                 return (
@@ -552,6 +587,8 @@ export default function OrganizationChartPage({ setPage }: Props) {
                       stroke="transparent"
                       strokeWidth={14}
                       style={{ pointerEvents: "auto", cursor: "pointer" }}
+                      onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                      onMouseLeave={() => setHoveredEdgeId((id) => (id === edge.id ? null : id))}
                       onClick={(e) => {
                         e.stopPropagation()
                         setSelectedEdgeId(edge.id)
@@ -566,7 +603,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
                       x2={g.x2}
                       y2={g.y2}
                       stroke="#64748b"
-                      strokeWidth={selected ? 3.5 : 2}
+                      strokeWidth={selected || hovered ? 3.5 : 2}
                       markerEnd="url(#org-arrow)"
                       style={{ pointerEvents: "none" }}
                     />
@@ -588,7 +625,9 @@ export default function OrganizationChartPage({ setPage }: Props) {
               </defs>
             </svg>
 
-            {doc.nodes.map((n) => (
+            {doc.nodes.map((n) => {
+              const eligible = Boolean(wireDrag && isWireDropAllowed(n.id))
+              return (
               <OrgNodeCard
                 key={n.id}
                 node={n}
@@ -596,7 +635,16 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 selected={selectedId === n.id}
                 linkSource={linkFromId === n.id}
                 linkMode={Boolean(linkFromId) || Boolean(wireDrag)}
+                wireDragActive={Boolean(wireDrag)}
+                wireEligible={eligible}
                 wireDropTarget={wireDropTargetId === n.id}
+                onWireTargetEnter={() => {
+                  if (wireDrag && isWireDropAllowed(n.id)) setWireDropTargetId(n.id)
+                }}
+                onWireTargetLeave={() => setWireDropTargetId((id) => (id === n.id ? null : id))}
+                onWireTargetDrop={() => {
+                  if (wireDrag && isWireDropAllowed(n.id)) completeWireDrag(n.id)
+                }}
                 members={members}
                 onSelect={() => handleNodeClick(n.id)}
                 onPatch={(patch) => patchNode(n.id, patch)}
@@ -607,37 +655,45 @@ export default function OrganizationChartPage({ setPage }: Props) {
                 onStartWire={(e) => startWireFromNode(n.id, e)}
                 onContextMenu={(e) => openContextMenu(e, "node", n.id)}
               />
-            ))}
+            )})}
 
-            {edgesWithLanes.map(({ edge, laneIndex, laneCount }) => {
+            {edgesWithLanes.map(({ edge }) => {
               const from = nodeById.get(edge.fromId)
               const to = nodeById.get(edge.toId)
               if (!from || !to) return null
-              const g = orgChartEdgeGeometry(from, to, laneIndex, laneCount)
               const selected = selectedEdgeId === edge.id
+              const hovered = hoveredEdgeId === edge.id
+              const reconnecting = wireDrag?.kind === "reconnect" && wireDrag.edgeId === edge.id
+              if (!(selected || hovered || reconnecting)) return null
+              const start = connectorOut(from, NODE_W, NODE_H)
+              const end = connectorIn(to, NODE_W)
               return (
                 <Fragment key={`org-handles-${edge.id}`}>
                   <WireEndpointHandle
-                    x={g.x1}
-                    y={g.y1}
+                    x={start.x}
+                    y={start.y}
                     stroke="#64748b"
-                    selected={selected}
-                    title="Drag to attach line start to another role"
+                    selected={selected || reconnecting}
+                    emphasized={hovered || reconnecting}
+                    label="Start"
+                    title="Drag to move where this line starts"
                     onPointerDown={(e) => {
                       e.stopPropagation()
-                      startReconnectWire(edge, "from", g.x1, g.y1)
+                      startReconnectWire(edge, "from", start.x, start.y)
                       canvasRef.current?.setPointerCapture(e.pointerId)
                     }}
                   />
                   <WireEndpointHandle
-                    x={g.x2}
-                    y={g.y2}
+                    x={end.x}
+                    y={end.y}
                     stroke="#64748b"
-                    selected={selected}
-                    title="Drag to attach line end to another role"
+                    selected={selected || reconnecting}
+                    emphasized={hovered || reconnecting}
+                    label="Points to"
+                    title="Drag to move where this line points"
                     onPointerDown={(e) => {
                       e.stopPropagation()
-                      startReconnectWire(edge, "to", g.x2, g.y2)
+                      startReconnectWire(edge, "to", end.x, end.y)
                       canvasRef.current?.setPointerCapture(e.pointerId)
                     }}
                   />
@@ -808,12 +864,17 @@ function OrgNodeCard({
   selected,
   linkSource,
   linkMode,
+  wireDragActive,
+  wireEligible,
   wireDropTarget,
   members,
   onSelect,
   onPatch,
   onDragStart,
   onStartWire,
+  onWireTargetEnter,
+  onWireTargetLeave,
+  onWireTargetDrop,
   onContextMenu,
 }: {
   node: OrgChartNode
@@ -821,12 +882,17 @@ function OrgNodeCard({
   selected: boolean
   linkSource: boolean
   linkMode: boolean
+  wireDragActive?: boolean
+  wireEligible?: boolean
   wireDropTarget?: boolean
   members: LinkableOrgUser[]
   onSelect: () => void
   onPatch: (patch: Partial<OrgChartNode>) => void
   onDragStart: (offsetX: number, offsetY: number) => void
   onStartWire: (e: ReactPointerEvent) => void
+  onWireTargetEnter?: () => void
+  onWireTargetLeave?: () => void
+  onWireTargetDrop?: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   return (
@@ -838,22 +904,39 @@ function OrgNodeCard({
         width: NODE_W,
         minHeight: NODE_H,
         borderRadius: 10,
-        border: linkSource
-          ? "2px solid #ca8a04"
-          : wireDropTarget
-            ? "2px solid #16a34a"
-            : selected
-              ? `2px solid ${theme.primary}`
-              : `1px solid ${theme.border}`,
-        background: linkSource ? "#fefce8" : wireDropTarget ? "#f0fdf4" : "#fff",
-        boxShadow: selected || linkSource || wireDropTarget ? "0 4px 14px rgba(249,115,22,0.18)" : "0 2px 8px rgba(15,23,42,0.06)",
+        border: wireDropTarget
+          ? "3px solid #16a34a"
+          : linkSource
+            ? "2px solid #ca8a04"
+            : wireEligible
+              ? "2px dashed #86efac"
+              : selected
+                ? `2px solid ${theme.primary}`
+                : `1px solid ${theme.border}`,
+        background: wireDropTarget ? "#ecfdf5" : linkSource ? "#fefce8" : wireEligible ? "#f0fdf4" : "#fff",
+        boxShadow: wireDropTarget || selected || linkSource ? "0 6px 20px rgba(22,163,74,0.22)" : "0 2px 8px rgba(15,23,42,0.06)",
         padding: "8px 10px",
-        cursor: linkMode ? "crosshair" : "grab",
+        cursor: wireDragActive ? "copy" : linkMode ? "crosshair" : "grab",
         touchAction: "none",
-        zIndex: selected || linkSource || wireDropTarget ? 2 : 1,
+        zIndex: wireDropTarget || selected || linkSource ? 3 : wireEligible ? 2 : 1,
+        transform: wireDropTarget ? "scale(1.02)" : undefined,
+        transition: "transform 0.12s ease, border-color 0.12s ease",
+      }}
+      onPointerEnter={() => {
+        if (wireDragActive) onWireTargetEnter?.()
+      }}
+      onPointerLeave={() => {
+        if (wireDragActive) onWireTargetLeave?.()
+      }}
+      onPointerUp={(e) => {
+        if (wireDragActive && wireDropTarget) {
+          e.stopPropagation()
+          onWireTargetDrop?.()
+        }
       }}
       onPointerDown={(e) => {
         if ((e.target as HTMLElement).dataset.wirePort === "out") return
+        if (wireDragActive) return
         onSelect()
         if (linkMode) return
         const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
@@ -862,6 +945,11 @@ function OrgNodeCard({
       }}
       onContextMenu={onContextMenu}
     >
+      {wireDropTarget ? (
+        <div style={{ position: "absolute", top: -26, left: "50%", transform: "translateX(-50%)", fontSize: 11, fontWeight: 800, color: "#166534", background: "#dcfce7", border: "1px solid #86efac", borderRadius: 999, padding: "3px 10px", pointerEvents: "none" }}>
+          Release to connect
+        </div>
+      ) : null}
       <input
         value={node.label}
         onChange={(e) => onPatch({ label: e.target.value })}
@@ -898,7 +986,10 @@ function OrgNodeCard({
         ))}
       </select>
       {linkedLabel ? <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 4 }}>{linkedLabel}</div> : null}
-      {linkSource ? <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 4 }}>Line starts here</div> : null}
+      {linkSource ? <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 4 }}>Now click the role this line goes to</div> : null}
+      {wireDragActive ? (
+        <div aria-hidden data-wire-port="in" style={{ position: "absolute", left: "50%", top: -10, transform: "translateX(-50%)", width: 20, height: 20, borderRadius: "50%", border: "2px dashed #16a34a", background: "#ecfdf5", pointerEvents: "none" }} />
+      ) : null}
       <button
         type="button"
         data-wire-port="out"
@@ -911,18 +1002,28 @@ function OrgNodeCard({
         style={{
           position: "absolute",
           left: "50%",
-          bottom: -7,
+          bottom: -12,
           transform: "translateX(-50%)",
-          width: 14,
-          height: 14,
+          width: 24,
+          height: 24,
           borderRadius: "50%",
-          border: `2px solid ${theme.primary}`,
-          background: "#fff",
-          cursor: "crosshair",
+          border: "3px solid #16a34a",
+          background: "linear-gradient(180deg, #ecfdf5 0%, #bbf7d0 100%)",
+          cursor: "grab",
           padding: 0,
-          zIndex: 3,
+          zIndex: 4,
+          boxShadow: "0 2px 10px rgba(22,163,74,0.35)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 14,
+          fontWeight: 900,
+          color: "#166534",
+          lineHeight: 1,
         }}
-      />
+      >
+        ↓
+      </button>
     </div>
   )
 }

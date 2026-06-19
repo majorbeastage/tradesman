@@ -18,14 +18,56 @@ export function hitTestDiagramNode(
   canvasY: number,
   nodeW: number,
   nodeH: number,
+  padding = 18,
 ): string | null {
   for (let i = nodes.length - 1; i >= 0; i -= 1) {
     const n = nodes[i]
-    if (canvasX >= n.x && canvasX <= n.x + nodeW && canvasY >= n.y && canvasY <= n.y + nodeH) {
+    if (
+      canvasX >= n.x - padding &&
+      canvasX <= n.x + nodeW + padding &&
+      canvasY >= n.y - padding &&
+      canvasY <= n.y + nodeH + padding
+    ) {
       return n.id
     }
   }
   return null
+}
+
+/** Snap to the nearest box when the pointer is close — forgiving for human hands. */
+export function nearestDiagramNode(
+  nodes: Array<{ id: string; x: number; y: number }>,
+  canvasX: number,
+  canvasY: number,
+  nodeW: number,
+  nodeH: number,
+  maxDistance = 72,
+): string | null {
+  let best: { id: string; dist: number } | null = null
+  for (const n of nodes) {
+    const closestX = Math.max(n.x, Math.min(canvasX, n.x + nodeW))
+    const closestY = Math.max(n.y, Math.min(canvasY, n.y + nodeH))
+    const dist = Math.hypot(canvasX - closestX, canvasY - closestY)
+    if (dist <= maxDistance && (!best || dist < best.dist)) {
+      best = { id: n.id, dist }
+    }
+  }
+  return best?.id ?? null
+}
+
+export function resolveWireDropTarget(
+  nodes: Array<{ id: string; x: number; y: number }>,
+  canvasX: number,
+  canvasY: number,
+  nodeW: number,
+  nodeH: number,
+  isAllowed?: (nodeId: string) => boolean,
+): string | null {
+  const direct = hitTestDiagramNode(nodes, canvasX, canvasY, nodeW, nodeH, 24)
+  const candidate = direct ?? nearestDiagramNode(nodes, canvasX, canvasY, nodeW, nodeH, 80)
+  if (!candidate) return null
+  if (isAllowed && !isAllowed(candidate)) return null
+  return candidate
 }
 
 export function canvasPointFromEvent(
