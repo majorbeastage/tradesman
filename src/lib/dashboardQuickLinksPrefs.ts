@@ -174,11 +174,15 @@ export type DashboardQuickLinksStoredV1 = {
   tile_scheme?: DashboardTileScheme
 }
 
+export type DashboardGridColumns = 2 | 3 | 4 | 5 | "auto"
+
 export type DashboardQuickLinksStored = {
   v: 2 | 3
   tile_order?: DashboardQuickLinkId[]
   /** Explicit rows — each inner array is left-to-right; row length controls auto-resize width. */
   tile_rows?: DashboardQuickLinkId[][]
+  /** Desktop column count when using flat order layout (2–5 or auto-fill). */
+  grid_columns?: DashboardGridColumns
   tile_styles?: Partial<Record<string, DashboardTileStyle>>
   tile_scheme?: DashboardTileScheme
 }
@@ -343,6 +347,9 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
     const ts = o.tile_scheme
     const tile_scheme =
       ts === "ember" || ts === "ocean" || ts === "slate" || ts === "paper" ? (ts as DashboardTileScheme) : undefined
+    const gc = o.grid_columns
+    const grid_columns: DashboardGridColumns | undefined =
+      gc === 2 || gc === 3 || gc === 4 || gc === 5 || gc === "auto" ? gc : undefined
     const stylesRaw = o.tile_styles
     const tile_styles: Partial<Record<string, DashboardTileStyle>> = {}
     if (stylesRaw && typeof stylesRaw === "object" && !Array.isArray(stylesRaw)) {
@@ -356,6 +363,7 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
       v: o.v === 3 ? 3 : 2,
       tile_order: parsed.length ? parsed : undefined,
       tile_rows,
+      grid_columns,
       tile_scheme,
       tile_styles,
     }
@@ -428,6 +436,7 @@ export function migrateStoredTileOrder(
   rows: DashboardQuickLinkId[][]
   styles: Partial<Record<string, DashboardTileStyle>>
   scheme: DashboardTileScheme
+  gridColumns: DashboardGridColumns
 } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     const order = defaultDashboardTileOrder(fourthCalendar)
@@ -436,6 +445,7 @@ export function migrateStoredTileOrder(
       rows: orderToDefaultRows(order),
       styles: {},
       scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
+      gridColumns: "auto",
     }
   }
   const o = raw as Record<string, unknown>
@@ -448,6 +458,7 @@ export function migrateStoredTileOrder(
       rows,
       styles: parsed?.tile_styles ?? {},
       scheme: parsed?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
+      gridColumns: parsed?.grid_columns ?? "auto",
     }
   }
   if (o.v === 1) {
@@ -462,6 +473,7 @@ export function migrateStoredTileOrder(
       rows: orderToDefaultRows(order),
       styles: {},
       scheme,
+      gridColumns: "auto",
     }
   }
   const order = defaultDashboardTileOrder(fourthCalendar)
@@ -470,12 +482,13 @@ export function migrateStoredTileOrder(
     rows: orderToDefaultRows(order),
     styles: {},
     scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
+    gridColumns: "auto",
   }
 }
 
 export function mergeDashboardQuickLinksMetadata(
   prevMeta: Record<string, unknown>,
-  patch: Partial<Pick<DashboardQuickLinksStored, "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme">> & {
+  patch: Partial<Pick<DashboardQuickLinksStored, "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme" | "grid_columns">> & {
     optional_order?: DashboardOptionalQuickLinkId[]
   },
   fourthCalendar: DashboardCoreQuickLinkId = "team_management",
@@ -504,6 +517,7 @@ export function mergeDashboardQuickLinksMetadata(
     v: 3,
     tile_rows: rows,
     tile_order: flattenTileRows(rows),
+    grid_columns: patch.grid_columns ?? existing?.grid_columns ?? migrated.gridColumns,
     tile_styles: patch.tile_styles ?? existing?.tile_styles ?? migrated.styles,
     tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? legacyV1?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
   }

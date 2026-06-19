@@ -1,8 +1,9 @@
 import { type DragEvent, type ReactNode } from "react"
-import { moveTileInOrder, type DashboardQuickLinkId } from "../lib/dashboardQuickLinksPrefs"
+import { moveTileInOrder, type DashboardGridColumns, type DashboardQuickLinkId } from "../lib/dashboardQuickLinksPrefs"
 
 type Props = {
   order: DashboardQuickLinkId[]
+  gridColumns?: DashboardGridColumns
   customize: boolean
   isMobile: boolean
   dragId: DashboardQuickLinkId | null
@@ -15,6 +16,7 @@ type Props = {
 
 export default function DashboardQuickLinkGrid({
   order,
+  gridColumns = "auto",
   customize,
   isMobile,
   dragId,
@@ -27,6 +29,10 @@ export default function DashboardQuickLinkGrid({
   const ids = customize ? order : order.filter(filterVisible)
   const gap = isMobile ? 8 : 10
   const minCol = isMobile ? 136 : 152
+  const gridTemplateColumns =
+    gridColumns === "auto"
+      ? `repeat(auto-fill, minmax(${minCol}px, 1fr))`
+      : `repeat(${gridColumns}, minmax(0, 1fr))`
 
   const applyDrop = (beforeId: DashboardQuickLinkId | null) => {
     if (!dragId) return
@@ -62,7 +68,7 @@ export default function DashboardQuickLinkGrid({
       style={{
         marginTop: 14,
         display: "grid",
-        gridTemplateColumns: `repeat(auto-fill, minmax(${minCol}px, 1fr))`,
+        gridTemplateColumns: isMobile && gridColumns !== "auto" ? `repeat(2, minmax(0, 1fr))` : gridTemplateColumns,
         gap,
       }}
       onDragOver={

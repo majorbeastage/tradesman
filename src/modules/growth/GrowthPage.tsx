@@ -284,6 +284,33 @@ export default function GrowthPage({ setPage }: Props) {
             />
             I have connected or claimed my Google Business Profile (manual for now)
           </label>
+          <label style={{ ...labelStyle, marginTop: 12 }}>
+            Business name (as shown on Google)
+            <input
+              value={doc.gbpBusinessName ?? ""}
+              onChange={(e) => updateDoc({ gbpBusinessName: e.target.value })}
+              placeholder="Demo Plumbing Co."
+              style={inputStyle}
+            />
+          </label>
+          <label style={{ ...labelStyle, marginTop: 10 }}>
+            Google Business Profile URL
+            <input
+              value={doc.gbpProfileUrl ?? ""}
+              onChange={(e) => updateDoc({ gbpProfileUrl: e.target.value })}
+              placeholder="https://maps.google.com/..."
+              style={inputStyle}
+            />
+          </label>
+          <label style={{ ...labelStyle, marginTop: 10 }}>
+            Primary service location
+            <input
+              value={doc.gbpLocation ?? ""}
+              onChange={(e) => updateDoc({ gbpLocation: e.target.value })}
+              placeholder="City, ST or service area"
+              style={inputStyle}
+            />
+          </label>
           <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
             <div style={{ fontWeight: 800, marginBottom: 8 }}>Example recommendations (when synced)</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.55, color: "#166534" }}>
@@ -310,6 +337,16 @@ export default function GrowthPage({ setPage }: Props) {
               style={inputStyle}
             />
           </label>
+          <label style={{ ...labelStyle, marginTop: 10 }}>
+            Notes from your last audit (manual)
+            <textarea
+              value={doc.websiteAuditNotes ?? ""}
+              onChange={(e) => updateDoc({ websiteAuditNotes: e.target.value })}
+              placeholder="SSL OK, mobile needs work, missing meta description on services page…"
+              rows={4}
+              style={{ ...inputStyle, resize: "vertical" }}
+            />
+          </label>
           <button type="button" style={{ ...secondaryBtn, marginTop: 10 }} disabled title="Automated audit coming soon">
             Run health check (coming soon)
           </button>
@@ -333,10 +370,9 @@ export default function GrowthPage({ setPage }: Props) {
         <div style={panelStyle}>
           <h2 style={h2}>Campaign builder</h2>
           <p style={p}>
-            Tradesman is not an ad agency — start from templates, set budget, radius, landing page, and duration. Ad provider
-            integrations when available.
+            Start from a template, set budget, radius, landing slug, and duration. Saved campaigns appear below for editing.
           </p>
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
             {GROWTH_CAMPAIGN_TEMPLATES.map((t) => (
               <div
                 key={t.id}
@@ -355,12 +391,153 @@ export default function GrowthPage({ setPage }: Props) {
                   <div style={{ fontWeight: 800 }}>{t.name}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>{t.targetService}</div>
                 </div>
-                <button type="button" style={secondaryBtn} disabled title="Campaign editor coming soon">
-                  Configure
+                <button
+                  type="button"
+                  style={secondaryBtn}
+                  onClick={() =>
+                    updateDoc((prev) => ({
+                      ...prev,
+                      campaigns: [
+                        ...(prev.campaigns ?? []),
+                        {
+                          id: `${t.id}-${Date.now()}`,
+                          name: t.name,
+                          targetService: t.targetService,
+                          budget: 500,
+                          radiusMiles: 15,
+                          durationDays: 30,
+                          landingSlug: ctaSlug,
+                          status: "draft",
+                        },
+                      ],
+                    }))
+                  }
+                >
+                  Add from template
                 </button>
               </div>
             ))}
           </div>
+          {(doc.campaigns ?? []).length === 0 ? (
+            <p style={{ fontSize: 13, color: "#64748b" }}>No campaigns yet — add one from a template above.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {(doc.campaigns ?? []).map((c) => (
+                <div key={c.id} style={{ padding: 14, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                    <input
+                      value={c.name}
+                      onChange={(e) =>
+                        updateDoc((prev) => ({
+                          ...prev,
+                          campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)),
+                        }))
+                      }
+                      style={{ ...inputStyle, fontWeight: 800, flex: "1 1 200px" }}
+                    />
+                    <select
+                      value={c.status}
+                      onChange={(e) =>
+                        updateDoc((prev) => ({
+                          ...prev,
+                          campaigns: (prev.campaigns ?? []).map((x) =>
+                            x.id === c.id ? { ...x, status: e.target.value as typeof c.status } : x,
+                          ),
+                        }))
+                      }
+                      style={{ ...inputStyle, width: 120 }}
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="active">Active</option>
+                      <option value="paused">Paused</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+                    <label style={labelStyle}>
+                      Budget ($)
+                      <input
+                        type="number"
+                        min={0}
+                        value={c.budget ?? ""}
+                        onChange={(e) =>
+                          updateDoc((prev) => ({
+                            ...prev,
+                            campaigns: (prev.campaigns ?? []).map((x) =>
+                              x.id === c.id ? { ...x, budget: Number(e.target.value) || 0 } : x,
+                            ),
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Radius (mi)
+                      <input
+                        type="number"
+                        min={1}
+                        value={c.radiusMiles ?? ""}
+                        onChange={(e) =>
+                          updateDoc((prev) => ({
+                            ...prev,
+                            campaigns: (prev.campaigns ?? []).map((x) =>
+                              x.id === c.id ? { ...x, radiusMiles: Number(e.target.value) || 0 } : x,
+                            ),
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Duration (days)
+                      <input
+                        type="number"
+                        min={1}
+                        value={c.durationDays ?? ""}
+                        onChange={(e) =>
+                          updateDoc((prev) => ({
+                            ...prev,
+                            campaigns: (prev.campaigns ?? []).map((x) =>
+                              x.id === c.id ? { ...x, durationDays: Number(e.target.value) || 0 } : x,
+                            ),
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Landing slug
+                      <input
+                        value={c.landingSlug ?? ""}
+                        onChange={(e) =>
+                          updateDoc((prev) => ({
+                            ...prev,
+                            campaigns: (prev.campaigns ?? []).map((x) =>
+                              x.id === c.id ? { ...x, landingSlug: e.target.value } : x,
+                            ),
+                          }))
+                        }
+                        placeholder={ctaSlug}
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    style={{ ...secondaryBtn, marginTop: 10, color: "#b91c1c", borderColor: "#fecaca" }}
+                    onClick={() =>
+                      updateDoc((prev) => ({
+                        ...prev,
+                        campaigns: (prev.campaigns ?? []).filter((x) => x.id !== c.id),
+                      }))
+                    }
+                  >
+                    Remove campaign
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
 

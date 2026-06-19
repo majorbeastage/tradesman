@@ -20,6 +20,9 @@ verify_jwt = false
 [functions.provision-demo]
 verify_jwt = false
 
+[functions.provision-sandbox]
+verify_jwt = false
+
 [functions.activate-demo]
 verify_jwt = false
 

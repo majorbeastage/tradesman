@@ -12,12 +12,13 @@ type HomePageProps = {
   onSignup: () => void
   onAboutUs: () => void
   onRequestDemo: () => void
+  onTraining: () => void
   onPricing: () => void
 }
 
 const FEATURE_IDS = ["clean", "automation", "leads", "comms", "quotes", "history", "custom"] as const
 
-export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onPricing }: HomePageProps) {
+export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onTraining, onPricing }: HomePageProps) {
   const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -312,6 +313,24 @@ export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, o
                 }}
               >
                 {t("home.requestDemo")}
+              </button>
+              <button
+                type="button"
+                onClick={onTraining}
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  padding: "10px 12px",
+                  background: "#0ea5e9",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 10,
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Training sandbox (full CRM)
               </button>
               <button
                 type="button"

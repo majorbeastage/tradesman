@@ -396,6 +396,8 @@ export type PortalConfig = {
   corporate_package?: boolean
   /** 24-hour demo / preview account (office manager portal). */
   demo_account?: boolean
+  /** Training sandbox — full CRM with simulated comms and live lead injection. */
+  sandbox_account?: boolean
   /** Onboarding option: rename Estimates sidebar (e.g. "Proposal Tool"). */
   quotes_tab_display_name?: string
   /** Growth module sidebar tab (Lead acquisition, GBP, attribution, etc.). */

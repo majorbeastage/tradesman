@@ -55,7 +55,11 @@ export type GrowthModuleDoc = {
   v: 1
   scores?: GrowthScores
   websiteUrl?: string
+  websiteAuditNotes?: string
   gbpConnected?: boolean
+  gbpProfileUrl?: string
+  gbpBusinessName?: string
+  gbpLocation?: string
   campaigns?: GrowthCampaignDraft[]
   advisorNotes?: string[]
   checklist?: Record<string, boolean>
@@ -83,7 +87,11 @@ export function loadGrowthModuleFromMetadata(raw: unknown): GrowthModuleDoc {
     v: 1,
     scores: typeof o.scores === "object" && o.scores ? (o.scores as GrowthScores) : placeholderGrowthScores(),
     websiteUrl: typeof o.websiteUrl === "string" ? o.websiteUrl : undefined,
+    websiteAuditNotes: typeof o.websiteAuditNotes === "string" ? o.websiteAuditNotes : undefined,
     gbpConnected: o.gbpConnected === true,
+    gbpProfileUrl: typeof o.gbpProfileUrl === "string" ? o.gbpProfileUrl : undefined,
+    gbpBusinessName: typeof o.gbpBusinessName === "string" ? o.gbpBusinessName : undefined,
+    gbpLocation: typeof o.gbpLocation === "string" ? o.gbpLocation : undefined,
     campaigns: Array.isArray(o.campaigns) ? (o.campaigns as GrowthCampaignDraft[]) : [],
     advisorNotes: Array.isArray(o.advisorNotes)
       ? o.advisorNotes.filter((x): x is string => typeof x === "string")

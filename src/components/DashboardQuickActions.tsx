@@ -29,6 +29,7 @@ import {
   thumbnailGlyph,
   tileRowsFromOrder,
   type DashboardCoreQuickLinkId,
+  type DashboardGridColumns,
   type DashboardQuickLinkId,
   type DashboardTileScheme,
   type DashboardTileStyle,
@@ -565,6 +566,7 @@ export default function DashboardQuickActions(props: Props) {
     return fallback
   })
   const [tileStyles, setTileStyles] = useState<Partial<Record<string, DashboardTileStyle>>>({})
+  const [gridColumns, setGridColumns] = useState<DashboardGridColumns>("auto")
   const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
   const [dragId, setDragId] = useState<DashboardQuickLinkId | null>(null)
@@ -612,6 +614,7 @@ export default function DashboardQuickActions(props: Props) {
         if (migrated.rows.length) {
           setTileOrder(flattenTileRows(migrated.rows))
           setTileStyles(migrated.styles)
+          setGridColumns(migrated.gridColumns)
           setPersistNote("cloud")
         } else {
           const loc =
@@ -646,7 +649,7 @@ export default function DashboardQuickActions(props: Props) {
             : {}
         const nextMeta = mergeDashboardQuickLinksMetadata(
           prevMeta,
-          { tile_rows: tileRowsFromOrder(tileOrder), tile_order: tileOrder, tile_styles: tileStyles, tile_scheme: "paper" },
+          { tile_rows: tileRowsFromOrder(tileOrder), tile_order: tileOrder, tile_styles: tileStyles, tile_scheme: "paper", grid_columns: gridColumns },
           fourthLinkId,
         )
         const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
@@ -660,7 +663,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [tileOrder, tileStyles, profileUserId, prefsHydrated, fourthLinkId])
+  }, [tileOrder, tileStyles, gridColumns, profileUserId, prefsHydrated, fourthLinkId])
 
   const linkAvailable = useCallback(
     (id: DashboardQuickLinkId): boolean => {
@@ -1207,6 +1210,27 @@ export default function DashboardQuickActions(props: Props) {
             <span style={{ display: "block", marginTop: 4, opacity: 0.85 }}>
               Drag any tile and drop it on another to move it — or drop on the empty slot at the end. Right-click a tile for colors and style.
             </span>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}>
+              <span style={{ fontWeight: 700 }}>Columns:</span>
+              {(["auto", 2, 3, 4, 5] as const).map((c) => (
+                <button
+                  key={String(c)}
+                  type="button"
+                  onClick={() => setGridColumns(c)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    border: gridColumns === c ? "2px solid #0ea5e9" : "1px solid rgba(51,65,85,0.35)",
+                    background: gridColumns === c ? "rgba(14,165,233,0.12)" : "rgba(255,255,255,0.5)",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                    fontSize: 11,
+                  }}
+                >
+                  {c === "auto" ? "Auto" : c}
+                </button>
+              ))}
+            </div>
             {persistNote === "cloud" ? (
               <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
             ) : persistNote === "local" ? (
@@ -1217,6 +1241,7 @@ export default function DashboardQuickActions(props: Props) {
 
         <DashboardQuickLinkGrid
           order={tileOrder}
+          gridColumns={gridColumns}
           customize={customize}
           isMobile={isMobile}
           dragId={dragId}

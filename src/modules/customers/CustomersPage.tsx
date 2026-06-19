@@ -65,6 +65,15 @@ import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant } from "
 import { customerEmailFromIdentifiers, customerEmailsFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import { listCustomerEmailValues, listCustomerPhoneValues, pickDefaultContactValue } from "../../lib/customerContactList"
 import CustomerContactChannelPicker from "../../components/CustomerContactChannelPicker"
+import EmailComposeRich from "../../components/EmailComposeRich"
+import {
+  appendHtmlEmailSignature,
+  htmlToPlainText,
+  loadEmailSignatureFromMetadata,
+  mergeEmailSignatureMetadata,
+  type EmailSignatureDoc,
+} from "../../lib/emailSignature"
+import { useSandboxTrafficRefresh } from "../../components/SandboxControlPanel"
 import { loadCustomerPaymentQuoteOptions, type CustomerPaymentQuoteOption } from "../../lib/customerQuotePaymentOptions"
 import {
   collapseOrgGroupedCustomers,
@@ -386,7 +395,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [customerReplySms, setCustomerReplySms] = useState("")
   const [customerEmailTo, setCustomerEmailTo] = useState("")
   const [customerEmailSubject, setCustomerEmailSubject] = useState("")
-  const [customerEmailBody, setCustomerEmailBody] = useState("")
+  const [customerEmailBodyHtml, setCustomerEmailBodyHtml] = useState("")
+  const [customerEmailComposeKey, setCustomerEmailComposeKey] = useState(0)
+  const [emailSignature, setEmailSignature] = useState("")
+  const [customerEmailCc, setCustomerEmailCc] = useState("")
+  const [customerEmailBcc, setCustomerEmailBcc] = useState("")
   const [customerSmsSending, setCustomerSmsSending] = useState(false)
   const [customerEmailSending, setCustomerEmailSending] = useState(false)
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
@@ -745,6 +758,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           ? mr.receipt_template_logo_url.trim()
           : ""
     setBrandLogoUrl(logoGuess || null)
+    const sigDoc = loadEmailSignatureFromMetadata(metaRaw)
+    setEmailSignature(sigDoc?.text ?? "")
 
     const fullSelectPipeline = `
         id,
@@ -1007,6 +1022,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     [userId],
   )
 
+  useSandboxTrafficRefresh(useCallback(() => {
+    void loadCustomers()
+    if (selectedCustomer?.id) void loadCustomerActivity(selectedCustomer.id)
+  }, [loadCustomers, loadCustomerActivity, selectedCustomer?.id]))
+
   useEffect(() => {
     if (!supabase || !userId) return
     let cancelled = false
@@ -1158,7 +1178,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setCustomerCommEvents([])
       setPrimaryConversationId(null)
       setCustomerReplySms("")
-      setCustomerEmailBody("")
+      setCustomerEmailBodyHtml("")
       return
     }
     const em = pickDefaultContactValue(listCustomerEmailValues(selectedCustomer.customer_identifiers ?? null))
@@ -1444,11 +1464,29 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
+  async function persistEmailSignature(text: string) {
+    if (!supabase || !userId) return
+    const trimmed = text.trim()
+    const doc: EmailSignatureDoc = { v: 1, text: trimmed, updated_at: new Date().toISOString() }
+    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const prevMeta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {}
+    await supabase
+      .from("profiles")
+      .update({ metadata: mergeEmailSignatureMetadata(prevMeta, doc) })
+      .eq("id", userId)
+  }
+
   async function sendCustomerEmail() {
     if (!userId || !selectedCustomer?.id) return
     const to = outboundEmail.trim() || customerEmailTo.trim()
     const subject = customerEmailSubject.trim()
-    const body = customerEmailBody.trim()
+    const bodyHtmlRaw = customerEmailBodyHtml.trim()
+    const sigDoc: EmailSignatureDoc | null = emailSignature.trim() ? { v: 1, text: emailSignature.trim() } : null
+    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, sigDoc)
+    const body = htmlToPlainText(bodyHtml)
     if (!to) {
       alert("Enter an email address.")
       return
@@ -1468,8 +1506,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to,
+          cc: customerEmailCc.trim() || undefined,
+          bcc: customerEmailBcc.trim() || undefined,
           subject,
           body,
+          ...(bodyHtml.includes("<") ? { bodyHtml } : {}),
           userId,
           customerId: selectedCustomer.id,
           ...(primaryConversationId ? { conversationId: primaryConversationId } : {}),
@@ -1477,7 +1518,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       })
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
-      setCustomerEmailBody("")
+      setCustomerEmailBodyHtml("")
+      setCustomerEmailComposeKey((k) => k + 1)
       await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
@@ -3126,42 +3168,38 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                         setCustomerEmailTo(v)
                                                       }}
                                                     />
-                                                    <input
-                                                      placeholder="To"
-                                                      value={customerEmailTo}
-                                                      onChange={(e) => setCustomerEmailTo(e.target.value)}
-                                                      style={{ ...theme.formInput, maxWidth: "100%", color: "#0f172a" }}
-                                                    />
-                                                    <input
-                                                      placeholder="Subject"
-                                                      value={customerEmailSubject}
-                                                      onChange={(e) => setCustomerEmailSubject(e.target.value)}
-                                                      style={{ ...theme.formInput, maxWidth: "100%", color: "#0f172a" }}
-                                                    />
-                                                    <textarea
-                                                      placeholder="Email body…"
-                                                      value={customerEmailBody}
-                                                      onChange={(e) => setCustomerEmailBody(e.target.value)}
-                                                      rows={4}
-                                                      style={{ ...theme.formInput, resize: "vertical", maxWidth: "100%", color: "#0f172a" }}
-                                                    />
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => void sendCustomerEmail()}
-                                                      disabled={customerEmailSending}
-                                                      style={{
-                                                        alignSelf: "flex-start",
-                                                        padding: "8px 14px",
-                                                        background: theme.primary,
-                                                        color: "white",
-                                                        border: "none",
-                                                        borderRadius: "6px",
-                                                        cursor: customerEmailSending ? "wait" : "pointer",
-                                                        fontWeight: 600,
+                                                    <EmailComposeRich
+                                                      key={`${selectedCustomer.id}-email-${customerEmailComposeKey}`}
+                                                      primaryTo={customerEmailTo || outboundEmail || emailOptions[0] || ""}
+                                                      onPrimaryToChange={(v) => {
+                                                        setCustomerEmailTo(v)
+                                                        setOutboundEmail(v)
                                                       }}
-                                                    >
-                                                      {customerEmailSending ? "Sending…" : "Send email"}
-                                                    </button>
+                                                      additionalTo=""
+                                                      onAdditionalToChange={() => {}}
+                                                      cc={customerEmailCc}
+                                                      onCcChange={setCustomerEmailCc}
+                                                      bcc={customerEmailBcc}
+                                                      onBccChange={setCustomerEmailBcc}
+                                                      replyTo=""
+                                                      onReplyToChange={() => {}}
+                                                      subject={customerEmailSubject}
+                                                      onSubjectChange={setCustomerEmailSubject}
+                                                      bodyHtml={customerEmailBodyHtml}
+                                                      onBodyHtmlChange={setCustomerEmailBodyHtml}
+                                                      signatureText={emailSignature}
+                                                      onSignatureTextChange={setEmailSignature}
+                                                      onSignatureBlur={() => void persistEmailSignature(emailSignature)}
+                                                      composeFiles={[]}
+                                                      onComposeFilesChange={() => {}}
+                                                      sending={customerEmailSending}
+                                                      onSend={() => void sendCustomerEmail()}
+                                                      footerNote={
+                                                        <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                                          Rich email with signature — same as Conversations. Sandbox accounts use simulated delivery.
+                                                        </span>
+                                                      }
+                                                    />
                                                   </div>
                                                 ) : null}
                                               </div>

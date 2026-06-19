@@ -46,6 +46,8 @@ import CustomerProfilePage from "../customers/CustomerProfilePage"
 import SetupGuideModal from "../../components/SetupGuideModal"
 import GlobalAssistantFab from "../../components/GlobalAssistantFab"
 import HelpDeskChatPanel from "../../components/HelpDeskChatPanel"
+import SandboxControlPanel from "../../components/SandboxControlPanel"
+import { isSandboxProfile } from "../../lib/sandboxEnvironment"
 import { GlobalAssistantProvider } from "../../contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "../../contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "../../components/RegisterSetupGuideOpener"
@@ -498,6 +500,12 @@ function OfficeManagerAppContent() {
     />
     <GlobalAssistantFab />
     <HelpDeskChatPanel />
+    <SandboxControlPanel
+      profileUserId={scope?.selectedUserId ?? user?.id ?? null}
+      profileMetadata={profileMetadata}
+      portalConfig={portalConfig}
+      authRole={authRole}
+    />
     <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
       <ManagedUserToolsStrip />
 
@@ -515,6 +523,24 @@ function OfficeManagerAppContent() {
           }}
         >
           <strong>{t("dashboard.demoLabel")}</strong> {t("dashboard.demoBanner")}
+        </div>
+      ) : null}
+
+      {isSandboxProfile(portalConfig, profileMetadata, authRole) ? (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "#e0f2fe",
+            border: "1px solid #7dd3fc",
+            color: "#0c4a6e",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>Training sandbox</strong> — Fictional customers and simulated comms. New leads can arrive while you
+          work; use the control panel (bottom right) or your CTA link.
         </div>
       ) : null}
 

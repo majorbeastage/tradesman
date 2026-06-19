@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Fragment } from "react"
+import { useEffect, useState, useMemo, Fragment, useCallback } from "react"
 import { supabase } from "../../lib/supabase"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { forceRefreshAccessToken, getFreshAccessToken } from "../../lib/authPlatformApi"
@@ -28,6 +28,7 @@ import TabNotificationAlertsButton from "../../components/TabNotificationAlertsB
 import LeadFilterPreferencesModal from "../../components/LeadFilterPreferencesModal"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
+import { useSandboxTrafficRefresh } from "../../components/SandboxControlPanel"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { ensureCustomerIdentifiers, normalizeCustomerEmail } from "../../lib/customerIdentifiers"
@@ -681,6 +682,10 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   useEffect(() => {
     loadLeads()
   }, [userId])
+
+  useSandboxTrafficRefresh(useCallback(() => {
+    void loadLeads()
+  }, [userId]))
 
   useEffect(() => {
     if (!supabase || !userId) return

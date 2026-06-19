@@ -20,6 +20,8 @@ import {
 import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResolve.js"
 import { isPhoneSmsOptedOut } from "./_smsOptOut.js"
 import { DEMO_COMM_BLOCK_MESSAGE, isDemoRestrictedUser } from "./_demoAccountRestrictions.js"
+import { isSandboxUser } from "./_sandboxEnvironment.js"
+import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxSeed.js"
 import { extractBareEmailFromFormattedFrom } from "./_emailThreadHeaders.js"
 
 /**
@@ -304,6 +306,25 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   if (await isDemoRestrictedUser(supabase, userId)) {
     return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
   }
+  if (await isSandboxUser(supabase, userId)) {
+    const sim = await simulateSandboxOutboundEmail(supabase, {
+      userId,
+      customerId: customerId || null,
+      conversationId: conversationId || null,
+      leadId: leadId || null,
+      to: toList,
+      subject,
+      body: body || (bodyHtml ? bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : ""),
+      bodyHtml: bodyHtml || undefined,
+    })
+    return res.status(200).json({
+      ok: true,
+      provider: "sandbox",
+      simulated: true,
+      to: toList,
+      ...sim,
+    })
+  }
   const dbChannel = await getPrimaryEmailChannelForUser(supabase, userId)
   const outboundFrom = await resolveOutboundEmailFromAddress(supabase, userId, dbChannel)
   const rawFrom = outboundFrom || firstEnv("RESEND_FROM_EMAIL", "EMAIL_DEFAULT_FROM")
@@ -535,6 +556,17 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   if (supabase && userId) {
     if (await isDemoRestrictedUser(supabase, userId)) {
       return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
+    }
+    if (await isSandboxUser(supabase, userId)) {
+      const sim = await simulateSandboxOutboundSms(supabase, {
+        userId,
+        customerId: customerIdForCompliance || null,
+        conversationId: conversationId || null,
+        leadId: leadIdSms || null,
+        to,
+        body,
+      })
+      return res.status(200).json({ ok: true, provider: "sandbox", simulated: true, to, ...sim })
     }
     const resolved = await resolveFirstSmsComplianceForOutbound(supabase, userId, customerIdForCompliance || null)
     complianceVariant = resolved.variant
