@@ -9,6 +9,7 @@
  * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=platform-assistant-route — Phase 2 LLM router for platform assistant (Bearer JWT)
  * POST /api/platform-tools?__route=platform-assistant-vocabulary-train — Admin AI coach for training phrases (Bearer JWT, admin role)
+ * POST /api/platform-tools?__route=workflow-from-voice — Build workflow steps from voice/text description (Bearer JWT)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (bundled public/sms-consent.html; legacy)
  * GET  /api/platform-tools?__route=legal-html&page=privacy|terms|sms  — HTML from platform_settings (crawlable; no JS)
@@ -50,6 +51,7 @@ import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_lea
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
 import { handlePlatformAssistantVocabularyTrain } from "./_platformAssistantVocabularyTrain.js"
+import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
@@ -1808,6 +1810,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "ai-summarize-customer-event",
         "platform-assistant-route",
         "platform-assistant-vocabulary-train",
+        "workflow-from-voice",
         "platform-email-domain-register",
         "platform-email-domain-verify",
         "platform-email-domain-claim",
@@ -1922,6 +1925,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "platform-assistant-vocabulary-train") {
       await handlePlatformAssistantVocabularyTrain(req, res)
+      return
+    }
+    if (route === "workflow-from-voice") {
+      const auth = await getUserIdFromBearer(req, res)
+      if (!auth) return
+      await handleWorkflowFromVoice(req, res)
       return
     }
     res.status(400).json({

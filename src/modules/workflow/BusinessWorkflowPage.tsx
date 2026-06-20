@@ -45,6 +45,14 @@ import {
 } from "../../lib/organizationChart"
 import { formatAppError } from "../../lib/formatAppError"
 import {
+  cloneWorkflowDoc,
+  loadSavedWorkflowsFromMetadata,
+  mergeSavedWorkflowsMetadata,
+  mergeWorkflowDocs,
+  type SavedWorkflowsLibrary,
+} from "../../lib/savedWorkflows"
+import WorkflowHubPanels, { WorkflowHubNavButtons, WorkflowVoiceAttendant } from "../../components/workflow/WorkflowHubPanels"
+import {
   canvasPointFromEvent,
   connectorIn,
   connectorOut,
@@ -96,6 +104,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
   const [orgChart, setOrgChart] = useState<OrganizationChartDoc | null>(null)
   const [externalContacts, setExternalContacts] = useState<ExternalContactsDoc>(() => createExampleExternalContacts())
+  const [savedLibrary, setSavedLibrary] = useState<SavedWorkflowsLibrary>(() => ({ v: 1, entries: [], updated_at: new Date().toISOString() }))
+  const [hubPanel, setHubPanel] = useState<"saved" | "dept-customer" | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
   const clipboardRef = useRef<{ kind: "node"; node: WorkflowNode } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -119,6 +129,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           setDoc(loadBusinessWorkflowFromMetadata(data?.metadata))
           setOrgChart(loadOrganizationChartFromMetadata(data?.metadata))
           setExternalContacts(loadExternalContactsFromMetadata(data?.metadata))
+          setSavedLibrary(loadSavedWorkflowsFromMetadata(data?.metadata))
         }
         setLoading(false)
       })
@@ -156,6 +167,33 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     [userId],
   )
 
+  const persistSavedLibrary = useCallback(
+    (library: SavedWorkflowsLibrary): Promise<void> => {
+      if (!supabase || !userId) return Promise.resolve()
+      setSaving(true)
+      return (async () => {
+        try {
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const prevMeta =
+            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+              ? { ...(data.metadata as Record<string, unknown>) }
+              : {}
+          const { error } = await supabase
+            .from("profiles")
+            .update({ metadata: mergeSavedWorkflowsMetadata(prevMeta, library) })
+            .eq("id", userId)
+          if (error) throw error
+          setSavedLibrary(library)
+        } catch (e: unknown) {
+          setErr(formatAppError(e))
+        } finally {
+          setSaving(false)
+        }
+      })()
+    },
+    [userId],
+  )
+
   const saveNow = useCallback(() => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     void persist(doc).then(() => {
@@ -174,6 +212,17 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       })
     },
     [persist],
+  )
+
+  const applyLiveWorkflowDoc = useCallback(
+    (incoming: BusinessWorkflowDoc, mode: "replace" | "merge" = "replace") => {
+      updateDoc((prev) => (mode === "merge" ? mergeWorkflowDocs(prev, incoming) : cloneWorkflowDoc(incoming)))
+      setSelectedId(null)
+      setSelectedEdgeId(null)
+      setLinkFromId(null)
+      setHubPanel(null)
+    },
+    [updateDoc],
   )
 
   const nodes = sortedWorkflowNodes(doc)
@@ -205,6 +254,17 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     },
     [externalContacts, members, orgChartNodes],
   )
+
+  const assigneeByNodeId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const n of doc.nodes) {
+      const label = workflowNodeAssigneeLabel(n)
+      if (label) map.set(n.id, label)
+    }
+    return map
+  }, [doc.nodes, workflowNodeAssigneeLabel])
+
+  const workflowSvgOptions = useMemo(() => ({ assigneeByNodeId }), [assigneeByNodeId])
   const edgesWithLanes = useMemo(() => workflowEdgesWithLanes(doc.edges), [doc.edges])
 
   const activeWireEdge = useMemo(
@@ -481,7 +541,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     }
     if (contextMenu.target === "edge" && contextMenu.id) {
       return [
-        { id: "copy", label: "Copy requirement label" },
+        { id: "copy", label: "Copy arrow label" },
         { id: "remove", label: "Remove arrow", danger: true },
       ]
     }
@@ -534,7 +594,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         ? "Adding arrow"
         : "Properties"
   const dockSubtitle = selectedEdge
-    ? "Reconnect endpoints, set approval type, and requirement label."
+    ? "Reconnect endpoints, set arrow type, and label on the arrow."
     : selectedNode
       ? "Assign an org user, set box color, and manage arrows for this step."
       : linkFromId
@@ -548,6 +608,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           ← Dashboard
         </button>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: theme.text, flex: 1 }}>My Business Workflow</h1>
+        <WorkflowHubNavButtons hubPanel={hubPanel} onHubPanelChange={setHubPanel} />
         <button type="button" onClick={() => setPage("organization-chart")} style={navCrossBtn}>
           Organization chart →
         </button>
@@ -563,6 +624,19 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         <strong>hover an arrow</strong> and drag its ends to another step. Drop anywhere on a step box — you don&apos;t
         need to hit a tiny target.
       </p>
+
+      <WorkflowVoiceAttendant onApply={applyLiveWorkflowDoc} />
+
+      <WorkflowHubPanels
+        userId={userId}
+        liveDoc={doc}
+        savedLibrary={savedLibrary}
+        orgChartRoles={orgChartNodes}
+        hubPanel={hubPanel}
+        onHubPanelChange={setHubPanel}
+        onApplyLiveDoc={(next) => applyLiveWorkflowDoc(next, "replace")}
+        onPersistSavedLibrary={persistSavedLibrary}
+      />
 
       <WorkflowArrowLegend />
 
@@ -592,7 +666,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
             Cancel arrow
           </button>
         ) : null}
-        <button type="button" onClick={() => downloadWorkflowSvg(doc)} style={secondaryBtn}>
+        <button type="button" onClick={() => downloadWorkflowSvg(doc, undefined, workflowSvgOptions)} style={secondaryBtn}>
           Download SVG
         </button>
         <button type="button" onClick={shareWithAdmin} style={secondaryBtn}>
@@ -823,9 +897,9 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", width: "100%", marginTop: 8 }}>
                 <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600, flex: "1 1 160px" }}>
-                  Requirement label
+                  Arrow label
                   <input
-                    list="wf-requirement-suggestions"
+                    list="wf-arrow-label-suggestions"
                     value={newArrowRequirement}
                     onChange={(e) => setNewArrowRequirement(e.target.value)}
                     placeholder="e.g. Estimate approval"
@@ -971,7 +1045,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         />
       ) : null}
 
-      <datalist id="wf-requirement-suggestions">
+      <datalist id="wf-arrow-label-suggestions">
         {WORKFLOW_REQUIREMENT_SUGGESTIONS.map((s) => (
           <option key={s} value={s} />
         ))}
@@ -981,7 +1055,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         <summary style={{ cursor: "pointer", fontWeight: 700, color: "#475569" }}>Preview export</summary>
         <div
           style={{ marginTop: 10, padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff" }}
-          dangerouslySetInnerHTML={{ __html: workflowToSvg(doc) }}
+          dangerouslySetInnerHTML={{ __html: workflowToSvg(doc, workflowSvgOptions) }}
         />
       </details>
     </div>
@@ -1113,11 +1187,15 @@ function EdgeEditor({
         ))}
       </datalist>
       <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-        Requirement
+        Arrow label
         <input
           list={`wf-req-${edge.id}`}
           value={edge.requirement ?? ""}
-          onChange={(e) => onPatch({ requirement: e.target.value.trim() || undefined })}
+          onChange={(e) => onPatch({ requirement: e.target.value || undefined })}
+          onBlur={(e) => {
+            const trimmed = e.target.value.trim()
+            onPatch({ requirement: trimmed || undefined })
+          }}
           placeholder="e.g. Purchase order approval"
           style={theme.formInput}
           onClick={(e) => e.stopPropagation()}

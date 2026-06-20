@@ -62,7 +62,7 @@ export type WorkflowEdge = {
   fromId: string
   toId: string
   approval: WorkflowEdgeApproval
-  /** Requirement label on the arrow (e.g. Estimate approval, PO approval). */
+  /** Optional label shown on the arrow (e.g. Estimate approval, PO approval). */
   requirement?: string
 }
 
@@ -432,10 +432,24 @@ function wrapLabelLines(text: string, maxChars: number): string[] {
 }
 
 /** Export height for a step box — grows when the label wraps (matches on-screen tiles). */
-export function workflowNodeExportHeight(label: string): number {
+export function workflowNodeExportHeight(label: string, assigneeLabel?: string | null): number {
   const lines = wrapLabelLines(label, 30)
   const lineCount = Math.min(lines.length, 5)
-  return Math.max(NODE_H, 22 + lineCount * 14 + 10)
+  let h = Math.max(NODE_H, 22 + lineCount * 14 + 10)
+  if (assigneeLabel?.trim()) {
+    const assigneeLines = wrapLabelLines(assigneeLabel, 34).slice(0, 2)
+    h += 4 + assigneeLines.length * 12
+  }
+  return h
+}
+
+function workflowNodeAssigneeSvg(x: number, y: number, labelLineCount: number, assignee: string): string {
+  const lines = wrapLabelLines(assignee, 34).slice(0, 2)
+  const startY = y + 20 + labelLineCount * 14 + 6
+  const tspans = lines
+    .map((line, i) => `<tspan x="${x + 12}" dy="${i === 0 ? 0 : 12}">${escapeXml(line)}</tspan>`)
+    .join("")
+  return `<text y="${startY}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="600" fill="#0ea5e9">${tspans}</text>`
 }
 
 function workflowNodeLabelSvg(x: number, y: number, label: string, textColor: string): string {
@@ -481,10 +495,30 @@ function computeWorkflowSvgBounds(
   return { width: Math.max(760, maxX), height: Math.max(480, maxY) }
 }
 
-export function workflowToSvg(doc: BusinessWorkflowDoc, width?: number, height?: number): string {
+export type WorkflowSvgOptions = {
+  width?: number
+  height?: number
+  /** Resolved display names for assigned org users / external contacts (keyed by node id). */
+  assigneeByNodeId?: ReadonlyMap<string, string> | Record<string, string>
+}
+
+function workflowSvgAssigneeLabel(
+  options: WorkflowSvgOptions | undefined,
+  nodeId: string,
+): string | null {
+  const map = options?.assigneeByNodeId
+  if (!map) return null
+  const raw = map instanceof Map ? map.get(nodeId) : map[nodeId as keyof typeof map]
+  const trimmed = typeof raw === "string" ? raw.trim() : ""
+  return trimmed || null
+}
+
+export function workflowToSvg(doc: BusinessWorkflowDoc, options?: WorkflowSvgOptions): string {
   const nodes = sortedWorkflowNodes(doc)
   const byId = new Map(nodes.map((n) => [n.id, n]))
-  const nodeHeights = new Map(nodes.map((n) => [n.id, workflowNodeExportHeight(n.label)]))
+  const nodeHeights = new Map(
+    nodes.map((n) => [n.id, workflowNodeExportHeight(n.label, workflowSvgAssigneeLabel(options, n.id))]),
+  )
 
   let minX = 0
   let minY = 0
@@ -497,8 +531,8 @@ export function workflowToSvg(doc: BusinessWorkflowDoc, width?: number, height?:
   const shiftY = SVG_DIAGRAM_TOP - minY
 
   const bounds = computeWorkflowSvgBounds(nodes, nodeHeights, shiftX, shiftY)
-  const svgW = width ?? bounds.width
-  const svgH = height ?? bounds.height
+  const svgW = options?.width ?? bounds.width
+  const svgH = options?.height ?? bounds.height
 
   const lines: string[] = []
   lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`)
@@ -539,10 +573,15 @@ export function workflowToSvg(doc: BusinessWorkflowDoc, width?: number, height?:
     const x = n.x + shiftX
     const y = n.y + shiftY
     const h = nodeHeights.get(n.id) ?? NODE_H
+    const assignee = workflowSvgAssigneeLabel(options, n.id)
+    const labelLines = wrapLabelLines(n.label, 30).slice(0, 5)
     lines.push(
       `<rect x="${x}" y="${y}" width="${NODE_W}" height="${h}" rx="10" fill="${pres.fill}" stroke="${pres.border}" stroke-width="1.5"/>`,
     )
     lines.push(workflowNodeLabelSvg(x, y, n.label, pres.text))
+    if (assignee) {
+      lines.push(workflowNodeAssigneeSvg(x, y, labelLines.length, assignee))
+    }
   }
 
   lines.push(`</svg>`)
@@ -558,8 +597,8 @@ function truncateLabel(s: string, max: number): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 
-export function downloadWorkflowSvg(doc: BusinessWorkflowDoc, fileName?: string): void {
-  const svg = workflowToSvg(doc)
+export function downloadWorkflowSvg(doc: BusinessWorkflowDoc, fileName?: string, options?: WorkflowSvgOptions): void {
+  const svg = workflowToSvg(doc, options)
   const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
