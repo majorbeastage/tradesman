@@ -24,6 +24,7 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { useLocale } from "../../i18n/LocaleContext"
+import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import LeadFilterPreferencesModal from "../../components/LeadFilterPreferencesModal"
 import CustomerCallButton from "../../components/CustomerCallButton"
@@ -127,6 +128,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
   const { session } = useAuth()
   const { t } = useLocale()
   const portalConfig = usePortalConfigForPage()
+  const sandboxTraining = useSandboxTrainingMode()
   const isMobile = useIsMobile()
   const [showForm, setShowForm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -977,7 +979,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setLeadReplySms("")
       await openLead(selectedLead.id)
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      sandboxTrainingAlert(sandboxTraining, err instanceof Error ? err.message : String(err), "communication")
     } finally {
       setLeadSmsSending(false)
     }
@@ -1025,7 +1027,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
       setLeadEmailBody("")
       await openLead(selectedLead.id)
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      sandboxTrainingAlert(sandboxTraining, err instanceof Error ? err.message : String(err), "communication")
     } finally {
       setLeadEmailSending(false)
     }

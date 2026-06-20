@@ -12,6 +12,7 @@ const CONSUMER_MAIL_DOMAINS = new Set([
   "gmail.com","googlemail.com","yahoo.com","hotmail.com","outlook.com","live.com",
   "icloud.com","me.com","aol.com","msn.com","protonmail.com","proton.me","mail.com",
 ])
+const NON_ORG_GROUP_EMAIL_TLDS = new Set(["invalid", "test", "example", "localhost"])
 
 export function normalizeCustomerEmail(email: string): string {
   return String(email ?? "").trim().toLowerCase()
@@ -41,6 +42,8 @@ export function organizationRootFromDomain(domain: string): string | null {
   if (!d || CONSUMER_MAIL_DOMAINS.has(d)) return null
   const parts = d.split(".").filter(Boolean)
   if (parts.length === 0) return null
+  const tld = parts[parts.length - 1] ?? ""
+  if (NON_ORG_GROUP_EMAIL_TLDS.has(tld)) return null
   if (parts.length === 1) return parts[0]
   const base = parts.slice(-2).join(".")
   if (CONSUMER_MAIL_DOMAINS.has(base)) return null

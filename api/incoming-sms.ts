@@ -14,7 +14,7 @@ import {
   pickFirstString,
 } from "./_communications.js"
 import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
-import { runConversationInboundSmsAutoReply } from "./_conversationAutoReply.js"
+import { runConversationInboundSmsAutoReply, recordSmsConsentFromInboundSms } from "./_conversationAutoReply.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import {
   detectInboundSmsKeyword,
@@ -151,6 +151,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const smsKeyword = detectInboundSmsKeyword(body)
+  if (customerId && smsKeyword !== "stop") {
+    try {
+      await recordSmsConsentFromInboundSms(supabase, targetUserId, customerId)
+    } catch (e) {
+      console.warn("[incoming-sms] record SMS consent", e instanceof Error ? e.message : e)
+    }
+  }
   const keywordMeta: Record<string, unknown> = {}
   if (smsKeyword === "start") {
     const cleared = await deleteSmsOptOut(supabase, targetUserId, from)

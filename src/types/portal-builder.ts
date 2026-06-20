@@ -181,6 +181,7 @@ export function isV2DeprecatedPortalTab(tabId: string): boolean {
 
 /** Whether a tab should appear in the user/OM sidebar under V2 defaults. */
 export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig | null | undefined): boolean {
+  if (tabId === "settings") return false
   if (isDashboardOnlyPortalTab(tabId)) {
     return portalConfig?.tabs?.[tabId] === true
   }

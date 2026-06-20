@@ -10,6 +10,7 @@ import {
   parseTeamRibbonColors,
   type OmCalendarPolicyV1,
 } from "../../lib/teamCalendarPolicy"
+import { filterRealUserIds, isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import TimeClockPortal from "../../components/TimeClockPortal"
 
 type ProfileLite = {
@@ -565,6 +566,11 @@ export default function CalendarTeamManagementPanel({
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
+  const rosterDbUserIds = useMemo(
+    () => filterRealUserIds(roster.map((r) => r.userId).filter(Boolean)),
+    [roster],
+  )
+
   const setCardTab = useCallback((userId: string, tab: CardTab) => {
     setCardTabByUser((prev) => ({ ...prev, [userId]: tab }))
   }, [])
@@ -597,8 +603,8 @@ export default function CalendarTeamManagementPanel({
   }, [officeManagerUserId])
 
   useEffect(() => {
-    if (!supabase || roster.length === 0) return
-    const ids = roster.map((r) => r.userId).filter(Boolean)
+    if (!supabase || rosterDbUserIds.length === 0) return
+    const ids = rosterDbUserIds
     let cancelled = false
     void (async () => {
       const { data: profs, error: e1 } = await supabase.from("profiles").select("id, display_name, email, metadata").in("id", ids)
@@ -615,11 +621,11 @@ export default function CalendarTeamManagementPanel({
     return () => {
       cancelled = true
     }
-  }, [roster])
+  }, [rosterDbUserIds])
 
   useEffect(() => {
-    if (!supabase || roster.length === 0) return
-    const ids = roster.map((r) => r.userId).filter(Boolean)
+    if (!supabase || rosterDbUserIds.length === 0) return
+    const ids = rosterDbUserIds
     let cancelled = false
     const nowIso = new Date().toISOString()
     void (async () => {
@@ -683,7 +689,7 @@ export default function CalendarTeamManagementPanel({
     return () => {
       cancelled = true
     }
-  }, [roster, supabase])
+  }, [rosterDbUserIds, supabase])
 
   async function persistOmColorForMember(memberUserId: string, hex: string) {
     if (!supabase) return
@@ -706,6 +712,15 @@ export default function CalendarTeamManagementPanel({
 
   async function persistManagedPolicy(targetUserId: string, patch: Partial<OmCalendarPolicyV1>) {
     if (!supabase) return
+    if (isSandboxDemoUserId(targetUserId)) {
+      setProfilesById((prev) => {
+        const cur = prev[targetUserId]
+        const nextMeta = mergeOmCalendarPolicy(cur?.metadata, patch)
+        return { ...prev, [targetUserId]: { ...cur, id: targetUserId, metadata: nextMeta } as ProfileLite }
+      })
+      setMessage("Demo team settings updated (training preview).")
+      return
+    }
     setSavingUserId(targetUserId)
     setMessage("")
     try {
@@ -728,6 +743,14 @@ export default function CalendarTeamManagementPanel({
 
   async function persistUserPref(targetUserId: string, ribbon: string, autoAssign: boolean) {
     if (!supabase) return
+    if (isSandboxDemoUserId(targetUserId)) {
+      setPrefsByUser((prev) => ({
+        ...prev,
+        [targetUserId]: { owner_user_id: targetUserId, ribbon_color: ribbon, auto_assign_enabled: autoAssign },
+      }))
+      setMessage("Demo calendar ribbon saved (training preview).")
+      return
+    }
     setSavingUserId(targetUserId)
     setMessage("")
     try {

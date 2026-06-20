@@ -113,15 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (customer?.customerId && from) {
           const sideEffects = (async () => {
             try {
-              const { data: prof } = await supabase
-                .from("profiles")
-                .select("metadata")
-                .eq("id", channel!.user_id!)
-                .maybeSingle()
-              const phoneFlow = resolveAutoReplyForIntake(prof?.metadata, "Phone call")
-              if (phoneFlow?.settings.conv_auto_sms_consent_on_call !== "unchecked") {
-                await recordSmsConsentFromInboundCall(supabase, channel!.user_id!, customer.customerId)
-              }
+              await recordSmsConsentFromInboundCall(supabase, channel!.user_id!, customer.customerId)
               await runMissedCallAutoTextBack(supabase, {
                 userId: channel!.user_id!,
                 customerId: customer.customerId,

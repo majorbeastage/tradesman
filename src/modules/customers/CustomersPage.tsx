@@ -27,8 +27,8 @@ import { EMPTY_MANUAL_SMS_CONSENT_SOURCE } from "../../components/CustomerSmsCon
 import {
   buildConsentAuditNote,
   mapManualMethodToSource,
-  parseCustomerSmsConsent,
   persistCustomerSmsConsent,
+  parseCustomerSmsConsent,
   validateManualSmsConsentSourceInput,
 } from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
@@ -37,6 +37,7 @@ import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddre
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
+import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { consumeQueuedCustomerFocus, queueCustomerFocus, queueCustomerProfile } from "../../lib/customerNavigation"
 import { consumeCustomerAssistantSmsFocus } from "../../lib/workflowNavigation"
 import {
@@ -61,7 +62,7 @@ import {
   SMS_OUTBOUND_BODY_HARD_MAX_CHARS,
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
-import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant, inboundContactGrantsSmsConsent } from "../../lib/smsFirstOutboundCompliance"
 import { customerEmailFromIdentifiers, customerEmailsFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import { listCustomerEmailValues, listCustomerPhoneValues, pickDefaultContactValue } from "../../lib/customerContactList"
 import CustomerContactChannelPicker from "../../components/CustomerContactChannelPicker"
@@ -333,6 +334,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
+  const sandboxTraining = useSandboxTrainingMode()
   const showCustomersCustomerPayment = getPageActionVisible(portalConfig, "customers", "customer_payment")
   const isMobile = useIsMobile()
   const globalAssistant = useGlobalAssistantOptional()
@@ -564,14 +566,64 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   const customerHasPhone = Boolean(selectedCustomerPhoneOnFile || detailForm.phone.trim())
 
-  /** Manual opt-in UI only for manually entered numbers — not when they called/voicemail first. */
+  /** Manual opt-in UI when they have not called/texted your line — inbound email alone does not count. */
   const showManualSmsOptInSection = useMemo(() => {
     if (!customerHasPhone || customerActivityLoading) return false
     return requiresManualSmsOptInRecord(customerCommEvents)
   }, [customerHasPhone, customerActivityLoading, customerCommEvents])
 
+  const customerInboundGrantsSmsConsent = useMemo(
+    () => inboundContactGrantsSmsConsent(customerCommEvents),
+    [customerCommEvents],
+  )
+
+  const showSmsOptInSection =
+    customerHasPhone &&
+    (Boolean(selectedCustomerSmsConsent) || showManualSmsOptInSection || customerInboundGrantsSmsConsent)
+
   const smsBlockedPendingManualOptIn =
     showManualSmsOptInSection && !selectedCustomerSmsConsent
+
+  useEffect(() => {
+    if (!supabase || !selectedCustomer || selectedCustomerSmsConsent || customerActivityLoading) return
+    if (!customerInboundGrantsSmsConsent) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const biz = contractorSmsDisplayName.trim() || "Your business"
+        const hasInboundSms = customerCommEvents.some(
+          (e) => (e.event_type ?? "").trim() === "sms" && (e.direction ?? "").trim() === "inbound",
+        )
+        const { metadata } = await persistCustomerSmsConsent(supabase, selectedCustomer.id, selectedCustomer.metadata, {
+          source: "phone_call",
+          businessName: biz,
+          consentMethod: hasInboundSms ? "other" : "phone_call",
+          consentNote: hasInboundSms
+            ? "Customer initiated inbound text message to business line; consent recorded for follow-up text messages."
+            : "Customer initiated inbound call to business line; consent recorded for follow-up text messages.",
+        })
+        if (cancelled) return
+        const patched: CustomerRow = { ...selectedCustomer, metadata }
+        setSelectedCustomer(patched)
+        setActiveCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+        setInProcessCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+        setArchivedCustomers((rows) => rows.map((r) => (r.id === patched.id ? patched : r)))
+      } catch (e) {
+        console.warn("[customers] auto SMS consent from inbound contact", e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    supabase,
+    selectedCustomer,
+    selectedCustomerSmsConsent,
+    customerActivityLoading,
+    customerInboundGrantsSmsConsent,
+    customerCommEvents,
+    contractorSmsDisplayName,
+  ])
 
   async function recordDetailSmsConsent() {
     if (!supabase || !selectedCustomer || !detailRecordSmsConsent) return
@@ -1458,7 +1510,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
-      alert(formatAppError(err))
+      sandboxTrainingAlert(sandboxTraining, formatAppError(err), "communication")
     } finally {
       setCustomerSmsSending(false)
     }
@@ -1524,7 +1576,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
-      alert(formatAppError(err))
+      sandboxTrainingAlert(sandboxTraining, formatAppError(err), "communication")
     } finally {
       setCustomerEmailSending(false)
     }
@@ -1974,7 +2026,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         <p style={{ color: "#b91c1c" }}>Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to tradesman/.env and restart the dev server.</p>
       )}
 
-      {loadError && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
+      {loadError && !sandboxTraining && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
 
       <div
         style={{
@@ -2396,14 +2448,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </div>
                             </div>
 
-                            {showManualSmsOptInSection ? (
+                            {showSmsOptInSection ? (
                               <div onClick={(e) => e.stopPropagation()}>
                                 <CustomerSmsOptInSection
                                   businessName={contractorSmsDisplayName.trim() || "Your business"}
                                   consent={selectedCustomerSmsConsent}
                                   phoneOnFile={selectedCustomerPhoneOnFile}
                                   draftPhone={detailForm.phone}
-                                  recordChecked={detailRecordSmsConsent}
+                                  recordChecked={detailRecordSmsConsent || customerInboundGrantsSmsConsent}
                                   onRecordCheckedChange={setDetailRecordSmsConsent}
                                   consentSource={detailConsentSource}
                                   onConsentSourceChange={setDetailConsentSource}

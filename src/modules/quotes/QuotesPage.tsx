@@ -7,6 +7,7 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { filterRealUserIds, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional, type OpenJobTypesModalOptions } from "../../contexts/JobTypesModalContext"
@@ -416,6 +417,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
+  const sandboxTraining = useSandboxTrainingMode()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [showEstimateTemplateModal, setShowEstimateTemplateModal] = useState(false)
@@ -3817,19 +3819,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
         /* ignore */
       }
       if (simulated) {
-        alert(
-          "Training sandbox: email was simulated (nothing was sent). In your live account, the estimate PDF is attached automatically.",
-        )
         setBottomActionEmailOpen(false)
         return
       }
-      if (attachmentCount < 1) {
+      if (!sandboxTraining && attachmentCount < 1) {
         throw new Error("Email was sent but the estimate PDF could not be attached. Try again or use Download.")
       }
-      alert("Email sent with estimate PDF attached.")
+      if (!sandboxTraining) alert("Email sent with estimate PDF attached.")
       setBottomActionEmailOpen(false)
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")
     } finally {
       setQuoteEmailSending(false)
     }

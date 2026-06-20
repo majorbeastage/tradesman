@@ -14,6 +14,10 @@ import {
   SANDBOX_DASHBOARD_QUICK_LINKS,
   SANDBOX_PROFILE_ROLE,
 } from "./_sandboxPortalConfig.js"
+import {
+  recordSmsConsentFromInboundCall,
+  recordSmsConsentFromInboundSms,
+} from "./_conversationAutoReply.js"
 
 export const SANDBOX_ZIP = "99901"
 export const SANDBOX_CITY = "Tradesman Demo"
@@ -125,6 +129,30 @@ function hoursFromNow(hours: number): string {
   return new Date(Date.now() + hours * 3600_000).toISOString()
 }
 
+/** Keep sandbox demo customers separate in the Customers hub (no example.invalid org merge). */
+async function repairSandboxDemoCustomerGrouping(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  const { data } = await supabase.from("customers").select("id, metadata").eq("user_id", userId)
+  for (const row of data ?? []) {
+    const meta =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    if (meta.sandbox_seed !== true && meta.sandbox_live !== true) continue
+    if (meta.contact_separated === true) continue
+    await supabase
+      .from("customers")
+      .update({
+        metadata: { ...meta, contact_separated: true },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("user_id", userId)
+  }
+}
+
 export type SeedSandboxResult = {
   ok: true
   customerCount: number
@@ -198,6 +226,7 @@ export async function seedSandboxWorkspace(
   const embedSlug = slugForSandbox(userId)
 
   const profileRepaired = await ensureSandboxProfile(supabase, userId)
+  await repairSandboxDemoCustomerGrouping(supabase, userId)
 
   const { data: prof } = await supabase.from("profiles").select("metadata, display_name").eq("id", userId).maybeSingle()
   const prevMeta =
@@ -283,6 +312,7 @@ export async function seedSandboxWorkspace(
         notes: row.notes ?? null,
         metadata: {
           sandbox_seed: true,
+          contact_separated: true,
           service_address: `${row.name.split(" ").pop()} St, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`,
         },
         last_activity_at: hoursFromNow(-Math.floor(Math.random() * 72)),
@@ -336,6 +366,9 @@ export async function seedSandboxWorkspace(
       unread: i < 3,
       metadata: { sandbox_seed: true, simulated: true },
     })
+    if (i % 2 === 0) {
+      await recordSmsConsentFromInboundSms(supabase, userId, cid)
+    }
     eventCount++
   }
 
@@ -392,6 +425,7 @@ export async function injectSandboxLead(
       last_activity_at: new Date().toISOString(),
       metadata: {
         sandbox_live: true,
+        contact_separated: true,
         attribution_source: scenario.attribution ?? "unknown",
         service_address: `${100 + idx} Demo Lane, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`,
       },
@@ -443,6 +477,7 @@ export async function injectSandboxLead(
       unread: true,
       metadata: { sandbox_simulated: true, from: normalizePhone(scenario.phone) },
     })
+    await recordSmsConsentFromInboundSms(supabase, userId, customerId)
   } else if (scenario.channel === "email") {
     await logCommunicationEvent(supabase, {
       user_id: userId,
@@ -466,6 +501,7 @@ export async function injectSandboxLead(
       unread: true,
       metadata: { sandbox_simulated: true, from: normalizePhone(scenario.phone), missed: true },
     })
+    await recordSmsConsentFromInboundCall(supabase, userId, customerId)
   } else {
     await logCommunicationEvent(supabase, {
       user_id: userId,

@@ -22,6 +22,7 @@ import {
   type TimeClockSessionKind,
   type TimeClockSessionRow,
 } from "../lib/timeClockSessions"
+import { filterRealUserIds } from "../lib/sandboxDemoTeam"
 
 type UpcomingEventRow = {
   id: string
@@ -100,7 +101,10 @@ export default function TimeClockPortal({
   const [entryForm, setEntryForm] = useState<EntryFormState | null>(null)
   const [entrySaving, setEntrySaving] = useState(false)
 
-  const rosterIds = useMemo(() => roster.map((r) => r.userId).filter(Boolean), [roster])
+  const rosterIds = useMemo(
+    () => filterRealUserIds(roster.map((r) => r.userId).filter(Boolean)),
+    [roster],
+  )
   const viewerOnRoster = rosterIds.includes(viewerUserId)
   const weekStart = useMemo(() => startOfWeekLocal(new Date()), [])
   const weekEnd = useMemo(() => {

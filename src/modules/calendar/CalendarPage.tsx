@@ -9,6 +9,7 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { filterRealUserIds, isSandboxDemoUserId, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
@@ -323,6 +324,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
+  const calendarDbUserId = useMemo(
+    () => resolveSandboxDataUserId(userId, authUserId || userId),
+    [userId, authUserId],
+  )
+  const sandboxTraining = useSandboxTrainingMode()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const jobTypesModal = useJobTypesModalOptional()
@@ -371,8 +377,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       )
       if (ids.length > 0) return ids
     }
-    return userId ? [userId] : []
-  }, [scopeCtx?.clients, userId])
+    return calendarDbUserId ? [calendarDbUserId] : []
+  }, [scopeCtx?.clients, calendarDbUserId])
 
   const orgClientIdsKey = useMemo(
     () =>
@@ -466,7 +472,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     void supabase
       .from("profiles")
       .select("metadata")
-      .eq("id", userId)
+      .eq("id", calendarDbUserId)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
@@ -479,7 +485,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [calendarDbUserId])
 
   const calendarSettingsItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "working_hours", { aiAutomationsEnabled }),
@@ -814,7 +820,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     void supabase
       .from("profiles")
       .select("metadata")
-      .eq("id", userId)
+      .eq("id", calendarDbUserId)
       .maybeSingle()
       .then(({ data }) => {
         const meta =
@@ -853,7 +859,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setShowCompletionSettingsModal(false)
       return
     }
-    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", calendarDbUserId).maybeSingle()
     if (loadErr) {
       alert(loadErr.message)
       return
@@ -863,7 +869,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         ? { ...(row.metadata as Record<string, unknown>) }
         : {}
     prevMeta.calendarCompletionValues = { ...completionSettingsFormValues }
-    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", calendarDbUserId)
     if (error) {
       alert(error.message)
       return
@@ -876,7 +882,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!showReceiptTemplateModal || !supabase || !userId) return
     let cancelled = false
     void (async () => {
-      const { data } = await supabase.from("profiles").select("document_template_receipt, metadata").eq("id", userId).maybeSingle()
+      const { data } = await supabase.from("profiles").select("document_template_receipt, metadata").eq("id", calendarDbUserId).maybeSingle()
       if (cancelled) return
       const meta =
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
@@ -934,7 +940,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const includeMileage = receiptTemplateFormValues.receipt_template_include_mileage === "checked"
     const rateField = (receiptTemplateFormValues.receipt_template_mileage_rate ?? "").trim().replace(/[^0-9.]/g, "")
     const rateNum = rateField ? Number.parseFloat(rateField) : Number.NaN
-    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", calendarDbUserId).maybeSingle()
     if (fetchErr) {
       alert(fetchErr.message)
       return
@@ -969,7 +975,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         document_template_receipt: notes || null,
         metadata: prevMeta,
       })
-      .eq("id", userId)
+      .eq("id", calendarDbUserId)
     if (error) {
       alert(error.message)
       return
@@ -984,6 +990,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean))),
     )
     const canViewOrgEvents = showAllOrgEvents && orgUserIds.length > 0
+    const scopedCalendarUserIds =
+      orgUserIds.length > 0 ? orgUserIds : calendarDbUserId ? [calendarDbUserId] : []
     setLoadError("")
     const start = new Date(currentDate)
     const end = new Date(currentDate)
@@ -1009,7 +1017,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
     const scopedQuery = (selectStr: string) =>
-      canViewOrgEvents ? baseQuery(selectStr).in("user_id", orgUserIds) : baseQuery(selectStr).eq("user_id", userId)
+      canViewOrgEvents
+        ? baseQuery(selectStr).in("user_id", scopedCalendarUserIds)
+        : baseQuery(selectStr).eq("user_id", calendarDbUserId)
 
     const selectTiers = [
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, customers ( display_name, service_address, service_lat, service_lng ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
@@ -1058,13 +1068,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         em.includes("service_lng") ||
         (em.includes("column") && em.includes("does not exist"))
       if (!retry) {
-        setLoadError(error.message)
+        if (!shouldSuppressSandboxTrainingError(sandboxTraining, error.message, "calendar_load")) {
+          setLoadError(error.message)
+        } else {
+          console.info("[sandbox-training] calendar load:", error.message)
+        }
         setEvents([])
         return
       }
     }
 
-    setLoadError(lastErr?.message ?? "Could not load calendar events.")
+    const fallbackMsg = lastErr?.message ?? "Could not load calendar events."
+    if (!shouldSuppressSandboxTrainingError(sandboxTraining, fallbackMsg, "calendar_load")) {
+      setLoadError(fallbackMsg)
+    } else {
+      console.info("[sandbox-training] calendar load:", fallbackMsg)
+    }
     setEvents([])
   }
 
@@ -1091,7 +1110,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       let q = client
         .from("calendar_events")
         .select(select)
-        .eq("user_id", userId)
+        .eq("user_id", calendarDbUserId)
         .is("removed_at", null)
         .gte("start_at", now.toISOString())
         .lte("start_at", horizon.toISOString())
@@ -1424,9 +1443,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
     setCompleteBusy(false)
     if (sendErrs.length) {
-      alert(
+      sandboxTrainingAlert(
+        sandboxTraining,
         `Job marked complete${completeEntireSeries ? " (entire series)" : ""}. Sending notes:\n${sendErrs.join("\n")}\n\n` +
           "To send email from Tradesman, set RESEND_API_KEY and RESEND_FROM_EMAIL on your Vercel project (Environment Variables).",
+        "communication",
       )
     }
     setCompleteEntireSeries(false)
@@ -1976,11 +1997,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   async function loadJobTypes() {
-    if (!userId || !supabase) return
+    if (!calendarDbUserId || !supabase) return
     let q = await supabase
       .from("job_types")
       .select("id, name, description, duration_minutes, color_hex, materials_list, track_mileage")
-      .eq("user_id", userId)
+      .eq("user_id", calendarDbUserId)
       .order("name")
     let rows: JobType[] = (q.data ?? []) as JobType[]
     let error = q.error
@@ -1989,7 +2010,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const q2 = await supabase
         .from("job_types")
         .select("id, name, description, duration_minutes, color_hex, materials_list")
-        .eq("user_id", userId)
+        .eq("user_id", calendarDbUserId)
         .order("name")
       rows = (q2.data ?? []) as JobType[]
       error = q2.error
@@ -1998,7 +2019,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const q3 = await supabase
         .from("job_types")
         .select("id, name, description, duration_minutes, color_hex")
-        .eq("user_id", userId)
+        .eq("user_id", calendarDbUserId)
         .order("name")
       rows = (q3.data ?? []) as JobType[]
       error = q3.error
@@ -2185,12 +2206,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!userId) return
     setLoading(true)
     void loadEvents().then(() => setLoading(false))
-  }, [userId, currentDate, view, jobTypes.length, showAllOrgEvents, orgClientIdsKey])
+  }, [userId, calendarDbUserId, currentDate, view, jobTypes.length, showAllOrgEvents, orgClientIdsKey])
 
   useEffect(() => {
     if (!userId) return
     loadJobTypes()
-  }, [userId])
+  }, [calendarDbUserId])
 
   useEffect(() => {
     if (!userId) return
@@ -2198,7 +2219,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setUserPref(row)
       setAddTargetUserId(userId)
     })
-  }, [userId])
+  }, [calendarDbUserId])
 
   useEffect(() => {
     if (!supabase || !selectedEvent?.id) {
@@ -2507,7 +2528,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setCustomReceiptPrefillCustomerId(null)
       setShowCustomReceiptModal(true)
     }
-  }, [userId])
+  }, [calendarDbUserId])
 
   useEffect(() => {
     if (!userId || !supabase) return
@@ -3131,7 +3152,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
         <div style={{ padding: isMobile ? "12px" : "16px" }}>
         <div style={{ minHeight: expanded ? "70vh" : "400px", overflow: "auto" }}>
-          {loadError && (
+          {loadError && !sandboxTraining && (
             <p style={{ color: "#b91c1c", marginBottom: "8px", fontSize: "14px" }}>Scheduling error: {loadError}</p>
           )}
           {loading ? (

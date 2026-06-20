@@ -8,7 +8,6 @@ import QuotesPage from "./modules/quotes/QuotesPage"
 import CalendarPage from "./modules/calendar/CalendarPage"
 import WebSupportPage from "./modules/web-support/WebSupportPage"
 import TechSupportPage from "./modules/tech-support/TechSupportPage"
-import SettingsPage from "./modules/settings/SettingsPage"
 import AccountPage from "./modules/account/AccountPage"
 import PaymentsPage from "./modules/payments/PaymentsPage"
 import InsuranceOptionsPage from "./modules/insurance/InsuranceOptionsPage"
@@ -204,7 +203,6 @@ function MainAppInner() {
   const estimateToolsOnlyPackage = portalConfig?.estimate_tools_only_package === true
   const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
   const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
-  const settingsTabAvailable = portalTabs.some((t) => t.tab_id === "settings")
   const calendarTabAvailable = portalTabs.some((t) => t.tab_id === "calendar")
   const showTimeClockShortcut = calendarTabAvailable && !estimateToolsOnlyPackage
   const showCustomReceiptShortcut =
@@ -213,6 +211,10 @@ function MainAppInner() {
     getPageActionVisible(portalConfig, "calendar", "custom_receipt") &&
     getOmPageActionVisible(portalConfig, "calendar", "custom_receipt")
   const customReceiptQuickLabel = portalConfig?.controlLabels?.custom_receipt?.trim() || null
+
+  useEffect(() => {
+    if (page === "settings") setPage("dashboard")
+  }, [page, setPage])
 
   useEffect(() => {
     if (page !== "payments") return
@@ -403,7 +405,7 @@ function MainAppInner() {
             authRole={authRole}
             managedByOfficeManager={managedByOfficeManager}
             managedSchedulingToolsEnabled={managedSchedulingToolsEnabled}
-            showSettingsShortcut={settingsTabAvailable}
+            showSettingsShortcut={false}
             showPaymentsShortcut={paymentsTabAvailable}
             showTimeClockShortcut={showTimeClockShortcut}
             showCustomReceiptShortcut={showCustomReceiptShortcut}
@@ -509,7 +511,6 @@ function MainAppInner() {
       {page === "calendar" && <CalendarPage setPage={setPage} />}
       {page === "web-support" && <WebSupportPage />}
       {page === "tech-support" && <TechSupportPage />}
-      {page === "settings" && <SettingsPage />}
       {page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}

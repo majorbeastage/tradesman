@@ -27,6 +27,7 @@ const SIDEBAR_EXCLUDED_TAB_IDS = new Set([
   "business-workflow",
   "organization-chart",
   "reporting",
+  "settings",
 ])
 
 export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {

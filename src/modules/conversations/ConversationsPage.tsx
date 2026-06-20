@@ -19,6 +19,7 @@ import {
 } from "../../types/portal-builder"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import {
   VoicemailRecordingBlock,
   VoicemailTranscriptBlock,
@@ -364,6 +365,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const userId = useScopedUserId()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
+  const sandboxTraining = useSandboxTrainingMode()
   const isMobile = useIsMobile()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
@@ -1445,7 +1447,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       setReplyBody("")
       setSmsMediaFiles([])
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      sandboxTrainingAlert(sandboxTraining, err instanceof Error ? err.message : String(err), "communication")
     } finally {
       setReplySending(false)
     }
@@ -1522,7 +1524,9 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       }
       if (logWarning) {
         console.warn("[send-email]", logWarning)
-        alert(`${logWarning}\n\nThe customer may still have received the email. Refresh conversations to confirm.`)
+        if (!sandboxTraining) {
+          alert(`${logWarning}\n\nThe customer may still have received the email. Refresh conversations to confirm.`)
+        }
       }
       const toMeta =
         primary && additional
@@ -1542,7 +1546,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       setEmailComposeFiles([])
       await loadConversations()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      sandboxTrainingAlert(sandboxTraining, err instanceof Error ? err.message : String(err), "communication")
     } finally {
       setEmailSending(false)
     }

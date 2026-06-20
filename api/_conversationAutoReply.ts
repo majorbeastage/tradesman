@@ -52,11 +52,12 @@ async function mergeLeadMetadataJson(
   await supabase.from("leads").update({ metadata: next }).eq("id", leadId)
 }
 
-/** Record SMS opt-in when customer initiates an inbound call (for compliant text-back). */
-export async function recordSmsConsentFromInboundCall(
+/** Record SMS opt-in when customer initiates inbound call or text (for compliant text-back). */
+async function recordSmsConsentFromInboundContact(
   supabase: SupabaseClient,
   userId: string,
   customerId: string,
+  channel: "phone_call" | "inbound_sms",
 ): Promise<void> {
   const { data: cust } = await supabase
     .from("customers")
@@ -76,11 +77,30 @@ export async function recordSmsConsentFromInboundCall(
   meta[SMS_CONSENT_META_KEY] = {
     at: new Date().toISOString(),
     source: "phone_call",
-    consent_method: "phone_call",
-    consent_note: "Customer initiated inbound call to business line; consent recorded for follow-up text messages.",
+    consent_method: channel === "phone_call" ? "phone_call" : undefined,
+    consent_note:
+      channel === "inbound_sms"
+        ? "Customer initiated inbound text message to business line; consent recorded for follow-up text messages."
+        : "Customer initiated inbound call to business line; consent recorded for follow-up text messages.",
     disclosure_snapshot: smsDisclosureSnapshot(businessName),
   }
   await supabase.from("customers").update({ metadata: meta }).eq("id", customerId).eq("user_id", userId)
+}
+
+export async function recordSmsConsentFromInboundCall(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<void> {
+  await recordSmsConsentFromInboundContact(supabase, userId, customerId, "phone_call")
+}
+
+export async function recordSmsConsentFromInboundSms(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<void> {
+  await recordSmsConsentFromInboundContact(supabase, userId, customerId, "inbound_sms")
 }
 
 async function buildAutoReplyText(
@@ -252,9 +272,7 @@ export async function runMissedCallAutoTextBack(
   const resolved = resolveAutoReplyForIntake(prof?.metadata, "Phone call")
   if (!resolved || resolved.outbound !== "Text message") return
 
-  if (resolved.settings.conv_auto_sms_consent_on_call !== "unchecked") {
-    await recordSmsConsentFromInboundCall(supabase, userId, customerId)
-  }
+  await recordSmsConsentFromInboundCall(supabase, userId, customerId)
 
   const aiAutomationsOn = (prof as { ai_assistant_visible?: boolean } | null)?.ai_assistant_visible !== false
   let replyText = await buildAutoReplyText(supabase, resolved.settings, aiAutomationsOn, {

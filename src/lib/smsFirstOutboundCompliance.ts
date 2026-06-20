@@ -25,34 +25,17 @@ export function hasInboundTwilioContactInTimeline(events: CommEventLite[]): bool
   })
 }
 
-const TRACKED_FIRST_CONTACT_TYPES = new Set(["sms", "call", "voicemail", "email"])
-
-function isTrackedCommEvent(e: CommEventLite): boolean {
-  const t = (e.event_type ?? "").trim()
-  const d = (e.direction ?? "").trim()
-  return TRACKED_FIRST_CONTACT_TYPES.has(t) && (d === "inbound" || d === "outbound")
-}
-
-function sortCommEventsChronologically(events: CommEventLite[]): CommEventLite[] {
-  return [...events].sort((a, b) => {
-    const ta = Date.parse(String(a.created_at ?? "")) || 0
-    const tb = Date.parse(String(b.created_at ?? "")) || 0
-    return ta - tb
-  })
+/** Inbound call, voicemail, or SMS to the business line — express SMS consent per carrier policy. */
+export function inboundContactGrantsSmsConsent(events: CommEventLite[]): boolean {
+  return hasInboundTwilioContactInTimeline(events)
 }
 
 /**
- * Manual SMS opt-in capture (checkbox + consent source) applies only to manually entered contacts.
- * When the customer's first tracked communication is an inbound call or voicemail on your line, skip it.
+ * Manual SMS opt-in capture (checkbox + consent source) applies only when the customer
+ * has not yet called or texted your business line. Inbound email alone does not count.
  */
 export function requiresManualSmsOptInRecord(events: CommEventLite[]): boolean {
-  const tracked = sortCommEventsChronologically(events.filter(isTrackedCommEvent))
-  if (tracked.length === 0) return true
-  const first = tracked[0]
-  const t = (first.event_type ?? "").trim()
-  const d = (first.direction ?? "").trim()
-  if (d === "inbound" && (t === "call" || t === "voicemail")) return false
-  return true
+  return !inboundContactGrantsSmsConsent(events)
 }
 
 /** First portal-originated SMS to this customer still needs a compliance footer. */

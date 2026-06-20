@@ -27,6 +27,15 @@ export type CustomerOrgGroupingMaps = {
 /** Stable key for grouping business-domain mail (Twilio, Stripe, etc.) in the Customers hub. */
 export function customerOrgGroupSignature(customer: CustomerOrgGroupable): string | null {
   if (isCustomerContactSeparated(customer.metadata)) return null
+  if (
+    customer.metadata &&
+    typeof customer.metadata === "object" &&
+    !Array.isArray(customer.metadata) &&
+    ((customer.metadata as Record<string, unknown>).sandbox_seed === true ||
+      (customer.metadata as Record<string, unknown>).sandbox_live === true)
+  ) {
+    return null
+  }
   const hubKind = parseCustomerHubKind(customer.metadata)
   for (const email of customerEmailsFromIdentifiers(customer.customer_identifiers)) {
     const root = deriveOrgGroupKeyFromEmail(email)

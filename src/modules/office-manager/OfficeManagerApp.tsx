@@ -7,7 +7,6 @@ import QuotesPage from "../quotes/QuotesPage"
 import CalendarPage from "../calendar/CalendarPage"
 import WebSupportPage from "../web-support/WebSupportPage"
 import TechSupportPage from "../tech-support/TechSupportPage"
-import SettingsPage from "../settings/SettingsPage"
 import AccountPage from "../account/AccountPage"
 import PaymentsPage from "../payments/PaymentsPage"
 import InsuranceOptionsPage from "../insurance/InsuranceOptionsPage"
@@ -406,7 +405,6 @@ function OfficeManagerAppContent() {
   const separateBillingForScope =
     Boolean(scope?.selectedUserId) && (selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
   const omPaymentsTabAvailable = hasClients && resolvedPortalTabs.some((t) => t.tab_id === "payments")
-  const omSettingsTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "settings")
   const scopedPortalCfg = scope?.scopedPortalConfig ?? portalConfig
   const calendarTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "calendar")
   const showTimeClockShortcut = calendarTabAvailable && hasClients
@@ -418,6 +416,10 @@ function OfficeManagerAppContent() {
 
   useEffect(() => {
     if (page === "web-support") setPage("tech-support")
+  }, [page, setPage])
+
+  useEffect(() => {
+    if (page === "settings") setPage("dashboard")
   }, [page, setPage])
 
   useEffect(() => {
@@ -549,7 +551,7 @@ function OfficeManagerAppContent() {
             authRole="office_manager"
             managedByOfficeManager={false}
             managedSchedulingToolsEnabled={false}
-            showSettingsShortcut={omSettingsTabAvailable}
+            showSettingsShortcut={false}
             showPaymentsShortcut={omPaymentsTabAvailable}
             showTimeClockShortcut={showTimeClockShortcut}
             showCustomReceiptShortcut={showCustomReceiptShortcut}
@@ -650,7 +652,6 @@ function OfficeManagerAppContent() {
       {hasClients && page === "calendar" && <CalendarPage setPage={setPage} />}
       {hasClients && page === "web-support" && <WebSupportPage />}
       {hasClients && page === "tech-support" && <TechSupportPage />}
-      {hasClients && page === "settings" && <SettingsPage />}
       {hasClients && page === "payments" && <PaymentsPage />}
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
