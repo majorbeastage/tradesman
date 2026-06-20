@@ -21,6 +21,7 @@ const STEP_KINDS: VoiceScreeningStepKind[] = [
   "schedule_timing",
   "caller_name",
   "callback_number",
+  "sms_opt_in",
   "custom",
 ]
 
@@ -37,10 +38,18 @@ const btnSmall: CSSProperties = {
   padding: "6px 10px",
   borderRadius: 8,
   border: `1px solid ${theme.border}`,
-  background: "#f8fafc",
+  background: "#fff",
+  color: theme.text,
   fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",
+}
+
+const btnPrimarySmall: CSSProperties = {
+  ...btnSmall,
+  border: "none",
+  background: theme.primary,
+  color: "#fff",
 }
 
 export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onChange, onCollectContactChange }: Props) {
@@ -54,6 +63,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
         schedule_timing: t("account.callScreening.kind.schedule"),
         caller_name: t("account.callScreening.kind.name"),
         callback_number: t("account.callScreening.kind.phone"),
+        sms_opt_in: t("account.callScreening.kind.smsOptIn"),
         custom: t("account.callScreening.kind.custom"),
       }) as Record<VoiceScreeningStepKind, string>,
     [t],
@@ -98,7 +108,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>{t("account.callScreening.menuHeading")}</span>
-        <button type="button" style={btnSmall} onClick={loadRecommended}>
+        <button type="button" style={btnPrimarySmall} onClick={loadRecommended}>
           {t("account.callScreening.loadTemplate")}
         </button>
         <button type="button" style={btnSmall} onClick={addCustomStep}>
@@ -182,6 +192,9 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
 
             {step.kind === "schedule_timing" ? (
               <p style={{ margin: 0, fontSize: 11, color: "#0ea5e9" }}>{t("account.callScreening.serviceTokenHint")}</p>
+            ) : null}
+            {step.kind === "sms_opt_in" ? (
+              <p style={{ margin: 0, fontSize: 11, color: "#0ea5e9" }}>{t("account.callScreening.smsOptInHint")}</p>
             ) : null}
           </div>
         ))}

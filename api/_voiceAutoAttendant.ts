@@ -9,6 +9,7 @@ export type VoiceScreeningStepKind =
   | "schedule_timing"
   | "caller_name"
   | "callback_number"
+  | "sms_opt_in"
   | "custom"
 
 export type VoiceScreeningStep = {
@@ -40,10 +41,10 @@ const RECOMMENDED: VoiceScreeningStep[] = [
   },
   { id: "name", kind: "caller_name", prompt: "May I have your name please?", enabled: true },
   {
-    id: "phone",
-    kind: "callback_number",
+    id: "sms",
+    kind: "sms_opt_in",
     prompt:
-      "If we need to reach you on a different number, please say it now. Otherwise say the word same to keep the number you are calling from.",
+      "Do you agree to receive text messages regarding your service request? We do not send text messages for marketing purposes.",
     enabled: true,
   },
 ]
@@ -67,6 +68,7 @@ function parseStep(raw: unknown): VoiceScreeningStep | null {
     o.kind === "schedule_timing" ||
     o.kind === "caller_name" ||
     o.kind === "callback_number" ||
+    o.kind === "sms_opt_in" ||
     o.kind === "custom"
       ? o.kind
       : "custom"
