@@ -57,7 +57,22 @@ type Props = {
 }
 
 const NODE_W = 240
-const NODE_H = 52
+const NODE_H = 72
+
+const TILE_LABEL_STYLE: CSSProperties = {
+  width: "100%",
+  border: "none",
+  background: "transparent",
+  outline: "none",
+  resize: "none",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  overflowWrap: "anywhere",
+  lineHeight: 1.35,
+  minHeight: 36,
+  maxHeight: 72,
+  overflow: "auto",
+}
 
 const APPROVAL_OPTIONS: WorkflowEdgeApproval[] = ["approved", "needs_approval", "needs_multiple_approvals"]
 
@@ -67,6 +82,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createExampleBusinessWorkflow())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveFlash, setSaveFlash] = useState("")
   const [err, setErr] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
@@ -115,10 +131,10 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   }, [userId])
 
   const persist = useCallback(
-    (next: BusinessWorkflowDoc) => {
-      if (!supabase || !userId) return
+    (next: BusinessWorkflowDoc): Promise<void> => {
+      if (!supabase || !userId) return Promise.resolve()
       setSaving(true)
-      void (async () => {
+      return (async () => {
         try {
           const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
           const prevMeta =
@@ -139,6 +155,14 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     },
     [userId],
   )
+
+  const saveNow = useCallback(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current)
+    void persist(doc).then(() => {
+      setSaveFlash("Saved")
+      window.setTimeout(() => setSaveFlash(""), 2200)
+    })
+  }, [doc, persist])
 
   const updateDoc = useCallback(
     (patch: Partial<BusinessWorkflowDoc> | ((prev: BusinessWorkflowDoc) => BusinessWorkflowDoc)) => {
@@ -524,7 +548,14 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           ← Dashboard
         </button>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: theme.text, flex: 1 }}>My Business Workflow</h1>
-        {saving ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
+        <button type="button" onClick={() => setPage("organization-chart")} style={navCrossBtn}>
+          Organization chart →
+        </button>
+        <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
+        {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
 
       <p style={{ margin: "0 0 12px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
@@ -1236,22 +1267,22 @@ function WorkflowNodeCard({
           }}
         />
       ) : null}
-      <input
+      <textarea
         value={node.label}
         onChange={(e) => onLabelChange(e.target.value)}
         onClick={(e) => e.stopPropagation()}
+        rows={2}
         style={{
-          width: "100%",
-          border: "none",
-          background: "transparent",
+          ...TILE_LABEL_STYLE,
           fontSize: 13,
           fontWeight: 600,
           color: pres.text,
-          outline: "none",
         }}
       />
       {assignedLabel ? (
-        <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 2 }}>{assignedLabel}</div>
+        <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {assignedLabel}
+        </div>
       ) : linkSource ? (
         <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 2 }}>Now click the step this arrow goes to</div>
       ) : null}
@@ -1343,4 +1374,11 @@ const secondaryBtn: CSSProperties = {
   fontWeight: 600,
   fontSize: 13,
   cursor: "pointer",
+}
+
+const navCrossBtn: CSSProperties = {
+  ...secondaryBtn,
+  background: "#eff6ff",
+  borderColor: "#bae6fd",
+  fontWeight: 700,
 }

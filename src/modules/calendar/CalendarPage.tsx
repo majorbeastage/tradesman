@@ -694,8 +694,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const showManagedJobTypesEntry =
     managedByOfficeManager && authRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off" && !managedSchedulingToolsEnabled
 
+  const canAccessCustomerMap =
+    Boolean(authUserId) &&
+    (sandboxTraining ||
+      isOfficeManagerOrAdmin ||
+      !managedByOfficeManager ||
+      managedSelfPolicy.customer_map_access === true)
+
+  const canAccessTeamMap = isOfficeManagerOrAdmin && teamMapUserIds.length > 0
+
+  const customerMapMembers = useMemo(() => {
+    if (isOfficeManagerOrAdmin && teamMapUserIds.length > 0) return teamMapMembers
+    const uid = calendarDbUserId || authUserId
+    if (!uid) return []
+    return [{ userId: uid, label: "My jobs on map" }]
+  }, [isOfficeManagerOrAdmin, teamMapUserIds.length, teamMapMembers, calendarDbUserId, authUserId])
+
+  const customerMapJobUserIds = useMemo(() => {
+    if (isOfficeManagerOrAdmin && teamMapUserIds.length > 0) return teamMapUserIds
+    const uid = calendarDbUserId || authUserId
+    return uid ? [uid] : []
+  }, [isOfficeManagerOrAdmin, teamMapUserIds, calendarDbUserId, authUserId])
+
   useEffect(() => {
-    if (calendarSuite.id !== "scheduling_tools" || !managedByOfficeManager) return
+    if (calendarSuite.id !== "scheduling_tools" || !managedByOfficeManager || isOfficeManagerOrAdmin || sandboxTraining) return
     const toolsOn = managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true
     if (!toolsOn) {
       setCalendarSuite({ id: "calendar" })
@@ -709,7 +731,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (calendarSuite.panel === "customer_map" && managedSelfPolicy.customer_map_access !== true) {
       setCalendarSuite({ id: "calendar" })
     }
-  }, [calendarSuite, managedByOfficeManager, managedSelfPolicy])
+  }, [calendarSuite, managedByOfficeManager, managedSelfPolicy, isOfficeManagerOrAdmin, sandboxTraining])
 
   useEffect(() => {
     if (!managedByOfficeManager || !supabase || !authUserId) return
@@ -2904,6 +2926,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Team management
                 </button>
               ) : null}
+              {canAccessCustomerMap ? (
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "customer_map" })}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                >
+                  Jobs map
+                </button>
+              ) : null}
+              {canAccessTeamMap ? (
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_map" })}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                >
+                  Team map
+                </button>
+              ) : null}
               {userId ? (
                 <>
                   <TabNotificationAlertsButton tab="calendar" profileUserId={userId} guideWizardId="scheduling_alerts" />
@@ -2973,7 +3013,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               <button
                 type="button"
                 onClick={() => {
-                  if (!managedByOfficeManager || managedSelfPolicy.customer_map_access === true) {
+                  if (canAccessCustomerMap) {
                     setCalendarSuite({ id: "scheduling_tools", panel: "customer_map" })
                   } else {
                     openJobTypesFromCalendar()
@@ -3091,7 +3131,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             {calendarSuite.id === "scheduling_tools" ? (
               <>
                 {(
-                  managedByOfficeManager
+                  managedByOfficeManager && !isOfficeManagerOrAdmin && !sandboxTraining
                     ? ([
                         ...(managedSelfPolicy.job_types_access !== "off" ? (["job_types"] as const) : []),
                         ...(managedSelfPolicy.customer_map_access === true ? (["customer_map"] as const) : []),
@@ -3584,6 +3624,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             teamMapUserIds.length > 0 ? (
             <TeamLocationsMapModal
               variant="embedded"
+              title="Team map"
               members={teamMapMembers}
               orgUserIdsForJobs={teamMapUserIds}
               onClose={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
@@ -3632,12 +3673,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           {calendarSuite.id === "scheduling_tools" &&
           calendarSuite.panel === "customer_map" &&
           authUserId &&
-          (!managedByOfficeManager || managedSelfPolicy.customer_map_access === true) ? (
+          canAccessCustomerMap ? (
             <TeamLocationsMapModal
               variant="embedded"
-              members={[{ userId: authUserId, label: "My jobs on map" }]}
-              orgUserIdsForJobs={[authUserId]}
-              onClose={() => {}}
+              title="Jobs map"
+              members={customerMapMembers}
+              orgUserIdsForJobs={customerMapJobUserIds}
+              onClose={() => setCalendarSuite({ id: "calendar" })}
             />
           ) : null}
         </div>

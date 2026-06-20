@@ -8,9 +8,15 @@ import {
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { filterRealUserIds, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import EstimateWorkflowActionsPanel from "../../components/EstimateWorkflowActionsPanel"
+import EstimateWorkflowRouteModal from "../../components/EstimateWorkflowRouteModal"
+import EstimateWorkflowNoteModal from "../../components/EstimateWorkflowNoteModal"
 import {
   applyMarkApproved,
+  applyBypassAllApprovals,
+  applyDenyApproval,
+  applyRequestUpdates,
   applySendForApproval,
+  canBypassEstimateApprovals,
   canSendEstimateToCustomer,
   computeEstimateWorkflowActions,
   loadAccountWorkflowBundleFromMetadata,
@@ -635,6 +641,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [accountWorkflowBundle, setAccountWorkflowBundle] = useState<AccountWorkflowBundle | null>(null)
   const [linkableOrgUsers, setLinkableOrgUsers] = useState<LinkableOrgUser[]>([])
   const [workflowActionBusy, setWorkflowActionBusy] = useState(false)
+  const [workflowRouteModal, setWorkflowRouteModal] = useState<WorkflowActionButton | null>(null)
+  const [workflowNoteModal, setWorkflowNoteModal] = useState<WorkflowActionButton | null>(null)
+  const [profileRole, setProfileRole] = useState<string | null>(null)
+  const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
 
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
@@ -650,12 +660,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
     let cancelled = false
     void (async () => {
       const ownerId = resolveSandboxDataUserId(authUserId, authUserId)
-      const { data } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+      const { data } = await supabase.from("profiles").select("metadata, role").eq("id", ownerId).maybeSingle()
       if (cancelled) return
       let meta =
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
           ? { ...(data.metadata as Record<string, unknown>) }
           : {}
+      setProfileRole(typeof data?.role === "string" ? data.role : null)
+      setProfileMetadata(meta)
       if (sandboxTraining) {
         const merged = mergeSandboxWorkflowSeedMetadata(meta)
         if (JSON.stringify(merged) !== JSON.stringify(meta)) {
@@ -690,8 +702,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       linkableUsers: linkableOrgUsers,
       state: quoteInternalWorkflowState,
       quoteHasLineItems: selectedQuoteItems.length > 0,
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
     })
-  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length])
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata])
 
   const customerSendWorkflowGate = useMemo(() => {
     if (!accountWorkflowBundle) return { allowed: true as const }
@@ -3849,21 +3862,27 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuote.id ? { ...q, metadata: nextMeta } : q))
   }
 
-  async function notifyWorkflowAssignee(action: WorkflowActionButton, nodeLabel: string): Promise<void> {
-    const assignee = action.assignee
-    if (!assignee?.email?.trim()) {
-      if (sandboxTraining) {
-        alert(`[Sandbox] Routed to ${assignee?.displayName ?? nodeLabel} for approval (no email on file).`)
-      }
+  async function notifyWorkflowAssignee(
+    action: WorkflowActionButton,
+    nodeLabel: string,
+    route?: { to: string; cc?: string; bcc?: string; note?: string },
+  ): Promise<void> {
+    const toEmail = route?.to?.trim() || action.assignee?.email?.trim()
+    if (!toEmail) {
+      alert("Enter an approver email address to send this for approval.")
       return
     }
+    const assigneeName = action.assignee?.displayName ?? nodeLabel
     const token = session?.access_token?.trim()
     if (!supabase || !token || !selectedQuote?.id) return
     const subject = `Estimate needs approval: ${nodeLabel}`
-    const body = `An estimate is ready for your review at step “${nodeLabel}”. Open Estimates in Tradesman to mark it approved when complete.`
+    const body = [
+      `An estimate is ready for your review at step “${nodeLabel}”.`,
+      route?.note ? `\nNote from sender:\n${route.note}` : "",
+      `\nOpen Estimates in Tradesman to review. Reply with approve, deny, or requested changes.`,
+    ].join("")
     if (sandboxTraining) {
-      alert(`[Sandbox] Notification sent to ${assignee.displayName} (${assignee.email}) for “${nodeLabel}”.`)
-      return
+      alert(`[Sandbox] Approval request sent to ${assigneeName} (${toEmail}) for “${nodeLabel}”.`)
     }
     try {
       await fetch("/api/outbound-messages?__channel=email", {
@@ -3874,7 +3893,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
           apikey: supabaseAnonKey,
         },
         body: outboundMessagesJsonBody({
-          to: assignee.email,
+          to: toEmail,
+          cc: route?.cc || undefined,
+          bcc: route?.bcc || undefined,
           subject,
           body,
           customerId: selectedQuote.customer_id ?? undefined,
@@ -3888,17 +3909,62 @@ export default function QuotesPage(_props: QuotesPageProps) {
   async function handleEstimateWorkflowAction(action: WorkflowActionButton): Promise<void> {
     if (!accountWorkflowBundle || !selectedQuote?.id || action.disabled) return
     const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
+    if (!node && action.kind !== "bypass_approval") return
+    if (action.kind === "send_for_approval") {
+      setWorkflowRouteModal(action)
+      return
+    }
+    if (action.kind === "request_updates" || action.kind === "deny_approval") {
+      setWorkflowNoteModal(action)
+      return
+    }
+    if (action.kind === "bypass_approval") {
+      const ok = window.confirm("Bypass all pending internal approvals? This is logged in routing history.")
+      if (!ok) return
+    }
+    setWorkflowActionBusy(true)
+    try {
+      if (action.kind === "mark_approved" && node) {
+        const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
+        await persistQuoteInternalWorkflowState(next)
+      } else if (action.kind === "bypass_approval") {
+        const next = applyBypassAllApprovals(quoteInternalWorkflowState, accountWorkflowBundle.workflow, authUserId ?? userId)
+        await persistQuoteInternalWorkflowState(next)
+      }
+    } finally {
+      setWorkflowActionBusy(false)
+    }
+  }
+
+  async function confirmWorkflowNoteSubmit(note: string): Promise<void> {
+    const action = workflowNoteModal
+    if (!action || !accountWorkflowBundle || !selectedQuote?.id) return
+    const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
     if (!node) return
     setWorkflowActionBusy(true)
     try {
-      if (action.kind === "send_for_approval") {
-        const next = applySendForApproval(quoteInternalWorkflowState, node, authUserId ?? userId)
-        await persistQuoteInternalWorkflowState(next)
-        await notifyWorkflowAssignee(action, node.label)
-      } else if (action.kind === "mark_approved") {
-        const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
-        await persistQuoteInternalWorkflowState(next)
-      }
+      const next =
+        action.kind === "deny_approval"
+          ? applyDenyApproval(quoteInternalWorkflowState, node, authUserId ?? userId, note)
+          : applyRequestUpdates(quoteInternalWorkflowState, node, authUserId ?? userId, note)
+      await persistQuoteInternalWorkflowState(next)
+      setWorkflowNoteModal(null)
+    } finally {
+      setWorkflowActionBusy(false)
+    }
+  }
+
+  async function confirmWorkflowRouteSend(payload: { to: string; cc: string; bcc: string; note: string }): Promise<void> {
+    const action = workflowRouteModal
+    if (!action || !accountWorkflowBundle || !selectedQuote?.id) return
+    const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
+    if (!node) return
+    setWorkflowActionBusy(true)
+    try {
+      const next = applySendForApproval(quoteInternalWorkflowState, node, authUserId ?? userId)
+      await persistQuoteInternalWorkflowState(next)
+      await notifyWorkflowAssignee(action, node.label, payload)
+      setWorkflowRouteModal(null)
     } finally {
       setWorkflowActionBusy(false)
     }
@@ -5378,7 +5444,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
                                 }
                               }}
-                              onPreviewOpenSection={() => openGuideSection(reviewSendSectionRef)}
+                              onPreviewOpenSection={() => {
+                                closeGuideWizard()
+                                openGuideSection(quoteItemsSectionRef)
+                              }}
                               onPreviewSaveProfile={() => {
                                 if (!selectedQuote?.customer_id) {
                                   alert("Select a customer first.")
@@ -6950,6 +7019,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     onOpenOrgChart={setPage ? () => setPage("organization-chart") : undefined}
                   />
                 ) : null}
+                <EstimateWorkflowRouteModal
+                  open={workflowRouteModal != null}
+                  action={workflowRouteModal}
+                  busy={workflowActionBusy}
+                  onClose={() => setWorkflowRouteModal(null)}
+                  onSend={(payload) => void confirmWorkflowRouteSend(payload)}
+                />
+                <EstimateWorkflowNoteModal
+                  open={workflowNoteModal != null}
+                  action={workflowNoteModal}
+                  busy={workflowActionBusy}
+                  onClose={() => setWorkflowNoteModal(null)}
+                  onSubmit={(note) => void confirmWorkflowNoteSubmit(note)}
+                />
               <div
                 style={{
                   paddingTop: 4,

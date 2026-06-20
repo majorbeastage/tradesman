@@ -38,7 +38,7 @@ export type QuoteInternalWorkflowState = {
   pendingNodeIds: string[]
   history: Array<{
     at: string
-    action: "send_for_approval" | "mark_approved" | "note"
+    action: "send_for_approval" | "mark_approved" | "request_updates" | "deny_approval" | "bypass_approval" | "note"
     nodeId: string
     nodeLabel: string
     byUserId?: string | null
@@ -46,7 +46,13 @@ export type QuoteInternalWorkflowState = {
   }>
 }
 
-export type WorkflowActionKind = "send_for_approval" | "mark_approved" | "send_to_customer"
+export type WorkflowActionKind =
+  | "send_for_approval"
+  | "mark_approved"
+  | "request_updates"
+  | "deny_approval"
+  | "bypass_approval"
+  | "send_to_customer"
 
 export type WorkflowActionButton = {
   kind: WorkflowActionKind
@@ -101,7 +107,7 @@ export function parseQuoteInternalWorkflow(metadata: unknown): QuoteInternalWork
       if (!row || typeof row !== "object") continue
       const h = row as Record<string, unknown>
       const action = h.action
-      if (action !== "send_for_approval" && action !== "mark_approved" && action !== "note") continue
+      if (action !== "send_for_approval" && action !== "mark_approved" && action !== "request_updates" && action !== "deny_approval" && action !== "bypass_approval" && action !== "note") continue
       const nodeId = typeof h.nodeId === "string" ? h.nodeId : ""
       const nodeLabel = typeof h.nodeLabel === "string" ? h.nodeLabel : ""
       if (!nodeId) continue
@@ -302,6 +308,15 @@ export function canSendEstimateToCustomer(
   return { allowed: true }
 }
 
+export function canBypassEstimateApprovals(profileRole: string | null | undefined, metadata: unknown): boolean {
+  const role = (profileRole ?? "").trim().toLowerCase()
+  if (role === "admin" || role === "corporate_management" || role === "office_manager") return true
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+  const raw = (metadata as Record<string, unknown>).estimate_approval_bypass_v1
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false
+  return (raw as Record<string, unknown>).enabled === true
+}
+
 export function computeEstimateWorkflowActions(input: {
   workflow: BusinessWorkflowDoc
   orgChart: OrganizationChartDoc
@@ -309,8 +324,9 @@ export function computeEstimateWorkflowActions(input: {
   linkableUsers: LinkableOrgUser[]
   state: QuoteInternalWorkflowState
   quoteHasLineItems: boolean
+  canBypassApprovals?: boolean
 }): WorkflowActionButton[] {
-  const { workflow, orgChart, externalContacts, linkableUsers, state, quoteHasLineItems } = input
+  const { workflow, orgChart, externalContacts, linkableUsers, state, quoteHasLineItems, canBypassApprovals } = input
   const actions: WorkflowActionButton[] = []
   const completed = new Set(state.completedNodeIds)
   const pending = new Set(state.pendingNodeIds)
@@ -325,10 +341,24 @@ export function computeEstimateWorkflowActions(input: {
       actions.push({
         kind: "mark_approved",
         nodeId: node.id,
-        label: `Mark “${node.label}” approved`,
+        label: `Approve “${node.label}”`,
         detail: assignee.displayName,
         assignee,
         primary: true,
+      })
+      actions.push({
+        kind: "request_updates",
+        nodeId: node.id,
+        label: `Request updates — ${node.label}`,
+        detail: "Send back to estimator with notes",
+        assignee,
+      })
+      actions.push({
+        kind: "deny_approval",
+        nodeId: node.id,
+        label: `Deny — ${node.label}`,
+        detail: "Reject this approval step with notes",
+        assignee,
       })
       continue
     }
@@ -339,25 +369,32 @@ export function computeEstimateWorkflowActions(input: {
     if (!prerequisitesMet(workflow, node.id, state)) continue
 
     const assignee = resolveWorkflowNodeAssignee(node, orgChart, externalContacts, linkableUsers)
-    const unassigned = assignee.kind === "unassigned"
     actions.push({
       kind: "send_for_approval",
       nodeId: node.id,
       label: `Send to ${node.label}`,
-      detail: unassigned
-        ? "Assign a team member or external contact on the workflow step"
-        : assignee.kind === "external_contact"
-          ? `External: ${assignee.displayName}`
-          : assignee.displayName,
+      detail:
+        assignee.kind === "unassigned"
+          ? "Choose approver email — or set assignee on workflow / org chart"
+          : assignee.kind === "external_contact"
+            ? `External: ${assignee.displayName}`
+            : assignee.displayName,
       assignee,
-      primary: !unassigned,
-      disabled: unassigned,
-      disabledReason: unassigned ? "Set an assignee on this workflow step or matching org chart role." : undefined,
+      primary: true,
     })
   }
 
   const customerGate = canSendEstimateToCustomer(workflow, state)
   const customerNode = findWorkflowNodeByLabelPatterns(workflow, ["sent to customer", "send to customer"])
+  if (canBypassApprovals && !customerGate.allowed && state.pendingNodeIds.length > 0) {
+    actions.push({
+      kind: "bypass_approval",
+      nodeId: state.pendingNodeIds[0] ?? "bypass",
+      label: "Bypass pending approvals",
+      detail: "Leadership override — mark all pending steps complete",
+      assignee: null,
+    })
+  }
   actions.push({
     kind: "send_to_customer",
     nodeId: customerNode?.id ?? "customer-send",
@@ -371,8 +408,14 @@ export function computeEstimateWorkflowActions(input: {
   })
 
   return actions.sort((a, b) => {
-    const order = (k: WorkflowActionKind) =>
-      k === "send_for_approval" ? 0 : k === "mark_approved" ? 1 : 2
+    const order = (k: WorkflowActionKind) => {
+      if (k === "send_for_approval") return 0
+      if (k === "mark_approved") return 1
+      if (k === "request_updates") return 2
+      if (k === "deny_approval") return 3
+      if (k === "bypass_approval") return 4
+      return 5
+    }
     return order(a.kind) - order(b.kind)
   })
 }
@@ -422,6 +465,80 @@ export function applyMarkApproved(
         nodeId: node.id,
         nodeLabel: node.label,
         byUserId,
+      },
+    ],
+  }
+}
+
+export function applyRequestUpdates(
+  state: QuoteInternalWorkflowState,
+  node: WorkflowNode,
+  byUserId: string | null,
+  note: string,
+): QuoteInternalWorkflowState {
+  return {
+    ...state,
+    pendingNodeIds: state.pendingNodeIds.filter((id) => id !== node.id),
+    history: [
+      ...state.history,
+      {
+        at: new Date().toISOString(),
+        action: "request_updates",
+        nodeId: node.id,
+        nodeLabel: node.label,
+        byUserId,
+        note: note.trim() || undefined,
+      },
+    ],
+  }
+}
+
+export function applyDenyApproval(
+  state: QuoteInternalWorkflowState,
+  node: WorkflowNode,
+  byUserId: string | null,
+  note: string,
+): QuoteInternalWorkflowState {
+  return {
+    ...state,
+    completedNodeIds: state.completedNodeIds.filter((id) => id !== node.id),
+    pendingNodeIds: state.pendingNodeIds.filter((id) => id !== node.id),
+    history: [
+      ...state.history,
+      {
+        at: new Date().toISOString(),
+        action: "deny_approval",
+        nodeId: node.id,
+        nodeLabel: node.label,
+        byUserId,
+        note: note.trim() || undefined,
+      },
+    ],
+  }
+}
+
+export function applyBypassAllApprovals(
+  state: QuoteInternalWorkflowState,
+  workflow: BusinessWorkflowDoc,
+  byUserId: string | null,
+): QuoteInternalWorkflowState {
+  const approvalNodeIds = workflow.nodes
+    .filter((n) => !isCustomerSendNode(n) && incomingEdges(workflow, n.id).some((e) => e.approval !== "approved"))
+    .map((n) => n.id)
+  const completedNodeIds = [...new Set([...state.completedNodeIds, ...state.pendingNodeIds, ...approvalNodeIds])]
+  return {
+    ...state,
+    completedNodeIds,
+    pendingNodeIds: [],
+    history: [
+      ...state.history,
+      {
+        at: new Date().toISOString(),
+        action: "bypass_approval",
+        nodeId: approvalNodeIds[0] ?? "bypass",
+        nodeLabel: "All pending approvals",
+        byUserId,
+        note: "Leadership bypass",
       },
     ],
   }

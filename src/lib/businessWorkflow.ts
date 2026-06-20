@@ -112,7 +112,12 @@ export const WORKFLOW_EDGE_META: Record<
 }
 
 const NODE_W = 240
-const NODE_H = 52
+const NODE_H = 72
+
+const SVG_PAD = 28
+const SVG_HEADER_H = 44
+const SVG_LEGEND_H = 36
+const SVG_DIAGRAM_TOP = SVG_HEADER_H + SVG_LEGEND_H + 20
 
 const EXAMPLE_LABELS = [
   "Customer Intake",
@@ -343,9 +348,11 @@ export function workflowEdgeGeometry(
   to: WorkflowNode,
   laneIndex: number,
   laneCount: number,
+  opts?: { fromHeight?: number },
 ): WorkflowEdgeGeometry {
+  const fromH = opts?.fromHeight ?? NODE_H
   const x1 = from.x + NODE_W / 2
-  const y1 = from.y + NODE_H
+  const y1 = from.y + fromH
   const x2 = to.x + NODE_W / 2
   const y2 = to.y
   const dx = x2 - x1
@@ -397,13 +404,109 @@ export function workflowEdgeLabelSvg(cx: number, cy: number, text: string, strok
   ].join("")
 }
 
-export function workflowToSvg(doc: BusinessWorkflowDoc, width = 760, height = 1200): string {
+function wrapLabelLines(text: string, maxChars: number): string[] {
+  const raw = text.trim()
+  if (!raw) return [""]
+  const words = raw.split(/\s+/)
+  const lines: string[] = []
+  let current = ""
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word
+    if (next.length > maxChars && current) {
+      lines.push(current)
+      current = word.length > maxChars ? word.slice(0, maxChars) : word
+      while (current.length > maxChars) {
+        lines.push(current.slice(0, maxChars))
+        current = current.slice(maxChars)
+      }
+    } else {
+      current = next.length > maxChars ? next.slice(0, maxChars) : next
+      if (next.length > maxChars && !current.includes(" ")) {
+        lines.push(current)
+        current = word.slice(maxChars)
+      }
+    }
+  }
+  if (current) lines.push(current)
+  return lines.length ? lines : [""]
+}
+
+/** Export height for a step box — grows when the label wraps (matches on-screen tiles). */
+export function workflowNodeExportHeight(label: string): number {
+  const lines = wrapLabelLines(label, 30)
+  const lineCount = Math.min(lines.length, 5)
+  return Math.max(NODE_H, 22 + lineCount * 14 + 10)
+}
+
+function workflowNodeLabelSvg(x: number, y: number, label: string, textColor: string): string {
+  const lines = wrapLabelLines(label, 30).slice(0, 5)
+  const startY = y + 20
+  const tspans = lines
+    .map((line, i) => `<tspan x="${x + 12}" dy="${i === 0 ? 0 : 14}">${escapeXml(line)}</tspan>`)
+    .join("")
+  return `<text y="${startY}" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" fill="${textColor}">${tspans}</text>`
+}
+
+function workflowLegendRowSvg(y: number, width: number): string {
+  const kinds: WorkflowEdgeApproval[] = ["approved", "needs_approval", "needs_multiple_approvals"]
+  const colW = Math.floor((width - SVG_PAD * 2) / kinds.length)
+  const parts: string[] = [
+    `<rect x="${SVG_PAD}" y="${y}" width="${width - SVG_PAD * 2}" height="${SVG_LEGEND_H}" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>`,
+  ]
+  kinds.forEach((kind, i) => {
+    const meta = WORKFLOW_EDGE_META[kind]
+    const cx = SVG_PAD + 16 + i * colW
+    const ty = y + SVG_LEGEND_H / 2 + 4
+    parts.push(`<line x1="${cx}" y1="${y + 10}" x2="${cx + 28}" y2="${y + 10}" stroke="${meta.stroke}" stroke-width="3"/>`)
+    parts.push(
+      `<text x="${cx + 36}" y="${ty}" font-family="Segoe UI, sans-serif" font-size="11" fill="#475569">${escapeXml(meta.shortLabel)}</text>`,
+    )
+  })
+  return parts.join("\n")
+}
+
+function computeWorkflowSvgBounds(
+  nodes: WorkflowNode[],
+  nodeHeights: Map<string, number>,
+  shiftX: number,
+  shiftY: number,
+): { width: number; height: number } {
+  let maxX = NODE_W + SVG_PAD * 2
+  let maxY = SVG_DIAGRAM_TOP + NODE_H + SVG_PAD
+  for (const n of nodes) {
+    const h = nodeHeights.get(n.id) ?? NODE_H
+    maxX = Math.max(maxX, n.x + shiftX + NODE_W + SVG_PAD)
+    maxY = Math.max(maxY, n.y + shiftY + h + SVG_PAD)
+  }
+  return { width: Math.max(760, maxX), height: Math.max(480, maxY) }
+}
+
+export function workflowToSvg(doc: BusinessWorkflowDoc, width?: number, height?: number): string {
   const nodes = sortedWorkflowNodes(doc)
   const byId = new Map(nodes.map((n) => [n.id, n]))
+  const nodeHeights = new Map(nodes.map((n) => [n.id, workflowNodeExportHeight(n.label)]))
+
+  let minX = 0
+  let minY = 0
+  if (nodes.length > 0) {
+    minX = Math.min(...nodes.map((n) => n.x))
+    minY = Math.min(...nodes.map((n) => n.y))
+  }
+
+  const shiftX = SVG_PAD - minX
+  const shiftY = SVG_DIAGRAM_TOP - minY
+
+  const bounds = computeWorkflowSvgBounds(nodes, nodeHeights, shiftX, shiftY)
+  const svgW = width ?? bounds.width
+  const svgH = height ?? bounds.height
+
   const lines: string[] = []
-  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`)
+  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`)
   lines.push(`<rect width="100%" height="100%" fill="#f8fafc"/>`)
-  lines.push(`<text x="24" y="32" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#0f172a">${escapeXml(doc.title)}</text>`)
+  lines.push(
+    `<text x="${SVG_PAD}" y="28" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#0f172a">${escapeXml(doc.title)}</text>`,
+  )
+  lines.push(workflowLegendRowSvg(SVG_HEADER_H, svgW))
 
   lines.push(`<defs>`)
   for (const kind of ["approved", "needs_approval", "needs_multiple_approvals"] as WorkflowEdgeApproval[]) {
@@ -418,7 +521,10 @@ export function workflowToSvg(doc: BusinessWorkflowDoc, width = 760, height = 12
     const from = byId.get(edge.fromId)
     const to = byId.get(edge.toId)
     if (!from || !to) continue
-    const g = workflowEdgeGeometry(from, to, laneIndex, laneCount)
+    const fromShifted = { ...from, x: from.x + shiftX, y: from.y + shiftY }
+    const toShifted = { ...to, x: to.x + shiftX, y: to.y + shiftY }
+    const fromH = nodeHeights.get(from.id) ?? NODE_H
+    const g = workflowEdgeGeometry(fromShifted, toShifted, laneIndex, laneCount, { fromHeight: fromH })
     const stroke = workflowEdgeStroke(edge.approval)
     lines.push(
       `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="${stroke}" stroke-width="2.5" marker-end="url(#arrow-${edge.approval})"/>`,
@@ -430,21 +536,13 @@ export function workflowToSvg(doc: BusinessWorkflowDoc, width = 760, height = 12
 
   for (const n of nodes) {
     const pres = workflowNodePresentation(n)
+    const x = n.x + shiftX
+    const y = n.y + shiftY
+    const h = nodeHeights.get(n.id) ?? NODE_H
     lines.push(
-      `<rect x="${n.x}" y="${n.y}" width="${NODE_W}" height="${NODE_H}" rx="10" fill="${pres.fill}" stroke="${pres.border}" stroke-width="1.5"/>`,
+      `<rect x="${x}" y="${y}" width="${NODE_W}" height="${h}" rx="10" fill="${pres.fill}" stroke="${pres.border}" stroke-width="1.5"/>`,
     )
-    const label = escapeXml(truncateLabel(n.label, 34))
-    lines.push(
-      `<text x="${n.x + 12}" y="${n.y + 30}" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" fill="${pres.text}">${label}</text>`,
-    )
-  }
-
-  let ly = 52
-  for (const kind of ["approved", "needs_approval", "needs_multiple_approvals"] as WorkflowEdgeApproval[]) {
-    const meta = WORKFLOW_EDGE_META[kind]
-    lines.push(`<line x1="24" y1="${ly}" x2="56" y2="${ly}" stroke="${meta.stroke}" stroke-width="3"/>`)
-    lines.push(`<text x="64" y="${ly + 4}" font-family="Segoe UI, sans-serif" font-size="11" fill="#475569">${escapeXml(meta.shortLabel)}</text>`)
-    ly += 18
+    lines.push(workflowNodeLabelSvg(x, y, n.label, pres.text))
   }
 
   lines.push(`</svg>`)

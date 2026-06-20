@@ -4,6 +4,7 @@ import type { CommunicationChannel } from "./_communications.js"
 import {
   buildVoicemailTwiml,
   createServiceSupabase,
+  ensureOpenLeadForInbound,
   getUserRoutingProfile,
   isWithinBusinessHours,
   logCommunicationEvent,
@@ -106,6 +107,7 @@ async function logScreeningEvent(params: {
   supabase: ReturnType<typeof createServiceSupabase>
   userId: string
   customerId: string | null
+  leadId?: string | null
   channelId: string | null
   callSid: string | null
   from: string
@@ -127,6 +129,7 @@ async function logScreeningEvent(params: {
   await logCommunicationEvent(params.supabase, {
     user_id: params.userId,
     customer_id: params.customerId,
+    lead_id: params.leadId ?? null,
     channel_id: params.channelId,
     event_type: "call",
     direction: "inbound",
@@ -143,10 +146,31 @@ async function logScreeningEvent(params: {
       screening_spam_signals: params.classification.spamSignals,
       screening_answers: params.answers,
       screening_action: params.action,
+      enrich_source: "auto_attendant_live",
       from: params.from,
       to: params.to,
     },
   })
+}
+
+async function ensureLeadForScreeningCall(
+  supabase: ReturnType<typeof createServiceSupabase>,
+  userId: string,
+  customerId: string | null,
+  callerName: string | null,
+  transcript: string,
+  intentSummary: string,
+): Promise<string | null> {
+  if (!customerId) return null
+  const title = callerName?.trim()
+    ? `Phone inquiry: ${callerName.trim().slice(0, 80)}`
+    : "Phone inquiry (auto-attendant)"
+  try {
+    return await ensureOpenLeadForInbound(supabase, userId, customerId, title, `${intentSummary}\n\n${transcript}`.slice(0, 4000))
+  } catch (e) {
+    console.warn("[call-screening] ensure lead", e instanceof Error ? e.message : e)
+    return null
+  }
 }
 
 async function buildForwardDialTwiml(params: {
@@ -300,12 +324,37 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
 
     // Final step — classify and route
     const classification = await classifyCallScreeningAnswers(nextAnswers, settings.spamScreenEnabled)
+    const transcript = nextAnswers.map((a) => `${a.question}\n→ ${a.answer || "(no response)"}`).join("\n\n")
     let customerId: string | null = null
     if (from) {
       const { getOrCreateCustomerByPhone } = await import("./_communications.js")
       const customer = await getOrCreateCustomerByPhone(supabase, channel.user_id, from)
       customerId = customer?.customerId ?? null
       await applyCustomerUpdates(supabase, channel.user_id, customerId, classification)
+    }
+    const leadId =
+      classification.verdict === "good_lead" || classification.verdict === "uncertain"
+        ? await ensureLeadForScreeningCall(
+            supabase,
+            channel.user_id,
+            customerId,
+            classification.callerName,
+            transcript,
+            classification.intentSummary,
+          )
+        : null
+
+    const screeningBase = {
+      supabase,
+      userId: channel.user_id,
+      customerId,
+      leadId,
+      channelId: channel.id,
+      callSid,
+      from,
+      to,
+      answers: nextAnswers,
+      classification,
     }
 
     const isBad =
@@ -315,18 +364,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
     const isGood = classification.verdict === "good_lead" || classification.verdict === "uncertain"
 
     if (isBad) {
-      await logScreeningEvent({
-        supabase,
-        userId: channel.user_id,
-        customerId,
-        channelId: channel.id,
-        callSid,
-        from,
-        to,
-        answers: nextAnswers,
-        classification,
-        action: "voicemail",
-      })
+      await logScreeningEvent({ ...screeningBase, action: "voicemail" })
       sendTwiml(
         res,
         buildVoicemailTwiml({
@@ -340,35 +378,13 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
     }
 
     if (isGood && settings.forwardGoodLeads && forwardTo) {
-      await logScreeningEvent({
-        supabase,
-        userId: channel.user_id,
-        customerId,
-        channelId: channel.id,
-        callSid,
-        from,
-        to,
-        answers: nextAnswers,
-        classification,
-        action: "forwarded",
-      })
+      await logScreeningEvent({ ...screeningBase, action: "forwarded" })
       const dialInner = await buildForwardDialTwiml({ req, channel, from, to, forwardTo, settings })
       sendTwiml(res, twimlResponse(dialInner))
       return
     }
 
-    await logScreeningEvent({
-      supabase,
-      userId: channel.user_id,
-      customerId,
-      channelId: channel.id,
-      callSid,
-      from,
-      to,
-      answers: nextAnswers,
-      classification,
-      action: "uncertain_voicemail",
-    })
+    await logScreeningEvent({ ...screeningBase, action: "uncertain_voicemail" })
     sendTwiml(
       res,
       buildVoicemailTwiml({

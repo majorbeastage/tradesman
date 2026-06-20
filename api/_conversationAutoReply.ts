@@ -381,8 +381,6 @@ export async function runMissedCallAutoTextBack(
     return
   }
 
-  await recordSmsConsentFromInboundCall(supabase, userId, customerId)
-
   const aiAutomationsOn = (prof as { ai_assistant_visible?: boolean } | null)?.ai_assistant_visible !== false
   let replyText = await buildAutoReplyText(supabase, resolved.settings, aiAutomationsOn, {
     fallbackName: dialCallStatus ? `Missed call (${dialCallStatus})` : "Missed call",

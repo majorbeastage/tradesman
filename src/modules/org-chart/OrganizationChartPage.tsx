@@ -50,6 +50,30 @@ type Props = {
 const NODE_W = 240
 const NODE_H = 72
 
+const TILE_LABEL_STYLE: CSSProperties = {
+  width: "100%",
+  border: "none",
+  background: "transparent",
+  outline: "none",
+  resize: "none",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  overflowWrap: "anywhere",
+  lineHeight: 1.35,
+  minHeight: 28,
+  maxHeight: 56,
+  overflow: "auto",
+}
+
+const TILE_SUBLABEL_STYLE: CSSProperties = {
+  ...TILE_LABEL_STYLE,
+  fontSize: 11,
+  color: "#64748b",
+  minHeight: 22,
+  maxHeight: 40,
+  marginTop: 2,
+}
+
 export default function OrganizationChartPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
@@ -60,6 +84,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveFlash, setSaveFlash] = useState("")
   const [err, setErr] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
@@ -107,10 +132,10 @@ export default function OrganizationChartPage({ setPage }: Props) {
   }, [userId])
 
   const persist = useCallback(
-    (next: OrganizationChartDoc) => {
-      if (!supabase || !userId) return
+    (next: OrganizationChartDoc): Promise<void> => {
+      if (!supabase || !userId) return Promise.resolve()
       setSaving(true)
-      void (async () => {
+      return (async () => {
         try {
           const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
           const prevMeta =
@@ -133,10 +158,10 @@ export default function OrganizationChartPage({ setPage }: Props) {
   )
 
   const persistExternalContacts = useCallback(
-    (next: ExternalContactsDoc) => {
-      if (!supabase || !userId) return
+    (next: ExternalContactsDoc): Promise<void> => {
+      if (!supabase || !userId) return Promise.resolve()
       setSaving(true)
-      void (async () => {
+      return (async () => {
         try {
           const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
           const prevMeta =
@@ -157,6 +182,35 @@ export default function OrganizationChartPage({ setPage }: Props) {
     },
     [userId],
   )
+
+  const saveNow = useCallback(() => {
+    if (!supabase || !userId) return
+    if (saveTimer.current) window.clearTimeout(saveTimer.current)
+    if (externalSaveTimer.current) window.clearTimeout(externalSaveTimer.current)
+    setSaving(true)
+    void (async () => {
+      try {
+        const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+        let prevMeta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? { ...(data.metadata as Record<string, unknown>) }
+            : {}
+        prevMeta = mergeOrganizationChartMetadata(prevMeta, doc)
+        prevMeta = mergeExternalContactsMetadata(prevMeta, externalContacts)
+        const { error } = await supabase
+          .from("profiles")
+          .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
+          .eq("id", userId)
+        if (error) throw error
+        setSaveFlash("Saved")
+        window.setTimeout(() => setSaveFlash(""), 2200)
+      } catch (e: unknown) {
+        setErr(formatAppError(e))
+      } finally {
+        setSaving(false)
+      }
+    })()
+  }, [doc, externalContacts, userId])
 
   const updateExternalContacts = useCallback(
     (patch: Partial<ExternalContactsDoc> | ((prev: ExternalContactsDoc) => ExternalContactsDoc)) => {
@@ -557,7 +611,14 @@ export default function OrganizationChartPage({ setPage }: Props) {
           ← Dashboard
         </button>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: theme.text, flex: 1 }}>Organization chart</h1>
-        {saving ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
+        <button type="button" onClick={() => setPage("business-workflow")} style={navCrossBtn}>
+          Business workflow →
+        </button>
+        <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
+        {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
 
       <p style={{ margin: "0 0 16px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
@@ -1055,19 +1116,21 @@ function OrgNodeCard({
           Release to connect
         </div>
       ) : null}
-      <input
+      <textarea
         value={node.label}
         onChange={(e) => onPatch({ label: e.target.value })}
         onClick={(e) => e.stopPropagation()}
         placeholder="Role / department"
-        style={{ width: "100%", border: "none", background: "transparent", fontSize: 13, fontWeight: 700, color: theme.text, outline: "none" }}
+        rows={2}
+        style={{ ...TILE_LABEL_STYLE, fontSize: 13, fontWeight: 700, color: theme.text }}
       />
-      <input
+      <textarea
         value={node.jobTitle}
         onChange={(e) => onPatch({ jobTitle: e.target.value })}
         onClick={(e) => e.stopPropagation()}
         placeholder="Job title"
-        style={{ width: "100%", border: "none", background: "transparent", fontSize: 11, color: "#64748b", outline: "none", marginTop: 2 }}
+        rows={2}
+        style={TILE_SUBLABEL_STYLE}
       />
       <select
         value={node.linkedUserId ?? ""}
@@ -1160,6 +1223,13 @@ const secondaryBtn: CSSProperties = {
   fontWeight: 600,
   fontSize: 13,
   cursor: "pointer",
+}
+
+const navCrossBtn: CSSProperties = {
+  ...secondaryBtn,
+  background: "#eff6ff",
+  borderColor: "#bae6fd",
+  fontWeight: 700,
 }
 
 function LinkableOrgUserOptions({ members }: { members: LinkableOrgUser[] }) {

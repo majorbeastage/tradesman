@@ -71,6 +71,10 @@ export async function simulateSandboxOutboundEmail(
         (cust?.service_address as string | null) ??
         (typeof meta.service_address === "string" ? meta.service_address : null),
     }).replace(/\n/g, " ")
+    const isEstimateWithPdf =
+      (params.attachmentCount ?? 0) > 0 &&
+      (/\bestimate\b/i.test(params.subject) ||
+        (params.attachmentNames ?? []).some((n) => /\.pdf$/i.test(n) && /estimate/i.test(n)))
     inboundReplyAt = new Date(Date.now() + 4000).toISOString()
     await logCommunicationEvent(supabase, {
       user_id: params.userId,
@@ -95,6 +99,36 @@ export async function simulateSandboxOutboundEmail(
       inboundBody: reply,
     })
     await recordSandboxCustomerReply(supabase, params.userId, params.customerId)
+
+    if (isEstimateWithPdf) {
+      const first = (cust?.display_name as string | null)?.trim().split(/\s+/)[0] || "Customer"
+      const signedBody =
+        `Hi — we reviewed the attached estimate PDF and are ready to move forward. ` +
+        `Please schedule the work at your earliest convenience. Signed, ${first}.`
+      await logCommunicationEvent(supabase, {
+        user_id: params.userId,
+        customer_id: params.customerId,
+        conversation_id: params.conversationId ?? null,
+        lead_id: params.leadId ?? null,
+        event_type: "email",
+        direction: "inbound",
+        subject: `Re: ${params.subject} — signed copy`,
+        body: signedBody,
+        unread: true,
+        metadata: {
+          sandbox_simulated: true,
+          simulated_delay_ms: 12000,
+          sandbox_signed_estimate: true,
+          in_reply_to: eventId,
+        },
+      })
+      await enrichSandboxFromSimulatedInbound(supabase, {
+        userId: params.userId,
+        customerId: params.customerId,
+        leadId: params.leadId,
+        inboundBody: signedBody,
+      })
+    }
   }
 
   return { ok: true, simulated: true, eventId, inboundReplyAt }

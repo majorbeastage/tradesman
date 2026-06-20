@@ -109,6 +109,46 @@ function extractMaxDollars(text: string): number | null {
 
 const URGENT_RE = /\b(asap|urgent|emergency|today|tonight|now|immediately|eod|right away)\b/i
 
+/** Pull auto-attendant, call, SMS, and email inbound text for lead/customer scoring. */
+async function fetchInboundEngagementCorpus(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string | null | undefined,
+  leadId?: string | null,
+): Promise<string> {
+  if (!customerId && !leadId) return ""
+  let q = supabase
+    .from("communication_events")
+    .select("body, transcript_text, summary_text, metadata, event_type")
+    .eq("user_id", userId)
+    .eq("direction", "inbound")
+    .order("created_at", { ascending: false })
+    .limit(14)
+  if (customerId) q = q.eq("customer_id", customerId)
+  else if (leadId) q = q.eq("lead_id", leadId)
+  const { data } = await q
+  const parts: string[] = []
+  for (const row of data ?? []) {
+    const meta =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {}
+    if (typeof row.transcript_text === "string" && row.transcript_text.trim()) {
+      parts.push(row.transcript_text.trim())
+      continue
+    }
+    if (Array.isArray(meta.screening_answers)) {
+      const qa = (meta.screening_answers as { question?: string; answer?: string }[])
+        .map((a) => `${a.question ?? "Question"}\n→ ${a.answer ?? ""}`)
+        .join("\n\n")
+      if (qa.trim()) parts.push(qa.trim())
+    }
+    if (typeof row.body === "string" && row.body.trim()) parts.push(row.body.trim())
+    else if (typeof row.summary_text === "string" && row.summary_text.trim()) parts.push(row.summary_text.trim())
+  }
+  return [...new Set(parts)].join("\n\n").slice(0, 6000)
+}
+
 type AiSignals = {
   jobTypeHints: string[]
   budgetSignal: "none" | "low" | "medium" | "high" | "unknown"
@@ -119,7 +159,7 @@ type AiSignals = {
 async function interpretWithAi(corpus: string, prefs: LeadFilterPreferencesV1): Promise<AiSignals | null> {
   if (!prefs.use_ai_for_unclear) return null
   const system =
-    'Reply with one JSON object only, no markdown. Keys: jobTypeHints (string array, short trade keywords inferred from text), budgetSignal ("none"|"low"|"medium"|"high"|"unknown"), urgency ("unknown"|"asap"|"flexible"), notes (one short sentence). Do not classify good/bad leads. If unsure, use unknown/flexible and empty hints.'
+    'Reply with one JSON object only, no markdown. Keys: jobTypeHints (string array, short trade keywords inferred from text), budgetSignal ("none"|"low"|"medium"|"high"|"unknown"), urgency ("unknown"|"asap"|"flexible"), notes (one short sentence). Do not classify good/bad leads. If unsure, use unknown/flexible and empty hints. Weight auto-attendant phone Q&A heavily when present (name, job scope, address, urgency, SMS opt-in).'
   const user = `Contractor accepted job types (hints): ${prefs.accepted_job_types.slice(0, 800)}\n\nLead text:\n${corpus.slice(0, 6000)}`
   const raw = await openAiJsonAssist(system, user)
   if (!raw) return null
@@ -210,8 +250,9 @@ export async function evaluateAndPersistLeadFit(
 
   const aiVisible = (prof as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false
 
-  let corpus = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}`.toLowerCase()
-  const corpusRaw = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}`
+  const engagementCorpus = await fetchInboundEngagementCorpus(supabase, lead.user_id, lead.customer_id, leadId)
+  let corpus = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`.toLowerCase()
+  const corpusRaw = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`
 
   const accepted = tokenizeJobTypes(prefs.accepted_job_types)
   const minSize = prefs.minimum_job_size
@@ -429,7 +470,8 @@ export async function evaluateAndPersistCustomerFit(
 
   const aiVisible = (prof as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false
 
-  const corpusRaw = `${cust.display_name ?? ""}\n${cust.service_address ?? ""}\n${cust.job_pipeline_status ?? ""}\n${cust.communication_urgency ?? ""}`
+  const engagementCorpus = await fetchInboundEngagementCorpus(supabase, cust.user_id, customerId)
+  const corpusRaw = `${cust.display_name ?? ""}\n${cust.service_address ?? ""}\n${cust.job_pipeline_status ?? ""}\n${cust.communication_urgency ?? ""}\n${engagementCorpus}`
   let corpus = corpusRaw.toLowerCase()
   const accepted = tokenizeJobTypes(prefs.accepted_job_types)
   const minSize = prefs.minimum_job_size

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import CommunicationUrgencyBadge from "../../components/CommunicationUrgencyBadge"
@@ -28,6 +29,9 @@ import {
 } from "../../lib/customReceipt"
 import { downloadPdfBlob } from "../../lib/documentPdf"
 import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
+import { leadFitBadgeEl } from "../../lib/leadFitUi"
+import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
+import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 
 type Props = {
   setPage: (page: string) => void
@@ -149,9 +153,19 @@ function CollapsibleProfileSection({
   )
 }
 
+function formatFetchApiError(response: Response, raw: string): string {
+  try {
+    const j = JSON.parse(raw) as { error?: string; message?: string }
+    return j.error || j.message || raw.slice(0, 200) || response.statusText
+  } catch {
+    return raw.slice(0, 200) || response.statusText
+  }
+}
+
 export default function CustomerProfilePage({ setPage }: Props) {
-  const { user } = useAuth()
+  const { user, session } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const isMobile = useIsMobile()
   const [customerId] = useState<string | null>(() => consumeQueuedCustomerProfile())
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
@@ -173,6 +187,9 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null)
   const [contactSplitMergeOpen, setContactSplitMergeOpen] = useState(false)
   const [contactSplitMergeMode, setContactSplitMergeMode] = useState<"separate" | "merge">("separate")
+  const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
+  const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
+  const [fitReRunBusy, setFitReRunBusy] = useState(false)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -192,6 +209,69 @@ export default function CustomerProfilePage({ setPage }: Props) {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  useEffect(() => {
+    const fc = bundle?.customer.fit_classification
+    setManualFitChoice(fc === "hot" || fc === "maybe" || fc === "bad" ? fc : "")
+  }, [bundle?.customer.id, bundle?.customer.fit_classification])
+
+  async function applyManualCustomerFit() {
+    if (!supabase || !userId || !customerId || !manualFitChoice) return
+    setFitOverrideBusy(true)
+    try {
+      const now = new Date().toISOString()
+      const { error: uErr } = await supabase
+        .from("customers")
+        .update({
+          fit_classification: manualFitChoice,
+          fit_confidence: null,
+          fit_reason: "Updated manually from the customer profile.",
+          fit_source: "manual",
+          fit_manually_overridden: true,
+          fit_evaluated_at: now,
+        })
+        .eq("id", customerId)
+        .eq("user_id", userId)
+      if (uErr) {
+        alert(uErr.message)
+        return
+      }
+      await reload()
+    } finally {
+      setFitOverrideBusy(false)
+    }
+  }
+
+  async function reRunCustomerFit() {
+    if (!supabase || !customerId || !session) return
+    setFitReRunBusy(true)
+    try {
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=customer-evaluate-fit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+          body: platformToolsJsonBody({ customerId, force: true }),
+        })
+      let res = await run(token)
+      if (res.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) res = await run(t2)
+      }
+      const raw = await res.text()
+      if (!res.ok) {
+        alert(formatFetchApiError(res, raw))
+        return
+      }
+      await reload()
+    } finally {
+      setFitReRunBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (!bundle) return
@@ -956,21 +1036,80 @@ export default function CustomerProfilePage({ setPage }: Props) {
             )}
           </CollapsibleProfileSection>
 
-          {formatDisplayText(c.fit_classification) || formatDisplayText(c.fit_reason) ? (
-            <CollapsibleProfileSection title="Customer insight">
-              <div style={{ fontSize: 14, lineHeight: 1.55 }}>
-                <p style={{ margin: "0 0 8px" }}>
-                  <strong>Lead score:</strong> {formatDisplayText(c.fit_classification, "—")}
-                  {c.fit_confidence != null && typeof c.fit_confidence === "number"
-                    ? ` (${Math.round(c.fit_confidence * 100)}% confidence)`
-                    : ""}
-                </p>
-                {formatDisplayText(c.fit_reason) ? (
-                  <p style={{ margin: 0, color: "#64748b", whiteSpace: "pre-wrap" }}>{formatDisplayText(c.fit_reason)}</p>
+          <CollapsibleProfileSection title="Lead score" defaultOpen>
+            <div style={{ fontSize: 14, lineHeight: 1.55 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
+                {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>Confidence: {Math.round(c.fit_confidence * 100)}%</span>
+                ) : null}
+                {c.fit_source ? <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span> : null}
+                {c.fit_manually_overridden ? (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#7c3aed" }}>Manual override</span>
                 ) : null}
               </div>
-            </CollapsibleProfileSection>
-          ) : null}
+              {formatDisplayText(c.fit_reason) ? (
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                  {formatDisplayText(c.fit_reason)}
+                </p>
+              ) : (
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                  No score yet — run auto scoring or set manually below.
+                </p>
+              )}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <select
+                  value={manualFitChoice}
+                  onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                  style={{ padding: "6px 10px", fontSize: 13, maxWidth: 160, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                >
+                  <option value="">Set manually…</option>
+                  <option value="hot">Hot</option>
+                  <option value="maybe">Maybe</option>
+                  <option value="bad">Bad</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={!manualFitChoice || fitOverrideBusy}
+                  onClick={() => void applyManualCustomerFit()}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    cursor: fitOverrideBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {fitOverrideBusy ? "Saving…" : "Apply"}
+                </button>
+                <button
+                  type="button"
+                  disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
+                  onClick={() => void reRunCustomerFit()}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    color: theme.text,
+                    cursor: fitReRunBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                </button>
+              </div>
+              {!aiAutomationsEnabled ? (
+                <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8" }}>
+                  Enable AI automations under Account to use auto scoring.
+                </p>
+              ) : null}
+            </div>
+          </CollapsibleProfileSection>
         </>
       ) : null}
     </div>

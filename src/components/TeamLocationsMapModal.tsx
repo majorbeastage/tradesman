@@ -38,7 +38,11 @@ type Props = {
   orgUserIdsForJobs: string[]
   onClose: () => void
   /** Inline panel (no modal overlay); used inside Calendar → Team management. */
-  variant?: "modal" | "embedded"
+  variant?: "modal" | "embedded" | "thumbnail"
+  /** Header label (default Team map). */
+  title?: string
+  /** Thumbnail mode — expand to full embedded/map view. */
+  onExpand?: () => void
 }
 
 function normalizeCustomerJoin(
@@ -49,7 +53,14 @@ function normalizeCustomerJoin(
   return c
 }
 
-export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onClose, variant = "modal" }: Props) {
+export default function TeamLocationsMapModal({
+  members,
+  orgUserIdsForJobs,
+  onClose,
+  variant = "modal",
+  title = "Team map",
+  onExpand,
+}: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -251,7 +262,8 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
   }, [members.length, orderedIds.join(","), locationQueryUserIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, viewUserId, activeLocationUserIds.join(",")])
 
   const embedded = variant === "embedded"
-  const shellStyle: CSSProperties = embedded
+  const thumbnail = variant === "thumbnail"
+  const shellStyle: CSSProperties = embedded || thumbnail
     ? {
         position: "relative",
         width: "100%",
@@ -259,11 +271,11 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
         overflow: "hidden",
         background: "#fff",
         borderRadius: 10,
-        padding: 16,
+        padding: thumbnail ? 12 : 16,
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: thumbnail ? 8 : 10,
         border: `1px solid ${theme.border}`,
       }
     : {
@@ -287,8 +299,25 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
   const inner = (
     <div style={shellStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h3 style={{ margin: 0, fontSize: 17, color: theme.text }}>Team map</h3>
-        {!embedded ? (
+        <h3 style={{ margin: 0, fontSize: thumbnail ? 15 : 17, color: theme.text }}>{title}</h3>
+        {thumbnail ? (
+          <button
+            type="button"
+            onClick={() => (onExpand ? onExpand() : onClose())}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: `1px solid ${theme.border}`,
+              background: "#eff6ff",
+              color: theme.text,
+              fontWeight: 700,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Open full map
+          </button>
+        ) : !embedded ? (
           <button
             type="button"
             onClick={onClose}
@@ -304,78 +333,119 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
           >
             Close
           </button>
-        ) : null}
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", fontSize: 13, color: theme.text }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-          Show
-          <select
-            value={viewUserId}
-            onChange={(e) => setViewUserId(e.target.value)}
-            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, minWidth: 200 }}
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              color: theme.text,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
           >
-            <option value="all">Entire team</option>
-            {members.map((m) => (
-              <option key={m.userId} value={m.userId}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-          <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
-          Next job pins
-        </label>
+            Back
+          </button>
+        )}
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Legend</span>
-        {orderedIds.map((uid) => {
-          const n = teamMemberDisplayIndex(uid, orderedIds)
-          const { fill, stroke } = teamMarkerColors(n)
-          return (
-            <span
-              key={uid}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 12,
-                padding: "4px 8px",
-                borderRadius: 999,
-                border: `1px solid ${theme.border}`,
-                background: "#f8fafc",
-              }}
-            >
-              <span style={{ width: 18, height: 18, borderRadius: 999, background: fill, border: `2px solid ${stroke}` }} />
-              <strong>#{n}</strong> {labelById.get(uid) ?? uid.slice(0, 6)}
+      {!thumbnail ? (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", fontSize: 13, color: theme.text }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+              Show
+              <select
+                value={viewUserId}
+                onChange={(e) => setViewUserId(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, minWidth: 200 }}
+              >
+                <option value="all">Entire team</option>
+                {members.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
+              Next job pins
+            </label>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Legend</span>
+            {orderedIds.map((uid) => {
+              const n = teamMemberDisplayIndex(uid, orderedIds)
+              const { fill, stroke } = teamMarkerColors(n)
+              return (
+                <span
+                  key={uid}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <span style={{ width: 18, height: 18, borderRadius: 999, background: fill, border: `2px solid ${stroke}` }} />
+                  <strong>#{n}</strong> {labelById.get(uid) ?? uid.slice(0, 6)}
+                </span>
+              )
+            })}
+            <span style={{ fontSize: 11, color: "#64748b" }}>
+              Solid = last GPS · dashed = next job (needs lat/lng on customer or job site)
             </span>
-          )
-        })}
-        <span style={{ fontSize: 11, color: "#64748b" }}>Solid = last GPS · dashed = next job (needs lat/lng on customer or job site)</span>
-      </div>
+          </div>
 
-      <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-        Last position from users who enabled GPS under Account → Mobile app. Numbers match the roster order above. Add{" "}
-        <strong>service address + coordinates</strong> on customers (Leads / Quotes / Conversations) or <strong>job site</strong> on a
-        calendar event so the next job can appear on the map.
-      </p>
+          <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+            Last position from users who enabled GPS under Account → Mobile app. Numbers match the roster order above. Add{" "}
+            <strong>service address + coordinates</strong> on customers (Leads / Quotes / Conversations) or{" "}
+            <strong>job site</strong> on a calendar event so the next job can appear on the map.
+          </p>
+        </>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Live team GPS and next job pins — tap <strong>Open full map</strong> for filters and legend.
+        </p>
+      )}
       {error && <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{error}</p>}
       {loading && <p style={{ margin: 0, fontSize: 13, color: theme.text }}>Loading map…</p>}
       <div
         ref={mapRef}
         style={{
-          height: embedded ? "min(420px, 55vh)" : "min(52vh, 440px)",
+          height: thumbnail ? 168 : embedded ? "min(420px, 55vh)" : "min(52vh, 440px)",
           width: "100%",
           borderRadius: 8,
           border: `1px solid ${theme.border}`,
+          cursor: thumbnail ? "pointer" : undefined,
         }}
+        onClick={thumbnail ? () => (onExpand ? onExpand() : undefined) : undefined}
+        role={thumbnail ? "button" : undefined}
+        tabIndex={thumbnail ? 0 : undefined}
+        onKeyDown={
+          thumbnail
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  onExpand?.()
+                }
+              }
+            : undefined
+        }
       />
     </div>
   )
 
-  if (embedded) return inner
+  if (embedded || thumbnail) return inner
 
   return (
     <>

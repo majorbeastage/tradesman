@@ -2457,6 +2457,85 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                               </div>
                             ) : null}
 
+                            {selectedCustomer?.id === c.id ? (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  marginBottom: 12,
+                                  borderRadius: 10,
+                                  border: `1px solid ${theme.border}`,
+                                  background: "#fff",
+                                  padding: "12px 14px",
+                                }}
+                              >
+                                <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead score</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                  {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
+                                  {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
+                                    <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                      Confidence: {Math.round(c.fit_confidence * 100)}%
+                                    </span>
+                                  ) : null}
+                                  {c.fit_source ? (
+                                    <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
+                                  ) : null}
+                                </div>
+                                {c.fit_reason ? (
+                                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
+                                ) : (
+                                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                                    No score yet — run auto scoring or set manually below.
+                                  </p>
+                                )}
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                  <select
+                                    value={manualFitChoice}
+                                    onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                                    style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
+                                  >
+                                    <option value="">Set manually…</option>
+                                    <option value="hot">Hot</option>
+                                    <option value="maybe">Maybe</option>
+                                    <option value="bad">Bad</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={!manualFitChoice || fitOverrideBusy}
+                                    onClick={() => void applyManualCustomerFit()}
+                                    style={{
+                                      padding: "6px 12px",
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      borderRadius: 6,
+                                      border: "none",
+                                      background: theme.primary,
+                                      color: "#fff",
+                                      cursor: fitOverrideBusy ? "wait" : "pointer",
+                                    }}
+                                  >
+                                    {fitOverrideBusy ? "Saving…" : "Apply"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
+                                    onClick={() => void reRunCustomerFit()}
+                                    style={{
+                                      padding: "6px 12px",
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      borderRadius: 6,
+                                      border: `1px solid ${theme.border}`,
+                                      background: "#fff",
+                                      color: theme.text,
+                                      cursor: fitReRunBusy ? "wait" : "pointer",
+                                    }}
+                                  >
+                                    {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
                             {!CUSTOMER_LIST_COMPACT_DETAIL ? (
                             <>
                             <div

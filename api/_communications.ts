@@ -983,6 +983,30 @@ export async function logCommunicationEvent(
   if (payload.direction === "inbound" && payload.customer_id) {
     const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline.js")
     await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
+    const meta = payload.metadata ?? {}
+    if (meta.skip_inbound_enrich !== true) {
+      const channel =
+        payload.event_type === "sms"
+          ? "sms"
+          : payload.event_type === "email"
+            ? "email"
+            : payload.event_type === "voicemail"
+              ? "voicemail"
+              : "call"
+      void import("./_inboundEngagementEnrichment.js")
+        .then(({ enrichInboundCustomerEngagement }) =>
+          enrichInboundCustomerEngagement(supabase, {
+            userId: payload.user_id,
+            customerId: payload.customer_id!,
+            leadId: payload.lead_id ?? null,
+            inboundBody: payload.body ?? "",
+            transcriptText: payload.transcript_text ?? null,
+            channel,
+            sourceTag: typeof meta.enrich_source === "string" ? meta.enrich_source : undefined,
+          }),
+        )
+        .catch((e) => console.warn("[logCommunicationEvent] inbound enrich", e instanceof Error ? e.message : e))
+    }
   }
 }
 

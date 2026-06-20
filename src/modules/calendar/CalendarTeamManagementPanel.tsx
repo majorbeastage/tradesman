@@ -12,6 +12,7 @@ import {
 } from "../../lib/teamCalendarPolicy"
 import { filterRealUserIds, isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import TimeClockPortal from "../../components/TimeClockPortal"
+import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 
 type ProfileLite = {
   id: string
@@ -563,6 +564,22 @@ export default function CalendarTeamManagementPanel({
   const [jobTypesByUser, setJobTypesByUser] = useState<Record<string, string[]>>({})
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
+  const [teamMapExpanded, setTeamMapExpanded] = useState(false)
+
+  const teamMapUserIds = useMemo(
+    () => filterRealUserIds(Array.from(new Set(roster.map((r) => r.userId).filter(Boolean)))),
+    [roster],
+  )
+
+  const teamMapMembers = useMemo(
+    () =>
+      roster.map((r) => ({
+        userId: isSandboxDemoUserId(r.userId) ? viewerUserId : r.userId,
+        label: profilesById[r.userId]?.display_name?.trim() || r.label || r.userId.slice(0, 8),
+        isSelf: r.isSelf,
+      })),
+    [roster, profilesById, viewerUserId],
+  )
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
@@ -803,6 +820,17 @@ export default function CalendarTeamManagementPanel({
 
       {message ? (
         <p style={{ margin: 0, fontSize: 13, color: message.includes("saved") ? "#059669" : "#b91c1c" }}>{message}</p>
+      ) : null}
+
+      {variant !== "time_clock_only" && teamMapUserIds.length > 0 ? (
+        <TeamLocationsMapModal
+          variant={teamMapExpanded ? "embedded" : "thumbnail"}
+          title="Team map"
+          members={teamMapMembers}
+          orgUserIdsForJobs={teamMapUserIds}
+          onClose={() => setTeamMapExpanded(false)}
+          onExpand={() => setTeamMapExpanded(true)}
+        />
       ) : null}
 
       {variant === "time_clock_only" ? null : (

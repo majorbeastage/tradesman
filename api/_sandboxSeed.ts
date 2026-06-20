@@ -15,7 +15,6 @@ import {
   SANDBOX_PROFILE_ROLE,
 } from "./_sandboxPortalConfig.js"
 import {
-  recordSmsConsentFromInboundCall,
   recordSmsConsentFromInboundSms,
   runConversationInboundEmailAutoReply,
   runInboundSmsAutoReply,
@@ -95,6 +94,22 @@ export const LIVE_LEAD_SCENARIOS: {
     attribution: "phone_call",
   },
   {
+    name: "Marcus Chen",
+    phone: "+15550102009",
+    email: "m.chen@example.invalid",
+    message: "Emergency — water heater making loud popping noises and leaking.",
+    channel: "call",
+    attribution: "phone_call",
+  },
+  {
+    name: "Linda Price",
+    phone: "+15550102010",
+    email: "l.price@example.invalid",
+    message: "Need a quote for repiping a kitchen and two bathrooms.",
+    channel: "call",
+    attribution: "google_maps",
+  },
+  {
     name: "Ryan Foster",
     phone: "+15550102006",
     email: "r.foster@example.invalid",
@@ -143,6 +158,34 @@ export const LIVE_LEAD_SCENARIOS: {
     attribution: "spam_suspected",
   },
 ]
+
+/** Weight phone-call scenarios higher so sandbox live traffic exercises auto-attendant training. */
+function pickLiveLeadScenarioIndex(explicit?: number): number {
+  if (typeof explicit === "number" && explicit >= 0 && explicit < LIVE_LEAD_SCENARIOS.length) return explicit
+  const callIndices = LIVE_LEAD_SCENARIOS.map((s, i) => (s.channel === "call" ? i : -1)).filter((i) => i >= 0)
+  if (callIndices.length > 0 && Math.random() < 0.32) {
+    return callIndices[Math.floor(Math.random() * callIndices.length)]!
+  }
+  const serviceIndices = LIVE_LEAD_SCENARIOS.map((s, i) =>
+    s.channel !== "email" || !isPromotionalEmailAddress(s.email) ? i : -1,
+  ).filter((i) => i >= 0)
+  return serviceIndices[Math.floor(Math.random() * serviceIndices.length)] ?? 0
+}
+
+function buildSandboxAutoAttendantTranscript(scenario: (typeof LIVE_LEAD_SCENARIOS)[number], idx: number): string {
+  const addr = `${100 + idx} Demo Lane, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`
+  const job = scenario.message.replace(/^Missed call —\s*/i, "").replace(/\.$/, "")
+  return [
+    "What is your name?",
+    `→ ${scenario.name}`,
+    "Briefly, what service do you need today?",
+    `→ ${job}`,
+    "What is the service address?",
+    `→ ${addr}`,
+    "Do you agree to receive text messages from us regarding quotes, appointments, and job updates?",
+    "→ Yes, I agree to receive text messages about this service request.",
+  ].join("\n\n")
+}
 
 const PROMOTIONAL_SEED_SENDERS: { email: string; name: string; subject: string; body: string }[] = [
   {
@@ -534,10 +577,7 @@ export async function injectSandboxLead(
   userId: string,
   scenarioIndex?: number,
 ): Promise<InjectLeadResult> {
-  const idx =
-    typeof scenarioIndex === "number" && scenarioIndex >= 0 && scenarioIndex < LIVE_LEAD_SCENARIOS.length
-      ? scenarioIndex
-      : Math.floor(Math.random() * LIVE_LEAD_SCENARIOS.length)
+  const idx = pickLiveLeadScenarioIndex(scenarioIndex)
   const scenario = LIVE_LEAD_SCENARIOS[idx]!
 
   if (scenario.channel === "email" && isPromotionalEmailAddress(scenario.email)) {
@@ -676,27 +716,37 @@ export async function injectSandboxLead(
       console.warn("[sandbox-inject] email auto-reply", e instanceof Error ? e.message : e)
     }
   } else if (scenario.channel === "call") {
+    const transcript = buildSandboxAutoAttendantTranscript(scenario, idx)
     await logCommunicationEvent(supabase, {
       user_id: userId,
       customer_id: customerId,
       lead_id: leadId,
       event_type: "call",
       direction: "inbound",
-      body: "Missed call — customer did not leave voicemail.",
+      subject: `Auto-attendant: ${scenario.name}`,
+      body: transcript,
+      transcript_text: transcript,
+      summary_text: scenario.message,
       unread: true,
-      metadata: { sandbox_simulated: true, from: normalizePhone(scenario.phone), missed: true },
+      metadata: {
+        sandbox_simulated: true,
+        from: normalizePhone(scenario.phone),
+        call_screening: true,
+        screening_verdict: "good_lead",
+        screening_action: "forwarded",
+        enrich_source: "auto_attendant_sandbox",
+      },
     })
-    await recordSmsConsentFromInboundCall(supabase, userId, customerId)
     try {
       await runMissedCallAutoTextBack(supabase, {
         userId,
         customerId,
         customerPhone: scenario.phone,
         leadId,
-        dialCallStatus: "no-answer",
+        dialCallStatus: "completed",
       })
     } catch (e) {
-      console.warn("[sandbox-inject] missed-call auto text", e instanceof Error ? e.message : e)
+      console.warn("[sandbox-inject] call follow-up text", e instanceof Error ? e.message : e)
     }
   } else {
     await logCommunicationEvent(supabase, {

@@ -23,7 +23,14 @@ export default function EstimateWorkflowActionsPanel({
   onOpenWorkflow,
   onOpenOrgChart,
 }: Props) {
-  const sendActions = actions.filter((a) => a.kind === "send_for_approval" || a.kind === "mark_approved")
+  const sendActions = actions.filter(
+    (a) =>
+      a.kind === "send_for_approval" ||
+      a.kind === "mark_approved" ||
+      a.kind === "request_updates" ||
+      a.kind === "deny_approval" ||
+      a.kind === "bypass_approval",
+  )
   const customerReady = actions.find((a) => a.kind === "send_to_customer")
   const progress = workflowProgressSummary(workflow, workflowState)
 
@@ -76,10 +83,30 @@ export default function EstimateWorkflowActionsPanel({
               style={{
                 padding: "10px 14px",
                 borderRadius: 8,
-                border: action.kind === "mark_approved" ? `2px solid #16a34a` : `1px solid ${theme.border}`,
+                border:
+                  action.kind === "mark_approved"
+                    ? `2px solid #16a34a`
+                    : action.kind === "deny_approval"
+                      ? `2px solid #dc2626`
+                      : action.kind === "bypass_approval"
+                        ? `2px solid #7c3aed`
+                        : `1px solid ${theme.border}`,
                 background:
-                  action.disabled ? "#f1f5f9" : action.primary ? theme.primary : "#fff",
-                color: action.disabled ? "#94a3b8" : action.primary ? "#fff" : theme.text,
+                  action.disabled
+                    ? "#f1f5f9"
+                    : action.kind === "deny_approval"
+                      ? "#fef2f2"
+                      : action.kind === "bypass_approval"
+                        ? "#faf5ff"
+                        : action.primary
+                          ? theme.primary
+                          : "#fff",
+                color:
+                  action.disabled
+                    ? "#94a3b8"
+                    : action.primary && action.kind !== "deny_approval" && action.kind !== "bypass_approval"
+                      ? "#fff"
+                      : theme.text,
                 fontWeight: 700,
                 fontSize: 13,
                 cursor: busy || action.disabled ? "not-allowed" : "pointer",
@@ -126,7 +153,18 @@ export default function EstimateWorkflowActionsPanel({
           <ul style={{ margin: "8px 0 0", paddingLeft: 18, lineHeight: 1.5 }}>
             {[...workflowState.history].reverse().slice(0, 8).map((h, i) => (
               <li key={`${h.at}-${i}`}>
-                {new Date(h.at).toLocaleString()} — {h.action === "mark_approved" ? "Approved" : "Sent"}: {h.nodeLabel}
+                {new Date(h.at).toLocaleString()} —{" "}
+                {h.action === "mark_approved"
+                  ? "Approved"
+                  : h.action === "request_updates"
+                    ? "Updates requested"
+                    : h.action === "deny_approval"
+                      ? "Denied"
+                      : h.action === "bypass_approval"
+                        ? "Bypassed"
+                        : "Sent"}
+                : {h.nodeLabel}
+                {h.note ? ` — ${h.note}` : ""}
               </li>
             ))}
           </ul>
