@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
-import { resolveAutoReplyForIntake, type AutoReplyIntakeChannel } from "./_automaticRepliesChannels.js"
+import { resolveAutoReplyForIntake, resolveAutoReplyForMissedCall, type AutoReplyIntakeChannel } from "./_automaticRepliesChannels.js"
 import { openAiText } from "./_leadAutomation.js"
+import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { isSandboxUser } from "./_sandboxEnvironment.js"
 import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
 import { SMS_OUTBOUND_BODY_HARD_MAX_CHARS } from "./_smsComplianceLimits.js"
@@ -373,8 +374,11 @@ export async function runMissedCallAutoTextBack(
     .eq("id", userId)
     .maybeSingle()
 
-  const resolved = resolveAutoReplyForIntake(prof?.metadata, "Phone call")
-  if (!resolved || resolved.outbound !== "Text message") return
+  const resolved = resolveAutoReplyForMissedCall(prof?.metadata)
+  if (!resolved) {
+    console.info("[conversationAutoReply] missed-call text-back skipped — no Phone call or Text message auto-reply enabled")
+    return
+  }
 
   await recordSmsConsentFromInboundCall(supabase, userId, customerId)
 
@@ -385,7 +389,10 @@ export async function runMissedCallAutoTextBack(
   })
   if (!replyText) {
     const biz = (prof as { display_name?: string | null } | null)?.display_name?.trim() || "us"
-    replyText = `Hi — sorry we missed your call! This is ${biz}. Reply here with how we can help, or call us back when you can.`
+    replyText =
+      resolved.intakeChannel === "Phone call"
+        ? `Hi — sorry we missed your call! This is ${biz}. Reply here with how we can help, or call us back when you can.`
+        : `Hi — thanks for reaching out! This is ${biz}. Could you share a quick summary of the job and service address?`
   }
 
   await sendAutoSmsReply({
@@ -400,6 +407,12 @@ export async function runMissedCallAutoTextBack(
     aiAutomationsOn,
     pendingSource: "missed_call_auto_text",
   })
+
+  if (leadId) {
+    void evaluateAndPersistLeadFit(supabase, leadId, {
+      supplementalText: `Missed inbound call — auto text-back sent: ${replyText.slice(0, 500)}`,
+    }).catch((e) => console.warn("[conversationAutoReply] lead fit after missed-call text", e instanceof Error ? e.message : e))
+  }
 }
 
 /** Optional hook for inbound email auto-reply (Email intake channel). */

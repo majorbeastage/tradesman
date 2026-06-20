@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { insertCommunicationEventReturningId, logCommunicationEvent } from "./_communications.js"
+import { buildSandboxCustomerSmsReply, enrichSandboxFromSimulatedInbound } from "./_sandboxCustomerSimulation.js"
 
 export async function simulateSandboxOutboundEmail(
   supabase: SupabaseClient,
@@ -38,13 +39,31 @@ export async function simulateSandboxOutboundEmail(
 
   let inboundReplyAt: string | undefined
   if (params.customerId) {
-    const replies = [
-      "Thanks for reaching out! What times work for an estimate this week?",
-      "Got it — we'll be home after 3pm most days.",
-      "Sounds good. Can you send the estimate when ready?",
-      "Yes, please schedule us for the first opening you have.",
-    ]
-    const reply = replies[Math.floor(Math.random() * replies.length)]!
+    const { data: cust } = await supabase
+      .from("customers")
+      .select("display_name, service_address, metadata")
+      .eq("id", params.customerId)
+      .maybeSingle()
+    let leadTitle = ""
+    let leadDescription = ""
+    if (params.leadId) {
+      const { data: lead } = await supabase.from("leads").select("title, description").eq("id", params.leadId).maybeSingle()
+      leadTitle = (lead?.title as string | null) ?? ""
+      leadDescription = (lead?.description as string | null) ?? ""
+    }
+    const meta =
+      cust?.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
+        ? (cust.metadata as Record<string, unknown>)
+        : {}
+    const reply = buildSandboxCustomerSmsReply({
+      outboundBody: params.body,
+      customerName: cust?.display_name,
+      leadDescription,
+      leadTitle,
+      serviceAddress:
+        (cust?.service_address as string | null) ??
+        (typeof meta.service_address === "string" ? meta.service_address : null),
+    }).replace(/\n/g, " ")
     inboundReplyAt = new Date(Date.now() + 4000).toISOString()
     await logCommunicationEvent(supabase, {
       user_id: params.userId,
@@ -61,6 +80,12 @@ export async function simulateSandboxOutboundEmail(
         simulated_delay_ms: 4000,
         in_reply_to: eventId,
       },
+    })
+    await enrichSandboxFromSimulatedInbound(supabase, {
+      userId: params.userId,
+      customerId: params.customerId,
+      leadId: params.leadId,
+      inboundBody: reply,
     })
   }
 
@@ -91,7 +116,38 @@ export async function simulateSandboxOutboundSms(
   })
 
   if (params.customerId) {
-    const replies = ["Thanks!", "Ok sounds good", "👍", "Can you call me in 10 min?"]
+    const { data: cust } = await supabase
+      .from("customers")
+      .select("display_name, service_address, metadata")
+      .eq("id", params.customerId)
+      .maybeSingle()
+    let leadTitle = ""
+    let leadDescription = ""
+    if (params.leadId) {
+      const { data: lead } = await supabase.from("leads").select("title, description, metadata").eq("id", params.leadId).maybeSingle()
+      leadTitle = (lead?.title as string | null) ?? ""
+      leadDescription = (lead?.description as string | null) ?? ""
+      const leadMeta =
+        lead?.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata)
+          ? (lead.metadata as Record<string, unknown>)
+          : {}
+      if (typeof leadMeta.capture_channel === "string") {
+        leadDescription = leadDescription || leadTitle
+      }
+    }
+    const meta =
+      cust?.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
+        ? (cust.metadata as Record<string, unknown>)
+        : {}
+    const reply = buildSandboxCustomerSmsReply({
+      outboundBody: params.body,
+      customerName: cust?.display_name,
+      leadDescription,
+      leadTitle,
+      serviceAddress:
+        (cust?.service_address as string | null) ??
+        (typeof meta.service_address === "string" ? meta.service_address : null),
+    })
     await logCommunicationEvent(supabase, {
       user_id: params.userId,
       customer_id: params.customerId,
@@ -99,9 +155,15 @@ export async function simulateSandboxOutboundSms(
       lead_id: params.leadId ?? null,
       event_type: "sms",
       direction: "inbound",
-      body: replies[Math.floor(Math.random() * replies.length)]!,
+      body: reply,
       unread: true,
-      metadata: { sandbox_simulated: true, in_reply_to: eventId },
+      metadata: { sandbox_simulated: true, in_reply_to: eventId, customer_simulated: true },
+    })
+    await enrichSandboxFromSimulatedInbound(supabase, {
+      userId: params.userId,
+      customerId: params.customerId,
+      leadId: params.leadId,
+      inboundBody: reply,
     })
   }
 

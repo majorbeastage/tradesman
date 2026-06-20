@@ -20,6 +20,7 @@ import {
   runInboundSmsAutoReply,
   runMissedCallAutoTextBack,
 } from "./_conversationAutoReply.js"
+import { parseAutomaticRepliesSourceFlows } from "./_automaticRepliesChannels.js"
 import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
 
 export { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
@@ -192,6 +193,8 @@ export async function ensureSandboxProfile(
   const nextPortal = mergeSandboxPortalConfigRecord(pc)
   const needsQuickLinks = !prevMeta.dashboard_quick_links
   const needsDemoTeam = !prevMeta.sandbox_demo_team
+  const needsAutoReplies = !prevMeta.conversationsAutomaticRepliesSourceFlows
+  const needsLeadFilter = !prevMeta.lead_filter_preferences
   const needsRoleFix = role !== SANDBOX_PROFILE_ROLE
   const needsPortalFix =
     pc.sandbox_account !== true ||
@@ -199,14 +202,32 @@ export async function ensureSandboxProfile(
     pc.enable_operations_tab !== true ||
     (pc.tabs as Record<string, boolean> | undefined)?.settings !== true
 
-  if (!needsRoleFix && !needsPortalFix && !needsQuickLinks && !needsDemoTeam) return false
+  if (!needsRoleFix && !needsPortalFix && !needsQuickLinks && !needsDemoTeam && !needsAutoReplies && !needsLeadFilter) {
+    return false
+  }
 
+  const defaultFlows = parseAutomaticRepliesSourceFlows(null)
   const nextMeta = {
     ...prevMeta,
     sandbox_account: true,
     demo_account: false,
     ...(needsQuickLinks ? { dashboard_quick_links: SANDBOX_DASHBOARD_QUICK_LINKS } : {}),
     ...(needsDemoTeam ? { sandbox_demo_team: DEFAULT_SANDBOX_DEMO_TEAM } : {}),
+    ...(needsAutoReplies ? { conversationsAutomaticRepliesSourceFlows: defaultFlows } : {}),
+    ...(needsLeadFilter
+      ? {
+          lead_filter_preferences: {
+            v: 1,
+            accepted_job_types: "plumbing, drain, water heater, bathroom remodel, tankless, leak repair",
+            minimum_job_size: null,
+            service_radius_miles: null,
+            use_account_service_radius: true,
+            availability: "flexible",
+            enable_auto_filter: true,
+            use_ai_for_unclear: true,
+          },
+        }
+      : {}),
   }
 
   await supabase

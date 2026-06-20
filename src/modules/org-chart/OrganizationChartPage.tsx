@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { saveJobTitleNicknameForProfile } from "../../lib/jobTitleNickname"
+import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import {
   canvasPointFromEvent,
@@ -376,14 +377,29 @@ export default function OrganizationChartPage({ setPage }: Props) {
   async function saveMemberJobTitle(memberId: string, jobTitle: string) {
     if (!supabase) return
     try {
-      await saveJobTitleNicknameForProfile(supabase, memberId, jobTitle)
+      if (!isSandboxDemoUserId(memberId)) {
+        await saveJobTitleNicknameForProfile(supabase, memberId, jobTitle)
+      }
       setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, jobTitle: jobTitle.trim() } : m)))
     } catch (e: unknown) {
       setErr(formatAppError(e))
     }
   }
 
-  const memberById = new Map(members.map((m) => [m.id, m]))
+  const memberById = useMemo(() => {
+    const map = new Map(members.map((m) => [m.id, m]))
+    for (const n of doc.nodes) {
+      if (!n.linkedUserId || map.has(n.linkedUserId)) continue
+      map.set(n.linkedUserId, {
+        id: n.linkedUserId,
+        displayName: isSandboxDemoUserId(n.linkedUserId) ? "Demo team member" : "Linked user",
+        email: null,
+        jobTitle: n.jobTitle,
+        isDemo: isSandboxDemoUserId(n.linkedUserId),
+      })
+    }
+    return map
+  }, [members, doc.nodes])
 
   function openContextMenu(e: React.MouseEvent, target: "node" | "edge" | "canvas", id?: string) {
     e.preventDefault()
@@ -978,12 +994,7 @@ function OrgNodeCard({
         style={{ width: "100%", marginTop: 4, fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, padding: "3px 6px" }}
       >
         <option value="">Link Tradesman user…</option>
-        {members.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.displayName}
-            {m.jobTitle ? ` — ${m.jobTitle}` : ""}
-          </option>
-        ))}
+        <LinkableOrgUserOptions members={members} />
       </select>
       {linkedLabel ? <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 4 }}>{linkedLabel}</div> : null}
       {linkSource ? <div style={{ fontSize: 10, color: "#ca8a04", marginTop: 4 }}>Now click the role this line goes to</div> : null}
@@ -1062,6 +1073,37 @@ const secondaryBtn: CSSProperties = {
   cursor: "pointer",
 }
 
+function LinkableOrgUserOptions({ members }: { members: LinkableOrgUser[] }) {
+  return (
+    <>
+      {members.some((m) => m.isDemo) ? (
+        <optgroup label="Demo team (training)">
+          {members
+            .filter((m) => m.isDemo)
+            .map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName}
+                {m.jobTitle ? ` — ${m.jobTitle}` : ""}
+              </option>
+            ))}
+        </optgroup>
+      ) : null}
+      {members.some((m) => !m.isDemo) ? (
+        <optgroup label="Organization users">
+          {members
+            .filter((m) => !m.isDemo)
+            .map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName}
+                {m.jobTitle ? ` — ${m.jobTitle}` : ""}
+              </option>
+            ))}
+        </optgroup>
+      ) : null}
+    </>
+  )
+}
+
 function OrgRoleEditor({
   node,
   members,
@@ -1104,12 +1146,7 @@ function OrgRoleEditor({
           style={theme.formInput}
         >
           <option value="">Link Tradesman user…</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.displayName}
-              {m.jobTitle ? ` — ${m.jobTitle}` : ""}
-            </option>
-          ))}
+          <LinkableOrgUserOptions members={members} />
         </select>
       </label>
       {linkedLabel ? <div style={{ fontSize: 12, color: "#0ea5e9" }}>Linked: {linkedLabel}</div> : null}
