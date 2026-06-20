@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
 import { resolveAutoReplyForIntake, type AutoReplyIntakeChannel } from "./_automaticRepliesChannels.js"
 import { openAiText } from "./_leadAutomation.js"
+import { isSandboxUser } from "./_sandboxEnvironment.js"
+import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
 import { SMS_OUTBOUND_BODY_HARD_MAX_CHARS } from "./_smsComplianceLimits.js"
 
 export { parseConversationsAutomaticRepliesValues } from "./_automaticRepliesChannels.js"
@@ -138,6 +140,97 @@ async function buildAutoReplyText(
   return replyText.trim()
 }
 
+async function dispatchOutboundSms(opts: {
+  supabase: SupabaseClient
+  userId: string
+  to: string
+  body: string
+  customerId: string
+  conversationId?: string | null
+  leadId?: string | null
+}): Promise<void> {
+  const trimmed = opts.body.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS)
+  if (!trimmed || !opts.to.trim()) return
+
+  if (await isSandboxUser(opts.supabase, opts.userId)) {
+    await simulateSandboxOutboundSms(opts.supabase, {
+      userId: opts.userId,
+      to: opts.to,
+      body: trimmed,
+      customerId: opts.customerId,
+      conversationId: opts.conversationId ?? null,
+      leadId: opts.leadId ?? null,
+    })
+    return
+  }
+
+  const base = publicAppBaseUrl()
+  if (!base) {
+    console.warn("[conversationAutoReply] auto SMS skipped — no PUBLIC_APP_URL / VERCEL_URL")
+    return
+  }
+
+  await fetch(`${base}/api/send-sms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: opts.userId,
+      to: opts.to,
+      body: trimmed,
+      conversationId: opts.conversationId ?? undefined,
+      leadId: opts.leadId ?? undefined,
+      customerId: opts.customerId,
+    }),
+  }).catch((e) => console.warn("[conversationAutoReply] auto SMS", e))
+}
+
+async function dispatchOutboundEmail(opts: {
+  supabase: SupabaseClient
+  userId: string
+  to: string
+  subject: string
+  body: string
+  customerId: string
+  conversationId?: string | null
+  leadId?: string | null
+}): Promise<void> {
+  const trimmed = opts.body.slice(0, 12000)
+  if (!trimmed || !opts.to.trim()) return
+
+  if (await isSandboxUser(opts.supabase, opts.userId)) {
+    await simulateSandboxOutboundEmail(opts.supabase, {
+      userId: opts.userId,
+      to: [opts.to],
+      subject: opts.subject,
+      body: trimmed,
+      customerId: opts.customerId,
+      conversationId: opts.conversationId ?? null,
+      leadId: opts.leadId ?? null,
+    })
+    return
+  }
+
+  const base = publicAppBaseUrl()
+  if (!base) {
+    console.warn("[conversationAutoReply] auto email skipped — no PUBLIC_APP_URL / VERCEL_URL")
+    return
+  }
+
+  await fetch(`${base}/api/send-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: opts.userId,
+      to: opts.to,
+      subject: opts.subject,
+      body: trimmed,
+      conversationId: opts.conversationId ?? undefined,
+      leadId: opts.leadId ?? undefined,
+      customerId: opts.customerId,
+    }),
+  }).catch((e) => console.warn("[conversationAutoReply] auto email", e))
+}
+
 async function sendAutoSmsReply(opts: {
   supabase: SupabaseClient
   userId: string
@@ -175,21 +268,15 @@ async function sendAutoSmsReply(opts: {
     return
   }
 
-  const base = publicAppBaseUrl()
-  if (!base) return
-
-  await fetch(`${base}/api/send-sms`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userId,
-      to,
-      body: replyText.slice(0, SMS_OUTBOUND_BODY_HARD_MAX_CHARS),
-      conversationId: conversationId ?? undefined,
-      leadId: leadId ?? undefined,
-      customerId,
-    }),
-  }).catch((e) => console.warn("[conversationAutoReply] auto SMS", e))
+  await dispatchOutboundSms({
+    supabase,
+    userId,
+    to,
+    body: replyText,
+    customerId,
+    conversationId,
+    leadId,
+  })
 
   if (conversationId) {
     const { error: insErr } = await supabase.from("messages").insert({
@@ -203,18 +290,20 @@ async function sendAutoSmsReply(opts: {
 
 /**
  * After an inbound SMS: auto-reply when Text message intake channel is enabled.
+ * Works for conversations and leads (first contact often lands on a lead).
  */
-export async function runConversationInboundSmsAutoReply(
+export async function runInboundSmsAutoReply(
   supabase: SupabaseClient,
   opts: {
     userId: string
-    conversationId: string
     customerId: string
     customerPhone: string
     inboundBody: string
+    conversationId?: string | null
+    leadId?: string | null
   },
 ): Promise<void> {
-  const { userId, conversationId, customerId, customerPhone, inboundBody } = opts
+  const { userId, customerId, customerPhone, inboundBody, conversationId, leadId } = opts
   const to = customerPhone.trim()
   if (!to) return
 
@@ -230,7 +319,7 @@ export async function runConversationInboundSmsAutoReply(
   const aiAutomationsOn = (prof as { ai_assistant_visible?: boolean } | null)?.ai_assistant_visible !== false
   const replyText = await buildAutoReplyText(supabase, resolved.settings, aiAutomationsOn, {
     inboundBody,
-    conversationId,
+    conversationId: conversationId ?? undefined,
   })
   await sendAutoSmsReply({
     supabase,
@@ -239,10 +328,25 @@ export async function runConversationInboundSmsAutoReply(
     replyText,
     customerId,
     conversationId,
+    leadId,
     settings: resolved.settings,
     aiAutomationsOn,
-    pendingSource: "conversation_auto",
+    pendingSource: conversationId ? "conversation_auto" : "lead_inbound_sms_auto",
   })
+}
+
+/** @deprecated Use runInboundSmsAutoReply — kept for call sites that always have a conversation. */
+export async function runConversationInboundSmsAutoReply(
+  supabase: SupabaseClient,
+  opts: {
+    userId: string
+    conversationId: string
+    customerId: string
+    customerPhone: string
+    inboundBody: string
+  },
+): Promise<void> {
+  await runInboundSmsAutoReply(supabase, { ...opts, conversationId: opts.conversationId })
 }
 
 /**
@@ -330,8 +434,6 @@ export async function runConversationInboundEmailAutoReply(
 
   const useAi = resolved.settings.conv_auto_reply_ai === "checked" && aiAutomationsOn
   const requireApproval = resolved.settings.conv_auto_reply_ai_require_approval === "checked"
-  const base = publicAppBaseUrl()
-  if (!base) return
 
   if (useAi && requireApproval) {
     const pending = {
@@ -351,19 +453,16 @@ export async function runConversationInboundEmailAutoReply(
     return
   }
 
-  await fetch(`${base}/api/send-email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userId,
-      to,
-      subject: subject?.trim() || "Thanks for contacting us",
-      body: replyText.slice(0, 12000),
-      conversationId: conversationId ?? undefined,
-      leadId: leadId ?? undefined,
-      customerId,
-    }),
-  }).catch((e) => console.warn("[conversationAutoReply] auto email", e))
+  await dispatchOutboundEmail({
+    supabase,
+    userId,
+    to,
+    subject: subject?.trim() || "Thanks for contacting us",
+    body: replyText,
+    customerId,
+    conversationId,
+    leadId,
+  })
 }
 
 export type { AutoReplyIntakeChannel }

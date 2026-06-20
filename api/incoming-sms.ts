@@ -14,7 +14,7 @@ import {
   pickFirstString,
 } from "./_communications.js"
 import { fetchTwilioMediaBuffer, uploadBytesToCommAttachments } from "./_commStorage.js"
-import { runConversationInboundSmsAutoReply, recordSmsConsentFromInboundSms } from "./_conversationAutoReply.js"
+import { runInboundSmsAutoReply, recordSmsConsentFromInboundSms } from "./_conversationAutoReply.js"
 import { evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import {
   detectInboundSmsKeyword,
@@ -285,7 +285,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (messageErr) return res.status(500).json({ error: messageErr.message, step: "create_message" })
     try {
       if (smsKeyword !== "stop") {
-        await runConversationInboundSmsAutoReply(supabase, {
+        await runInboundSmsAutoReply(supabase, {
           userId: targetUserId,
           conversationId,
           customerId,
@@ -295,6 +295,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } catch (e) {
       console.warn("[incoming-sms] conversation auto-reply", e instanceof Error ? e.message : e)
+    }
+  } else if (leadId) {
+    try {
+      if (smsKeyword !== "stop") {
+        await runInboundSmsAutoReply(supabase, {
+          userId: targetUserId,
+          leadId,
+          customerId,
+          customerPhone: from,
+          inboundBody: body,
+        })
+      }
+    } catch (e) {
+      console.warn("[incoming-sms] lead auto-reply", e instanceof Error ? e.message : e)
     }
   }
 

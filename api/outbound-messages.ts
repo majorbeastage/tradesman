@@ -21,7 +21,7 @@ import { resolveFirstSmsComplianceForOutbound } from "./_smsFirstComplianceResol
 import { isPhoneSmsOptedOut } from "./_smsOptOut.js"
 import { DEMO_COMM_BLOCK_MESSAGE, isDemoRestrictedUser } from "./_demoAccountRestrictions.js"
 import { isSandboxUser } from "./_sandboxEnvironment.js"
-import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxSeed.js"
+import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
 import { extractBareEmailFromFormattedFrom } from "./_emailThreadHeaders.js"
 
 /**

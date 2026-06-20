@@ -3,7 +3,6 @@ import {
   ensureOpenLeadForInbound,
   getOrCreateCustomerByEmail,
   getOrCreateCustomerByPhone,
-  insertCommunicationEventReturningId,
   logCommunicationEvent,
   normalizePhone,
 } from "./_communications.js"
@@ -17,7 +16,13 @@ import {
 import {
   recordSmsConsentFromInboundCall,
   recordSmsConsentFromInboundSms,
+  runConversationInboundEmailAutoReply,
+  runInboundSmsAutoReply,
+  runMissedCallAutoTextBack,
 } from "./_conversationAutoReply.js"
+import { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
+
+export { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_sandboxOutbound.js"
 
 export const SANDBOX_ZIP = "99901"
 export const SANDBOX_CITY = "Tradesman Demo"
@@ -368,6 +373,16 @@ export async function seedSandboxWorkspace(
     })
     if (i % 2 === 0) {
       await recordSmsConsentFromInboundSms(supabase, userId, cid)
+      try {
+        await runInboundSmsAutoReply(supabase, {
+          userId,
+          customerId: cid,
+          customerPhone: cust.phone,
+          inboundBody: `Hi, this is ${cust.name.split(" ")[0]}. Can someone call me back about scheduling?`,
+        })
+      } catch (e) {
+        console.warn("[sandbox-seed] inbound SMS auto-reply", e instanceof Error ? e.message : e)
+      }
     }
     eventCount++
   }
@@ -478,6 +493,17 @@ export async function injectSandboxLead(
       metadata: { sandbox_simulated: true, from: normalizePhone(scenario.phone) },
     })
     await recordSmsConsentFromInboundSms(supabase, userId, customerId)
+    try {
+      await runInboundSmsAutoReply(supabase, {
+        userId,
+        customerId,
+        customerPhone: scenario.phone,
+        inboundBody: scenario.message,
+        leadId,
+      })
+    } catch (e) {
+      console.warn("[sandbox-inject] SMS auto-reply", e instanceof Error ? e.message : e)
+    }
   } else if (scenario.channel === "email") {
     await logCommunicationEvent(supabase, {
       user_id: userId,
@@ -490,6 +516,18 @@ export async function injectSandboxLead(
       unread: true,
       metadata: { sandbox_simulated: true, from: scenario.email },
     })
+    try {
+      await runConversationInboundEmailAutoReply(supabase, {
+        userId,
+        customerId,
+        customerEmail: scenario.email,
+        leadId,
+        inboundBody: scenario.message,
+        subject: `Service inquiry — ${scenario.name}`,
+      })
+    } catch (e) {
+      console.warn("[sandbox-inject] email auto-reply", e instanceof Error ? e.message : e)
+    }
   } else if (scenario.channel === "call") {
     await logCommunicationEvent(supabase, {
       user_id: userId,
@@ -502,6 +540,17 @@ export async function injectSandboxLead(
       metadata: { sandbox_simulated: true, from: normalizePhone(scenario.phone), missed: true },
     })
     await recordSmsConsentFromInboundCall(supabase, userId, customerId)
+    try {
+      await runMissedCallAutoTextBack(supabase, {
+        userId,
+        customerId,
+        customerPhone: scenario.phone,
+        leadId,
+        dialCallStatus: "no-answer",
+      })
+    } catch (e) {
+      console.warn("[sandbox-inject] missed-call auto text", e instanceof Error ? e.message : e)
+    }
   } else {
     await logCommunicationEvent(supabase, {
       user_id: userId,
@@ -523,113 +572,6 @@ export async function injectSandboxLead(
     scenario: scenario.name,
     channel: scenario.channel,
   }
-}
-
-export async function simulateSandboxOutboundEmail(
-  supabase: SupabaseClient,
-  params: {
-    userId: string
-    customerId?: string | null
-    conversationId?: string | null
-    leadId?: string | null
-    to: string[]
-    subject: string
-    body: string
-    bodyHtml?: string
-    attachmentCount?: number
-    attachmentNames?: string[]
-  },
-): Promise<{ ok: true; simulated: true; eventId: string | null; inboundReplyAt?: string }> {
-  const eventId = await insertCommunicationEventReturningId(supabase, {
-    user_id: params.userId,
-    customer_id: params.customerId ?? null,
-    conversation_id: params.conversationId ?? null,
-    lead_id: params.leadId ?? null,
-    event_type: "email",
-    direction: "outbound",
-    subject: params.subject,
-    body: params.body,
-    unread: false,
-    metadata: {
-      sandbox_simulated: true,
-      to: params.to,
-      body_html: params.bodyHtml ?? undefined,
-      provider: "sandbox",
-      attachment_count: params.attachmentCount ?? 0,
-      attachment_names: params.attachmentNames ?? [],
-    },
-  })
-
-  let inboundReplyAt: string | undefined
-  if (params.customerId) {
-    const replies = [
-      "Thanks for reaching out! What times work for an estimate this week?",
-      "Got it — we'll be home after 3pm most days.",
-      "Sounds good. Can you send the estimate when ready?",
-      "Yes, please schedule us for the first opening you have.",
-    ]
-    const reply = replies[Math.floor(Math.random() * replies.length)]!
-    inboundReplyAt = new Date(Date.now() + 4000).toISOString()
-    await logCommunicationEvent(supabase, {
-      user_id: params.userId,
-      customer_id: params.customerId,
-      conversation_id: params.conversationId ?? null,
-      lead_id: params.leadId ?? null,
-      event_type: "email",
-      direction: "inbound",
-      subject: `Re: ${params.subject}`,
-      body: reply,
-      unread: true,
-      metadata: {
-        sandbox_simulated: true,
-        simulated_delay_ms: 4000,
-        in_reply_to: eventId,
-      },
-    })
-  }
-
-  return { ok: true, simulated: true, eventId, inboundReplyAt }
-}
-
-export async function simulateSandboxOutboundSms(
-  supabase: SupabaseClient,
-  params: {
-    userId: string
-    customerId?: string | null
-    conversationId?: string | null
-    leadId?: string | null
-    to: string
-    body: string
-  },
-): Promise<{ ok: true; simulated: true; eventId: string | null }> {
-  const eventId = await insertCommunicationEventReturningId(supabase, {
-    user_id: params.userId,
-    customer_id: params.customerId ?? null,
-    conversation_id: params.conversationId ?? null,
-    lead_id: params.leadId ?? null,
-    event_type: "sms",
-    direction: "outbound",
-    body: params.body,
-    unread: false,
-    metadata: { sandbox_simulated: true, to: params.to, provider: "sandbox" },
-  })
-
-  if (params.customerId) {
-    const replies = ["Thanks!", "Ok sounds good", "👍", "Can you call me in 10 min?"]
-    await logCommunicationEvent(supabase, {
-      user_id: params.userId,
-      customer_id: params.customerId,
-      conversation_id: params.conversationId ?? null,
-      lead_id: params.leadId ?? null,
-      event_type: "sms",
-      direction: "inbound",
-      body: replies[Math.floor(Math.random() * replies.length)]!,
-      unread: true,
-      metadata: { sandbox_simulated: true, in_reply_to: eventId },
-    })
-  }
-
-  return { ok: true, simulated: true, eventId }
 }
 
 export async function sandboxTrafficTick(
