@@ -9,6 +9,13 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { filterRealUserIds, isSandboxDemoUserId, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import {
+  calendarAssigneeLabel,
+  calendarEventAssigneeUserId,
+  calendarEventVisibleToScopedUser,
+  mergeCalendarAssigneeMetadata,
+  resolveCalendarAssigneeForSave,
+} from "../../lib/calendarAssignee"
 import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
@@ -71,6 +78,7 @@ import {
   consumeSchedulingCustomerPrefill,
   consumeSchedulingQuotePrefill,
   queueQuotesCustomerPrefill,
+  notifyCustomersHubRefresh,
   SCHEDULING_ADD_WIZARD_PREFILL_EVENT,
   type SchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
@@ -360,6 +368,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
   const [addTargetUserId, setAddTargetUserId] = useState("")
   const [addAssignToSelectedUser, setAddAssignToSelectedUser] = useState(true)
+  const [eventAssigneePick, setEventAssigneePick] = useState("")
+  const [eventAssigneeSaving, setEventAssigneeSaving] = useState(false)
   const [showAllOrgEvents, setShowAllOrgEvents] = useState(() => {
     try { return localStorage.getItem("calendar_showAllOrgEvents") === "true" } catch { return false }
   })
@@ -379,6 +389,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     return calendarDbUserId ? [calendarDbUserId] : []
   }, [scopeCtx?.clients, calendarDbUserId])
+
+  /** Demo persona IDs are UI-only — map GPS/job queries need real auth user IDs. */
+  const teamMapMembers = useMemo(
+    () =>
+      selectableUsers.map((u) => ({
+        userId: isSandboxDemoUserId(u.userId) ? calendarDbUserId : u.userId,
+        label: u.label,
+        isSelf: u.isSelf,
+      })),
+    [selectableUsers, calendarDbUserId],
+  )
+
+  const calendarVisibleEvents = useMemo(
+    () => events.filter((ev) => calendarEventVisibleToScopedUser(ev, userId)),
+    [events, userId],
+  )
 
   const orgClientIdsKey = useMemo(
     () =>
@@ -658,6 +684,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems])
 
   const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(authRole)
+  const canAssignToTeam = selectableUsers.length > 1 || isOfficeManagerOrAdmin
   const showTeamManagementEntry = isOfficeManagerOrAdmin
   const managedSchedulingToolsEnabled =
     managedByOfficeManager && (managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true)
@@ -2230,6 +2257,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [selectedEvent?.id, supabase])
 
   useEffect(() => {
+    if (!selectedEvent) {
+      setEventAssigneePick("")
+      return
+    }
+    setEventAssigneePick(calendarEventAssigneeUserId(selectedEvent) || userId)
+  }, [selectedEvent?.id, selectedEvent?.user_id, selectedEvent?.metadata, userId])
+
+  useEffect(() => {
     if (!showAddItem || !addTargetUserId) return
     void loadUserPreference(addTargetUserId).then((row) => {
       if (authUserId && addTargetUserId !== authUserId) {
@@ -2260,9 +2295,37 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       })
   }, [orgClientIdsKey, supabase])
 
+  async function saveEventAssignee() {
+    if (!supabase || !selectedEvent?.id || !eventAssigneePick.trim()) return
+    setEventAssigneeSaving(true)
+    try {
+      const assignee = resolveCalendarAssigneeForSave(eventAssigneePick, authUserId || userId)
+      const nextMeta = mergeCalendarAssigneeMetadata(selectedEvent.metadata, assignee.assignedDemoUserId)
+      const { error } = await supabase
+        .from("calendar_events")
+        .update({ user_id: assignee.dbUserId, metadata: nextMeta, updated_at: new Date().toISOString() })
+        .eq("id", selectedEvent.id)
+      if (error) {
+        sandboxTrainingAlert(sandboxTraining, error.message)
+        return
+      }
+      setSelectedEvent((prev) =>
+        prev && prev.id === selectedEvent.id ? { ...prev, user_id: assignee.dbUserId, metadata: nextMeta } : prev,
+      )
+      void loadEvents()
+    } finally {
+      setEventAssigneeSaving(false)
+    }
+  }
+
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
-    const selectedTarget = resolveSandboxDataUserId(addTargetUserId || userId, authUserId || userId)
+    const assigneePick = addAssignToSelectedUser ? addTargetUserId || userId : authUserId || userId
+    const assignee = resolveCalendarAssigneeForSave(assigneePick, authUserId || userId)
+    const eventOwnerUserId = addAssignToSelectedUser
+      ? assignee.dbUserId
+      : resolveSandboxDataUserId(authUserId || userId, authUserId || userId)
+    const assignedDemoUserId = addAssignToSelectedUser ? assignee.assignedDemoUserId : null
     setAddError("")
     const start = parseLocalDateTime(addStartDate, addStartTime)
     if (Number.isNaN(start.getTime())) {
@@ -2299,9 +2362,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]
     const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
-    const eventOwnerUserId = addAssignToSelectedUser
-      ? selectedTarget
-      : resolveSandboxDataUserId(authUserId || selectedTarget, authUserId || userId)
 
     if (readCalendarNoDuplicateTimesSetting() && newRanges.length > 0) {
       try {
@@ -2358,6 +2418,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           start_at: s.toISOString(),
           end_at: e.toISOString(),
         }
+        if (assignedDemoUserId) row.metadata = mergeCalendarAssigneeMetadata(null, assignedDemoUserId)
         if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
         return row
@@ -2393,6 +2454,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setShowAddItem(false)
     resetAddForm()
     loadEvents()
+    notifyCustomersHubRefresh()
   }
 
   function resetAddForm() {
@@ -2600,7 +2662,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     dayStart.setHours(0, 0, 0, 0)
     const dayEnd = new Date(d)
     dayEnd.setHours(23, 59, 59, 999)
-    return events.filter((e) => {
+    return calendarVisibleEvents.filter((e) => {
       const start = new Date(e.start_at)
       const end = new Date(e.end_at)
       return start <= dayEnd && end >= dayStart
@@ -3272,7 +3334,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   calDayStart.setHours(0, 0, 0, 0)
                   const calDayEnd = new Date(dayStart)
                   calDayEnd.setHours(23, 59, 59, 999)
-                  const dayEvents = events.filter((e) => {
+                  const dayEvents = calendarVisibleEvents.filter((e) => {
                     const s = new Date(e.start_at)
                     const en = new Date(e.end_at)
                     if (!(s <= calDayEnd && en >= calDayStart)) return false
@@ -3518,13 +3580,20 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               onOpenTimeClockWorkspace={() => setCalendarSuite({ id: "time_clock" })}
             />
           ) : null}
-          {calendarSuite.id === "team_management" && calendarSuite.panel === "team_map" && teamMapUserIds.length > 0 ? (
+          {calendarSuite.id === "team_management" && calendarSuite.panel === "team_map" ? (
+            teamMapUserIds.length > 0 ? (
             <TeamLocationsMapModal
               variant="embedded"
-              members={selectableUsers.map((u) => ({ userId: u.userId, label: u.label, isSelf: u.isSelf }))}
+              members={teamMapMembers}
               orgUserIdsForJobs={teamMapUserIds}
               onClose={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
             />
+            ) : (
+              <p style={{ margin: 0, fontSize: 14, color: theme.text, lineHeight: 1.5 }}>
+                Team map needs at least one signed-in user. If you are previewing a demo team member, switch back to your account in the
+                Viewing as bar, then reopen Team map.
+              </p>
+            )
           ) : null}
           {calendarSuite.id === "team_management" && calendarSuite.panel === "scheduling_settings" ? (
             <div>
@@ -3585,7 +3654,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>
                 <select value={addTargetUserId} onChange={(e) => setAddTargetUserId(e.target.value)} style={addInputStyle}>
                   {selectableUsers.map((u) => (
                     <option key={u.userId} value={u.userId}>
@@ -3593,6 +3662,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     </option>
                   ))}
                 </select>
+                {selectableUsers.length <= 1 ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                    Link field users under Team management (Operations → Team management) or use sandbox demo team members to assign work to someone other than yourself.
+                  </p>
+                ) : null}
               </div>
               <div>
                 <label style={{ fontSize: "12px", color: theme.text }}>Customer (optional)</label>
@@ -4309,12 +4383,48 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   ) : null}
                 </div>
               )}
-              {selectedEvent.user_id && selectedEvent.user_id !== userId && (
+              {canAssignToTeam ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4 }}>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                    Assigned to
+                    <select
+                      value={eventAssigneePick}
+                      onChange={(e) => setEventAssigneePick(e.target.value)}
+                      style={{ ...theme.formInput, marginLeft: 8, minWidth: 200, fontWeight: 500 }}
+                    >
+                      {selectableUsers.map((u) => (
+                        <option key={u.userId} value={u.userId}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={eventAssigneeSaving || !eventAssigneePick.trim()}
+                    onClick={() => void saveEventAssignee()}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: eventAssigneeSaving ? "wait" : "pointer",
+                    }}
+                  >
+                    {eventAssigneeSaving ? "Saving…" : "Save assignee"}
+                  </button>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>
+                    Currently: {calendarAssigneeLabel(selectedEvent, selectableUsers)}
+                  </span>
+                </div>
+              ) : selectedEvent.user_id ? (
                 <p style={{ margin: 0 }}>
-                  <strong>Calendar owner:</strong>{" "}
-                  {selectableUsers.find((u) => u.userId === selectedEvent.user_id)?.label ?? selectedEvent.user_id.slice(0, 8)}
+                  <strong>Assigned to:</strong> {calendarAssigneeLabel(selectedEvent, selectableUsers)}
                 </p>
-              )}
+              ) : null}
               {(selectedEvent.recurrence_series_id || (selectedLegacyRecurringIds && selectedLegacyRecurringIds.length >= 2)) && (
                 <p style={{ margin: 0, color: "#2563eb" }}>
                   <strong>Recurrence:</strong>{" "}

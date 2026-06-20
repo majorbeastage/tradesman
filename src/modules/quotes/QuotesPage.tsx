@@ -7,6 +7,21 @@ import {
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { filterRealUserIds, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import EstimateWorkflowActionsPanel from "../../components/EstimateWorkflowActionsPanel"
+import {
+  applyMarkApproved,
+  applySendForApproval,
+  canSendEstimateToCustomer,
+  computeEstimateWorkflowActions,
+  loadAccountWorkflowBundleFromMetadata,
+  mergeQuoteInternalWorkflowMetadata,
+  parseQuoteInternalWorkflow,
+  type AccountWorkflowBundle,
+  type QuoteInternalWorkflowState,
+  type WorkflowActionButton,
+} from "../../lib/estimateWorkflowRuntime"
+import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
+import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
@@ -122,7 +137,9 @@ import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContex
 import {
   consumeOpenSpecialtyReportWizard,
   consumeQuotesCustomerPrefill,
+  notifyCustomersHubRefresh,
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
+  peekQuotesCustomerPrefill,
 } from "../../lib/workflowNavigation"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
@@ -408,7 +425,7 @@ function quoteCustomerCopyAttachmentsPayload(rows: EntityAttachmentRow[]): Quote
 }
 
 export default function QuotesPage(_props: QuotesPageProps) {
-  void _props
+  const { setPage } = _props
   const isMobile = useIsMobile()
   const { userId: authUserId, session } = useAuth()
   const globalAssistant = useGlobalAssistantOptional()
@@ -615,11 +632,71 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [autoAssignEnabled, setAutoAssignEnabled] = useState(true)
   const [assignToScopedUser, setAssignToScopedUser] = useState(true)
   const [calendarTargetUserId, setCalendarTargetUserId] = useState("")
+  const [accountWorkflowBundle, setAccountWorkflowBundle] = useState<AccountWorkflowBundle | null>(null)
+  const [linkableOrgUsers, setLinkableOrgUsers] = useState<LinkableOrgUser[]>([])
+  const [workflowActionBusy, setWorkflowActionBusy] = useState(false)
 
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
+
+  useEffect(() => {
+    if (!supabase || !authUserId) {
+      setAccountWorkflowBundle(null)
+      setLinkableOrgUsers([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const ownerId = resolveSandboxDataUserId(authUserId, authUserId)
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+      if (cancelled) return
+      let meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      if (sandboxTraining) {
+        const merged = mergeSandboxWorkflowSeedMetadata(meta)
+        if (JSON.stringify(merged) !== JSON.stringify(meta)) {
+          await supabase.from("profiles").update({ metadata: merged, updated_at: new Date().toISOString() }).eq("id", ownerId)
+          meta = merged
+        }
+      }
+      setAccountWorkflowBundle(loadAccountWorkflowBundleFromMetadata(meta))
+      try {
+        const users = await loadLinkableOrgUsers(supabase, ownerId)
+        if (!cancelled) setLinkableOrgUsers(users)
+      } catch (e) {
+        console.warn("[quotes] linkable org users", e instanceof Error ? e.message : e)
+        if (!cancelled) setLinkableOrgUsers([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, authUserId, sandboxTraining])
+
+  const quoteInternalWorkflowState = useMemo((): QuoteInternalWorkflowState => {
+    return parseQuoteInternalWorkflow(selectedQuote?.metadata)
+  }, [selectedQuote?.metadata, selectedQuote?.id])
+
+  const estimateWorkflowActions = useMemo((): WorkflowActionButton[] => {
+    if (!accountWorkflowBundle) return []
+    return computeEstimateWorkflowActions({
+      workflow: accountWorkflowBundle.workflow,
+      orgChart: accountWorkflowBundle.orgChart,
+      externalContacts: accountWorkflowBundle.externalContacts,
+      linkableUsers: linkableOrgUsers,
+      state: quoteInternalWorkflowState,
+      quoteHasLineItems: selectedQuoteItems.length > 0,
+    })
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length])
+
+  const customerSendWorkflowGate = useMemo(() => {
+    if (!accountWorkflowBundle) return { allowed: true as const }
+    return canSendEstimateToCustomer(accountWorkflowBundle.workflow, quoteInternalWorkflowState)
+  }, [accountWorkflowBundle, quoteInternalWorkflowState])
 
   useEffect(() => {
     let cancelled = false
@@ -1931,23 +2008,27 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     if (!userId || !supabase || estimateSuite !== "home") return
+    if (estimatesBootstrapRef.current) return
 
-    const queuedCustomerId = consumeQuotesCustomerPrefill()
+    const queuedCustomerId = peekQuotesCustomerPrefill()
     if (queuedCustomerId) {
+      estimatesBootstrapRef.current = true
       void (async () => {
         const ok = await openOrCreateEstimateForCustomer(queuedCustomerId)
-        if (ok) estimatesBootstrapRef.current = true
+        if (ok) consumeQuotesCustomerPrefill()
+        else estimatesBootstrapRef.current = false
       })()
       return
     }
 
-    if (selectedQuoteId) return
-    if (estimatesBootstrapRef.current) return
-    void (async () => {
-      const ok = await createNewEstimate()
-      if (ok) estimatesBootstrapRef.current = true
-    })()
-  }, [userId, supabase, estimateSuite, selectedQuoteId])
+    if (selectedQuoteId) {
+      estimatesBootstrapRef.current = true
+      return
+    }
+
+    estimatesBootstrapRef.current = true
+    void createNewEstimate()
+  }, [userId, supabase, estimateSuite])
 
   async function loadCustomerList() {
     if (!supabase || !userId) return
@@ -2021,10 +2102,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
     setEstimateGuideCustomerPick(cid)
     setCustomerPickerCustomerId(cid)
-    if (ctx?.jobDetailsText.trim()) setJobDetailsText(ctx.jobDetailsText)
+    if (ctx?.jobDetailsText.trim()) {
+      setJobDetailsText((prev) => (prev.trim() ? prev : ctx.jobDetailsText))
+    }
 
     if (ctx?.conversationPack.trim()) {
       try {
+        const existingBullets = loadEstimateGuideFlags(quoteId).conversationScopeBullets?.trim()
+        if (existingBullets) return
         const bullets = await fetchEstimateWizardBullets("conversation", ctx.conversationPack)
         if (bullets.length > 0) {
           const text = bullets.map((b) => `• ${b}`).join("\n")
@@ -2055,6 +2140,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
         setEstimateGuideCustomerPick(cid)
         setCustomerPickerCustomerId(cid)
         const opened = await openQuote(existingQuoteId)
+        if (opened) {
+          await prefillNewEstimateFromCustomerContext(existingQuoteId, cid)
+          void loadCustomerList()
+        }
         return opened
       }
 
@@ -2079,6 +2168,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (!opened) return false
       await refreshCustomerPipelineOnEngagement(supabase, cid, "estimate_work")
       await prefillNewEstimateFromCustomerContext(quoteId, cid)
+      void loadCustomerList()
       return true
     } catch (err: unknown) {
       console.error(err)
@@ -2629,11 +2719,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateStartGuideStep(7)
   }
 
+  function resolveEstimateWizardCustomerPick(): string {
+    const linked = typeof selectedQuote?.customer_id === "string" ? selectedQuote.customer_id.trim() : ""
+    if (linked) return linked
+    const picker = customerPickerCustomerId.trim()
+    if (picker) return picker
+    return estimateGuideCustomerPick.trim()
+  }
+
+  function openEstimateStartGuide(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1) {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { wizardOpened: true })
+      setEstimateGuideFlags((f) => ({ ...f, wizardOpened: true }))
+    }
+    void loadCustomerList()
+    setEstimateGuideCustomerPick(resolveEstimateWizardCustomerPick())
+    setEstimateGuideTemplatePick("")
+    setEstimateStartGuideStep(step)
+    setEstimateStartGuideOpen(true)
+  }
+
   function closeGuideWizard() {
     setEstimateStartGuideOpen(false)
     setEstimateStartGuideStep(1)
     setEstimateGuideTemplatePick("")
-    setEstimateGuideCustomerPick("")
   }
 
   async function patchEntityAttachmentMetadataRow(row: EntityAttachmentRow, patch: Record<string, unknown>) {
@@ -2875,6 +2984,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const jobDetailsFromDb = quoteJobDetailsFromMetadata(row.metadata)
     if (jobDetailsFromDb.trim()) setJobDetailsText(jobDetailsFromDb)
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
+    const linkedCustomerId = typeof row.customer_id === "string" ? row.customer_id.trim() : ""
+    if (linkedCustomerId) {
+      setCustomerPickerCustomerId(linkedCustomerId)
+      setEstimateGuideCustomerPick((prev) => prev.trim() || linkedCustomerId)
+    }
     const { data: items } = await supabase
       .from("quote_items")
       .select("*")
@@ -3716,7 +3830,85 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
+  async function persistQuoteInternalWorkflowState(nextState: QuoteInternalWorkflowState): Promise<void> {
+    if (!supabase || !selectedQuote?.id || !userId) return
+    const prevMeta =
+      selectedQuote.metadata && typeof selectedQuote.metadata === "object" && !Array.isArray(selectedQuote.metadata)
+        ? { ...(selectedQuote.metadata as Record<string, unknown>) }
+        : {}
+    const nextMeta = mergeQuoteInternalWorkflowMetadata(prevMeta, nextState)
+    const { error } = await supabase
+      .from("quotes")
+      .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+      .eq("id", selectedQuote.id)
+      .eq("user_id", userId)
+    if (error) {
+      sandboxTrainingAlert(sandboxTraining, error.message, "calendar_load")
+      return
+    }
+    setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuote.id ? { ...q, metadata: nextMeta } : q))
+  }
+
+  async function notifyWorkflowAssignee(action: WorkflowActionButton, nodeLabel: string): Promise<void> {
+    const assignee = action.assignee
+    if (!assignee?.email?.trim()) {
+      if (sandboxTraining) {
+        alert(`[Sandbox] Routed to ${assignee?.displayName ?? nodeLabel} for approval (no email on file).`)
+      }
+      return
+    }
+    const token = session?.access_token?.trim()
+    if (!supabase || !token || !selectedQuote?.id) return
+    const subject = `Estimate needs approval: ${nodeLabel}`
+    const body = `An estimate is ready for your review at step “${nodeLabel}”. Open Estimates in Tradesman to mark it approved when complete.`
+    if (sandboxTraining) {
+      alert(`[Sandbox] Notification sent to ${assignee.displayName} (${assignee.email}) for “${nodeLabel}”.`)
+      return
+    }
+    try {
+      await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          apikey: supabaseAnonKey,
+        },
+        body: outboundMessagesJsonBody({
+          to: assignee.email,
+          subject,
+          body,
+          customerId: selectedQuote.customer_id ?? undefined,
+        }),
+      })
+    } catch (e) {
+      console.warn("[quotes] workflow notify", e instanceof Error ? e.message : e)
+    }
+  }
+
+  async function handleEstimateWorkflowAction(action: WorkflowActionButton): Promise<void> {
+    if (!accountWorkflowBundle || !selectedQuote?.id || action.disabled) return
+    const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
+    if (!node) return
+    setWorkflowActionBusy(true)
+    try {
+      if (action.kind === "send_for_approval") {
+        const next = applySendForApproval(quoteInternalWorkflowState, node, authUserId ?? userId)
+        await persistQuoteInternalWorkflowState(next)
+        await notifyWorkflowAssignee(action, node.label)
+      } else if (action.kind === "mark_approved") {
+        const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
+        await persistQuoteInternalWorkflowState(next)
+      }
+    } finally {
+      setWorkflowActionBusy(false)
+    }
+  }
+
   async function sendQuoteCustomerEmail() {
+    if (!customerSendWorkflowGate.allowed) {
+      alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals before sending to the customer.")
+      return
+    }
     if (!supabase || !userId || !selectedQuote) return
     const token = session?.access_token?.trim()
     if (!token) {
@@ -5003,17 +5195,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (selectedQuote?.id) {
-                                      saveEstimateGuideFlags(selectedQuote.id, { wizardOpened: true })
-                                      setEstimateGuideFlags((f) => ({ ...f, wizardOpened: true }))
-                                    }
-                                    setEstimateStartGuideOpen(true)
-                                    setEstimateStartGuideStep(1)
-                                    setEstimateGuideCustomerPick("")
-                                    setEstimateGuideTemplatePick("")
-                                    void loadCustomerList()
-                                  }}
+                                  onClick={() => openEstimateStartGuide(1)}
                                   style={{
                                     padding: "10px 18px",
                                     borderRadius: 10,
@@ -5032,7 +5214,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      void loadCustomerList()
                                       if (!selectedQuote?.id) return
                                       const resume = getResumeEstimateWizardStep(estimateGuideFlags, {
                                         customerId: selectedQuote.customer_id,
@@ -5041,8 +5222,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         jobDetailsText,
                                         lineItemCount: selectedQuoteItems.length,
                                       })
-                                      setEstimateStartGuideOpen(true)
-                                      setEstimateStartGuideStep(resume)
+                                      openEstimateStartGuide(resume)
                                     }}
                                     style={{
                                       padding: "10px 18px",
@@ -6759,6 +6939,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   />
                 </div>
                 <div style={{ marginTop: 10 }}>
+                {accountWorkflowBundle ? (
+                  <EstimateWorkflowActionsPanel
+                    workflow={accountWorkflowBundle.workflow}
+                    workflowState={quoteInternalWorkflowState}
+                    actions={estimateWorkflowActions}
+                    busy={workflowActionBusy}
+                    onAction={(action) => void handleEstimateWorkflowAction(action)}
+                    onOpenWorkflow={setPage ? () => setPage("business-workflow") : undefined}
+                    onOpenOrgChart={setPage ? () => setPage("organization-chart") : undefined}
+                  />
+                ) : null}
               <div
                 style={{
                   paddingTop: 4,
@@ -6889,25 +7080,45 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   ) : null}
                   <button
                     type="button"
-                    disabled={!selectedQuote?.customer_id || selectedQuoteItems.length === 0}
+                    disabled={
+                      !selectedQuote?.customer_id ||
+                      selectedQuoteItems.length === 0 ||
+                      !customerSendWorkflowGate.allowed
+                    }
                     title={
                       !selectedQuote?.customer_id
                         ? "Select a customer first"
                         : selectedQuoteItems.length === 0
                           ? "Add quote items first"
-                          : undefined
+                          : !customerSendWorkflowGate.allowed
+                            ? customerSendWorkflowGate.reason
+                            : undefined
                     }
                     onClick={() => {
+                      if (!customerSendWorkflowGate.allowed) {
+                        alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals first.")
+                        return
+                      }
                       setBottomActionEmailOpen((v) => !v)
                     }}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 8,
                       border: "none",
-                      background: !selectedQuote?.customer_id || selectedQuoteItems.length === 0 ? "#94a3b8" : theme.primary,
+                      background:
+                        !selectedQuote?.customer_id ||
+                        selectedQuoteItems.length === 0 ||
+                        !customerSendWorkflowGate.allowed
+                          ? "#94a3b8"
+                          : theme.primary,
                       color: "#fff",
                       fontWeight: 600,
-                      cursor: !selectedQuote?.customer_id || selectedQuoteItems.length === 0 ? "not-allowed" : "pointer",
+                      cursor:
+                        !selectedQuote?.customer_id ||
+                        selectedQuoteItems.length === 0 ||
+                        !customerSendWorkflowGate.allowed
+                          ? "not-allowed"
+                          : "pointer",
                     }}
                   >
                     {bottomActionEmailOpen ? "Hide email to customer" : "Email to Customer"}
@@ -7013,15 +7224,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     <button
                       type="button"
                       onClick={() => void sendQuoteCustomerEmail()}
-                      disabled={quoteEmailSending}
+                      disabled={quoteEmailSending || !customerSendWorkflowGate.allowed}
+                      title={!customerSendWorkflowGate.allowed ? customerSendWorkflowGate.reason : undefined}
                       style={{
                         padding: "8px 14px",
                         borderRadius: 6,
                         border: "none",
-                        background: theme.primary,
+                        background: !customerSendWorkflowGate.allowed ? "#94a3b8" : theme.primary,
                         color: "#fff",
                         fontWeight: 600,
-                        cursor: quoteEmailSending ? "wait" : "pointer",
+                        cursor: quoteEmailSending || !customerSendWorkflowGate.allowed ? "not-allowed" : "pointer",
                         justifySelf: "start",
                       }}
                     >
@@ -7107,7 +7319,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </div>
                 )}
                 <div>
-                  <label style={{ fontSize: "12px", color: theme.text }}>Select user</label>
+                  <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>
                   <select
                     value={calendarTargetUserId}
                     onChange={(e) => setCalendarTargetUserId(e.target.value)}
@@ -7119,6 +7331,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       </option>
                     ))}
                   </select>
+                  {selectableUsers.length <= 1 ? (
+                    <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                      Add team members under Team management to route scheduled work to field staff.
+                    </p>
+                  ) : null}
                 </div>
                 <input placeholder="Title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} style={{ ...theme.formInput }} />
                 <div style={{ display: "flex", gap: "8px", alignItems: "stretch", flexWrap: "wrap" }}>
@@ -7342,6 +7559,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       setSelectedQuote((q: QuoteRow | null) => (q ? { ...q, scheduled_at: nowIso } : q))
                       setShowAddToCalendar(false)
                       void loadQuotes()
+                      notifyCustomersHubRefresh()
                       const when = new Date(result.firstStartIso).toLocaleString([], {
                         dateStyle: "medium",
                         timeStyle: "short",

@@ -5,6 +5,99 @@ const SANDBOX_CITY = "Tradesman Demo"
 const SANDBOX_STATE = "TX"
 const SANDBOX_ZIP = "99901"
 
+/** Minimum gap between simulated customer SMS replies for the same customer. */
+const SANDBOX_SIM_COOLDOWN_MS = 120_000
+/** Max simulated customer replies per customer per rolling hour. */
+const SANDBOX_SIM_MAX_PER_WINDOW = 4
+const SANDBOX_SIM_WINDOW_MS = 60 * 60 * 1000
+
+const SANDBOX_SIM_META_KEY = "sandbox_customer_sim_v1"
+
+type SandboxSimState = {
+  last_at?: string
+  window_start?: string
+  count_in_window?: number
+}
+
+function parseCustomerMetadata(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {}
+}
+
+function parseSandboxSimState(meta: Record<string, unknown>): SandboxSimState {
+  const raw = meta[SANDBOX_SIM_META_KEY]
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  return raw as SandboxSimState
+}
+
+/** Prevent ping-pong: auto-reply → simulated customer → another outbound → same reply again. */
+export async function shouldAllowSandboxCustomerReply(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  opts?: { isAutoReplyOutbound?: boolean },
+): Promise<boolean> {
+  const { data: cust } = await supabase
+    .from("customers")
+    .select("metadata")
+    .eq("id", customerId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  const meta = parseCustomerMetadata(cust?.metadata)
+  const state = parseSandboxSimState(meta)
+  const now = Date.now()
+  const lastAt = state.last_at ? Date.parse(state.last_at) : 0
+
+  if (opts?.isAutoReplyOutbound && typeof meta.sandbox_last_inbound_sms === "string" && meta.sandbox_last_inbound_sms.trim()) {
+    if (lastAt && now - lastAt < SANDBOX_SIM_COOLDOWN_MS) return false
+  }
+  if (lastAt && now - lastAt < SANDBOX_SIM_COOLDOWN_MS) return false
+
+  let windowStart = state.window_start ? Date.parse(state.window_start) : 0
+  let count = state.count_in_window ?? 0
+  if (!windowStart || now - windowStart > SANDBOX_SIM_WINDOW_MS) {
+    windowStart = now
+    count = 0
+  }
+  return count < SANDBOX_SIM_MAX_PER_WINDOW
+}
+
+export async function recordSandboxCustomerReply(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<void> {
+  const { data: cust } = await supabase
+    .from("customers")
+    .select("metadata")
+    .eq("id", customerId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  const meta = parseCustomerMetadata(cust?.metadata)
+  const state = parseSandboxSimState(meta)
+  const now = Date.now()
+  const nowIso = new Date(now).toISOString()
+  let windowStart = state.window_start ? Date.parse(state.window_start) : 0
+  let count = state.count_in_window ?? 0
+  if (!windowStart || now - windowStart > SANDBOX_SIM_WINDOW_MS) {
+    windowStart = now
+    count = 0
+  }
+  await supabase
+    .from("customers")
+    .update({
+      metadata: {
+        ...meta,
+        [SANDBOX_SIM_META_KEY]: {
+          last_at: nowIso,
+          window_start: new Date(windowStart).toISOString(),
+          count_in_window: count + 1,
+        },
+      },
+    })
+    .eq("id", customerId)
+    .eq("user_id", userId)
+}
+
 export type SandboxCustomerReplyContext = {
   outboundBody: string
   customerName?: string | null
@@ -12,6 +105,8 @@ export type SandboxCustomerReplyContext = {
   leadTitle?: string | null
   serviceAddress?: string | null
   captureChannel?: string | null
+  /** When true, avoid repeating the full address block (training loop guard). */
+  recentInboundHadAddress?: boolean
 }
 
 /** Realistic training reply — job details + service address so lead qualification can proceed. */
@@ -41,6 +136,13 @@ export function buildSandboxCustomerSmsReply(ctx: SandboxCustomerReplyContext): 
       `${first} here — yes, an estimate works for us. ${job.replace(/\.$/, "")}. Address: ${addr}. ` +
       `Mornings are best but we can do afternoons too.`
     ).slice(0, 480)
+  }
+
+  if (ctx.recentInboundHadAddress) {
+    return `${first} here — got it, thanks. We already sent the address and job details. Let us know if you need anything else.`.slice(
+      0,
+      480,
+    )
   }
 
   return (
@@ -79,11 +181,13 @@ export async function enrichSandboxFromSimulatedInbound(
     .eq("user_id", userId)
     .maybeSingle()
 
+  const meta = parseCustomerMetadata(cust?.metadata)
+  const hadAddressBefore = Boolean(
+    (cust?.service_address as string | null | undefined)?.trim() ||
+      (typeof meta.service_address === "string" && meta.service_address.trim()),
+  )
+
   if (cust) {
-    const meta =
-      cust.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
-        ? { ...(cust.metadata as Record<string, unknown>) }
-        : {}
     const patch: Record<string, unknown> = {
       last_activity_at: new Date().toISOString(),
       metadata: {
@@ -98,12 +202,20 @@ export async function enrichSandboxFromSimulatedInbound(
     }
     const noteLine = `[Sandbox SMS ${new Date().toLocaleDateString()}] ${body.slice(0, 500)}`
     const prevNotes = typeof cust.notes === "string" ? cust.notes.trim() : ""
-    patch.notes = prevNotes ? `${prevNotes}\n\n${noteLine}` : noteLine
+    if (!prevNotes.includes(body.slice(0, 80))) {
+      patch.notes = prevNotes ? `${prevNotes}\n\n${noteLine}` : noteLine
+    }
     await supabase.from("customers").update(patch).eq("id", customerId).eq("user_id", userId)
   }
 
+  const addressNewlyCaptured = Boolean(parsedAddr && !hadAddressBefore)
+
   if (leadId) {
-    const { data: lead } = await supabase.from("leads").select("description, title").eq("id", leadId).maybeSingle()
+    const { data: lead } = await supabase
+      .from("leads")
+      .select("description, title, fit_evaluated_at")
+      .eq("id", leadId)
+      .maybeSingle()
     const prevDesc = (lead?.description ?? "").trim()
     const mergedDesc = prevDesc && !prevDesc.includes(body.slice(0, 80)) ? `${prevDesc}\n\n${body}` : body || prevDesc
     await supabase
@@ -114,12 +226,23 @@ export async function enrichSandboxFromSimulatedInbound(
       })
       .eq("id", leadId)
 
-    await evaluateAndPersistLeadFit(supabase, leadId, { supplementalText: body, force: true }).catch((e) =>
-      console.warn("[sandbox-customer-sim] lead fit", e instanceof Error ? e.message : e),
-    )
+    const leadNeedsFit = !lead?.fit_evaluated_at || addressNewlyCaptured
+    if (leadNeedsFit) {
+      await evaluateAndPersistLeadFit(supabase, leadId, {
+        supplementalText: addressNewlyCaptured ? body : undefined,
+      }).catch((e) => console.warn("[sandbox-customer-sim] lead fit", e instanceof Error ? e.message : e))
+    }
   }
 
-  await evaluateAndPersistCustomerFit(supabase, customerId, { force: true }).catch((e) =>
-    console.warn("[sandbox-customer-sim] customer fit", e instanceof Error ? e.message : e),
-  )
+  const { data: custFitRow } = await supabase
+    .from("customers")
+    .select("fit_evaluated_at")
+    .eq("id", customerId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (!(custFitRow as { fit_evaluated_at?: string | null } | null)?.fit_evaluated_at) {
+    await evaluateAndPersistCustomerFit(supabase, customerId).catch((e) =>
+      console.warn("[sandbox-customer-sim] customer fit", e instanceof Error ? e.message : e),
+    )
+  }
 }

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { insertCommunicationEventReturningId, logCommunicationEvent } from "./_communications.js"
-import { buildSandboxCustomerSmsReply, enrichSandboxFromSimulatedInbound } from "./_sandboxCustomerSimulation.js"
+import { buildSandboxCustomerSmsReply, enrichSandboxFromSimulatedInbound, recordSandboxCustomerReply, shouldAllowSandboxCustomerReply } from "./_sandboxCustomerSimulation.js"
 
 export async function simulateSandboxOutboundEmail(
   supabase: SupabaseClient,
@@ -39,6 +39,13 @@ export async function simulateSandboxOutboundEmail(
 
   let inboundReplyAt: string | undefined
   if (params.customerId) {
+    const allowed = await shouldAllowSandboxCustomerReply(supabase, params.userId, params.customerId, {
+      isAutoReplyOutbound: false,
+    })
+    if (!allowed) {
+      return { ok: true, simulated: true, eventId, inboundReplyAt }
+    }
+
     const { data: cust } = await supabase
       .from("customers")
       .select("display_name, service_address, metadata")
@@ -87,6 +94,7 @@ export async function simulateSandboxOutboundEmail(
       leadId: params.leadId,
       inboundBody: reply,
     })
+    await recordSandboxCustomerReply(supabase, params.userId, params.customerId)
   }
 
   return { ok: true, simulated: true, eventId, inboundReplyAt }
@@ -101,8 +109,11 @@ export async function simulateSandboxOutboundSms(
     leadId?: string | null
     to: string
     body: string
+    /** When true, this outbound came from automatic intake reply (cooldown applies). */
+    isAutoReplyOutbound?: boolean
   },
 ): Promise<{ ok: true; simulated: true; eventId: string | null }> {
+  const isAutoReply = params.isAutoReplyOutbound === true
   const eventId = await insertCommunicationEventReturningId(supabase, {
     user_id: params.userId,
     customer_id: params.customerId ?? null,
@@ -112,10 +123,22 @@ export async function simulateSandboxOutboundSms(
     direction: "outbound",
     body: params.body,
     unread: false,
-    metadata: { sandbox_simulated: true, to: params.to, provider: "sandbox", auto_reply: true },
+    metadata: {
+      sandbox_simulated: true,
+      to: params.to,
+      provider: "sandbox",
+      ...(isAutoReply ? { auto_reply: true } : {}),
+    },
   })
 
   if (params.customerId) {
+    const allowed = await shouldAllowSandboxCustomerReply(supabase, params.userId, params.customerId, {
+      isAutoReplyOutbound: isAutoReply,
+    })
+    if (!allowed) {
+      return { ok: true, simulated: true, eventId }
+    }
+
     const { data: cust } = await supabase
       .from("customers")
       .select("display_name, service_address, metadata")
@@ -139,6 +162,11 @@ export async function simulateSandboxOutboundSms(
       cust?.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
         ? (cust.metadata as Record<string, unknown>)
         : {}
+    const recentInboundHadAddress = Boolean(
+      typeof meta.sandbox_last_inbound_sms === "string" &&
+        meta.sandbox_last_inbound_sms.trim() &&
+        /\d{1,5}\s+\S+,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s*\d{5}/.test(meta.sandbox_last_inbound_sms),
+    )
     const reply = buildSandboxCustomerSmsReply({
       outboundBody: params.body,
       customerName: cust?.display_name,
@@ -147,6 +175,7 @@ export async function simulateSandboxOutboundSms(
       serviceAddress:
         (cust?.service_address as string | null) ??
         (typeof meta.service_address === "string" ? meta.service_address : null),
+      recentInboundHadAddress,
     })
     await logCommunicationEvent(supabase, {
       user_id: params.userId,
@@ -165,6 +194,7 @@ export async function simulateSandboxOutboundSms(
       leadId: params.leadId,
       inboundBody: reply,
     })
+    await recordSandboxCustomerReply(supabase, params.userId, params.customerId)
   }
 
   return { ok: true, simulated: true, eventId }

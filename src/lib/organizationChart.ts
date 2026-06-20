@@ -5,6 +5,8 @@ export type OrgChartNode = {
   label: string
   jobTitle: string
   linkedUserId: string | null
+  /** External vendor / contractor when role is outsourced (external_contacts_v1). */
+  externalContactId?: string | null
   /** @deprecated Lines are stored in `edges`; kept for migration/export. */
   parentId: string | null
   x: number
@@ -100,6 +102,8 @@ export function parseOrganizationChart(raw: unknown): OrganizationChartDoc | nul
       label: row.label,
       jobTitle: typeof row.jobTitle === "string" ? row.jobTitle : "",
       linkedUserId: typeof row.linkedUserId === "string" ? row.linkedUserId : null,
+      externalContactId:
+        typeof row.externalContactId === "string" && row.externalContactId.trim() ? row.externalContactId.trim() : null,
       parentId: typeof row.parentId === "string" ? row.parentId : null,
       x: typeof row.x === "number" && Number.isFinite(row.x) ? row.x : 40,
       y: typeof row.y === "number" && Number.isFinite(row.y) ? row.y : 40,

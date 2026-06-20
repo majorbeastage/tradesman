@@ -161,6 +161,7 @@ async function dispatchOutboundSms(opts: {
       customerId: opts.customerId,
       conversationId: opts.conversationId ?? null,
       leadId: opts.leadId ?? null,
+      isAutoReplyOutbound: true,
     })
     return
   }

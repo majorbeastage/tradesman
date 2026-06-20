@@ -49,6 +49,7 @@ import {
   queueSchedulingCustomerPrefill,
   queueCustomReceiptCustomerPrefill,
   queueSchedulingQuotePrefill,
+  CUSTOMERS_HUB_REFRESH_EVENT,
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { formatAppError } from "../../lib/formatAppError"
@@ -721,35 +722,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setLoadError("")
 
     const activeIds = new Set<string>()
-    const recurringBookedIds = new Set<string>()
+    const bookedIds = new Set<string>()
 
     const addActive = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
       if (!r.error && r.data) r.data.forEach((row) => row.customer_id && activeIds.add(row.customer_id))
+    }
+    const addBooked = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
+      if (!r.error && r.data) r.data.forEach((row) => row.customer_id && bookedIds.add(row.customer_id))
     }
 
     let eventsRes = await supabase.from("calendar_events").select("customer_id").eq("user_id", userId).is("removed_at", null).is("completed_at", null)
     if (eventsRes.error) {
       eventsRes = await supabase.from("calendar_events").select("customer_id").eq("user_id", userId).is("removed_at", null)
     }
-    addActive(eventsRes)
-    let recurringRes = await supabase
-      .from("calendar_events")
-      .select("customer_id, recurrence_series_id")
-      .eq("user_id", userId)
-      .is("removed_at", null)
-      .is("completed_at", null)
-    if (recurringRes.error) {
-      recurringRes = await supabase
-        .from("calendar_events")
-        .select("customer_id, recurrence_series_id")
-        .eq("user_id", userId)
-        .is("removed_at", null)
-    }
-    if (!recurringRes.error && recurringRes.data) {
-      recurringRes.data.forEach((row) => {
-        if (row.customer_id && row.recurrence_series_id) recurringBookedIds.add(row.customer_id)
-      })
-    }
+    addBooked(eventsRes)
 
     const leadsRes = await supabase.from("leads").select("customer_id").eq("user_id", userId).is("removed_at", null).is("converted_at", null)
     const leadsResFallback = leadsRes.error
@@ -983,13 +969,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     let inProcess = operational.filter(
       (c) =>
         !isCustomerManuallyArchived(c.metadata) &&
-        recurringBookedIds.has(c.id) &&
+        bookedIds.has(c.id) &&
         !isCompletedJobStatus(c.job_pipeline_status),
     )
     let active = operational.filter(
       (c) =>
         !isCustomerManuallyArchived(c.metadata) &&
-        !recurringBookedIds.has(c.id) &&
+        !bookedIds.has(c.id) &&
         !isCompletedJobStatus(c.job_pipeline_status) &&
         (activeIds.has(c.id) || !relatedIds.has(c.id)),
     )
@@ -997,7 +983,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       (c) =>
         isCompletedJobStatus(c.job_pipeline_status) ||
         isCustomerManuallyArchived(c.metadata) ||
-        (relatedIds.has(c.id) && !activeIds.has(c.id) && !recurringBookedIds.has(c.id)),
+        (relatedIds.has(c.id) && !activeIds.has(c.id) && !bookedIds.has(c.id)),
     )
     inProcess = await escalateList(inProcess, urgencyPrefs)
     active = await escalateList(active, urgencyPrefs)
@@ -1162,6 +1148,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
+  }, [loadCustomers])
+
+  useEffect(() => {
+    const onRefresh = () => void loadCustomers()
+    window.addEventListener(CUSTOMERS_HUB_REFRESH_EVENT, onRefresh)
+    return () => window.removeEventListener(CUSTOMERS_HUB_REFRESH_EVENT, onRefresh)
   }, [loadCustomers])
 
   useEffect(() => {
@@ -1815,7 +1807,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const nextMeta = await setCustomerHubKind(supabase, userId, selectedCustomer.id, "promotional")
       setSelectedCustomer({ ...selectedCustomer, metadata: nextMeta })
       await loadCustomers()
-      setSection("promotions")
+      setSelectedCustomer(null)
     } catch (e) {
       alert(formatAppError(e))
     } finally {
@@ -1847,7 +1839,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await reassignCommunicationEventToPromotions(supabase, userId, eventId, fromEmail)
       if (selectedCustomer?.id) await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
-      setSection("promotions")
     } catch (e) {
       alert(formatAppError(e))
     } finally {

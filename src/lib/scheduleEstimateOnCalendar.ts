@@ -11,13 +11,8 @@ import { parseLocalDateTime } from "./parseLocalDateTime"
 import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
 import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
-import { isSandboxDemoUserId } from "./sandboxDemoTeam"
+import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave } from "./calendarAssignee"
 import type { PortalSettingItem } from "../types/portal-builder"
-
-function resolveCalendarOwnerUserId(candidate: string, authUserId: string): string {
-  if (isSandboxDemoUserId(candidate)) return authUserId
-  return candidate.trim() || authUserId
-}
 
 export type ScheduleEstimateOnCalendarInput = {
   supabase: SupabaseClient
@@ -59,13 +54,14 @@ function buildCalRows(
   materialsCombined: string | null,
   mileageMiles: number | null,
   contactTarget: string,
+  assignedDemoUserId: string | null,
 ): Array<Record<string, unknown>> {
   return ranges.map(({ s, e }) => {
     const row: Record<string, unknown> = {
       ...rowBase,
       start_at: s.toISOString(),
       end_at: e.toISOString(),
-      metadata: { contact_target: contactTarget },
+      metadata: mergeCalendarAssigneeMetadata(null, assignedDemoUserId, { contact_target: contactTarget }),
     }
     if (materialsCombined) row.materials_list = materialsCombined
     if (mileageMiles != null) row.mileage_miles = mileageMiles
@@ -82,6 +78,20 @@ export async function scheduleEstimateOnCalendar(
   }
   if (input.durationMinutes < 15) {
     return { ok: false, error: "Enter a valid duration (at least 15 minutes)." }
+  }
+
+  const { data: existingForQuote, error: existingErr } = await input.supabase
+    .from("calendar_events")
+    .select("id")
+    .eq("quote_id", input.quoteId)
+    .is("removed_at", null)
+    .limit(1)
+  if (existingErr) return { ok: false, error: existingErr.message }
+  if (existingForQuote && existingForQuote.length > 0) {
+    return {
+      ok: false,
+      error: "This estimate is already on the calendar. Open Calendar to edit or remove the existing appointment first.",
+    }
   }
 
   const working = readCalendarWorkingHoursFromStorage()
@@ -103,10 +113,11 @@ export async function scheduleEstimateOnCalendar(
   const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
   const noDup = readCalendarNoDuplicateTimesSetting()
-  const selectedTarget = resolveCalendarOwnerUserId(input.targetUserId || input.userId, input.authUserId)
-  const eventOwnerUserId = input.assignToScopedUser
-    ? selectedTarget
-    : resolveCalendarOwnerUserId(input.authUserId, input.authUserId) || selectedTarget
+  const assigneePick = input.assignToScopedUser
+    ? input.targetUserId || input.userId
+    : input.authUserId || input.userId
+  const assignee = resolveCalendarAssigneeForSave(assigneePick, input.authUserId)
+  const eventOwnerUserId = assignee.dbUserId
   if (noDup && newRanges.length > 0) {
     try {
       const conflicts = await findCalendarScheduleConflicts(input.supabase, {
@@ -128,7 +139,7 @@ export async function scheduleEstimateOnCalendar(
     }
   }
 
-  const targetUserId = input.assignToScopedUser ? selectedTarget : resolveCalendarOwnerUserId(input.authUserId, input.authUserId) || selectedTarget
+  const targetUserId = eventOwnerUserId
   const recurrenceSeriesId = starts.length > 1 ? crypto.randomUUID() : null
   const jtRow = input.jobTypeId ? input.jobTypes.find((j) => j.id === input.jobTypeId) : null
   const materialsFromJobType =
@@ -169,6 +180,7 @@ export async function scheduleEstimateOnCalendar(
       incMat ? materialsCombined : null,
       incMile && jtRow?.track_mileage ? input.mileageMiles : null,
       input.contactTarget,
+      assignee.assignedDemoUserId,
     )
     const r = await input.supabase.from("calendar_events").insert(rows).select("id")
     if (!r.error) {

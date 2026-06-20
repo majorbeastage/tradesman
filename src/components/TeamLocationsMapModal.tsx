@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { teamMarkerColors, teamMemberDisplayIndex } from "../lib/teamMapStyle"
 import { addressLooksCyrillic, resolveJobMapCoords, reverseGeocodeLatLngToAddressEn } from "../lib/jobSiteLocation"
+import { filterRealUserIds } from "../lib/sandboxDemoTeam"
 
 export type TeamMapMember = {
   userId: string
@@ -57,6 +58,7 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
   const [showNextJobs, setShowNextJobs] = useState(true)
 
   const orderedIds = useMemo(() => members.map((m) => m.userId).filter(Boolean), [members])
+  const locationQueryUserIds = useMemo(() => filterRealUserIds(orderedIds), [orderedIds])
   const labelById = useMemo(() => {
     const m = new Map<string, string>()
     for (const row of members) m.set(row.userId, row.label)
@@ -81,7 +83,7 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
       const { data: locs, error: e1 } = await supabase
         .from("user_last_locations")
         .select("user_id, lat, lng, accuracy_m, updated_at")
-        .in("user_id", orderedIds)
+        .in("user_id", locationQueryUserIds.length > 0 ? locationQueryUserIds : orderedIds)
       if (cancelled) return
       if (e1) {
         setError(e1.message)
@@ -246,7 +248,7 @@ export default function TeamLocationsMapModal({ members, orgUserIdsForJobs, onCl
         mapInstanceRef.current = null
       }
     }
-  }, [members.length, orderedIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, viewUserId, activeLocationUserIds.join(",")])
+  }, [members.length, orderedIds.join(","), locationQueryUserIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, viewUserId, activeLocationUserIds.join(",")])
 
   const embedded = variant === "embedded"
   const shellStyle: CSSProperties = embedded

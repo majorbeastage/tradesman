@@ -10,6 +10,10 @@ export type WorkflowNode = {
   boxColor?: WorkflowNodeColor
   /** Org user assigned to this step (approval / routing). */
   assignedUserId?: string | null
+  /** External vendor / contractor contact (see external_contacts_v1). */
+  externalContactId?: string | null
+  /** Optional link to organization chart node for assignee fallback. */
+  orgChartNodeId?: string | null
 }
 
 export type WorkflowNodeColor =
@@ -281,6 +285,10 @@ export function parseBusinessWorkflow(raw: unknown): BusinessWorkflowDoc | null 
       order: typeof row.order === "number" && Number.isFinite(row.order) ? row.order : nodes.length,
       boxColor: parseWorkflowNodeColor(row.boxColor),
       assignedUserId: typeof row.assignedUserId === "string" && row.assignedUserId.trim() ? row.assignedUserId.trim() : null,
+      externalContactId:
+        typeof row.externalContactId === "string" && row.externalContactId.trim() ? row.externalContactId.trim() : null,
+      orgChartNodeId:
+        typeof row.orgChartNodeId === "string" && row.orgChartNodeId.trim() ? row.orgChartNodeId.trim() : null,
     })
   }
   if (!nodes.length) return null

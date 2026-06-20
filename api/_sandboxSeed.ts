@@ -6,6 +6,7 @@ import {
   logCommunicationEvent,
   normalizePhone,
 } from "./_communications.js"
+import { isPromotionalEmailAddress } from "./_customerContactKind.js"
 import { isSandboxProfileRow } from "./_sandboxEnvironment.js"
 import { DEFAULT_SANDBOX_DEMO_TEAM } from "./_sandboxDemoTeam.js"
 import {
@@ -116,6 +117,51 @@ export const LIVE_LEAD_SCENARIOS: {
     message: "Insurance adjuster asked for a plumber — slab leak suspected.",
     channel: "email",
     attribution: "referral",
+  },
+  {
+    name: "Home Deals Weekly",
+    phone: "+15550102901",
+    email: "noreply@deals.example.invalid",
+    message: "FLASH SALE: 40% off drain cleaning this week. Reply STOP to unsubscribe.",
+    channel: "email",
+    attribution: "email_campaign",
+  },
+  {
+    name: "Vendor Supplies",
+    phone: "+15550102902",
+    email: "newsletter@vendor-supplies.com",
+    message: "Your March wholesale price list — copper fittings and PEX kits on promotion.",
+    channel: "email",
+    attribution: "vendor",
+  },
+  {
+    name: "Special Offers",
+    phone: "+15550102903",
+    email: "offers@marketing.example.invalid",
+    message: "Limited time: bundle water heater + install and save $200. Not a real customer inquiry.",
+    channel: "email",
+    attribution: "spam_suspected",
+  },
+]
+
+const PROMOTIONAL_SEED_SENDERS: { email: string; name: string; subject: string; body: string }[] = [
+  {
+    email: "noreply@deals.example.invalid",
+    name: "Home Deals Weekly",
+    subject: "50% off water heaters — this week only",
+    body: "Hi there,\n\nSave big on tankless installs. Click to view offers.\n\nReply STOP to unsubscribe.",
+  },
+  {
+    email: "newsletter@vendor-supplies.com",
+    name: "Vendor Supplies (notifications)",
+    subject: "March wholesale price list",
+    body: "Attached is your updated price sheet for trade accounts.\n\nThis is an automated vendor notice.",
+  },
+  {
+    email: "promo@mailer.example.invalid",
+    name: "Marketing Cloud",
+    subject: "Your business could rank higher on Google",
+    body: "We noticed your listing — boost visibility with our SEO package.\n\nUnsubscribe anytime.",
   },
 ]
 
@@ -410,6 +456,14 @@ export async function seedSandboxWorkspace(
 
   for (let i = 0; i < 3; i++) {
     const cid = customerIds[i]
+    const { count: existingCal } = await supabase
+      .from("calendar_events")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("customer_id", cid)
+      .is("removed_at", null)
+    if ((existingCal ?? 0) > 0) continue
+
     const start = daysFromNow(i + 1, 10 + i)
     const end = daysFromNow(i + 1, 12 + i)
     const { error } = await supabase.from("calendar_events").insert({
@@ -419,8 +473,41 @@ export async function seedSandboxWorkspace(
       start_at: start,
       end_at: end,
       notes: "Sandbox scheduled job",
+      metadata: { sandbox_seed: true },
     })
     if (!error) eventCount++
+  }
+
+  for (const promo of PROMOTIONAL_SEED_SENDERS) {
+    try {
+      const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, promo.email)
+      await supabase
+        .from("customers")
+        .update({
+          display_name: promo.name,
+          last_activity_at: new Date().toISOString(),
+          metadata: {
+            sandbox_seed: true,
+            sandbox_promotional: true,
+            customer_hub_kind: "promotional",
+          },
+        })
+        .eq("id", customerId)
+        .eq("user_id", userId)
+      await logCommunicationEvent(supabase, {
+        user_id: userId,
+        customer_id: customerId,
+        event_type: "email",
+        direction: "inbound",
+        subject: promo.subject,
+        body: promo.body,
+        unread: true,
+        metadata: { sandbox_seed: true, from: promo.email, promotional_auto_routed: true },
+      })
+      eventCount++
+    } catch (e) {
+      console.warn("[sandbox-seed] promotional sender", promo.email, e instanceof Error ? e.message : e)
+    }
   }
 
   return {
@@ -452,6 +539,45 @@ export async function injectSandboxLead(
       ? scenarioIndex
       : Math.floor(Math.random() * LIVE_LEAD_SCENARIOS.length)
   const scenario = LIVE_LEAD_SCENARIOS[idx]!
+
+  if (scenario.channel === "email" && isPromotionalEmailAddress(scenario.email)) {
+    const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, scenario.email)
+    await supabase
+      .from("customers")
+      .update({
+        display_name: scenario.name,
+        last_activity_at: new Date().toISOString(),
+        metadata: {
+          sandbox_live: true,
+          sandbox_promotional: true,
+          customer_hub_kind: "promotional",
+          attribution_source: scenario.attribution ?? "email_campaign",
+        },
+      })
+      .eq("id", customerId)
+      .eq("user_id", userId)
+    await logCommunicationEvent(supabase, {
+      user_id: userId,
+      customer_id: customerId,
+      event_type: "email",
+      direction: "inbound",
+      subject: scenario.name,
+      body: scenario.message,
+      unread: true,
+      metadata: {
+        sandbox_simulated: true,
+        from: scenario.email.toLowerCase(),
+        promotional_auto_routed: true,
+      },
+    })
+    return {
+      ok: true,
+      customerId,
+      leadId: "",
+      scenario: scenario.name,
+      channel: "email_promotional",
+    }
+  }
 
   const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, scenario.phone)
   await supabase

@@ -5,9 +5,9 @@ export const CUSTOMER_ORG_GROUP_META_KEY = "org_group_key"
 export const CUSTOMER_SPLIT_EMAILS_META_KEY = "split_org_emails"
 
 const PROMOTIONAL_LOCAL_PART =
-  /^(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounce|bounces|notifications?|newsletter|marketing|promo|unsubscribe|daemon|robot|automated|alerts?|notify|notification|helpdesk|servicedesk|tickets?|ticket[-_.]?system)$/i
+  /^(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounce|bounces|notifications?|newsletter|marketing|promo|unsubscribe|daemon|robot|automated|alerts?|notify|notification|helpdesk|servicedesk|tickets?|ticket[-_.]?system|deals|offers|special[-_.]?offers?|spam|bulk)$/i
 const PROMOTIONAL_LOCAL_PREFIX =
-  /^(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer|bounce|notification|newsletter|marketing|promo|helpdesk|servicedesk|ticket)/i
+  /^(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer|bounce|notification|newsletter|marketing|promo|helpdesk|servicedesk|ticket|deals|offers|special|spam|bulk)/i
 const CONSUMER_MAIL_DOMAINS = new Set([
   "gmail.com","googlemail.com","yahoo.com","hotmail.com","outlook.com","live.com",
   "icloud.com","me.com","aol.com","msn.com","protonmail.com","proton.me","mail.com",
@@ -33,6 +33,7 @@ export function isPromotionalEmailAddress(email: string): boolean {
   if (PROMOTIONAL_LOCAL_PART.test(local)) return true
   if (PROMOTIONAL_LOCAL_PREFIX.test(local)) return true
   if (local.includes("noreply") || local.includes("donotreply") || local.includes("no-reply")) return true
+  if (local.includes("unsubscribe") || local.includes("special-offer") || local.includes("specialoffer")) return true
   if (domain === "resend.dev" || domain.endsWith(".resend.dev")) return true
   return false
 }

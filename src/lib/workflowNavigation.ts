@@ -166,6 +166,13 @@ export function notifySchedulingAddWizardPrefill(): void {
   window.dispatchEvent(new CustomEvent(SCHEDULING_ADD_WIZARD_PREFILL_EVENT))
 }
 
+export const CUSTOMERS_HUB_REFRESH_EVENT = "tradesman-customers-hub-refresh"
+
+export function notifyCustomersHubRefresh(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(CUSTOMERS_HUB_REFRESH_EVENT))
+}
+
 export function queueCustomReceiptCustomerPrefill(customerId: string): void {
   if (!customerId?.trim() || typeof window === "undefined") return
   try {

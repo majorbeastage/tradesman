@@ -34,6 +34,14 @@ import {
   type OrgChartEdge,
   type OrgChartNode,
 } from "../../lib/organizationChart"
+import {
+  externalContactById,
+  loadExternalContactsFromMetadata,
+  mergeExternalContactsMetadata,
+  newExternalContact,
+  type ExternalContact,
+  type ExternalContactsDoc,
+} from "../../lib/externalContacts"
 
 type Props = {
   setPage: (page: string) => void
@@ -46,6 +54,9 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [doc, setDoc] = useState<OrganizationChartDoc>(() => createExampleOrganizationChart())
+  const [externalContacts, setExternalContacts] = useState<ExternalContactsDoc>(() =>
+    loadExternalContactsFromMetadata(null),
+  )
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -62,6 +73,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
   const clipboardRef = useRef<OrgChartNode | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<number | null>(null)
+  const externalSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -76,7 +88,10 @@ export default function OrganizationChartPage({ setPage }: Props) {
       .then(([profileRes, team]) => {
         if (cancelled) return
         if (profileRes.error) setErr(profileRes.error.message)
-        else setDoc(loadOrganizationChartFromMetadata(profileRes.data?.metadata))
+        else {
+          setDoc(loadOrganizationChartFromMetadata(profileRes.data?.metadata))
+          setExternalContacts(loadExternalContactsFromMetadata(profileRes.data?.metadata))
+        }
         setMembers(team)
         setLoading(false)
       })
@@ -115,6 +130,44 @@ export default function OrganizationChartPage({ setPage }: Props) {
       })()
     },
     [userId],
+  )
+
+  const persistExternalContacts = useCallback(
+    (next: ExternalContactsDoc) => {
+      if (!supabase || !userId) return
+      setSaving(true)
+      void (async () => {
+        try {
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const prevMeta =
+            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+              ? { ...(data.metadata as Record<string, unknown>) }
+              : {}
+          const { error } = await supabase
+            .from("profiles")
+            .update({ metadata: mergeExternalContactsMetadata(prevMeta, next) })
+            .eq("id", userId)
+          if (error) throw error
+        } catch (e: unknown) {
+          setErr(formatAppError(e))
+        } finally {
+          setSaving(false)
+        }
+      })()
+    },
+    [userId],
+  )
+
+  const updateExternalContacts = useCallback(
+    (patch: Partial<ExternalContactsDoc> | ((prev: ExternalContactsDoc) => ExternalContactsDoc)) => {
+      setExternalContacts((prev) => {
+        const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
+        if (externalSaveTimer.current) window.clearTimeout(externalSaveTimer.current)
+        externalSaveTimer.current = window.setTimeout(() => persistExternalContacts(next), 800)
+        return next
+      })
+    },
+    [persistExternalContacts],
   )
 
   const updateDoc = useCallback(
@@ -401,6 +454,20 @@ export default function OrganizationChartPage({ setPage }: Props) {
     return map
   }, [members, doc.nodes])
 
+  const orgNodeLinkedLabel = useCallback(
+    (n: OrgChartNode): string | null => {
+      if (n.externalContactId) {
+        const ext = externalContactById(externalContacts, n.externalContactId)
+        return ext ? `External: ${ext.displayName}` : "External contact"
+      }
+      if (n.linkedUserId) {
+        return memberById.get(n.linkedUserId)?.displayName ?? "Linked user"
+      }
+      return null
+    },
+    [externalContacts, memberById],
+  )
+
   function openContextMenu(e: React.MouseEvent, target: "node" | "edge" | "canvas", id?: string) {
     e.preventDefault()
     e.stopPropagation()
@@ -647,7 +714,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
               <OrgNodeCard
                 key={n.id}
                 node={n}
-                linkedLabel={n.linkedUserId ? memberById.get(n.linkedUserId)?.displayName ?? "Linked user" : null}
+                linkedLabel={orgNodeLinkedLabel(n)}
                 selected={selectedId === n.id}
                 linkSource={linkFromId === n.id}
                 linkMode={Boolean(linkFromId) || Boolean(wireDrag)}
@@ -746,7 +813,8 @@ export default function OrganizationChartPage({ setPage }: Props) {
               <OrgRoleEditor
                 node={selected}
                 members={members}
-                linkedLabel={selected.linkedUserId ? memberById.get(selected.linkedUserId)?.displayName ?? null : null}
+                externalContacts={externalContacts.contacts}
+                linkedLabel={orgNodeLinkedLabel(selected)}
                 onPatch={(patch) => patchNode(selected.id, patch)}
                 onRemove={removeSelected}
                 onAddChild={addChild}
@@ -780,6 +848,27 @@ export default function OrganizationChartPage({ setPage }: Props) {
               <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
                 No role selected. Team job titles for signed-in users are listed below for quick nickname edits.
               </p>
+              <ExternalContactsPanel
+                contacts={externalContacts.contacts}
+                onAdd={() =>
+                  updateExternalContacts((prev) => ({
+                    ...prev,
+                    contacts: [...prev.contacts, newExternalContact("New external contact")],
+                  }))
+                }
+                onPatch={(id, patch) =>
+                  updateExternalContacts((prev) => ({
+                    ...prev,
+                    contacts: prev.contacts.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+                  }))
+                }
+                onRemove={(id) =>
+                  updateExternalContacts((prev) => ({
+                    ...prev,
+                    contacts: prev.contacts.filter((c) => c.id !== id),
+                  }))
+                }
+              />
               <OrgTeamJobTitlesPanel members={members} onSaveTitle={saveMemberJobTitle} />
             </>
           )}
@@ -1107,6 +1196,7 @@ function LinkableOrgUserOptions({ members }: { members: LinkableOrgUser[] }) {
 function OrgRoleEditor({
   node,
   members,
+  externalContacts,
   linkedLabel,
   onPatch,
   onRemove,
@@ -1115,6 +1205,7 @@ function OrgRoleEditor({
 }: {
   node: OrgChartNode
   members: LinkableOrgUser[]
+  externalContacts: ExternalContact[]
   linkedLabel: string | null
   onPatch: (patch: Partial<OrgChartNode>) => void
   onRemove: () => void
@@ -1140,6 +1231,7 @@ function OrgRoleEditor({
             const member = members.find((m) => m.id === id)
             onPatch({
               linkedUserId: id,
+              externalContactId: id ? null : node.externalContactId,
               jobTitle: member?.jobTitle && !node.jobTitle ? member.jobTitle : node.jobTitle,
             })
           }}
@@ -1149,7 +1241,28 @@ function OrgRoleEditor({
           <LinkableOrgUserOptions members={members} />
         </select>
       </label>
-      {linkedLabel ? <div style={{ fontSize: 12, color: "#0ea5e9" }}>Linked: {linkedLabel}</div> : null}
+      <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+        External contact (outsourced)
+        <select
+          value={node.externalContactId ?? ""}
+          onChange={(e) =>
+            onPatch({
+              externalContactId: e.target.value || null,
+              linkedUserId: e.target.value ? null : node.linkedUserId,
+            })
+          }
+          style={theme.formInput}
+        >
+          <option value="">None — internal team member</option>
+          {externalContacts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.displayName}
+              {c.role ? ` — ${c.role}` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {linkedLabel ? <div style={{ fontSize: 12, color: "#0ea5e9" }}>Routing: {linkedLabel}</div> : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button type="button" onClick={onAddLine} style={secondaryBtn}>
           Add reporting line
@@ -1161,6 +1274,102 @@ function OrgRoleEditor({
           Remove role
         </button>
       </div>
+    </div>
+  )
+}
+
+function ExternalContactsPanel({
+  contacts,
+  onAdd,
+  onPatch,
+  onRemove,
+}: {
+  contacts: ExternalContact[]
+  onAdd: () => void
+  onPatch: (id: string, patch: Partial<ExternalContact>) => void
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>External contacts</h3>
+        <button type="button" onClick={onAdd} style={primaryBtn}>
+          Add external contact
+        </button>
+      </div>
+      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+        Vendors and outsourced roles (parts, field techs, accounting) used by workflow routing and org chart links.
+      </p>
+      {contacts.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No external contacts yet.</p>
+      ) : (
+        contacts.map((c) => (
+          <div
+            key={c.id}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+              Display name
+              <input
+                value={c.displayName}
+                onChange={(e) => onPatch(c.id, { displayName: e.target.value })}
+                style={theme.formInput}
+              />
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Email
+                <input
+                  value={c.email ?? ""}
+                  onChange={(e) => onPatch(c.id, { email: e.target.value.trim() || null })}
+                  style={theme.formInput}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Phone
+                <input
+                  value={c.phone ?? ""}
+                  onChange={(e) => onPatch(c.id, { phone: e.target.value.trim() || null })}
+                  style={theme.formInput}
+                />
+              </label>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Role / function
+                <input
+                  value={c.role ?? ""}
+                  onChange={(e) => onPatch(c.id, { role: e.target.value.trim() || null })}
+                  placeholder="e.g. Parts vendor"
+                  style={theme.formInput}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Department
+                <input
+                  value={c.department ?? ""}
+                  onChange={(e) => onPatch(c.id, { department: e.target.value.trim() || null })}
+                  style={theme.formInput}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => onRemove(c.id)}
+              style={{ ...secondaryBtn, color: "#b91c1c", borderColor: "#fecaca", justifySelf: "start" }}
+            >
+              Remove contact
+            </button>
+          </div>
+        ))
+      )}
     </div>
   )
 }

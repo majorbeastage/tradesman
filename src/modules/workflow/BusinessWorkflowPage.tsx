@@ -32,6 +32,17 @@ import {
   type WorkflowNode,
   type WorkflowNodeColor,
 } from "../../lib/businessWorkflow"
+import {
+  externalContactById,
+  loadExternalContactsFromMetadata,
+  createExampleExternalContacts,
+  type ExternalContactsDoc,
+} from "../../lib/externalContacts"
+import {
+  loadOrganizationChartFromMetadata,
+  type OrganizationChartDoc,
+  type OrgChartNode,
+} from "../../lib/organizationChart"
 import { formatAppError } from "../../lib/formatAppError"
 import {
   canvasPointFromEvent,
@@ -67,6 +78,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   const [wireDropTargetId, setWireDropTargetId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
+  const [orgChart, setOrgChart] = useState<OrganizationChartDoc | null>(null)
+  const [externalContacts, setExternalContacts] = useState<ExternalContactsDoc>(() => createExampleExternalContacts())
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: "node" | "edge" | "canvas"; id?: string } | null>(null)
   const clipboardRef = useRef<{ kind: "node"; node: WorkflowNode } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -86,7 +99,11 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       .then(({ data, error }) => {
         if (cancelled) return
         if (error) setErr(error.message)
-        else setDoc(loadBusinessWorkflowFromMetadata(data?.metadata))
+        else {
+          setDoc(loadBusinessWorkflowFromMetadata(data?.metadata))
+          setOrgChart(loadOrganizationChartFromMetadata(data?.metadata))
+          setExternalContacts(loadExternalContactsFromMetadata(data?.metadata))
+        }
         setLoading(false)
       })
     void loadLinkableOrgUsers(supabase, userId).then((team) => {
@@ -137,6 +154,33 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
 
   const nodes = sortedWorkflowNodes(doc)
   const nodeById = useMemo(() => new Map(doc.nodes.map((n) => [n.id, n])), [doc.nodes])
+  const orgChartNodes = orgChart?.nodes ?? []
+  const externalContactList = externalContacts.contacts
+
+  const workflowNodeAssigneeLabel = useCallback(
+    (n: WorkflowNode): string | null => {
+      if (n.externalContactId) {
+        const ext = externalContactById(externalContacts, n.externalContactId)
+        return ext ? `External: ${ext.displayName}` : "External contact"
+      }
+      if (n.assignedUserId) {
+        return members.find((m) => m.id === n.assignedUserId)?.displayName ?? null
+      }
+      if (n.orgChartNodeId) {
+        const orgNode = orgChartNodes.find((row) => row.id === n.orgChartNodeId)
+        if (orgNode?.externalContactId) {
+          const ext = externalContactById(externalContacts, orgNode.externalContactId)
+          if (ext) return `External: ${ext.displayName}`
+        }
+        if (orgNode?.linkedUserId) {
+          return members.find((m) => m.id === orgNode.linkedUserId)?.displayName ?? orgNode.label
+        }
+        if (orgNode) return orgNode.label
+      }
+      return null
+    },
+    [externalContacts, members, orgChartNodes],
+  )
   const edgesWithLanes = useMemo(() => workflowEdgesWithLanes(doc.edges), [doc.edges])
 
   const activeWireEdge = useMemo(
@@ -687,9 +731,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                 }}
                 onStartWire={(e) => startWireFromNode(n.id, e)}
                 onContextMenu={(e) => openContextMenu(e, "node", n.id)}
-                assignedLabel={
-                  n.assignedUserId ? members.find((m) => m.id === n.assignedUserId)?.displayName ?? null : null
-                }
+                assignedLabel={workflowNodeAssigneeLabel(n)}
               />
             )})}
 
@@ -793,7 +835,12 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                 Assigned org user
                 <select
                   value={selectedNode.assignedUserId ?? ""}
-                  onChange={(e) => patchNode(selectedNode.id, { assignedUserId: e.target.value || null })}
+                  onChange={(e) =>
+                    patchNode(selectedNode.id, {
+                      assignedUserId: e.target.value || null,
+                      externalContactId: e.target.value ? null : selectedNode.externalContactId,
+                    })
+                  }
                   style={theme.formInput}
                 >
                   <option value="">Unassigned</option>
@@ -805,6 +852,53 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
                   ))}
                 </select>
               </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Linked org chart role
+                <select
+                  value={selectedNode.orgChartNodeId ?? ""}
+                  onChange={(e) => patchNode(selectedNode.id, { orgChartNodeId: e.target.value || null })}
+                  style={theme.formInput}
+                >
+                  <option value="">Auto-match by label</option>
+                  {orgChartNodes.map((row: OrgChartNode) => (
+                    <option key={row.id} value={row.id}>
+                      {row.label}
+                      {row.jobTitle ? ` — ${row.jobTitle}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                External contact (outsourced vendor)
+                <select
+                  value={selectedNode.externalContactId ?? ""}
+                  onChange={(e) =>
+                    patchNode(selectedNode.id, {
+                      externalContactId: e.target.value || null,
+                      assignedUserId: e.target.value ? null : selectedNode.assignedUserId,
+                    })
+                  }
+                  style={theme.formInput}
+                >
+                  <option value="">None — use org user or org chart link</option>
+                  {externalContactList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.displayName}
+                      {c.role ? ` — ${c.role}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {externalContactList.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  Add external contacts on the Organization Chart page for outsourced parts, field techs, or accounting.
+                </p>
+              ) : null}
+              {setPage ? (
+                <button type="button" onClick={() => setPage("organization-chart")} style={secondaryBtn}>
+                  Manage org chart &amp; external contacts
+                </button>
+              ) : null}
               {selectedNodeEdges.length > 0 ? (
                 <>
                   <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Arrows for this step</h3>
