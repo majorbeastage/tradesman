@@ -82,11 +82,11 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
           ← Back
         </button>
 
-        <h1 style={{ margin: "0 0 12px", fontSize: 28, fontWeight: 800 }}>Training sandbox</h1>
+        <h1 style={{ margin: "0 0 12px", fontSize: 28, fontWeight: 800 }}>Free trial mode</h1>
         <p style={{ margin: "0 0 24px", lineHeight: 1.65, color: "#475569", fontSize: 15 }}>
-          A full practice environment for your team — fictional customers, simulated texts and emails, and{" "}
-          <strong>live incoming leads</strong> while you explore. Watch traffic move from web form → lead → customer →
-          estimate → calendar, end to end.
+          A full practice workspace for your team — sample customers, simulated texts and emails, and{" "}
+          <strong>live incoming leads</strong> while you explore. Walk through web form → lead → customer → estimate →
+          calendar, end to end.
         </p>
 
         <div
@@ -101,8 +101,8 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
           }}
         >
           <strong>Use a different email</strong> from your live Tradesman account if you have one. After creating the
-          sandbox, we sign you out of any current session so you can log in as the practice business — not your regular
-          account.
+          trial workspace, we sign you out of any current session so you can log in as the practice business — not your
+          regular account.
         </div>
 
         {done ? (
@@ -114,18 +114,18 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               border: "1px solid #bbf7d0",
             }}
           >
-            <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Sandbox ready</h2>
+            <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Trial workspace ready</h2>
             <p style={{ margin: "0 0 12px", lineHeight: 1.6 }}>
               {emailed
                 ? "We also emailed these details (check spam). Save the password below — you need it to sign in."
                 : "Save the login below. Email may not have sent; use these credentials on the next screen."}
               {seededCustomers != null && seededCustomers > 0
-                ? ` Sample customers (${seededCustomers}) are already loaded — after sign-in, use the blue training banner at the top to add more or change how often new ones arrive.`
-                : " After sign-in, use the blue training banner at the top of the dashboard to load sample customers and control live incoming traffic."}
+                ? ` Sample customers (${seededCustomers}) are already loaded — after sign-in, use the trial mode banner at the top to add more or change how often new ones arrive.`
+                : " After sign-in, use the trial mode banner at the top of the dashboard to load sample customers and control live incoming traffic."}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               <label style={labelStyle}>
-                Sandbox email
+                Trial email
                 <input readOnly value={email} onFocus={(e) => e.target.select()} style={inputStyle} />
               </label>
               {sandboxPassword ? (
@@ -136,7 +136,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               ) : null}
               {ctaUrl ? (
                 <label style={labelStyle}>
-                  Lead capture link (live during sandbox)
+                  Lead capture link (live during trial)
                   <input readOnly value={ctaUrl} onFocus={(e) => e.target.select()} style={inputStyle} />
                 </label>
               ) : null}
@@ -160,7 +160,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
                 cursor: loginBusy ? "wait" : "pointer",
               }}
             >
-              {loginBusy ? "Signing out…" : "Sign out & open sandbox login"}
+              {loginBusy ? "Signing out…" : "Sign out & open trial login"}
             </button>
           </div>
         ) : (
@@ -174,7 +174,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} style={inputStyle} />
             </label>
             <label style={labelStyle}>
-              Email for this sandbox (not your live account email)
+              Email for this trial workspace (not your live account email)
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
             </label>
             {error ? <div style={{ color: "#b91c1c", fontSize: 13 }}>{error}</div> : null}
@@ -198,7 +198,7 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
                 cursor: submitting ? "wait" : "pointer",
               }}
             >
-              {submitting ? "Creating sandbox…" : "Create training sandbox"}
+              {submitting ? "Creating trial workspace…" : "Create free trial workspace"}
             </button>
           </form>
         )}

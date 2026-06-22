@@ -14,6 +14,18 @@ export type OmCalendarPolicyV1 = {
   allow_my_hours?: boolean
   /** When true, this user can be selected for variance/report assignments by office managers. */
   allow_variance_assignment?: boolean
+  /** Operations tab + sub-tools (work orders, POs, invoicing, inventory). */
+  allow_operations_tab?: boolean
+  allow_work_orders_tool?: boolean
+  allow_purchase_orders_tool?: boolean
+  allow_invoices_tool?: boolean
+  allow_inventory_tool?: boolean
+  /** When true, Customers tab only lists customers whose active workflow step matches this user/department. */
+  workflow_only_customers?: boolean
+  /** Department label for workflow routing display (e.g. Parts, Accounting). */
+  department_label?: string | null
+  /** When true, user may bypass workflow approval steps from the customer profile. */
+  allow_bypass_workflow_approval?: boolean
   backup_user_id?: string | null
   teammate_user_id?: string | null
   /**
@@ -33,6 +45,14 @@ const DEFAULT_POLICY: OmCalendarPolicyV1 = {
   customer_map_access: false,
   allow_my_hours: false,
   allow_variance_assignment: false,
+  allow_operations_tab: false,
+  allow_work_orders_tool: false,
+  allow_purchase_orders_tool: false,
+  allow_invoices_tool: false,
+  allow_inventory_tool: false,
+  workflow_only_customers: false,
+  department_label: null,
+  allow_bypass_workflow_approval: false,
   backup_user_id: null,
   teammate_user_id: null,
   job_qualifications: {},
@@ -70,6 +90,15 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     customer_map_access: o.customer_map_access === true,
     allow_my_hours: o.allow_my_hours === true,
     allow_variance_assignment: o.allow_variance_assignment === true,
+    allow_operations_tab: o.allow_operations_tab === true,
+    allow_work_orders_tool: o.allow_work_orders_tool === true,
+    allow_purchase_orders_tool: o.allow_purchase_orders_tool === true,
+    allow_invoices_tool: o.allow_invoices_tool === true,
+    allow_inventory_tool: o.allow_inventory_tool === true,
+    workflow_only_customers: o.workflow_only_customers === true,
+    department_label:
+      typeof o.department_label === "string" && o.department_label.trim() ? o.department_label.trim() : null,
+    allow_bypass_workflow_approval: o.allow_bypass_workflow_approval === true,
     backup_user_id: backupUserId,
     teammate_user_id: teammateUserId,
     job_qualifications: quals,

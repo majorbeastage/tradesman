@@ -28,9 +28,9 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "settings.loading": "Loading settings…",
     "settings.noFields": "No custom fields configured.",
     "settings.selectOption": "— Select —",
-    "home.tagline": "Leads • Quotes • Scheduling",
+    "home.tagline": "Leads • Workflows • Scheduling",
     "home.hero":
-      "Tradesman is a powerful, automated and fully customizable Office Management tool. We are 2 proud United States Veterans, who developed this platform to help contractors like you take back your time, focus on your customers, and grow your business without the headache of juggling an office. We are very excited to offer you the opportunity to join our platform, and we look forward to being able to assist you Focus, Manage and Grow your business into further success.",
+      "Contractor office management in one platform — conversations, estimates, scheduling, workflows, and payments. Start with free Trial mode to explore the full CRM with sample data before you sign up.",
     "home.adminLogin": "Admin Login",
     "home.login": "Login",
     "home.userLogin": "User Login",
@@ -38,34 +38,35 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "home.signUp": "Sign up",
     "home.platformHighlights": "Platform highlights",
     "home.hoverOrTap": "Hover or tap",
-    "home.demoTitle": "Try Tradesman free for 24 hours",
-    "home.demoBody": "Enter your email — we send a temporary Office Manager login instantly. No live texts, emails, or calls on demo accounts.",
-    "home.requestDemo": "Request demo access",
+    "home.demoTitle": "Try Tradesman — free trial mode",
+    "home.demoBody":
+      "Launch a practice workspace with sample customers and simulated messages. Explore every tab — workflows, estimates, calendar, and more — without using your live phone or email.",
+    "home.startTrial": "Start free trial",
     "home.aboutUs": "About Us",
     "home.designedFor": "Designed for desktop and mobile web.",
     "home.linkIssue": "Link issue",
     "home.openLoginReset": "Open User Login to request a new reset",
-    "home.feature.clean.title": "Clean Workflow",
-    "home.feature.clean.body":
-      "A single tool to manage all new and existing clients, for the lifespan of a job or working relationship.",
-    "home.feature.automation.title": "Automation tools",
-    "home.feature.automation.body":
-      "We utilize multiple AI services and/or pre-determined options, to generate as many automation options as possible for your office requirements.",
-    "home.feature.leads.title": "Create and Manage Leads",
-    "home.feature.leads.body":
-      "Manage existing and new organic customer acquisitions, as well as AI powered new lead capturing. Fully customizable opportunities to meet your needs and expectations.",
-    "home.feature.comms.title": "Organized Communications",
+    "home.feature.workflow.title": "Business workflows",
+    "home.feature.workflow.body":
+      "Build department and customer workflows, saved templates, org-chart routing, and AI-assisted flow design. Approve, deny, or bypass steps from one hub.",
+    "home.feature.comms.title": "Unified conversations",
     "home.feature.comms.body":
-      "Client communications from Phone Calls, Missed Calls, Voicemails, Text Messages and Emails are all neatly catalogued in your Conversations Tab.",
-    "home.feature.quotes.title": "Quotes/Estimates/Scheduling",
+      "Phone calls, missed-call text-back, voicemails, SMS, and email in one timeline — with auto-attendant transcripts and customer context on every thread.",
+    "home.feature.screening.title": "Call screening & auto-attendant",
+    "home.feature.screening.body":
+      "Optional AI or recorded menus screen spam, capture intent, log answers on the customer record, and forward qualified callers. Collect SMS opt-in on the call when you need compliant text-back.",
+    "home.feature.leads.title": "Lead scoring & enrichment",
+    "home.feature.leads.body":
+      "AI-assisted fit scoring, address and intent parsing from inbound messages, and live lead injection in trial mode so your team can practice the full pipeline end to end.",
+    "home.feature.quotes.title": "Estimates, PDFs & scheduling",
     "home.feature.quotes.body":
-      "Seamlessly progress Leads and client Conversations to receive pre-established or patterned quotes and estimates, potentially using AI to determine customer intent and automatically schedule based off your preferences, or manually schedule using our customized Calendar.",
-    "home.feature.history.title": "Centralized History",
-    "home.feature.history.body":
-      "Don't lose a Client. We keep your past jobs archived in your inventory. Anytime you receive repeat business, simply review the readily available notes from your previous job with that client.",
-    "home.feature.custom.title": "Fully Customizable",
-    "home.feature.custom.body":
-      "We are very confident that Tradesman will meet all of your office management needs. We believe this because we focus on offering as many options and customizations as possible, to fit into your business's specific needs.",
+      "Guided estimate wizard, branded PDF attachments on customer emails, calendar booking, and workflow handoffs from quote to scheduled job.",
+    "home.feature.payments.title": "Payment requests & billing",
+    "home.feature.payments.body":
+      "Send payment requests, track customer payment activity, and connect operations billing steps to your workflow and customer record.",
+    "home.feature.assistant.title": "AI help desk & setup guides",
+    "home.feature.assistant.body":
+      "Built-in AI assistant explains settings and navigation. Setup wizards and the help desk chat get new users productive faster without hunting through menus.",
     "about.backHome": "← Home",
     "about.loading": "Loading…",
     "login.backHome": "← Back to home",
@@ -370,9 +371,9 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "settings.loading": "Cargando ajustes…",
     "settings.noFields": "No hay campos personalizados configurados.",
     "settings.selectOption": "— Seleccionar —",
-    "home.tagline": "Prospectos • Cotizaciones • Agenda",
+    "home.tagline": "Prospectos • Flujos • Agenda",
     "home.hero":
-      "Tradesman es una herramienta de gestión de oficina potente, automatizada y totalmente personalizable. Somos 2 veteranos orgullosos de EE. UU. que desarrollamos esta plataforma para ayudar a contratistas como usted a recuperar su tiempo, centrarse en sus clientes y hacer crecer su negocio sin el dolor de cabeza de administrar una oficina. Nos emociona ofrecerle unirse a nuestra plataforma y esperamos ayudarle a enfocar, gestionar y hacer crecer su negocio.",
+      "Gestión de oficina para contratistas en una sola plataforma: conversaciones, presupuestos, agenda, flujos de trabajo y pagos. Comience con el modo de prueba gratuita para explorar el CRM completo con datos de ejemplo antes de registrarse.",
     "home.adminLogin": "Inicio de sesión admin",
     "home.login": "Iniciar sesión",
     "home.userLogin": "Inicio de sesión usuario",
@@ -380,34 +381,35 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "home.signUp": "Registrarse",
     "home.platformHighlights": "Aspectos destacados",
     "home.hoverOrTap": "Pase el cursor o toque",
-    "home.demoTitle": "¿Quiere verlo en acción?",
-    "home.demoBody": "Solicite una demostración y le mostraremos cómo Tradesman encaja en su oficina.",
-    "home.requestDemo": "Solicitar demostración",
+    "home.demoTitle": "Pruebe Tradesman — modo de prueba gratuita",
+    "home.demoBody":
+      "Abra un espacio de práctica con clientes de ejemplo y mensajes simulados. Explore cada pestaña — flujos, presupuestos, calendario y más — sin usar su teléfono o correo en vivo.",
+    "home.startTrial": "Iniciar prueba gratuita",
     "home.aboutUs": "Sobre nosotros",
     "home.designedFor": "Diseñado para escritorio y web móvil.",
     "home.linkIssue": "Problema con el enlace",
     "home.openLoginReset": "Abrir inicio de sesión de usuario para solicitar un restablecimiento",
-    "home.feature.clean.title": "Flujo de trabajo limpio",
-    "home.feature.clean.body":
-      "Una sola herramienta para gestionar clientes nuevos y existentes durante toda la relación laboral o comercial.",
-    "home.feature.automation.title": "Herramientas de automatización",
-    "home.feature.automation.body":
-      "Utilizamos varios servicios de IA y/o opciones predeterminadas para generar el máximo de automatización posible para su oficina.",
-    "home.feature.leads.title": "Crear y gestionar prospectos",
-    "home.feature.leads.body":
-      "Gestione adquisiciones orgánicas nuevas y existentes, así como captación de prospectos con IA. Oportunidades totalmente personalizables según sus necesidades.",
-    "home.feature.comms.title": "Comunicaciones organizadas",
+    "home.feature.workflow.title": "Flujos de trabajo",
+    "home.feature.workflow.body":
+      "Cree flujos por departamento y cliente, plantillas guardadas, enrutamiento por organigrama y diseño asistido por IA. Apruebe, rechace o omita pasos desde un solo centro.",
+    "home.feature.comms.title": "Conversaciones unificadas",
     "home.feature.comms.body":
-      "Llamadas, llamadas perdidas, mensajes de voz, SMS y correos con el cliente quedan catalogados en la pestaña Conversaciones.",
-    "home.feature.quotes.title": "Cotizaciones / presupuestos / agenda",
+      "Llamadas, devolución de llamada perdida, mensajes de voz, SMS y correo en una línea de tiempo — con transcripciones del auto-asistente y contexto del cliente en cada hilo.",
+    "home.feature.screening.title": "Filtrado de llamadas y auto-asistente",
+    "home.feature.screening.body":
+      "Menús opcionales con IA o grabados filtran spam, capturan intención, registran respuestas en el cliente y reenvían llamadas calificadas. Recoja opt-in SMS en la llamada cuando necesite cumplir con el text-back.",
+    "home.feature.leads.title": "Puntuación y enriquecimiento de prospectos",
+    "home.feature.leads.body":
+      "Puntuación de encaje con IA, análisis de dirección e intención en mensajes entrantes e inyección de prospectos en vivo en modo prueba para practicar el pipeline completo.",
+    "home.feature.quotes.title": "Presupuestos, PDF y agenda",
     "home.feature.quotes.body":
-      "Avance desde prospectos y conversaciones hacia cotizaciones y presupuestos predefinidos o con plantillas, con IA para detectar intención y programar según sus preferencias, o programe manualmente con el calendario personalizado.",
-    "home.feature.history.title": "Historial centralizado",
-    "home.feature.history.body":
-      "No pierda un cliente. Archivamos trabajos anteriores. Si hay negocio repetido, revise las notas disponibles del trabajo anterior.",
-    "home.feature.custom.title": "Totalmente personalizable",
-    "home.feature.custom.body":
-      "Confiamos en que Tradesman cubrirá sus necesidades de gestión de oficina porque ofrecemos la mayor cantidad de opciones y personalizaciones posibles para su negocio.",
+      "Asistente de presupuestos, PDF con marca en correos al cliente, reservas en calendario y traspasos de flujo desde cotización a trabajo programado.",
+    "home.feature.payments.title": "Solicitudes de pago y facturación",
+    "home.feature.payments.body":
+      "Envíe solicitudes de pago, haga seguimiento de la actividad de pago del cliente y conecte pasos de facturación operativa con su flujo y registro del cliente.",
+    "home.feature.assistant.title": "Mesa de ayuda IA y guías",
+    "home.feature.assistant.body":
+      "El asistente de IA integrado explica ajustes y navegación. Los asistentes de configuración y el chat de ayuda ponen a los usuarios nuevos en marcha más rápido.",
     "about.backHome": "← Inicio",
     "about.loading": "Cargando…",
     "login.backHome": "← Volver al inicio",

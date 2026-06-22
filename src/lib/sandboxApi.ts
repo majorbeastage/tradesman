@@ -9,7 +9,7 @@ async function sandboxFetch(action: SandboxApiAction, body: Record<string, unkno
   const session = supabase ? (await supabase.auth.getSession()).data.session : null
   const userId = session?.user?.id
   if (!userId || !session?.access_token) {
-    throw new Error("Sign in to use the training sandbox.")
+    throw new Error("Sign in to use trial mode.")
   }
   return fetch("/api/sandbox-simulator", {
     method: "POST",
@@ -148,7 +148,7 @@ export async function provisionSandboxAccount(params: {
   if (!res.ok) {
     const statusHint =
       res.status === 404
-        ? " The training sandbox service is not deployed yet — contact support or try again in a few minutes."
+        ? " The trial mode service is not deployed yet — contact support or try again in a few minutes."
         : ""
     return { ok: false, error: (json.error ?? `Sandbox service error (${res.status})`) + statusHint }
   }

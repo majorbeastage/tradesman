@@ -651,7 +651,6 @@ function App() {
           setView("signup")
         }}
         onAboutUs={() => setView("about")}
-        onRequestDemo={() => setView("demo")}
         onTraining={() => setView("training")}
         onPricing={() => setView("pricing")}
       />

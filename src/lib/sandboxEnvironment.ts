@@ -13,6 +13,17 @@ export type SandboxWorkspaceMeta = {
   liveTrafficIntervalMinutes?: number
   lastTrafficAt?: string
   embedLeadSlug?: string
+  /** When true, org-chart / workflow demo personas auto-advance assigned steps. */
+  dummyUsersAutopilotEnabled?: boolean
+  dummyUsersAutopilotIntervalMinutes?: number
+  dummyUsersAutopilotLastAt?: string
+  /** Leadership-granted capabilities for demo personas (all default on when autopilot enabled). */
+  dummyUsersAutopilotPermissions?: {
+    approveEstimates?: boolean
+    completeFieldJobs?: boolean
+    customerReplies?: boolean
+    invoicing?: boolean
+  }
 }
 
 export function parseSandboxMeta(raw: unknown): SandboxWorkspaceMeta | null {
@@ -28,6 +39,14 @@ export function parseSandboxMeta(raw: unknown): SandboxWorkspaceMeta | null {
       typeof o.liveTrafficIntervalMinutes === "number" ? o.liveTrafficIntervalMinutes : undefined,
     lastTrafficAt: typeof o.lastTrafficAt === "string" ? o.lastTrafficAt : undefined,
     embedLeadSlug: typeof o.embedLeadSlug === "string" ? o.embedLeadSlug : undefined,
+    dummyUsersAutopilotEnabled: o.dummyUsersAutopilotEnabled === true,
+    dummyUsersAutopilotIntervalMinutes:
+      typeof o.dummyUsersAutopilotIntervalMinutes === "number" ? o.dummyUsersAutopilotIntervalMinutes : undefined,
+    dummyUsersAutopilotLastAt: typeof o.dummyUsersAutopilotLastAt === "string" ? o.dummyUsersAutopilotLastAt : undefined,
+    dummyUsersAutopilotPermissions:
+      o.dummyUsersAutopilotPermissions && typeof o.dummyUsersAutopilotPermissions === "object"
+        ? (o.dummyUsersAutopilotPermissions as SandboxWorkspaceMeta["dummyUsersAutopilotPermissions"])
+        : undefined,
   }
 }
 

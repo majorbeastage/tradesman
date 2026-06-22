@@ -17,6 +17,9 @@ import {
   parseSplitOrgEmails,
 } from "./customerContactKind"
 import { loadCustomReceiptsForCustomer, type CustomReceiptDraft } from "./customReceipt"
+import { loadWorkOrdersFromProfile, type WorkOrderRecord } from "./workOrders"
+import { loadPurchaseOrdersFromProfile, type PurchaseOrderRecord } from "./purchaseOrders"
+import type { PaymentRequestRow } from "./paymentRequests"
 import { loadCustomerCalendarEventsForProfile, type CalendarEventProfileRow } from "./calendarEventProfile"
 import { normalizeCommunicationUrgency } from "./customerUrgency"
 import { quoteItemsSubtotalFromRows } from "./customerQuotePaymentOptions"
@@ -91,6 +94,9 @@ export type CustomerProfileBundle = {
   reports: SpecialtyReportRegistryItem[]
   commEvents: CustomerProfileCommEvent[]
   leads: CustomerProfileLeadRow[]
+  workOrders: WorkOrderRecord[]
+  purchaseOrders: PurchaseOrderRecord[]
+  invoices: PaymentRequestRow[]
 }
 
 const CUSTOMER_SELECT_FULL = `
@@ -292,7 +298,8 @@ export async function loadCustomerProfileBundle(
   const orgGroupLabel = orgGroupSummaryLabel(parseCustomerOrgGroupKey(row.metadata), parseCustomerHubKind(row.metadata))
   const relatedCustomerIds = await findOrgGroupedCustomerIds(supabase, userId, customerId, emails, row.metadata)
 
-  const [quotesRes, calendarEvents, receipts, leads, commRes, allQuotesRes] = await Promise.all([
+  const [quotesRes, calendarEvents, receipts, leads, commRes, allQuotesRes, workOrdersAll, purchaseOrdersAll, invoicesRes] =
+    await Promise.all([
     supabase
       .from("quotes")
       .select("id, status, created_at, updated_at, metadata")
@@ -306,6 +313,26 @@ export async function loadCustomerProfileBundle(
     loadLeadsForCustomers(supabase, userId, relatedCustomerIds),
     loadCommEventsForCustomers(supabase, userId, relatedCustomerIds).catch(() => [] as CustomerProfileCommEvent[]),
     supabase.from("quotes").select("id, customer_id, metadata").eq("user_id", userId).is("removed_at", null).limit(800),
+    loadWorkOrdersFromProfile(supabase, userId).catch(() => [] as WorkOrderRecord[]),
+    loadPurchaseOrdersFromProfile(supabase, userId).catch(() => [] as PurchaseOrderRecord[]),
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("payment_requests")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("customer_id", customerId)
+          .order("created_at", { ascending: false })
+          .limit(40)
+        if (error) {
+          if (/payment_requests|does not exist/i.test(error.message ?? "")) return [] as PaymentRequestRow[]
+          throw error
+        }
+        return (data ?? []) as PaymentRequestRow[]
+      } catch {
+        return [] as PaymentRequestRow[]
+      }
+    })(),
   ])
 
   if (quotesRes.error) throw quotesRes.error
@@ -362,6 +389,14 @@ export async function loadCustomerProfileBundle(
   }
   reports.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
 
+  const workOrders = workOrdersAll.filter((w) => w.customer_id === customerId)
+  const purchaseOrders = purchaseOrdersAll.filter((po) => {
+    const cid = (po as PurchaseOrderRecord & { customer_id?: string | null }).customer_id
+    if (cid === customerId) return true
+    return false
+  })
+  const invoices = (invoicesRes as PaymentRequestRow[]).filter((r) => r.customer_id === customerId)
+
   return {
     customer: row,
     contactLine: formatCustomerContactLine(row.customer_identifiers),
@@ -377,5 +412,8 @@ export async function loadCustomerProfileBundle(
     reports,
     commEvents: commRes,
     leads,
+    workOrders,
+    purchaseOrders,
+    invoices,
   }
 }

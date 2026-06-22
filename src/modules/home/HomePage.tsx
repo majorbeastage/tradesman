@@ -11,14 +11,13 @@ type HomePageProps = {
   onAdminLogin: () => void
   onSignup: () => void
   onAboutUs: () => void
-  onRequestDemo: () => void
   onTraining: () => void
   onPricing: () => void
 }
 
-const FEATURE_IDS = ["clean", "automation", "leads", "comms", "quotes", "history", "custom"] as const
+const FEATURE_IDS = ["workflow", "comms", "screening", "leads", "quotes", "payments", "assistant"] as const
 
-export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onRequestDemo, onTraining, onPricing }: HomePageProps) {
+export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onTraining, onPricing }: HomePageProps) {
   const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -299,7 +298,7 @@ export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, o
               <div style={{ color: theme.text, opacity: 0.85, fontSize: 11, lineHeight: 1.5, marginBottom: 8 }}>{t("home.demoBody")}</div>
               <button
                 type="button"
-                onClick={onRequestDemo}
+                onClick={onTraining}
                 style={{
                   width: "100%",
                   padding: "10px 12px",
@@ -312,25 +311,7 @@ export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, o
                   cursor: "pointer",
                 }}
               >
-                {t("home.requestDemo")}
-              </button>
-              <button
-                type="button"
-                onClick={onTraining}
-                style={{
-                  width: "100%",
-                  marginTop: 8,
-                  padding: "10px 12px",
-                  background: "#0ea5e9",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 10,
-                  fontWeight: 800,
-                  fontSize: 13,
-                  cursor: "pointer",
-                }}
-              >
-                Training sandbox (full CRM)
+                {t("home.startTrial")}
               </button>
               <button
                 type="button"
@@ -348,7 +329,7 @@ export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, o
                   cursor: "pointer",
                 }}
               >
-                About Us
+                {t("home.aboutUs")}
               </button>
               <button
                 type="button"

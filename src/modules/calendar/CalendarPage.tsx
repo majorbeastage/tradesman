@@ -8,7 +8,12 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
-import { filterRealUserIds, isSandboxDemoUserId, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import { filterRealUserIds, isSandboxDemoUserId, parseSandboxDemoTeam, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
+import {
+  buildDefaultSandboxDemoLocations,
+  parseSandboxDemoLocations,
+  SANDBOX_DEMO_LOCATIONS_META_KEY,
+} from "../../lib/sandboxDemoLocations"
 import {
   calendarAssigneeLabel,
   calendarEventAssigneeUserId,
@@ -357,6 +362,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [customReceiptPrefillCustomerId, setCustomReceiptPrefillCustomerId] = useState<string | null>(null)
   const [showCompletionSettingsModal, setShowCompletionSettingsModal] = useState(false)
   const [calendarSuite, setCalendarSuite] = useState<CalendarSuiteState>({ id: "calendar" })
+  const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
   const managedByOfficeManager = useManagedByOfficeManager()
 
   const [managedSelfPolicy, setManagedSelfPolicy] = useState(() => parseOmCalendarPolicy({}))
@@ -390,15 +396,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return calendarDbUserId ? [calendarDbUserId] : []
   }, [scopeCtx?.clients, calendarDbUserId])
 
-  /** Demo persona IDs are UI-only — map GPS/job queries need real auth user IDs. */
+  /** Keep unique roster ids for map legend (demo personas stay distinct). */
   const teamMapMembers = useMemo(
     () =>
       selectableUsers.map((u) => ({
-        userId: isSandboxDemoUserId(u.userId) ? calendarDbUserId : u.userId,
+        userId: u.userId,
         label: u.label,
         isSelf: u.isSelf,
+        isDemo: isSandboxDemoUserId(u.userId),
       })),
-    [selectableUsers, calendarDbUserId],
+    [selectableUsers],
   )
 
   const calendarVisibleEvents = useMemo(
@@ -701,7 +708,31 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       !managedByOfficeManager ||
       managedSelfPolicy.customer_map_access === true)
 
-  const canAccessTeamMap = isOfficeManagerOrAdmin && teamMapUserIds.length > 0
+  const canAccessTeamMap =
+    isOfficeManagerOrAdmin && (teamMapUserIds.length > 0 || (sandboxTraining && teamMapMembers.some((m) => m.isDemo)))
+
+  const canOpenUnifiedMap = canAccessCustomerMap || canAccessTeamMap
+
+  useEffect(() => {
+    if (!sandboxTraining || !supabase || !calendarDbUserId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", calendarDbUserId).maybeSingle()
+      if (cancelled) return
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      let locs = parseSandboxDemoLocations(meta[SANDBOX_DEMO_LOCATIONS_META_KEY])
+      if (Object.keys(locs).length === 0) {
+        locs = buildDefaultSandboxDemoLocations(parseSandboxDemoTeam(meta.sandbox_demo_team))
+      }
+      setSandboxDemoLocations(locs)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [sandboxTraining, calendarDbUserId])
 
   const customerMapMembers = useMemo(() => {
     if (isOfficeManagerOrAdmin && teamMapUserIds.length > 0) return teamMapMembers
@@ -715,6 +746,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const uid = calendarDbUserId || authUserId
     return uid ? [uid] : []
   }, [isOfficeManagerOrAdmin, teamMapUserIds, calendarDbUserId, authUserId])
+
+  const unifiedMapMembers = useMemo(() => {
+    if (teamMapMembers.length > 0) return teamMapMembers
+    return customerMapMembers
+  }, [teamMapMembers, customerMapMembers])
 
   useEffect(() => {
     if (calendarSuite.id !== "scheduling_tools" || !managedByOfficeManager || isOfficeManagerOrAdmin || sandboxTraining) return
@@ -2888,7 +2924,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
       <h1 style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-        {calendarSuite.id === "time_clock" ? "Time clock workspace" : "Scheduling"}
+        {calendarSuite.id === "time_clock" ? "Time clock workspace" : calendarSuite.id === "team_management" ? "Team Management" : "Scheduling"}
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
 
@@ -2926,22 +2962,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Team management
                 </button>
               ) : null}
-              {canAccessCustomerMap ? (
+              {canOpenUnifiedMap ? (
                 <button
                   type="button"
                   onClick={() => setCalendarSuite({ id: "scheduling_tools", panel: "customer_map" })}
                   style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
                 >
-                  Jobs map
-                </button>
-              ) : null}
-              {canAccessTeamMap ? (
-                <button
-                  type="button"
-                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_map" })}
-                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
-                >
-                  Team map
+                  Map
                 </button>
               ) : null}
               {userId ? (
@@ -3068,42 +3095,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Clock in/out and hours — team permissions and maps stay under Team management.
                 </span>
               </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCalendarSuite({ id: "calendar" })}
-                style={{
-                  padding: "8px 14px",
-                  borderRadius: "6px",
-                  border: `2px solid ${theme.primary}`,
-                  background: "#eff6ff",
-                  cursor: "pointer",
-                  color: theme.text,
-                  fontWeight: 700,
-                }}
-              >
-                Return to scheduling view
-              </button>
-            )}
-            {calendarSuite.id === "team_management" ? (
+            ) : calendarSuite.id === "team_management" ? (
               <>
                 {(
-                  [
-                    "team_members",
-                    "job_types",
-                    "team_map",
-                    ...(showCalSettings ? (["scheduling_settings"] as const) : []),
-                  ] as const
+                  ["job_types", ...(showCalSettings ? (["scheduling_settings"] as const) : [])] as const
                 ).map((panel) => {
                   const active = calendarSuite.panel === panel
-                  const label =
-                    panel === "team_members"
-                      ? "Team member options"
-                      : panel === "job_types"
-                        ? "Job types"
-                        : panel === "team_map"
-                          ? "Team map"
-                          : calendarSettingsButtonLabel
+                  const label = panel === "job_types" ? "Job types" : calendarSettingsButtonLabel
                   return (
                     <button
                       key={panel}
@@ -3127,43 +3125,39 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   )
                 })}
               </>
-            ) : null}
-            {calendarSuite.id === "scheduling_tools" ? (
-              <>
-                {(
-                  managedByOfficeManager && !isOfficeManagerOrAdmin && !sandboxTraining
-                    ? ([
-                        ...(managedSelfPolicy.job_types_access !== "off" ? (["job_types"] as const) : []),
-                        ...(managedSelfPolicy.customer_map_access === true ? (["customer_map"] as const) : []),
-                      ] as Array<"job_types" | "customer_map">)
-                    : (["job_types", "customer_map"] as Array<"job_types" | "customer_map">)
-                ).map((panel) => {
-                  const active = calendarSuite.panel === panel
-                  const label = panel === "job_types" ? "Job types" : "Customer locations map"
-                  return (
-                    <button
-                      key={panel}
-                      type="button"
-                      onClick={() => {
-                        if (panel === "job_types") openJobTypesFromCalendar()
-                        else setCalendarSuite({ id: "scheduling_tools", panel })
-                      }}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: "6px",
-                        border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                        background: active ? "#eff6ff" : "white",
-                        cursor: "pointer",
-                        color: theme.text,
-                        fontWeight: active ? 700 : 500,
-                      }}
-                    >
-                      {label}
-                    </button>
-                  )
-                })}
-              </>
-            ) : null}
+            ) : calendarSuite.id === "scheduling_tools" ? (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "calendar" })}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: `2px solid ${theme.primary}`,
+                  background: "#eff6ff",
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontWeight: 700,
+                }}
+              >
+                Back to calendar
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "calendar" })}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                  border: `2px solid ${theme.primary}`,
+                  background: "#eff6ff",
+                  cursor: "pointer",
+                  color: theme.text,
+                  fontWeight: 700,
+                }}
+              >
+                Return to scheduling view
+              </button>
+            )}
           </>
         )}
       </div>
@@ -3676,9 +3670,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           canAccessCustomerMap ? (
             <TeamLocationsMapModal
               variant="embedded"
-              title="Jobs map"
-              members={customerMapMembers}
+              title="Team & jobs map"
+              members={unifiedMapMembers}
               orgUserIdsForJobs={customerMapJobUserIds}
+              sandboxDemoLocations={sandboxDemoLocations}
+              resolveJobUserId={(id) => resolveSandboxDataUserId(id, calendarDbUserId || authUserId || id)}
+              showTeamGps={canAccessTeamMap || sandboxTraining}
+              showJobPins
               onClose={() => setCalendarSuite({ id: "calendar" })}
             />
           ) : null}

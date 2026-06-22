@@ -268,7 +268,7 @@ Deno.serve(async (req) => {
     const text = [
       `Hi ${displayName},`,
       "",
-      "Your Tradesman training sandbox is ready.",
+      "Your Tradesman free trial workspace is ready.",
       "",
       `1. Open: ${loginUrl}`,
       "2. Sign in with Corporate Manager Login",
@@ -290,7 +290,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           from: resendFrom,
           to: [email],
-          subject: "Your Tradesman training sandbox login",
+          subject: "Your Tradesman free trial login",
           text,
         }),
       })

@@ -32,6 +32,10 @@ import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../component
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
+import { loadAccountWorkflowBundleFromMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
+import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
+import { CustomerWorkflowStatusPanel } from "../../components/CustomerWorkflowStatusPanel"
+import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 
 type Props = {
   setPage: (page: string) => void
@@ -68,6 +72,62 @@ function parseProfileNotesPast(raw: unknown): { id: string; text: string; saved_
     out.push({ id, text, saved_at })
   })
   return out.sort((a, b) => (b.saved_at || "").localeCompare(a.saved_at || ""))
+}
+
+function ActivityHistoryTabs({ events }: { events: CustomerProfileBundle["commEvents"] }) {
+  const [tab, setTab] = useState<"phone" | "sms" | "email" | "notes">("phone")
+  const tabBtn = (id: typeof tab, label: string) => (
+    <button
+      type="button"
+      key={id}
+      onClick={() => setTab(id)}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 8,
+        border: tab === id ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+        background: tab === id ? "#fff7ed" : "#fff",
+        fontWeight: tab === id ? 800 : 600,
+        fontSize: 12,
+        cursor: "pointer",
+        color: theme.text,
+      }}
+    >
+      {label}
+    </button>
+  )
+  const filtered = events.filter((ev) => {
+    const t = (ev.event_type ?? "").toLowerCase()
+    if (tab === "phone") return t === "call" || t === "voicemail" || t.includes("call")
+    if (tab === "sms") return t === "sms"
+    if (tab === "email") return t === "email"
+    return t === "note" || t === "internal_note"
+  })
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {tabBtn("phone", "Phone calls")}
+        {tabBtn("sms", "SMS")}
+        {tabBtn("email", "Emails")}
+        {tabBtn("notes", "Notes")}
+      </div>
+      {filtered.length === 0 ? (
+        <Empty text={`No ${tab === "phone" ? "phone" : tab} activity logged yet.`} />
+      ) : (
+        <Timeline
+          rows={filtered.slice(0, 40).map((ev) => {
+            const emailAddr = ev.event_type === "email" ? formatCommEventEmailAddressSummary(ev) : null
+            const metaParts = [formatDisplayText(ev.direction, ""), emailAddr, formatWhen(ev.created_at)].filter(Boolean)
+            return {
+              key: ev.id,
+              title: formatDisplayText(ev.subject, "") || formatDisplayText(ev.event_type, "Event"),
+              meta: metaParts.join(" · "),
+              body: formatDisplayText(ev.body, ""),
+            }
+          })}
+        />
+      )}
+    </div>
+  )
 }
 
 function CollapsibleProfileSection({
@@ -190,14 +250,19 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
+  const [profileMetadata, setProfileMetadata] = useState<unknown>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
     setLoading(true)
     setErr("")
     try {
-      const data = await loadCustomerProfileBundle(supabase, userId, customerId)
+      const [data, profRes] = await Promise.all([
+        loadCustomerProfileBundle(supabase, userId, customerId),
+        supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
+      ])
       setBundle(data)
+      setProfileMetadata(profRes.data?.metadata ?? null)
     } catch (e: unknown) {
       setErr(formatAppError(e))
       setBundle(null)
@@ -495,6 +560,16 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const c = bundle?.customer
   const notesPast = c ? parseProfileNotesPast(c.notes_past) : []
   const hasMultipleContacts = bundle ? bundle.phones.length > 1 || bundle.emails.length > 1 : false
+  const workflowBundle = bundle && profileMetadata ? loadAccountWorkflowBundleFromMetadata(profileMetadata) : null
+  const quoteForWorkflow =
+    bundle?.quotes.find((q) => parseQuoteInternalWorkflow(q.metadata).pendingNodeIds.length > 0) ?? bundle?.quotes[0] ?? null
+  const quoteWorkflowState = quoteForWorkflow ? parseQuoteInternalWorkflow(quoteForWorkflow.metadata) : null
+  const workflowSnapshot =
+    profileMetadata != null
+      ? loadCustomerWorkflowSnapshotFromProfile(profileMetadata, quoteForWorkflow?.id ?? null, quoteWorkflowState)
+      : null
+  const selfOmPolicy = parseOmCalendarPolicy(profileMetadata)
+  const allowWorkflowBypass = selfOmPolicy.allow_bypass_workflow_approval === true
 
   const contactHeaderActions = (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -877,23 +952,56 @@ export default function CustomerProfilePage({ setPage }: Props) {
             onUpdated={() => void reload()}
           />
 
-          <CollapsibleProfileSection title="Activity history" badge={bundle.commEvents.length || undefined}>
-            {bundle.commEvents.length === 0 ? (
-              <Empty text="No communication events logged yet." />
-            ) : (
-              <Timeline
-                rows={bundle.commEvents.slice(0, 40).map((ev) => {
-                  const emailAddr = ev.event_type === "email" ? formatCommEventEmailAddressSummary(ev) : null
-                  const metaParts = [formatDisplayText(ev.direction, ""), emailAddr, formatWhen(ev.created_at)].filter(Boolean)
-                  return {
-                    key: ev.id,
-                    title: formatDisplayText(ev.subject, "") || formatDisplayText(ev.event_type, "Event"),
-                    meta: metaParts.join(" · "),
-                    body: formatDisplayText(ev.body, ""),
-                  }
-                })}
+          {workflowBundle ? (
+            <div style={{ marginBottom: 16 }}>
+              <CustomerWorkflowStatusPanel
+                workflow={workflowBundle.workflow}
+                snapshot={workflowSnapshot}
+                allowBypass={allowWorkflowBypass}
+                onOpenWorkflow={() => setPage("business-workflow")}
               />
-            )}
+            </div>
+          ) : null}
+
+          <CollapsibleProfileSection title="Job paperwork" defaultOpen>
+            <Timeline
+              rows={[
+                ...bundle.quotes.map((q) => ({
+                  key: `est-${q.id}`,
+                  title: `Estimate · ${formatDisplayText(q.title, q.id.slice(0, 8))}`,
+                  meta: `${estimateDisplayStatus(q.status, q.metadata)} · ${formatUsdAmount(q.total) ?? "—"} · ${formatWhen(q.updated_at ?? q.created_at)}`,
+                  body: `Document ID: EST-${q.id.slice(0, 8).toUpperCase()}`,
+                })),
+                ...bundle.workOrders.map((w) => ({
+                  key: `wo-${w.id}`,
+                  title: `Work order · ${w.work_order_number}`,
+                  meta: `${w.status} · ${formatWhen(w.updated_at)}`,
+                  body: w.estimate_title,
+                })),
+                ...bundle.purchaseOrders.map((p) => ({
+                  key: `po-${p.id}`,
+                  title: `Purchase order · ${p.po_number}`,
+                  meta: `${p.status} · ${formatWhen(p.updated_at)}`,
+                  body: p.description,
+                })),
+                ...bundle.invoices.map((inv) => ({
+                  key: `inv-${inv.id}`,
+                  title: `Invoice / payment · ${formatUsdAmount(inv.amount) ?? "—"}`,
+                  meta: `${inv.status} · ${formatWhen(inv.created_at)}`,
+                  body: inv.description,
+                })),
+                ...bundle.receipts.map((r) => ({
+                  key: `rcpt-${r.id}`,
+                  title: `Receipt · ${formatDisplayText(r.job_title, "Custom receipt")}`,
+                  meta: receiptDisplayStatus(r),
+                  body: `Document ID: RCPT-${r.id.slice(0, 8).toUpperCase()}`,
+                })),
+              ].slice(0, 40)}
+            />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection title="Activity history" badge={bundle.commEvents.length || undefined}>
+            <ActivityHistoryTabs events={bundle.commEvents} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection title="Calendar events" badge={bundle.calendarEvents.length || undefined}>
@@ -967,6 +1075,51 @@ export default function CustomerProfilePage({ setPage }: Props) {
                     ),
                   }
                 })}
+              />
+            )}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection title="Work orders" badge={bundle.workOrders.length || undefined}>
+            {bundle.workOrders.length === 0 ? (
+              <Empty text="No work orders linked to this customer yet." />
+            ) : (
+              <Timeline
+                rows={bundle.workOrders.map((w) => ({
+                  key: w.id,
+                  title: w.work_order_number,
+                  meta: `${w.status} · ${formatWhen(w.updated_at)}`,
+                  body: w.estimate_title,
+                }))}
+              />
+            )}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection title="Purchase orders" badge={bundle.purchaseOrders.length || undefined}>
+            {bundle.purchaseOrders.length === 0 ? (
+              <Empty text="No purchase orders on file for this customer yet." />
+            ) : (
+              <Timeline
+                rows={bundle.purchaseOrders.map((p) => ({
+                  key: p.id,
+                  title: p.po_number,
+                  meta: `${p.status} · ${formatWhen(p.updated_at)}`,
+                  body: `${p.vendor_name} — ${p.description}`,
+                }))}
+              />
+            )}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection title="Invoices" badge={bundle.invoices.length || undefined}>
+            {bundle.invoices.length === 0 ? (
+              <Empty text="No invoices or payment requests for this customer yet." />
+            ) : (
+              <Timeline
+                rows={bundle.invoices.map((inv) => ({
+                  key: inv.id,
+                  title: formatDisplayText(inv.description, "Payment request"),
+                  meta: `${inv.status} · ${formatUsdAmount(inv.amount) ?? "—"} · ${formatWhen(inv.created_at)}`,
+                  body: inv.payment_url ? `Pay link on file` : "",
+                }))}
               />
             )}
           </CollapsibleProfileSection>

@@ -5,13 +5,18 @@ import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { teamMarkerColors, teamMemberDisplayIndex } from "../lib/teamMapStyle"
 import { addressLooksCyrillic, resolveJobMapCoords, reverseGeocodeLatLngToAddressEn } from "../lib/jobSiteLocation"
-import { filterRealUserIds } from "../lib/sandboxDemoTeam"
+import { filterRealUserIds, isSandboxDemoUserId } from "../lib/sandboxDemoTeam"
+import type { SandboxDemoLocationsV1 } from "../lib/sandboxDemoLocations"
 
 export type TeamMapMember = {
   userId: string
   label: string
   isSelf?: boolean
+  /** Sandbox demo persona — GPS comes from sandbox_demo_locations_v1, not user_last_locations. */
+  isDemo?: boolean
 }
+
+export type MapJobTimeWindow = "24h" | "week" | "month" | "all"
 
 type LocRow = {
   user_id: string
@@ -43,6 +48,13 @@ type Props = {
   title?: string
   /** Thumbnail mode — expand to full embedded/map view. */
   onExpand?: () => void
+  /** Optional demo GPS pins keyed by sandbox-demo-* user id. */
+  sandboxDemoLocations?: SandboxDemoLocationsV1
+  /** Resolve demo persona id → auth user id for calendar job queries. */
+  resolveJobUserId?: (memberUserId: string) => string
+  showTeamGps?: boolean
+  showJobPins?: boolean
+  jobTimeWindow?: MapJobTimeWindow
 }
 
 function normalizeCustomerJoin(
@@ -60,15 +72,31 @@ export default function TeamLocationsMapModal({
   variant = "modal",
   title = "Team map",
   onExpand,
+  sandboxDemoLocations = {},
+  resolveJobUserId,
+  showTeamGps: showTeamGpsProp,
+  showJobPins: showJobPinsProp,
+  jobTimeWindow: jobTimeWindowProp,
 }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [viewUserId, setViewUserId] = useState<string>("all")
-  const [showNextJobs, setShowNextJobs] = useState(true)
+  const [showNextJobs, setShowNextJobs] = useState(showJobPinsProp ?? true)
+  const [showTeamGps, setShowTeamGps] = useState(showTeamGpsProp ?? true)
+  const [jobTimeWindow, setJobTimeWindow] = useState<MapJobTimeWindow>(jobTimeWindowProp ?? "week")
 
-  const orderedIds = useMemo(() => members.map((m) => m.userId).filter(Boolean), [members])
+  const orderedIds = useMemo(() => {
+    const seen = new Set<string>()
+    const ids: string[] = []
+    for (const m of members) {
+      if (!m.userId || seen.has(m.userId)) continue
+      seen.add(m.userId)
+      ids.push(m.userId)
+    }
+    return ids
+  }, [members])
   const locationQueryUserIds = useMemo(() => filterRealUserIds(orderedIds), [orderedIds])
   const labelById = useMemo(() => {
     const m = new Map<string, string>()
@@ -104,7 +132,14 @@ export default function TeamLocationsMapModal({
 
       let jobRows: CalendarJobRow[] = []
       if (showNextJobs && orgUserIdsForJobs.length > 0) {
-        const nowIso = new Date().toISOString()
+        const now = new Date()
+        const end = new Date(now)
+        if (jobTimeWindow === "24h") end.setHours(end.getHours() + 24)
+        else if (jobTimeWindow === "week") end.setDate(end.getDate() + 7)
+        else if (jobTimeWindow === "month") end.setMonth(end.getMonth() + 1)
+        else end.setFullYear(end.getFullYear() + 2)
+        const nowIso = now.toISOString()
+        const endIso = jobTimeWindow === "all" ? null : end.toISOString()
         const jobSelect = `
           id,
           user_id,
@@ -137,6 +172,7 @@ export default function TeamLocationsMapModal({
           .is("removed_at", null)
           .is("completed_at", null)
           .gte("start_at", nowIso)
+          .lte("start_at", endIso ?? "9999-12-31T23:59:59.999Z")
           .order("start_at", { ascending: true })
           .limit(120)
         const jr =
@@ -148,6 +184,7 @@ export default function TeamLocationsMapModal({
                 .is("removed_at", null)
                 .is("completed_at", null)
                 .gte("start_at", nowIso)
+                .lte("start_at", endIso ?? "9999-12-31T23:59:59.999Z")
                 .order("start_at", { ascending: true })
                 .limit(120)
             : jrPrimary
@@ -181,6 +218,7 @@ export default function TeamLocationsMapModal({
       const locRows = (locs ?? []) as LocRow[]
 
       for (const r of locRows) {
+        if (!showTeamGps) break
         if (!activeLocationUserIds.includes(r.user_id)) continue
         const n = teamMemberDisplayIndex(r.user_id, orderedIds)
         const { fill, stroke } = teamMarkerColors(n)
@@ -200,12 +238,38 @@ export default function TeamLocationsMapModal({
         marker.addTo(group)
       }
 
+      if (showTeamGps) {
+        for (const uid of orderedIds) {
+          if (!isSandboxDemoUserId(uid)) continue
+          if (!activeLocationUserIds.includes(uid)) continue
+          const demoLoc = sandboxDemoLocations[uid]
+          if (!demoLoc) continue
+          const n = teamMemberDisplayIndex(uid, orderedIds)
+          const { fill, stroke } = teamMarkerColors(n)
+          const marker = L.circleMarker([demoLoc.lat, demoLoc.lng], {
+            radius: 11,
+            color: stroke,
+            fillColor: fill,
+            fillOpacity: 0.9,
+            weight: 2,
+          })
+          const name = labelById.get(uid) ?? demoLoc.label ?? uid.slice(0, 8)
+          marker.bindPopup(
+            `<div style="font-family:system-ui,sans-serif;font-size:13px"><strong>#${n} ${escapeHtml(name)}</strong> <span style="color:#64748b">(trial GPS)</span><br/>Updated: ${escapeHtml(new Date(demoLoc.updated_at).toLocaleString())}</div>`,
+          )
+          marker.addTo(group)
+        }
+      }
+
       if (showNextJobs) {
         const byUser = new Map<string, CalendarJobRow>()
         for (const ev of jobRows) {
           const uid = ev.user_id ?? ""
           if (!uid || !orgUserIdsForJobs.includes(uid)) continue
-          if (viewUserId !== "all" && uid !== viewUserId) continue
+          if (viewUserId !== "all") {
+            const matchUid = resolveJobUserId && isSandboxDemoUserId(viewUserId) ? resolveJobUserId(viewUserId) : viewUserId
+            if (uid !== matchUid && uid !== viewUserId) continue
+          }
           if (!byUser.has(uid)) byUser.set(uid, ev)
         }
         for (const ev of byUser.values()) {
@@ -259,7 +323,7 @@ export default function TeamLocationsMapModal({
         mapInstanceRef.current = null
       }
     }
-  }, [members.length, orderedIds.join(","), locationQueryUserIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, viewUserId, activeLocationUserIds.join(",")])
+  }, [members.length, orderedIds.join(","), locationQueryUserIds.join(","), orgUserIdsForJobs.join(","), showNextJobs, showTeamGps, jobTimeWindow, viewUserId, activeLocationUserIds.join(","), JSON.stringify(sandboxDemoLocations)])
 
   const embedded = variant === "embedded"
   const thumbnail = variant === "thumbnail"
@@ -372,9 +436,28 @@ export default function TeamLocationsMapModal({
               </select>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-              <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
-              Next job pins
+              <input type="checkbox" checked={showTeamGps} onChange={(e) => setShowTeamGps(e.target.checked)} />
+              Team GPS
             </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={showNextJobs} onChange={(e) => setShowNextJobs(e.target.checked)} />
+              Job pins
+            </label>
+            {showNextJobs ? (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                Jobs through
+                <select
+                  value={jobTimeWindow}
+                  onChange={(e) => setJobTimeWindow(e.target.value as MapJobTimeWindow)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}` }}
+                >
+                  <option value="24h">Next 24 hours</option>
+                  <option value="week">Next week</option>
+                  <option value="month">Next month</option>
+                  <option value="all">All scheduled</option>
+                </select>
+              </label>
+            ) : null}
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>

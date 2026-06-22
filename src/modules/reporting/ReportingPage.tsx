@@ -4,6 +4,7 @@ import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScope
 import { supabase } from "../../lib/supabase"
 import { normalizeCommunicationUrgency } from "../../lib/customerUrgency"
 import { loadTodayWorkSnapshot, type TodayWorkSnapshot } from "../../lib/todayWorkReport"
+import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { theme } from "../../styles/theme"
 
 type Period = "30d" | "90d" | "365d"
@@ -44,7 +45,7 @@ export default function ReportingPage() {
   const omScope = useOfficeManagerScopeOptional()
   const reportingUserId = omScope?.selectedUserId ?? user?.id ?? null
 
-  const allowed = role === "office_manager" || role === "admin"
+  const allowed = isOfficeManagerLikeRole(role)
 
   const [period, setPeriod] = useState<Period>("90d")
   const [filtersOpen, setFiltersOpen] = useState(true)
@@ -146,7 +147,7 @@ export default function ReportingPage() {
       <div style={{ padding: 24, maxWidth: 560 }}>
         <h1 style={{ marginTop: 0, color: "#475569", fontWeight: 700 }}>Reporting</h1>
         <p style={{ color: "#94a3b8", lineHeight: 1.6, margin: 0 }}>
-          Reporting exports and charts are available to office managers and administrators. Ask your admin if you need access.
+          Reporting exports and charts are available to office managers, corporate managers, and administrators. Ask your admin if you need access.
         </p>
       </div>
     )

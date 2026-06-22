@@ -210,7 +210,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
               lineHeight: 1.5,
             }}
           >
-            <strong>Training sandbox login.</strong> Enter the temporary password from the sandbox screen (or your email).
+            <strong>Trial mode login.</strong> Enter the temporary password from the trial screen (or your email).
             This is a separate practice account — not your regular Tradesman login.
           </div>
         ) : null}

@@ -9,6 +9,8 @@ export type SandboxDemoTeamMember = {
   role: UserRole
   email: string
   title?: string
+  /** Department shown in Team Management roster (e.g. Parts, Accounting). */
+  department?: string
 }
 
 export const DEFAULT_SANDBOX_DEMO_TEAM: SandboxDemoTeamMember[] = [
@@ -16,6 +18,7 @@ export const DEFAULT_SANDBOX_DEMO_TEAM: SandboxDemoTeamMember[] = [
     id: "sandbox-demo-office-maria",
     label: "Maria Ortiz",
     title: "Office manager",
+    department: "Office / Reception",
     role: "office_manager",
     email: "maria.demo@example.invalid",
   },
@@ -23,6 +26,7 @@ export const DEFAULT_SANDBOX_DEMO_TEAM: SandboxDemoTeamMember[] = [
     id: "sandbox-demo-field-jake",
     label: "Jake Miller",
     title: "Field technician",
+    department: "Field",
     role: "user",
     email: "jake.demo@example.invalid",
   },
@@ -30,6 +34,7 @@ export const DEFAULT_SANDBOX_DEMO_TEAM: SandboxDemoTeamMember[] = [
     id: "sandbox-demo-field-sam",
     label: "Sam Rivera",
     title: "External contractor",
+    department: "Field / External",
     role: "corporate_external",
     email: "sam.demo@example.invalid",
   },
@@ -37,6 +42,7 @@ export const DEFAULT_SANDBOX_DEMO_TEAM: SandboxDemoTeamMember[] = [
     id: "sandbox-demo-internal-lee",
     label: "Lee Chen",
     title: "Internal staff",
+    department: "Accounting",
     role: "corporate_internal",
     email: "lee.demo@example.invalid",
   },
@@ -74,6 +80,7 @@ export function parseSandboxDemoTeam(raw: unknown): SandboxDemoTeamMember[] {
       role,
       email,
       title: typeof o.title === "string" ? o.title : undefined,
+      department: typeof o.department === "string" ? o.department.trim() : undefined,
     })
   }
   return out.length > 0 ? out : DEFAULT_SANDBOX_DEMO_TEAM
@@ -82,7 +89,7 @@ export function parseSandboxDemoTeam(raw: unknown): SandboxDemoTeamMember[] {
 export function sandboxDemoTeamToManageableRows(team: SandboxDemoTeamMember[]): ManageableUserRow[] {
   return team.map((m) => ({
     userId: m.id,
-    label: `${m.label} (demo)`,
+    label: m.department ? `${m.label} · ${m.department}` : m.label,
     email: m.email,
     role: m.role,
     clientId: null,

@@ -10,7 +10,12 @@ import {
   parseTeamRibbonColors,
   type OmCalendarPolicyV1,
 } from "../../lib/teamCalendarPolicy"
-import { filterRealUserIds, isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
+import { filterRealUserIds, isSandboxDemoUserId, parseSandboxDemoTeam } from "../../lib/sandboxDemoTeam"
+import {
+  buildDefaultSandboxDemoLocations,
+  parseSandboxDemoLocations,
+  SANDBOX_DEMO_LOCATIONS_META_KEY,
+} from "../../lib/sandboxDemoLocations"
 import TimeClockPortal from "../../components/TimeClockPortal"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 
@@ -371,9 +376,6 @@ function TeamUserCard({
                 />
                 Allow Estimate tool (Quotes tab)
               </label>
-              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
-                When unchecked, managed users cannot open Estimates until you enable it here (defaults off for office-manager-managed accounts).
-              </p>
 
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
@@ -384,9 +386,104 @@ function TeamUserCard({
                 />
                 Allow assigning variances/reports to this team member
               </label>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "grid", gap: 4 }}>
+                <span>Department (workflow routing label)</span>
+                <input
+                  type="text"
+                  value={policy.department_label ?? ""}
+                  disabled={savingUserId === member.userId}
+                  placeholder="e.g. Parts, Accounting, Field"
+                  onChange={(e) => void persistManagedPolicy(member.userId, { department_label: e.target.value.trim() || null })}
+                  style={{ ...theme.formInput, fontSize: 12 }}
+                />
+              </label>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.workflow_only_customers === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { workflow_only_customers: e.target.checked })}
+                />
+                Only show customers active in this user&apos;s workflow
+              </label>
               <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
-                Used in Estimates → Reports. If enabled, office managers can route variance work items to this user.
+                When enabled, the Customers tab lists active-step matches plus an Upcoming folder for customers not at this department yet.
               </p>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_bypass_workflow_approval === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_bypass_workflow_approval: e.target.checked })}
+                />
+                Allow bypassing workflow approval requirements
+              </label>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_operations_tab === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) =>
+                    void persistManagedPolicy(member.userId, {
+                      allow_operations_tab: e.target.checked,
+                      ...(e.target.checked
+                        ? {}
+                        : {
+                            allow_work_orders_tool: false,
+                            allow_purchase_orders_tool: false,
+                            allow_invoices_tool: false,
+                            allow_inventory_tool: false,
+                          }),
+                    })
+                  }
+                />
+                Allow Operations tab
+              </label>
+
+              {policy.allow_operations_tab ? (
+                <div style={{ marginLeft: 16, display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.allow_work_orders_tool === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_work_orders_tool: e.target.checked })}
+                    />
+                    Work orders tool
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.allow_purchase_orders_tool === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_purchase_orders_tool: e.target.checked })}
+                    />
+                    Purchase orders tool
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.allow_invoices_tool === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_invoices_tool: e.target.checked })}
+                    />
+                    Invoices / billing tool
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={policy.allow_inventory_tool === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_inventory_tool: e.target.checked })}
+                    />
+                    Inventory tool
+                  </label>
+                </div>
+              ) : null}
 
               <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: 8 }}>
                 <button
@@ -565,6 +662,7 @@ export default function CalendarTeamManagementPanel({
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
   const [teamMapExpanded, setTeamMapExpanded] = useState(false)
+  const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
 
   const teamMapUserIds = useMemo(
     () => filterRealUserIds(Array.from(new Set(roster.map((r) => r.userId).filter(Boolean)))),
@@ -574,12 +672,34 @@ export default function CalendarTeamManagementPanel({
   const teamMapMembers = useMemo(
     () =>
       roster.map((r) => ({
-        userId: isSandboxDemoUserId(r.userId) ? viewerUserId : r.userId,
+        userId: r.userId,
         label: profilesById[r.userId]?.display_name?.trim() || r.label || r.userId.slice(0, 8),
         isSelf: r.isSelf,
+        isDemo: isSandboxDemoUserId(r.userId),
       })),
-    [roster, profilesById, viewerUserId],
+    [roster, profilesById],
   )
+
+  useEffect(() => {
+    if (!supabase || !officeManagerUserId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", officeManagerUserId).maybeSingle()
+      if (cancelled) return
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      let locs = parseSandboxDemoLocations(meta[SANDBOX_DEMO_LOCATIONS_META_KEY])
+      if (Object.keys(locs).length === 0) {
+        locs = buildDefaultSandboxDemoLocations(parseSandboxDemoTeam(meta.sandbox_demo_team))
+      }
+      setSandboxDemoLocations(locs)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [officeManagerUserId])
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
@@ -825,9 +945,13 @@ export default function CalendarTeamManagementPanel({
       {variant !== "time_clock_only" && teamMapUserIds.length > 0 ? (
         <TeamLocationsMapModal
           variant={teamMapExpanded ? "embedded" : "thumbnail"}
-          title="Team map"
+          title="Team & jobs map"
           members={teamMapMembers}
-          orgUserIdsForJobs={teamMapUserIds}
+          orgUserIdsForJobs={teamMapUserIds.length > 0 ? teamMapUserIds : [viewerUserId]}
+          sandboxDemoLocations={sandboxDemoLocations}
+          resolveJobUserId={(id) => (isSandboxDemoUserId(id) ? viewerUserId : id)}
+          showTeamGps
+          showJobPins
           onClose={() => setTeamMapExpanded(false)}
           onExpand={() => setTeamMapExpanded(true)}
         />

@@ -13,6 +13,7 @@ import {
 import { BUSINESS_WORKFLOW_META_KEY } from "./businessWorkflow"
 import { ORG_CHART_META_KEY } from "./organizationChart"
 import { DEFAULT_SANDBOX_DEMO_TEAM } from "./sandboxDemoTeam"
+import { buildDefaultSandboxDemoLocations, mergeSandboxDemoLocationsMetadata, SANDBOX_DEMO_LOCATIONS_META_KEY } from "./sandboxDemoLocations"
 
 export function buildSandboxWorkflowSeed(): {
   workflow: BusinessWorkflowDoc
@@ -83,6 +84,9 @@ export function mergeSandboxWorkflowSeedMetadata(prevMeta: Record<string, unknow
   }
   if (!prevMeta[EXTERNAL_CONTACTS_META_KEY]) {
     next = mergeExternalContactsMetadata(next, seed.externalContacts)
+  }
+  if (!prevMeta[SANDBOX_DEMO_LOCATIONS_META_KEY]) {
+    next = mergeSandboxDemoLocationsMetadata(next, buildDefaultSandboxDemoLocations(DEFAULT_SANDBOX_DEMO_TEAM))
   }
   return next
 }
