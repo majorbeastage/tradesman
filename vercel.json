@@ -48,6 +48,10 @@
       "destination": "/api/platform-tools?__route=notify-admin-new-signup"
     },
     {
+      "source": "/api/notify-admin-trial-signup",
+      "destination": "/api/platform-tools?__route=notify-admin-trial-signup"
+    },
+    {
       "source": "/api/send-onboarding-welcome",
       "destination": "/api/platform-tools?__route=send-onboarding-welcome"
     },

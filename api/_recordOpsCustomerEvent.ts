@@ -11,6 +11,7 @@ const KINDS = new Set<AdminOpsCustomerEventKind>([
   "signup_verified",
   "demo_request",
   "demo_provisioned",
+  "trial_provisioned",
   "support_ticket",
 ])
 

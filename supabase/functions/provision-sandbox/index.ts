@@ -22,6 +22,50 @@ function sandboxExpiresIso(): string {
   return d.toISOString()
 }
 
+async function notifyAdminTrialProvisioned(params: {
+  email: string
+  displayName: string
+  userId: string
+  businessName?: string | null
+  embedSlug?: string | null
+  expiresAt?: string | null
+  customerCount?: number | null
+  leadCount?: number | null
+}): Promise<void> {
+  const site = Deno.env.get("VITE_SITE_URL")?.trim() || Deno.env.get("SITE_URL")?.trim() || Deno.env.get("VERCEL_URL")?.trim()
+  const secret =
+    Deno.env.get("COMPLETE_SIGNUP_NOTIFY_SECRET")?.trim() || Deno.env.get("ADMIN_SIGNUP_NOTIFY_SECRET")?.trim()
+  if (!site || !secret) {
+    console.warn("[provision-sandbox] trial admin notify skipped — set SITE_URL + COMPLETE_SIGNUP_NOTIFY_SECRET on Edge")
+    return
+  }
+  const base = site.startsWith("http") ? site.replace(/\/+$/, "") : `https://${site.replace(/\/+$/, "")}`
+  try {
+    const res = await fetch(`${base}/api/notify-admin-trial-signup`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-tradesman-signup-notify-secret": secret,
+      },
+      body: JSON.stringify({
+        user_id: params.userId,
+        email: params.email,
+        display_name: params.displayName,
+        business_name: params.businessName ?? null,
+        embed_slug: params.embedSlug ?? null,
+        expires_at: params.expiresAt ?? null,
+        customer_count: params.customerCount ?? null,
+        lead_count: params.leadCount ?? null,
+      }),
+    })
+    if (!res.ok) {
+      console.warn("[provision-sandbox] trial admin notify", res.status, await res.text())
+    }
+  } catch (e) {
+    console.warn("[provision-sandbox] trial admin notify", e instanceof Error ? e.message : e)
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
   if (req.method !== "POST") {
@@ -302,6 +346,17 @@ Deno.serve(async (req) => {
   } else {
     emailError = "RESEND not configured on Edge"
   }
+
+  await notifyAdminTrialProvisioned({
+    email,
+    displayName,
+    userId: uid,
+    businessName: companyName,
+    embedSlug,
+    expiresAt,
+    customerCount: seedSummary.customerCount ?? null,
+    leadCount: seedSummary.leadCount ?? null,
+  })
 
   return new Response(
     JSON.stringify({

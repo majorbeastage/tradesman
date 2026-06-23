@@ -9,6 +9,7 @@ export type AdminOpsCustomerEventKind =
   | "signup_verified"
   | "demo_request"
   | "demo_provisioned"
+  | "trial_provisioned"
   | "support_ticket"
 
 async function resolveAdminOpsCustomerOwnerUserId(service: SupabaseClient): Promise<string | null> {
