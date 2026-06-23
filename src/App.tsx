@@ -37,6 +37,8 @@ import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
 import { useManagedOmCalendarPolicy } from "./hooks/useManagedOmCalendarPolicy"
+import { usePortalViewOptional } from "./contexts/PortalViewContext"
+import { isSandboxDemoUserId } from "./lib/sandboxDemoTeam"
 import { useIsMobile } from "./hooks/useIsMobile"
 import {
   endUserHasSeparateBillingPortal,
@@ -50,6 +52,7 @@ import {
   type PortalConfig,
   type PortalTab,
 } from "./types/portal-builder"
+import { filterPortalTabsForOmCalendarPolicy, omCalendarPolicyNavContext } from "./lib/teamCalendarPolicy"
 import BillingDueDashboardBanner from "./components/BillingDueDashboardBanner"
 import DashboardQuickActions from "./components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
@@ -183,6 +186,12 @@ function MainAppInner() {
   const { tabs: portalTabsFromApi } = usePortalTabs(effectiveClientId, "user")
   const managedByOfficeManager = useManagedByOfficeManager()
   const omCalendarPolicy = useManagedOmCalendarPolicy()
+  const portalView = usePortalViewOptional()
+  const viewAsDemoUserId =
+    portalView?.showViewBar && portalView.targetUserId && isSandboxDemoUserId(portalView.targetUserId)
+      ? portalView.targetUserId
+      : null
+  const omPolicyNavContext = omCalendarPolicyNavContext(viewAsDemoUserId, managedByOfficeManager)
   const managedSchedulingToolsEnabled =
     managedByOfficeManager &&
     (omCalendarPolicy.scheduling_tools === true || omCalendarPolicy.advanced_scheduling_tools === true)
@@ -199,8 +208,9 @@ function MainAppInner() {
   const portalTabs = useMemo(() => {
     let t = filterUserPortalTabsForManagedPaymentsPolicy(mergedTabs, portalConfig, managedByOfficeManager)
     t = filterPortalTabsForV2(t, portalConfig)
+    t = filterPortalTabsForOmCalendarPolicy(t, omCalendarPolicy, omPolicyNavContext)
     return t
-  }, [mergedTabs, portalConfig, managedByOfficeManager])
+  }, [mergedTabs, portalConfig, managedByOfficeManager, omCalendarPolicy, omPolicyNavContext])
   const estimateToolsOnlyPackage = portalConfig?.estimate_tools_only_package === true
   const separateBillingProfile = endUserHasSeparateBillingPortal(portalConfig, managedByOfficeManager)
   const paymentsTabAvailable = portalTabs.some((t) => t.tab_id === "payments")
@@ -239,7 +249,10 @@ function MainAppInner() {
 
   useEffect(() => {
     if (page === "operations" || page.startsWith("operations-")) {
-      if (!isPortalTabVisibleInV2("operations", portalConfig)) setPage("dashboard")
+      const hasOpsTab = portalTabs.some(
+        (t) => t.tab_id === "operations" || t.tab_id === "work_orders" || t.tab_id === "purchase_orders",
+      )
+      if (!hasOpsTab) setPage("dashboard")
       return
     }
     if (!isPortalTabVisibleInV2(page, portalConfig)) {
@@ -254,7 +267,7 @@ function MainAppInner() {
         setPage("dashboard")
       }
     }
-  }, [page, portalConfig, setPage])
+  }, [page, portalConfig, portalTabs, setPage])
 
   useEffect(() => {
     if (!supabase) {

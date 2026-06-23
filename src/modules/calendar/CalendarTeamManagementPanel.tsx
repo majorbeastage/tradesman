@@ -19,6 +19,7 @@ import {
 } from "../../lib/sandboxDemoTeamPolicies"
 import { loadOrganizationChartFromMetadata } from "../../lib/organizationChart"
 import { resolveTeamMemberDepartmentLabel } from "../../lib/orgChartDepartment"
+import { dispatchOmCalendarPolicyUpdated } from "../../lib/teamCalendarPolicy"
 import {
   buildDefaultSandboxDemoLocations,
   parseSandboxDemoLocations,
@@ -49,7 +50,6 @@ type UpcomingEventRow = {
 }
 
 type JobTypeNameRow = { user_id: string; name: string }
-type JobQualificationLevel = "not_qualified" | "qualified" | "preferred" | "required"
 
 type CardTab = "schedule" | "permissions"
 
@@ -96,7 +96,6 @@ function TeamUserCard({
   upcoming,
   jobTypeNames,
   rosterOptions,
-  removeJobQualification,
   cardTab,
   setCardTab,
 }: {
@@ -118,7 +117,6 @@ function TeamUserCard({
   upcoming: UpcomingEventRow[]
   jobTypeNames: string[]
   rosterOptions: { id: string; label: string }[]
-  removeJobQualification: (targetUserId: string, key: string) => void
   cardTab: CardTab
   setCardTab: (userId: string, tab: CardTab) => void
 }) {
@@ -137,10 +135,6 @@ function TeamUserCard({
     overflow: "hidden",
   }
   const listTitle: CSSProperties = { fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.04, marginBottom: 2 }
-  const [qualificationsOpen, setQualificationsOpen] = useState(false)
-  const [jobQualificationDraft, setJobQualificationDraft] = useState("")
-  const [jobQualificationLevel, setJobQualificationLevel] = useState<JobQualificationLevel>("qualified")
-  const qualificationPairs = Object.entries(policy.job_qualifications ?? {})
   const [upcomingWindow, setUpcomingWindow] = useState<"day" | "week" | "month">("week")
   const filteredUpcoming = useMemo(() => {
     const now = new Date()
@@ -506,71 +500,6 @@ function TeamUserCard({
                   </label>
                 </div>
               ) : null}
-
-              <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => setQualificationsOpen((v) => !v)}
-                  style={{ border: "none", background: "transparent", color: theme.text, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700 }}
-                >
-                  {qualificationsOpen ? "Hide" : "Select"} Job Qualifications
-                </button>
-                {qualificationsOpen ? (
-                  <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6 }}>
-                      <select value={jobQualificationDraft} onChange={(e) => setJobQualificationDraft(e.target.value)} style={{ ...theme.formInput, fontSize: 12 }}>
-                        <option value="">Select job type</option>
-                        {jobTypeNames.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                      <select value={jobQualificationLevel} onChange={(e) => setJobQualificationLevel(e.target.value as JobQualificationLevel)} style={{ ...theme.formInput, fontSize: 12 }}>
-                        <option value="not_qualified">Not - Qualified</option>
-                        <option value="qualified">Qualified</option>
-                        <option value="preferred">Preferred</option>
-                        <option value="required">Required</option>
-                      </select>
-                      <button
-                        type="button"
-                        disabled={!jobQualificationDraft || savingUserId === member.userId}
-                        onClick={() => {
-                          updatePermissionDraft(member.userId, {
-                            job_qualifications: {
-                              ...(policy.job_qualifications ?? {}),
-                              [jobQualificationDraft]: jobQualificationLevel,
-                            },
-                          })
-                          setJobQualificationDraft("")
-                          setJobQualificationLevel("qualified")
-                        }}
-                        style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
-                      >
-                        Add
-                      </button>
-                    </div>
-                    {qualificationPairs.length ? (
-                      <div style={{ display: "grid", gap: 4 }}>
-                        {qualificationPairs.map(([key, value]) => (
-                          <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${theme.border}`, borderRadius: 6, background: "#fff", padding: "6px 8px" }}>
-                            <span style={{ fontSize: 11, color: "#334155" }}>{key} - {String(value).replace("_", " ")}</span>
-                            <button
-                              type="button"
-                              onClick={() => void removeJobQualification(member.userId, key)}
-                              style={{ border: "none", background: "transparent", color: "#b91c1c", cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ fontSize: 11, color: "#94a3b8" }}>No job qualifications selected yet.</span>
-                    )}
-                  </div>
-                ) : null}
-              </div>
 
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
@@ -992,6 +921,7 @@ export default function CalendarTeamManagementPanel({
         return next
       })
       setMessage("Permissions saved.")
+      dispatchOmCalendarPolicyUpdated()
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1027,13 +957,6 @@ export default function CalendarTeamManagementPanel({
     } finally {
       setSavingUserId(null)
     }
-  }
-
-  function removeJobQualification(targetUserId: string, key: string) {
-    const current = permissionDraftByUserId[targetUserId] ?? savedPolicyForMember(targetUserId)
-    const next = { ...(current.job_qualifications ?? {}) }
-    delete next[key]
-    updatePermissionDraft(targetUserId, { job_qualifications: next })
   }
 
   const rosterOptions = useMemo(
@@ -1126,7 +1049,6 @@ export default function CalendarTeamManagementPanel({
               upcoming={upcomingByUser[member.userId] ?? []}
               jobTypeNames={jobTypesByUser[member.userId] ?? []}
               rosterOptions={rosterOptions}
-              removeJobQualification={removeJobQualification}
               cardTab={tab}
               setCardTab={setCardTab}
             />

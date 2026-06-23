@@ -73,6 +73,7 @@ export default function DocumentPdfViewerModal({
                   borderRadius: 8,
                   border: `1px solid ${theme.border}`,
                   background: "#fff",
+                  color: theme.text,
                   fontWeight: 700,
                   fontSize: 12,
                   cursor: "pointer",

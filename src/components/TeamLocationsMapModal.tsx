@@ -140,59 +140,47 @@ export default function TeamLocationsMapModal({
         else end.setFullYear(end.getFullYear() + 2)
         const nowIso = now.toISOString()
         const endIso = jobTimeWindow === "all" ? null : end.toISOString()
-        const jobSelect = `
-          id,
-          user_id,
-          title,
-          start_at,
-          customer_id,
-          metadata,
-          customers (
-            display_name,
-            service_address,
-            service_lat,
-            service_lng
-          )
+
+        async function fetchJobs(select: string, withStatusFilters: boolean) {
+          let q = supabase!
+            .from("calendar_events")
+            .select(select)
+            .in("user_id", orgUserIdsForJobs)
+            .gte("start_at", nowIso)
+            .lte("start_at", endIso ?? "9999-12-31T23:59:59.999Z")
+            .order("start_at", { ascending: true })
+            .limit(120)
+          if (withStatusFilters) q = q.is("removed_at", null).is("completed_at", null)
+          return q
+        }
+
+        const jobSelectFull = `
+          id, user_id, title, start_at, customer_id, metadata,
+          customers ( display_name, service_address, service_lat, service_lng )
         `
-        const jobSelectFallback = `
-          id,
-          user_id,
-          title,
-          start_at,
-          customer_id,
-          metadata,
-          customers (
-            display_name
-          )
+        const jobSelectBasic = `
+          id, user_id, title, start_at, customer_id, metadata,
+          customers ( display_name, service_address )
         `
-        const jrPrimary = await supabase
-          .from("calendar_events")
-          .select(jobSelect)
-          .in("user_id", orgUserIdsForJobs)
-          .is("removed_at", null)
-          .is("completed_at", null)
-          .gte("start_at", nowIso)
-          .lte("start_at", endIso ?? "9999-12-31T23:59:59.999Z")
-          .order("start_at", { ascending: true })
-          .limit(120)
-        const jr =
-          jrPrimary.error && String(jrPrimary.error.message || "").toLowerCase().includes("service_")
-            ? await supabase
-                .from("calendar_events")
-                .select(jobSelectFallback)
-                .in("user_id", orgUserIdsForJobs)
-                .is("removed_at", null)
-                .is("completed_at", null)
-                .gte("start_at", nowIso)
-                .lte("start_at", endIso ?? "9999-12-31T23:59:59.999Z")
-                .order("start_at", { ascending: true })
-                .limit(120)
-            : jrPrimary
-        if (!cancelled && !jr.error && jr.data) {
-          jobRows = (jr.data as CalendarJobRow[]).map((row) => ({
-            ...row,
-            customers: normalizeCustomerJoin(row.customers),
-          }))
+        const jobSelectMinimal = `id, user_id, title, start_at, customer_id, metadata`
+
+        const attempts: Array<{ select: string; status: boolean }> = [
+          { select: jobSelectFull, status: true },
+          { select: jobSelectBasic, status: true },
+          { select: jobSelectMinimal, status: true },
+          { select: jobSelectMinimal, status: false },
+        ]
+
+        for (const attempt of attempts) {
+          const jr = await fetchJobs(attempt.select, attempt.status)
+          if (cancelled) break
+          if (!jr.error && jr.data) {
+            jobRows = (jr.data as unknown as CalendarJobRow[]).map((row) => ({
+              ...row,
+              customers: normalizeCustomerJoin(row.customers),
+            }))
+            break
+          }
         }
       }
 

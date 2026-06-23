@@ -18,8 +18,7 @@ import {
 import CalendarEventViewModal, { type CalendarEventLinkedDoc } from "../../components/CalendarEventViewModal"
 import DocumentPdfViewerModal from "../../components/DocumentPdfViewerModal"
 import { calendarEventAssigneeUserId } from "../../lib/calendarAssignee"
-import { DEFAULT_SANDBOX_DEMO_TEAM, sandboxDemoMemberById } from "../../lib/sandboxDemoTeam"
-import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
+import { DEFAULT_SANDBOX_DEMO_TEAM, sandboxDemoMemberById, parseSandboxDemoTeam, filterRealUserIds, isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
 import { loadCustomerProfileBundle, type CustomerProfileBundle } from "../../lib/customerProfileData"
 import { formatAppError } from "../../lib/formatAppError"
@@ -45,6 +44,7 @@ import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { loadAccountWorkflowBundleFromMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
 import { CustomerWorkflowStatusPanel } from "../../components/CustomerWorkflowStatusPanel"
+import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 
 type Props = {
@@ -273,6 +273,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
     preparedAtLabel: string | null
     revokeOnClose: boolean
   } | null>(null)
+  const [assigneeLabelById, setAssigneeLabelById] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -284,11 +285,43 @@ export default function CustomerProfilePage({ setPage }: Props) {
         supabase.from("profiles").select("metadata").eq("id", user?.id ?? userId).maybeSingle(),
       ])
       setBundle(data)
+      const profMeta = profRes.data?.metadata
       if (viewAsDemoId) {
-        setProfileMetadata({ om_calendar_policy: resolveDemoTeamPolicyFromOwnerMetadata(profRes.data?.metadata, viewAsDemoId) })
+        setProfileMetadata({ om_calendar_policy: resolveDemoTeamPolicyFromOwnerMetadata(profMeta, viewAsDemoId) })
       } else {
-        setProfileMetadata(profRes.data?.metadata ?? null)
+        setProfileMetadata(profMeta ?? null)
       }
+
+      const labelMap: Record<string, string> = {}
+      for (const m of parseSandboxDemoTeam(
+        profMeta && typeof profMeta === "object" && !Array.isArray(profMeta)
+          ? (profMeta as Record<string, unknown>).sandbox_demo_team
+          : null,
+      )) {
+        if (m.id && m.label?.trim()) labelMap[m.id] = m.label.trim()
+      }
+      for (const m of DEFAULT_SANDBOX_DEMO_TEAM) {
+        if (m.id && m.label?.trim()) labelMap[m.id] = m.label.trim()
+      }
+      const assigneeIds = filterRealUserIds(
+        (data?.calendarEvents ?? [])
+          .map((ev) => calendarEventAssigneeUserId(ev))
+          .filter(Boolean),
+      )
+      if (assigneeIds.length > 0) {
+        const { data: profRows } = await supabase
+          .from("profiles")
+          .select("id, display_name, email")
+          .in("id", assigneeIds)
+        for (const row of profRows ?? []) {
+          const id = String((row as { id?: string }).id ?? "")
+          const dn = (row as { display_name?: string | null }).display_name
+          const em = (row as { email?: string | null }).email
+          const label = (typeof dn === "string" && dn.trim()) || (typeof em === "string" && em.trim()) || ""
+          if (id && label) labelMap[id] = label
+        }
+      }
+      setAssigneeLabelById(labelMap)
     } catch (e: unknown) {
       setErr(formatAppError(e))
       setBundle(null)
@@ -315,9 +348,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
   function assigneeLabelForEvent(ev: CalendarEventProfileRow): string {
     const assigneeId = calendarEventAssigneeUserId(ev)
     if (!assigneeId) return "Unassigned"
+    const cached = assigneeLabelById[assigneeId]
+    if (cached?.trim()) return cached.trim()
     const demo = sandboxDemoMemberById(DEFAULT_SANDBOX_DEMO_TEAM, assigneeId)
     if (demo?.label) return demo.label
-    return assigneeId.slice(0, 8) + "…"
+    return "Team member"
   }
 
   function linkedDocsForEvent(ev: CalendarEventProfileRow): CalendarEventLinkedDoc[] {
@@ -367,8 +402,17 @@ export default function CustomerProfilePage({ setPage }: Props) {
       ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata)
         ? (ev.metadata as Record<string, unknown>)
         : {}
+    const scheduled =
+      typeof meta.scheduled_scope_of_work === "string" ? meta.scheduled_scope_of_work.trim() : ""
+    if (scheduled) return scheduled
     const fromMeta = typeof meta.scope_of_work === "string" ? meta.scope_of_work.trim() : ""
     if (fromMeta) return fromMeta
+    if (ev.quote_id && bundle?.quoteScopeByQuoteId[ev.quote_id]) {
+      const q = bundle.quotes.find((row) => row.id === ev.quote_id)
+      const title = formatDisplayText(q?.title, "")
+      const lines = bundle.quoteScopeByQuoteId[ev.quote_id]
+      return title ? `${title}\n\n${lines}` : lines
+    }
     if (ev.quote_id && bundle) {
       const q = bundle.quotes.find((row) => row.id === ev.quote_id)
       const title = formatDisplayText(q?.title, "")
@@ -378,6 +422,13 @@ export default function CustomerProfilePage({ setPage }: Props) {
   }
 
   function materialsForEvent(ev: CalendarEventProfileRow): string | null {
+    const meta =
+      ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata)
+        ? (ev.metadata as Record<string, unknown>)
+        : {}
+    const scheduled =
+      typeof meta.scheduled_materials_list === "string" ? meta.scheduled_materials_list.trim() : ""
+    if (scheduled) return scheduled
     return ev.materials_list?.trim() || ev.job_type_materials_list?.trim() || null
   }
 
@@ -685,6 +736,10 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const workflowSnapshot =
     profileMetadata != null
       ? loadCustomerWorkflowSnapshotFromProfile(profileMetadata, quoteForWorkflow?.id ?? null, quoteWorkflowState)
+      : null
+  const inferredWorkflow =
+    bundle && workflowBundle
+      ? inferCustomerWorkflowStep(workflowBundle.workflow, bundle, workflowSnapshot)
       : null
   const selfOmPolicy = parseOmCalendarPolicy(profileMetadata)
   const allowWorkflowBypass = selfOmPolicy.allow_bypass_workflow_approval === true
@@ -1070,11 +1125,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
             onUpdated={() => void reload()}
           />
 
-          {workflowBundle ? (
+          {workflowBundle && inferredWorkflow ? (
             <div style={{ marginBottom: 16 }}>
               <CustomerWorkflowStatusPanel
                 workflow={workflowBundle.workflow}
-                snapshot={workflowSnapshot}
+                inferred={inferredWorkflow}
                 allowBypass={allowWorkflowBypass}
                 onOpenWorkflow={() => setPage("business-workflow")}
               />

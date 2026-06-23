@@ -6,6 +6,11 @@ import CalendarTeamManagementPanel from "../calendar/CalendarTeamManagementPanel
 import { theme } from "../../styles/theme"
 import { useLocale } from "../../i18n/LocaleContext"
 import { useAuth } from "../../contexts/AuthContext"
+import { usePortalViewOptional } from "../../contexts/PortalViewContext"
+import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
+import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
+import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
+import { omCalendarPolicyNavContext, operationsSubModuleAllowedByPolicy } from "../../lib/teamCalendarPolicy"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
@@ -31,6 +36,14 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
   const { t } = useLocale()
   const { portalConfig, user, role } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
+  const managedByOfficeManager = useManagedByOfficeManager()
+  const omCalendarPolicy = useManagedOmCalendarPolicy()
+  const portalView = usePortalViewOptional()
+  const viewAsDemoUserId =
+    portalView?.showViewBar && portalView.targetUserId && isSandboxDemoUserId(portalView.targetUserId)
+      ? portalView.targetUserId
+      : null
+  const omPolicyNavContext = omCalendarPolicyNavContext(viewAsDemoUserId, managedByOfficeManager)
   const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(role)
   const authUserId = user?.id ?? null
 
@@ -40,9 +53,10 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
       if (id === "team_management") {
         return isOfficeManagerOrAdmin && operationsSubModuleEnabled(id, portalConfig)
       }
-      return operationsSubModuleEnabled(id, portalConfig)
+      if (!operationsSubModuleEnabled(id, portalConfig)) return false
+      return operationsSubModuleAllowedByPolicy(id, omCalendarPolicy, omPolicyNavContext)
     })
-  }, [portalConfig, isOfficeManagerOrAdmin])
+  }, [portalConfig, isOfficeManagerOrAdmin, omCalendarPolicy, omPolicyNavContext])
 
   const [tab, setTab] = useState<OperationsSubModuleId>(() =>
     enabledTabs.includes(initialTab) ? initialTab : enabledTabs[0] ?? "work_orders",

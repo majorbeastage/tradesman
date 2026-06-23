@@ -5,7 +5,7 @@ import { usePortalViewOptional } from "../contexts/PortalViewContext"
 import { useManagedByOfficeManager } from "./useManagedByOfficeManager"
 import { isSandboxDemoUserId } from "../lib/sandboxDemoTeam"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../lib/sandboxDemoTeamPolicies"
-import { parseOmCalendarPolicy, type OmCalendarPolicyV1 } from "../lib/teamCalendarPolicy"
+import { parseOmCalendarPolicy, OM_CALENDAR_POLICY_UPDATED_EVENT, type OmCalendarPolicyV1 } from "../lib/teamCalendarPolicy"
 
 /** Managed user's `profiles.metadata.om_calendar_policy` (same source as Calendar tab). */
 export function useManagedOmCalendarPolicy(): OmCalendarPolicyV1 {
@@ -15,6 +15,13 @@ export function useManagedOmCalendarPolicy(): OmCalendarPolicyV1 {
   const viewAsDemoId =
     portalView?.showViewBar && isSandboxDemoUserId(portalView.targetUserId) ? portalView.targetUserId : null
   const [policy, setPolicy] = useState(() => parseOmCalendarPolicy({}))
+  const [policyRevision, setPolicyRevision] = useState(0)
+
+  useEffect(() => {
+    const bump = () => setPolicyRevision((n) => n + 1)
+    window.addEventListener(OM_CALENDAR_POLICY_UPDATED_EVENT, bump)
+    return () => window.removeEventListener(OM_CALENDAR_POLICY_UPDATED_EVENT, bump)
+  }, [])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -53,7 +60,7 @@ export function useManagedOmCalendarPolicy(): OmCalendarPolicyV1 {
     return () => {
       cancelled = true
     }
-  }, [managedByOfficeManager, userId, supabase, viewAsDemoId])
+  }, [managedByOfficeManager, userId, supabase, viewAsDemoId, policyRevision])
 
   return policy
 }

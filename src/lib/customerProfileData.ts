@@ -97,6 +97,8 @@ export type CustomerProfileBundle = {
   workOrders: WorkOrderRecord[]
   purchaseOrders: PurchaseOrderRecord[]
   invoices: PaymentRequestRow[]
+  /** Line-item text captured when the estimate was scheduled (scope of work preview). */
+  quoteScopeByQuoteId: Record<string, string>
 }
 
 const CUSTOMER_SELECT_FULL = `
@@ -397,6 +399,14 @@ export async function loadCustomerProfileBundle(
   })
   const invoices = (invoicesRes as PaymentRequestRow[]).filter((r) => r.customer_id === customerId)
 
+  const quoteScopeByQuoteId: Record<string, string> = {}
+  for (const [qid, items] of quoteItemsById.entries()) {
+    const lines = items
+      .map((item) => (typeof item.description === "string" ? item.description.trim() : ""))
+      .filter(Boolean)
+    if (lines.length) quoteScopeByQuoteId[qid] = lines.join("\n")
+  }
+
   return {
     customer: row,
     contactLine: formatCustomerContactLine(row.customer_identifiers),
@@ -415,5 +425,6 @@ export async function loadCustomerProfileBundle(
     workOrders,
     purchaseOrders,
     invoices,
+    quoteScopeByQuoteId,
   }
 }

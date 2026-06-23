@@ -1,11 +1,10 @@
 import { theme } from "../styles/theme"
 import type { BusinessWorkflowDoc } from "../lib/businessWorkflow"
-import type { CustomerWorkflowSnapshot } from "../lib/customerWorkflowRouting"
-import { workflowProgressLabel } from "../lib/customerWorkflowRouting"
+import type { InferredCustomerWorkflowStep } from "../lib/inferCustomerWorkflowStep"
 
 type Props = {
   workflow: BusinessWorkflowDoc
-  snapshot: CustomerWorkflowSnapshot | null
+  inferred: InferredCustomerWorkflowStep
   onOpenWorkflow?: () => void
   allowBypass?: boolean
   onBypassStep?: () => void
@@ -14,14 +13,15 @@ type Props = {
 
 export function CustomerWorkflowStatusPanel({
   workflow,
-  snapshot,
+  inferred,
   onOpenWorkflow,
   allowBypass,
   onBypassStep,
   bypassBusy,
 }: Props) {
-  const nodes = workflow.nodes
-  const activeId = snapshot?.activeNodeId
+  const currentNode = inferred.currentNodeId
+    ? workflow.nodes.find((n) => n.id === inferred.currentNodeId) ?? null
+    : null
 
   return (
     <div
@@ -29,15 +29,20 @@ export function CustomerWorkflowStatusPanel({
         padding: 14,
         borderRadius: 10,
         border: `1px solid ${theme.border}`,
-        background: "linear-gradient(180deg, #f8fafc 0%, #fff 100%)",
+        background: "linear-gradient(180deg, #fff7ed 0%, #fff 48%)",
         display: "grid",
-        gap: 10,
+        gap: 12,
       }}
     >
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: theme.text }}>Workflow position</div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, lineHeight: 1.45 }}>{workflowProgressLabel(snapshot)}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#9a3412", textTransform: "uppercase", letterSpacing: 0.04 }}>
+            Current job status
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: theme.text, marginTop: 6, lineHeight: 1.3 }}>
+            {inferred.currentNodeLabel ?? "Status pending"}
+          </div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>{inferred.reason}</div>
         </div>
         {onOpenWorkflow ? (
           <button
@@ -59,39 +64,29 @@ export function CustomerWorkflowStatusPanel({
         ) : null}
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        {nodes.slice(0, 12).map((node) => {
-          const completed = snapshot?.completedNodeIds.includes(node.id)
-          const active = node.id === activeId
-          const pending = snapshot?.pendingNodeIds.includes(node.id)
-          const bg = completed ? "#dcfce7" : active ? "#ffedd5" : pending ? "#e0f2fe" : "#f1f5f9"
-          const border = active ? theme.primary : completed ? "#86efac" : theme.border
-          return (
-            <span
-              key={node.id}
-              title={node.label}
-              style={{
-                fontSize: 11,
-                fontWeight: active ? 800 : 600,
-                padding: "4px 8px",
-                borderRadius: 999,
-                border: `1px solid ${border}`,
-                background: bg,
-                color: theme.text,
-                maxWidth: 160,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {completed ? "✓ " : active ? "● " : ""}
-              {node.label}
-            </span>
-          )
-        })}
-      </div>
+      {currentNode ? (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `2px solid ${theme.primary}`,
+            background: "#fff",
+            fontSize: 13,
+            fontWeight: 700,
+            color: theme.text,
+          }}
+        >
+          Active step: {currentNode.label}
+        </div>
+      ) : null}
 
-      {allowBypass && activeId && onBypassStep ? (
+      {inferred.completedNodeIds.length > 0 ? (
+        <div style={{ fontSize: 11, color: "#64748b" }}>
+          {inferred.completedNodeIds.length} earlier step{inferred.completedNodeIds.length === 1 ? "" : "s"} completed
+        </div>
+      ) : null}
+
+      {allowBypass && inferred.currentNodeId && onBypassStep ? (
         <button
           type="button"
           disabled={bypassBusy}

@@ -55,13 +55,18 @@ function buildCalRows(
   mileageMiles: number | null,
   contactTarget: string,
   assignee: Pick<CalendarAssigneeResolution, "assignedDemoUserId" | "assignedUserId">,
+  scheduledScopeOfWork: string | null,
 ): Array<Record<string, unknown>> {
   return ranges.map(({ s, e }) => {
     const row: Record<string, unknown> = {
       ...rowBase,
       start_at: s.toISOString(),
       end_at: e.toISOString(),
-      metadata: mergeCalendarAssigneeMetadata(null, assignee, { contact_target: contactTarget }),
+      metadata: mergeCalendarAssigneeMetadata(null, assignee, {
+        contact_target: contactTarget,
+        ...(scheduledScopeOfWork?.trim() ? { scheduled_scope_of_work: scheduledScopeOfWork.trim() } : {}),
+        ...(materialsCombined?.trim() ? { scheduled_materials_list: materialsCombined.trim() } : {}),
+      }),
     }
     if (materialsCombined) row.materials_list = materialsCombined
     if (mileageMiles != null) row.mileage_miles = mileageMiles
@@ -151,6 +156,8 @@ export async function scheduleEstimateOnCalendar(
     quoteMaterialsBlock.trim() ? quoteMaterialsBlock : null,
     materialsFromJobType,
   )
+  const scopeTitle = input.title.trim()
+  const scheduledScopeOfWork = [scopeTitle, quoteMaterialsBlock.trim()].filter(Boolean).join("\n\n") || null
 
   const rowBase: Record<string, unknown> = {
     user_id: targetUserId,
@@ -181,6 +188,7 @@ export async function scheduleEstimateOnCalendar(
       incMile && jtRow?.track_mileage ? input.mileageMiles : null,
       input.contactTarget,
       assignee,
+      scheduledScopeOfWork,
     )
     const r = await input.supabase.from("calendar_events").insert(rows).select("id")
     if (!r.error) {

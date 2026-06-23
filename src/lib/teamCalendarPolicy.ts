@@ -142,3 +142,71 @@ export function mergeTeamRibbonColors(metadata: unknown, userId: string, hex: st
   base.team_calendar_colors = colors
   return base
 }
+
+export const OM_CALENDAR_POLICY_UPDATED_EVENT = "om-calendar-policy-updated"
+
+export function dispatchOmCalendarPolicyUpdated(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(OM_CALENDAR_POLICY_UPDATED_EVENT))
+}
+
+/** When team-management view-as or managed-user restrictions apply to sidebar navigation. */
+export type OmCalendarPolicyNavContext = "view_as_demo" | "managed_user" | "none"
+
+export function omCalendarPolicyNavContext(
+  viewAsDemoUserId: string | null | undefined,
+  managedByOfficeManager: boolean,
+): OmCalendarPolicyNavContext {
+  if (viewAsDemoUserId?.trim()) return "view_as_demo"
+  if (managedByOfficeManager) return "managed_user"
+  return "none"
+}
+
+export type PortalNavTabLite = { tab_id: string; label: string | null }
+
+const OPERATIONS_TAB_IDS = new Set(["operations", "work_orders", "purchase_orders", "parts_inventory"])
+
+/**
+ * Apply per-user team permissions to sidebar tabs (view-as demo persona or managed contractor).
+ * Account owners testing without view-as are unchanged (`context === "none"`).
+ */
+export function filterPortalTabsForOmCalendarPolicy(
+  tabs: PortalNavTabLite[],
+  policy: OmCalendarPolicyV1,
+  context: OmCalendarPolicyNavContext,
+): PortalNavTabLite[] {
+  if (context === "none") return tabs
+  let out = tabs.filter((t) => {
+    const id = t.tab_id
+    if (OPERATIONS_TAB_IDS.has(id)) return policy.allow_operations_tab === true
+    if (id === "quotes") return policy.allow_estimates_tool === true
+    if (id === "payments") return policy.allow_invoices_tool === true
+    return true
+  })
+  if (policy.allow_operations_tab && !out.some((t) => OPERATIONS_TAB_IDS.has(t.tab_id))) {
+    out = [...out, { tab_id: "operations", label: "Operations" }]
+  }
+  if (policy.allow_estimates_tool && !out.some((t) => t.tab_id === "quotes")) {
+    out = [...out, { tab_id: "quotes", label: "Estimates" }]
+  }
+  if (policy.allow_invoices_tool && !out.some((t) => t.tab_id === "payments")) {
+    out = [...out, { tab_id: "payments", label: "Payments" }]
+  }
+  return out
+}
+
+/** Whether an Operations sub-tool is enabled for the current team-permission context. */
+export function operationsSubModuleAllowedByPolicy(
+  sub: "work_orders" | "purchase_orders" | "invoicing" | "inventory" | "team_management",
+  policy: OmCalendarPolicyV1,
+  context: OmCalendarPolicyNavContext,
+): boolean {
+  if (context === "none") return true
+  if (sub === "team_management") return true
+  if (!policy.allow_operations_tab) return false
+  if (sub === "work_orders") return policy.allow_work_orders_tool === true
+  if (sub === "purchase_orders") return policy.allow_purchase_orders_tool === true
+  if (sub === "invoicing") return policy.allow_invoices_tool === true
+  if (sub === "inventory") return policy.allow_inventory_tool === true
+  return false
+}
