@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
+import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { supabase } from "../../lib/supabase"
@@ -10,7 +11,11 @@ import {
   queueCustomReceiptCustomerPrefill,
   queueQuotesCustomerPrefill,
   queueSchedulingCustomerPrefill,
+  queueSchedulingEventView,
 } from "../../lib/workflowNavigation"
+import CalendarEventViewModal from "../../components/CalendarEventViewModal"
+import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
+import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
 import { loadCustomerProfileBundle, type CustomerProfileBundle } from "../../lib/customerProfileData"
 import { formatAppError } from "../../lib/formatAppError"
 import { formatDisplayText } from "../../lib/formatDisplayText"
@@ -19,7 +24,7 @@ import CustomerContactSplitMergeModal from "../../components/CustomerContactSpli
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { estimateDisplayStatus, formatUsdAmount, receiptDisplayStatus } from "../../lib/customerDocumentStatus"
-import { calendarEventDisplayStatus, openCalendarEventSummaryPdf } from "../../lib/calendarEventProfile"
+import { calendarEventDisplayStatus, openCalendarEventSummaryPdf, type CalendarEventProfileRow } from "../../lib/calendarEventProfile"
 import { openEstimatePdfInBrowser } from "../../lib/estimatePdfExport"
 import {
   buildCustomReceiptPdfBytes,
@@ -224,6 +229,9 @@ function formatFetchApiError(response: Response, raw: string): string {
 
 export default function CustomerProfilePage({ setPage }: Props) {
   const { user, session } = useAuth()
+  const portalView = usePortalViewOptional()
+  const viewAsDemoId =
+    portalView?.showViewBar && isSandboxDemoUserId(portalView.targetUserId) ? portalView.targetUserId : null
   const userId = useScopedUserId() ?? user?.id ?? null
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const isMobile = useIsMobile()
@@ -251,6 +259,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
   const [profileMetadata, setProfileMetadata] = useState<unknown>(null)
+  const [eventView, setEventView] = useState<CalendarEventProfileRow | null>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -259,17 +268,21 @@ export default function CustomerProfilePage({ setPage }: Props) {
     try {
       const [data, profRes] = await Promise.all([
         loadCustomerProfileBundle(supabase, userId, customerId),
-        supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
+        supabase.from("profiles").select("metadata").eq("id", user?.id ?? userId).maybeSingle(),
       ])
       setBundle(data)
-      setProfileMetadata(profRes.data?.metadata ?? null)
+      if (viewAsDemoId) {
+        setProfileMetadata({ om_calendar_policy: resolveDemoTeamPolicyFromOwnerMetadata(profRes.data?.metadata, viewAsDemoId) })
+      } else {
+        setProfileMetadata(profRes.data?.metadata ?? null)
+      }
     } catch (e: unknown) {
       setErr(formatAppError(e))
       setBundle(null)
     } finally {
       setLoading(false)
     }
-  }, [userId, customerId])
+  }, [userId, customerId, user?.id, viewAsDemoId])
 
   useEffect(() => {
     void reload()
@@ -971,30 +984,41 @@ export default function CustomerProfilePage({ setPage }: Props) {
                   title: `Estimate · ${formatDisplayText(q.title, q.id.slice(0, 8))}`,
                   meta: `${estimateDisplayStatus(q.status, q.metadata)} · ${formatUsdAmount(q.total) ?? "—"} · ${formatWhen(q.updated_at ?? q.created_at)}`,
                   body: `Document ID: EST-${q.id.slice(0, 8).toUpperCase()}`,
+                  onClick: () => {
+                    queueQuotesCustomerPrefill(c.id)
+                    setPage("quotes")
+                  },
                 })),
                 ...bundle.workOrders.map((w) => ({
                   key: `wo-${w.id}`,
                   title: `Work order · ${w.work_order_number}`,
                   meta: `${w.status} · ${formatWhen(w.updated_at)}`,
                   body: w.estimate_title,
+                  onClick: () => setPage("operations-work_orders"),
                 })),
                 ...bundle.purchaseOrders.map((p) => ({
                   key: `po-${p.id}`,
                   title: `Purchase order · ${p.po_number}`,
                   meta: `${p.status} · ${formatWhen(p.updated_at)}`,
                   body: p.description,
+                  onClick: () => setPage("operations-purchase_orders"),
                 })),
                 ...bundle.invoices.map((inv) => ({
                   key: `inv-${inv.id}`,
                   title: `Invoice / payment · ${formatUsdAmount(inv.amount) ?? "—"}`,
                   meta: `${inv.status} · ${formatWhen(inv.created_at)}`,
                   body: inv.description,
+                  onClick: () => setPage("payments"),
                 })),
                 ...bundle.receipts.map((r) => ({
                   key: `rcpt-${r.id}`,
                   title: `Receipt · ${formatDisplayText(r.job_title, "Custom receipt")}`,
                   meta: receiptDisplayStatus(r),
                   body: `Document ID: RCPT-${r.id.slice(0, 8).toUpperCase()}`,
+                  onClick: () => {
+                    queueCustomReceiptCustomerPrefill(c.id)
+                    setPage("calendar")
+                  },
                 })),
               ].slice(0, 40)}
             />
@@ -1023,15 +1047,19 @@ export default function CustomerProfilePage({ setPage }: Props) {
                     title: formatDisplayText(ev.title, "Untitled job"),
                     meta: metaParts.join(" · "),
                     body: formatDisplayText(ev.notes, ""),
+                    onClick: () => setEventView(ev),
                     actions: (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                        <MiniBtn
-                          label="Calendar"
-                          onClick={() => {
-                            queueSchedulingCustomerPrefill(c.id)
-                            setPage("calendar")
-                          }}
-                        />
+                        <MiniBtn label="View details" onClick={() => setEventView(ev)} />
+                        {(status === "Upcoming" || status === "Recurring") ? (
+                          <MiniBtn
+                            label="Edit in Scheduling"
+                            onClick={() => {
+                              queueSchedulingEventView(ev.id)
+                              setPage("calendar")
+                            }}
+                          />
+                        ) : null}
                         {status === "Complete" ? (
                           <MiniBtn
                             label={pdfBusyId === `ev-${ev.id}` ? "Opening PDF…" : "View PDF summary"}
@@ -1265,6 +1293,34 @@ export default function CustomerProfilePage({ setPage }: Props) {
           </CollapsibleProfileSection>
         </>
       ) : null}
+
+      {eventView ? (
+        <CalendarEventViewModal
+          event={eventView}
+          onClose={() => setEventView(null)}
+          onEditInCalendar={
+            calendarEventDisplayStatus(eventView) === "Upcoming" ||
+            calendarEventDisplayStatus(eventView) === "Recurring"
+              ? () => {
+                  queueSchedulingEventView(eventView.id)
+                  setEventView(null)
+                  setPage("calendar")
+                }
+              : undefined
+          }
+          onViewPdf={
+            eventView.completed_at
+              ? () => {
+                  const ev = bundle?.calendarEvents.find((e) => e.id === eventView.id) ?? eventView
+                  void openCalendarEventSummaryPdf(supabase!, userId!, ev).catch((e: unknown) =>
+                    alert(formatAppError(e)),
+                  )
+                }
+              : undefined
+          }
+          pdfBusy={pdfBusyId === `ev-${eventView.id}`}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1298,16 +1354,45 @@ function Empty({ text }: { text: string }) {
 function Timeline({
   rows,
 }: {
-  rows: { key: string; title: string; meta: string; body: string; actions?: ReactNode }[]
+  rows: { key: string; title: string; meta: string; body: string; actions?: ReactNode; onClick?: () => void }[]
 }) {
   return (
     <div style={{ display: "grid", gap: 10 }}>
       {rows.map((row) => (
-        <div key={row.key} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+        <div
+          key={row.key}
+          role={row.onClick ? "button" : undefined}
+          tabIndex={row.onClick ? 0 : undefined}
+          onClick={row.onClick}
+          onKeyDown={
+            row.onClick
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    row.onClick?.()
+                  }
+                }
+              : undefined
+          }
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: `1px solid ${theme.border}`,
+            background: "#f8fafc",
+            cursor: row.onClick ? "pointer" : "default",
+          }}
+        >
           <div style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>{row.title}</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{row.meta}</div>
           {row.body ? <div style={{ fontSize: 13, color: "#475569", marginTop: 6, whiteSpace: "pre-wrap" }}>{row.body}</div> : null}
-          {row.actions}
+          {row.actions ? (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {row.actions}
+            </div>
+          ) : null}
         </div>
       ))}
     </div>

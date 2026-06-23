@@ -3,6 +3,8 @@
 const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
 const CUSTOMER_SMS_FOCUS = "tradesman_assistant_focus_customer_sms"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
+const SCHEDULING_EVENT_VIEW = "tradesman_scheduling_view_event_id_v1"
+export const SCHEDULING_EVENT_VIEW_EVENT = "tradesman-scheduling-event-view"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
 const CUSTOM_RECEIPT_PREFILL = "tradesman_custom_receipt_prefill_customer_id"
 const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
@@ -110,6 +112,31 @@ export function queueSchedulingCustomerPrefill(customerId: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Open an existing calendar event in Scheduling (view / edit), not the add-event wizard. */
+export function queueSchedulingEventView(eventId: string): void {
+  if (!eventId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(SCHEDULING_EVENT_VIEW, eventId.trim())
+    window.dispatchEvent(new CustomEvent(SCHEDULING_EVENT_VIEW_EVENT))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeSchedulingEventView(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(SCHEDULING_EVENT_VIEW) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(SCHEDULING_EVENT_VIEW)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 export function consumeSchedulingCustomerPrefill(): string | null {

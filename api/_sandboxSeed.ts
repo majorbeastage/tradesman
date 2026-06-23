@@ -28,6 +28,9 @@ export { simulateSandboxOutboundEmail, simulateSandboxOutboundSms } from "./_san
 export const SANDBOX_ZIP = "99901"
 export const SANDBOX_CITY = "Tradesman Demo"
 export const SANDBOX_STATE = "TX"
+/** Approximate map center for seeded demo addresses (Dallas metro). */
+export const SANDBOX_BASE_LAT = 32.7767
+export const SANDBOX_BASE_LNG = -96.797
 export const SANDBOX_COMPANY = "Demo Plumbing Co."
 
 const SEED_CUSTOMERS: { name: string; phone: string; email: string; notes?: string }[] = [
@@ -420,15 +423,22 @@ export async function seedSandboxWorkspace(
   for (const row of SEED_CUSTOMERS) {
     const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, row.phone)
     customerIds.push(customerId)
+    const idx = customerIds.length - 1
+    const serviceAddress = `${row.name.split(" ").pop()} St, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`
+    const serviceLat = SANDBOX_BASE_LAT + idx * 0.012
+    const serviceLng = SANDBOX_BASE_LNG + idx * 0.018
     await supabase
       .from("customers")
       .update({
         display_name: row.name,
         notes: row.notes ?? null,
+        service_address: serviceAddress,
+        service_lat: serviceLat,
+        service_lng: serviceLng,
         metadata: {
           sandbox_seed: true,
           contact_separated: true,
-          service_address: `${row.name.split(" ").pop()} St, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`,
+          service_address: serviceAddress,
         },
         last_activity_at: hoursFromNow(-Math.floor(Math.random() * 72)),
       })

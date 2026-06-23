@@ -217,7 +217,18 @@ async function getUserIdFromBearer(
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   })
-  const { data: userData, error: userErr } = await userClient.auth.getUser(token)
+  let userData: Awaited<ReturnType<typeof userClient.auth.getUser>>["data"]
+  let userErr: Awaited<ReturnType<typeof userClient.auth.getUser>>["error"]
+  {
+    const r = await userClient.auth.getUser()
+    userData = r.data
+    userErr = r.error
+  }
+  if ((userErr || !userData.user) && token) {
+    const r2 = await userClient.auth.getUser(token)
+    userData = r2.data
+    userErr = r2.error
+  }
   if (userErr || !userData.user) {
     res.status(401).json({ error: "Invalid session" })
     return null

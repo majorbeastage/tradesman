@@ -4,7 +4,7 @@ import { buildCalendarReceiptPdfSections } from "./receiptItemizedLines"
 import { buildReceiptPdfBytes } from "./documentPdf"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
 
-export type CalendarEventDisplayStatus = "Recurring" | "Upcoming" | "Complete" | "Cancelled"
+export type CalendarEventDisplayStatus = "Recurring" | "Upcoming" | "Complete" | "Cancelled" | "Past — no status"
 
 export type CalendarEventProfileRow = {
   id: string
@@ -31,10 +31,16 @@ export function calendarEventDisplayStatus(ev: {
   removed_at?: string | null
   completed_at?: string | null
   recurrence_series_id?: string | null
+  start_at?: string | null
+  end_at?: string | null
 }): CalendarEventDisplayStatus {
   if (ev.removed_at) return "Cancelled"
   if (ev.completed_at) return "Complete"
   if (ev.recurrence_series_id) return "Recurring"
+  const endMs = ev.end_at ? Date.parse(ev.end_at) : Number.NaN
+  const startMs = ev.start_at ? Date.parse(ev.start_at) : Number.NaN
+  const ref = Number.isFinite(endMs) ? endMs : startMs
+  if (Number.isFinite(ref) && ref < Date.now()) return "Past — no status"
   return "Upcoming"
 }
 

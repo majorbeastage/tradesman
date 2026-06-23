@@ -81,12 +81,15 @@ import {
   consumeOpenCustomReceiptModal,
   consumeSchedulingAddWizardPrefill,
   consumeSchedulingCustomerPrefill,
+  consumeSchedulingEventView,
   consumeSchedulingQuotePrefill,
   queueQuotesCustomerPrefill,
   notifyCustomersHubRefresh,
   SCHEDULING_ADD_WIZARD_PREFILL_EVENT,
+  SCHEDULING_EVENT_VIEW_EVENT,
   type SchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
+import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
 import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
 import {
   loadEntityAttachmentsForCalendarEvent,
@@ -375,6 +378,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addTargetUserId, setAddTargetUserId] = useState("")
   const [addAssignToSelectedUser, setAddAssignToSelectedUser] = useState(true)
   const [eventAssigneePick, setEventAssigneePick] = useState("")
+  const [assigneeSaveNote, setAssigneeSaveNote] = useState("")
   const [eventAssigneeSaving, setEventAssigneeSaving] = useState(false)
   const [showAllOrgEvents, setShowAllOrgEvents] = useState(() => {
     try { return localStorage.getItem("calendar_showAllOrgEvents") === "true" } catch { return false }
@@ -771,6 +775,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   useEffect(() => {
     if (!managedByOfficeManager || !supabase || !authUserId) return
+    const viewAsDemoId =
+      scopeCtx?.selectedUserId && isSandboxDemoUserId(scopeCtx.selectedUserId) ? scopeCtx.selectedUserId : null
     let cancelled = false
     void supabase
       .from("profiles")
@@ -779,12 +785,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
+        if (viewAsDemoId) {
+          setManagedSelfPolicy(resolveDemoTeamPolicyFromOwnerMetadata(data?.metadata, viewAsDemoId))
+          return
+        }
         setManagedSelfPolicy(parseOmCalendarPolicy(data?.metadata))
       })
     return () => {
       cancelled = true
     }
-  }, [managedByOfficeManager, supabase, authUserId])
+  }, [managedByOfficeManager, supabase, authUserId, scopeCtx?.selectedUserId])
 
   useEffect(() => {
     if (jobTypesPortalItems.length === 0) {
@@ -2353,23 +2363,50 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       })
   }, [orgClientIdsKey, supabase])
 
+  async function openCalendarEventById(eventId: string) {
+    if (!supabase || !eventId.trim()) return
+    setShowAddItem(false)
+    const select =
+      "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, completed_at, removed_at, customers ( display_name, service_address, service_lat, service_lng ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )"
+    const { data, error } = await supabase.from("calendar_events").select(select).eq("id", eventId.trim()).maybeSingle()
+    if (error || !data) {
+      sandboxTrainingAlert(sandboxTraining, error?.message || "Could not load this calendar event.")
+      return
+    }
+    const row = normalizeCalendarEventRow(data)
+    setSelectedEvent(row)
+    const start = new Date(row.start_at)
+    if (!Number.isNaN(start.getTime())) setCurrentDate(start)
+  }
+
   async function saveEventAssignee() {
     if (!supabase || !selectedEvent?.id || !eventAssigneePick.trim()) return
     setEventAssigneeSaving(true)
+    setAssigneeSaveNote("")
     try {
       const assignee = resolveCalendarAssigneeForSave(eventAssigneePick, authUserId || userId)
       const nextMeta = mergeCalendarAssigneeMetadata(selectedEvent.metadata, assignee.assignedDemoUserId)
-      const { error } = await supabase
+      const { data: updated, error } = await supabase
         .from("calendar_events")
         .update({ user_id: assignee.dbUserId, metadata: nextMeta, updated_at: new Date().toISOString() })
         .eq("id", selectedEvent.id)
+        .select("id, user_id, metadata")
+        .maybeSingle()
       if (error) {
         sandboxTrainingAlert(sandboxTraining, error.message)
         return
       }
-      setSelectedEvent((prev) =>
-        prev && prev.id === selectedEvent.id ? { ...prev, user_id: assignee.dbUserId, metadata: nextMeta } : prev,
+      if (!updated) {
+        sandboxTrainingAlert(sandboxTraining, "Assignee was not saved. Check that you can edit this event.")
+        return
+      }
+      const patched = { ...selectedEvent, user_id: assignee.dbUserId, metadata: nextMeta }
+      setSelectedEvent(patched)
+      setEvents((prev) =>
+        prev.map((e) => (e.id === selectedEvent.id ? { ...e, user_id: assignee.dbUserId, metadata: nextMeta } : e)),
       )
+      setEventAssigneePick(calendarEventAssigneeUserId(patched) || userId)
+      setAssigneeSaveNote("Assignee saved.")
       void loadEvents()
     } finally {
       setEventAssigneeSaving(false)
@@ -2687,6 +2724,18 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot queue from Customers tab
   }, [userId, supabase])
+
+  useEffect(() => {
+    if (!supabase) return
+    const openQueued = () => {
+      const eventId = consumeSchedulingEventView()
+      if (eventId) void openCalendarEventById(eventId)
+    }
+    openQueued()
+    window.addEventListener(SCHEDULING_EVENT_VIEW_EVENT, openQueued)
+    return () => window.removeEventListener(SCHEDULING_EVENT_VIEW_EVENT, openQueued)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open by queued id once
+  }, [supabase])
 
   useEffect(() => {
     if (!showAddItem || !supabase || !userId) {
@@ -4459,6 +4508,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   <span style={{ fontSize: 12, color: "#64748b" }}>
                     Currently: {calendarAssigneeLabel(selectedEvent, selectableUsers)}
                   </span>
+                  {assigneeSaveNote ? (
+                    <span style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>{assigneeSaveNote}</span>
+                  ) : null}
                 </div>
               ) : selectedEvent.user_id ? (
                 <p style={{ margin: 0 }}>

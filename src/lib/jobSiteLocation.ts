@@ -39,16 +39,47 @@ export function coordsFromCustomer(c: CustomerServiceLocation | null | undefined
   return { lat, lng }
 }
 
+function serviceAddressFromCustomerMetadata(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return ""
+  const m = metadata as Record<string, unknown>
+  const addr = typeof m.service_address === "string" ? m.service_address.trim() : ""
+  return addr
+}
+
+export function customerServiceAddressForMap(
+  customer: (CustomerServiceLocation & { metadata?: unknown }) | null | undefined,
+): string {
+  if (!customer) return ""
+  const col = typeof customer.service_address === "string" ? customer.service_address.trim() : ""
+  if (col) return col
+  return serviceAddressFromCustomerMetadata(customer.metadata)
+}
+
 /** Prefer event-specific coords, then customer service coords. */
 export function resolveJobMapCoords(args: {
   eventMetadata: unknown
-  customer: CustomerServiceLocation | null | undefined
+  customer: (CustomerServiceLocation & { metadata?: unknown }) | null | undefined
 }): { lat: number; lng: number; source: "event" | "customer" } | null {
   const fromMeta = parseJobSiteFromEventMetadata(args.eventMetadata)
   if (fromMeta.lat != null && fromMeta.lng != null) return { lat: fromMeta.lat, lng: fromMeta.lng, source: "event" }
   const fromCust = coordsFromCustomer(args.customer)
   if (fromCust) return { ...fromCust, source: "customer" }
   return null
+}
+
+/** Forward-geocode customer / event address when lat/lng are missing (map pins). */
+export async function resolveJobMapCoordsAsync(args: {
+  eventMetadata: unknown
+  customer: (CustomerServiceLocation & { metadata?: unknown }) | null | undefined
+}): Promise<{ lat: number; lng: number; source: "event" | "customer" | "geocoded" } | null> {
+  const direct = resolveJobMapCoords(args)
+  if (direct) return direct
+  const fromMeta = parseJobSiteFromEventMetadata(args.eventMetadata)
+  const addr = fromMeta.address || customerServiceAddressForMap(args.customer)
+  if (!addr) return null
+  const geo = await geocodeAddressToLatLng(addr)
+  if (!geo) return null
+  return { ...geo, source: "geocoded" }
 }
 
 export function mergeJobSiteIntoMetadata(

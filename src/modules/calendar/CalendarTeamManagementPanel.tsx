@@ -12,6 +12,14 @@ import {
 } from "../../lib/teamCalendarPolicy"
 import { filterRealUserIds, isSandboxDemoUserId, parseSandboxDemoTeam } from "../../lib/sandboxDemoTeam"
 import {
+  mergeSandboxDemoTeamPolicy,
+  metadataForDemoTeamPolicy,
+  parseSandboxDemoTeamPolicies,
+  SANDBOX_DEMO_TEAM_POLICIES_META_KEY,
+} from "../../lib/sandboxDemoTeamPolicies"
+import { loadOrganizationChartFromMetadata } from "../../lib/organizationChart"
+import { orgDepartmentForLinkedUser } from "../../lib/orgChartDepartment"
+import {
   buildDefaultSandboxDemoLocations,
   parseSandboxDemoLocations,
   SANDBOX_DEMO_LOCATIONS_META_KEY,
@@ -80,7 +88,10 @@ function TeamUserCard({
   savingUserId,
   setOmMeta,
   persistOmColorForMember,
-  persistManagedPolicy,
+  updatePermissionDraft,
+  savePermissionsForMember,
+  permissionsDirty,
+  departmentLabel,
   persistUserPref,
   upcoming,
   jobTypeNames,
@@ -99,12 +110,15 @@ function TeamUserCard({
   savingUserId: string | null
   setOmMeta: React.Dispatch<React.SetStateAction<Record<string, unknown>>>
   persistOmColorForMember: (memberUserId: string, hex: string) => Promise<void>
-  persistManagedPolicy: (targetUserId: string, patch: Partial<OmCalendarPolicyV1>) => Promise<void>
+  updatePermissionDraft: (targetUserId: string, patch: Partial<OmCalendarPolicyV1>) => void
+  savePermissionsForMember: (targetUserId: string) => Promise<void>
+  permissionsDirty: boolean
+  departmentLabel: string | null
   persistUserPref: (targetUserId: string, ribbon: string, autoAssign: boolean) => Promise<void>
   upcoming: UpcomingEventRow[]
   jobTypeNames: string[]
   rosterOptions: { id: string; label: string }[]
-  removeJobQualification: (targetUserId: string, key: string) => Promise<void>
+  removeJobQualification: (targetUserId: string, key: string) => void
   cardTab: CardTab
   setCardTab: (userId: string, tab: CardTab) => void
 }) {
@@ -362,7 +376,7 @@ function TeamUserCard({
                   type="checkbox"
                   checked={policy.allow_add_to_calendar !== false}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_add_to_calendar: e.target.checked })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_add_to_calendar: e.target.checked })}
                 />
                 Allow User to add items to Calendar
               </label>
@@ -372,7 +386,7 @@ function TeamUserCard({
                   type="checkbox"
                   checked={policy.allow_estimates_tool === true}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_estimates_tool: e.target.checked })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_estimates_tool: e.target.checked })}
                 />
                 Allow Estimate tool (Quotes tab)
               </label>
@@ -382,29 +396,24 @@ function TeamUserCard({
                   type="checkbox"
                   checked={policy.allow_variance_assignment === true}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_variance_assignment: e.target.checked })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_variance_assignment: e.target.checked })}
                 />
                 Allow assigning variances/reports to this team member
               </label>
 
-              <label style={{ fontSize: 12, color: theme.text, display: "grid", gap: 4 }}>
-                <span>Department (workflow routing label)</span>
-                <input
-                  type="text"
-                  value={policy.department_label ?? ""}
-                  disabled={savingUserId === member.userId}
-                  placeholder="e.g. Parts, Accounting, Field"
-                  onChange={(e) => void persistManagedPolicy(member.userId, { department_label: e.target.value.trim() || null })}
-                  style={{ ...theme.formInput, fontSize: 12 }}
-                />
-              </label>
+              <div style={{ fontSize: 12, color: theme.text }}>
+                <span style={{ fontWeight: 600 }}>Department</span>
+                <p style={{ margin: "4px 0 0", color: "#475569", lineHeight: 1.4 }}>
+                  {departmentLabel?.trim() || "Not linked on organization chart — open Organization chart and link this person to a department node."}
+                </p>
+              </div>
 
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
                   checked={policy.workflow_only_customers === true}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { workflow_only_customers: e.target.checked })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { workflow_only_customers: e.target.checked })}
                 />
                 Only show customers active in this user&apos;s workflow
               </label>
@@ -417,7 +426,7 @@ function TeamUserCard({
                   type="checkbox"
                   checked={policy.allow_bypass_workflow_approval === true}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { allow_bypass_workflow_approval: e.target.checked })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_bypass_workflow_approval: e.target.checked })}
                 />
                 Allow bypassing workflow approval requirements
               </label>
@@ -428,7 +437,7 @@ function TeamUserCard({
                   checked={policy.allow_operations_tab === true}
                   disabled={savingUserId === member.userId}
                   onChange={(e) =>
-                    void persistManagedPolicy(member.userId, {
+                    updatePermissionDraft(member.userId, {
                       allow_operations_tab: e.target.checked,
                       ...(e.target.checked
                         ? {}
@@ -451,7 +460,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.allow_work_orders_tool === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_work_orders_tool: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_work_orders_tool: e.target.checked })}
                     />
                     Work orders tool
                   </label>
@@ -460,7 +469,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.allow_purchase_orders_tool === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_purchase_orders_tool: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_purchase_orders_tool: e.target.checked })}
                     />
                     Purchase orders tool
                   </label>
@@ -469,7 +478,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.allow_invoices_tool === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_invoices_tool: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_invoices_tool: e.target.checked })}
                     />
                     Invoices / billing tool
                   </label>
@@ -478,7 +487,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.allow_inventory_tool === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_inventory_tool: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_inventory_tool: e.target.checked })}
                     />
                     Inventory tool
                   </label>
@@ -514,7 +523,7 @@ function TeamUserCard({
                         type="button"
                         disabled={!jobQualificationDraft || savingUserId === member.userId}
                         onClick={() => {
-                          void persistManagedPolicy(member.userId, {
+                          updatePermissionDraft(member.userId, {
                             job_qualifications: {
                               ...(policy.job_qualifications ?? {}),
                               [jobQualificationDraft]: jobQualificationLevel,
@@ -556,7 +565,7 @@ function TeamUserCard({
                   checked={policy.advanced_scheduling_tools === true || policy.scheduling_tools === true}
                   disabled={savingUserId === member.userId}
                   onChange={(e) =>
-                    void persistManagedPolicy(member.userId, {
+                    updatePermissionDraft(member.userId, {
                       scheduling_tools: e.target.checked,
                       advanced_scheduling_tools: e.target.checked,
                       ...(e.target.checked ? {} : { job_types_access: "off", customer_map_access: false, allow_my_hours: false }),
@@ -573,7 +582,7 @@ function TeamUserCard({
                     <select
                       value={policy.job_types_access ?? "read"}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"] })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { job_types_access: e.target.value as OmCalendarPolicyV1["job_types_access"] })}
                       style={{ ...theme.formInput, maxWidth: 160, fontSize: 12 }}
                     >
                       <option value="read">View only</option>
@@ -585,7 +594,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.customer_map_access === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { customer_map_access: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { customer_map_access: e.target.checked })}
                     />
                     Allow upcoming Customer Map access
                   </label>
@@ -594,7 +603,7 @@ function TeamUserCard({
                       type="checkbox"
                       checked={policy.allow_my_hours === true}
                       disabled={savingUserId === member.userId}
-                      onChange={(e) => void persistManagedPolicy(member.userId, { allow_my_hours: e.target.checked })}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_my_hours: e.target.checked })}
                     />
                     Allow My Hours
                   </label>
@@ -606,7 +615,7 @@ function TeamUserCard({
                 <select
                   value={policy.backup_user_id ?? ""}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { backup_user_id: e.target.value || null })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { backup_user_id: e.target.value || null })}
                   style={{ ...theme.formInput, maxWidth: 220, fontSize: 12 }}
                 >
                   <option value="">None selected</option>
@@ -622,7 +631,7 @@ function TeamUserCard({
                 <select
                   value={policy.teammate_user_id ?? ""}
                   disabled={savingUserId === member.userId}
-                  onChange={(e) => void persistManagedPolicy(member.userId, { teammate_user_id: e.target.value || null })}
+                  onChange={(e) => updatePermissionDraft(member.userId, { teammate_user_id: e.target.value || null })}
                   style={{ ...theme.formInput, maxWidth: 220, fontSize: 12 }}
                 >
                   <option value="">None selected</option>
@@ -633,6 +642,31 @@ function TeamUserCard({
                   ))}
                 </select>
               </label>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4 }}>
+                <button
+                  type="button"
+                  disabled={savingUserId === member.userId || !permissionsDirty}
+                  onClick={() => void savePermissionsForMember(member.userId)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: permissionsDirty ? theme.primary : "#cbd5e1",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: savingUserId === member.userId ? "wait" : permissionsDirty ? "pointer" : "default",
+                  }}
+                >
+                  {savingUserId === member.userId ? "Saving…" : "Save permissions"}
+                </button>
+                {permissionsDirty ? (
+                  <span style={{ fontSize: 11, color: "#b45309", fontWeight: 600 }}>Unsaved changes</span>
+                ) : (
+                  <span style={{ fontSize: 11, color: "#64748b" }}>Permissions match saved settings</span>
+                )}
+              </div>
             </div>
           ) : (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>Use this card to adjust your team color.</p>
@@ -663,6 +697,9 @@ export default function CalendarTeamManagementPanel({
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
   const [teamMapExpanded, setTeamMapExpanded] = useState(false)
   const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
+  const [permissionDraftByUserId, setPermissionDraftByUserId] = useState<Record<string, OmCalendarPolicyV1>>({})
+
+  const orgChart = useMemo(() => loadOrganizationChartFromMetadata(omMeta), [omMeta])
 
   const teamMapUserIds = useMemo(
     () => filterRealUserIds(Array.from(new Set(roster.map((r) => r.userId).filter(Boolean)))),
@@ -700,6 +737,25 @@ export default function CalendarTeamManagementPanel({
       cancelled = true
     }
   }, [officeManagerUserId])
+
+  useEffect(() => {
+    const demoTeam = parseSandboxDemoTeam(omMeta.sandbox_demo_team)
+    const demoPolicies = parseSandboxDemoTeamPolicies(omMeta[SANDBOX_DEMO_TEAM_POLICIES_META_KEY])
+    if (demoTeam.length === 0) return
+    setProfilesById((prev) => {
+      const next = { ...prev }
+      for (const m of demoTeam) {
+        const pol = demoPolicies[m.id]
+        next[m.id] = {
+          id: m.id,
+          display_name: m.label,
+          email: m.email,
+          metadata: pol ? metadataForDemoTeamPolicy(pol) : {},
+        }
+      }
+      return next
+    })
+  }, [omMeta])
 
   const teamColors = useMemo(() => parseTeamRibbonColors(omMeta), [omMeta])
 
@@ -847,30 +903,70 @@ export default function CalendarTeamManagementPanel({
     }
   }
 
-  async function persistManagedPolicy(targetUserId: string, patch: Partial<OmCalendarPolicyV1>) {
+  function savedPolicyForMember(userId: string): OmCalendarPolicyV1 {
+    return parseOmCalendarPolicy(profilesById[userId]?.metadata)
+  }
+
+  function updatePermissionDraft(targetUserId: string, patch: Partial<OmCalendarPolicyV1>) {
+    setPermissionDraftByUserId((prev) => {
+      const base = prev[targetUserId] ?? savedPolicyForMember(targetUserId)
+      const merged = mergeOmCalendarPolicy({ om_calendar_policy: base }, patch)
+      return { ...prev, [targetUserId]: parseOmCalendarPolicy(merged) }
+    })
+  }
+
+  async function savePermissionsForMember(targetUserId: string) {
     if (!supabase) return
-    if (isSandboxDemoUserId(targetUserId)) {
-      setProfilesById((prev) => {
-        const cur = prev[targetUserId]
-        const nextMeta = mergeOmCalendarPolicy(cur?.metadata, patch)
-        return { ...prev, [targetUserId]: { ...cur, id: targetUserId, metadata: nextMeta } as ProfileLite }
-      })
-      setMessage("Demo team settings updated (training preview).")
-      return
-    }
+    const draft = permissionDraftByUserId[targetUserId] ?? savedPolicyForMember(targetUserId)
+    const dept = orgDepartmentForLinkedUser(orgChart, targetUserId)
+    const toSave = parseOmCalendarPolicy(
+      mergeOmCalendarPolicy({ om_calendar_policy: draft }, { department_label: dept }),
+    )
     setSavingUserId(targetUserId)
     setMessage("")
     try {
-      const { data: row, error: e1 } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
-      if (e1) throw e1
-      const nextMeta = mergeOmCalendarPolicy(row?.metadata, patch)
-      const { error: e2 } = await supabase.from("profiles").update({ metadata: nextMeta, updated_at: new Date().toISOString() }).eq("id", targetUserId)
-      if (e2) throw e2
-      setProfilesById((prev) => ({
-        ...prev,
-        [targetUserId]: { ...prev[targetUserId], id: targetUserId, metadata: nextMeta } as ProfileLite,
-      }))
-      setMessage("Team settings saved for user.")
+      if (isSandboxDemoUserId(targetUserId)) {
+        const { data: row, error: e1 } = await supabase
+          .from("profiles")
+          .select("metadata")
+          .eq("id", officeManagerUserId)
+          .maybeSingle()
+        if (e1) throw e1
+        const merged = mergeSandboxDemoTeamPolicy(row?.metadata, targetUserId, toSave)
+        const { error: e2 } = await supabase
+          .from("profiles")
+          .update({ metadata: merged, updated_at: new Date().toISOString() })
+          .eq("id", officeManagerUserId)
+        if (e2) throw e2
+        setOmMeta(merged)
+        setProfilesById((prev) => ({
+          ...prev,
+          [targetUserId]: {
+            ...prev[targetUserId],
+            id: targetUserId,
+            metadata: metadataForDemoTeamPolicy(toSave),
+          } as ProfileLite,
+        }))
+      } else {
+        const { data: row, error: e1 } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
+        if (e1) throw e1
+        const nextMeta = mergeOmCalendarPolicy(row?.metadata, toSave)
+        const { error: e2 } = await supabase
+          .from("profiles")
+          .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+          .eq("id", targetUserId)
+        if (e2) throw e2
+        setProfilesById((prev) => ({
+          ...prev,
+          [targetUserId]: { ...prev[targetUserId], id: targetUserId, metadata: nextMeta } as ProfileLite,
+        }))
+      }
+      setPermissionDraftByUserId((prev) => {
+        const next = { ...prev }
+        delete next[targetUserId]
+        return next
+      })
+      setMessage("Permissions saved.")
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
     } finally {
@@ -908,11 +1004,11 @@ export default function CalendarTeamManagementPanel({
     }
   }
 
-  async function removeJobQualification(targetUserId: string, key: string) {
-    const current = parseOmCalendarPolicy(profilesById[targetUserId]?.metadata)
+  function removeJobQualification(targetUserId: string, key: string) {
+    const current = permissionDraftByUserId[targetUserId] ?? savedPolicyForMember(targetUserId)
     const next = { ...(current.job_qualifications ?? {}) }
     delete next[key]
-    await persistManagedPolicy(targetUserId, { job_qualifications: next })
+    updatePermissionDraft(targetUserId, { job_qualifications: next })
   }
 
   const rosterOptions = useMemo(
@@ -974,7 +1070,13 @@ export default function CalendarTeamManagementPanel({
               : null
           const ribbonOm = teamColors[member.userId] ?? defaultTeamRibbonColor(member.userId, idx)
           const pref = prefsByUser[member.userId]
-          const policy = member.isSelf ? ({ allow_add_to_calendar: true, job_types_access: "edit" } as OmCalendarPolicyV1) : parseOmCalendarPolicy(p?.metadata)
+          const policy = member.isSelf
+            ? ({ allow_add_to_calendar: true, job_types_access: "edit" } as OmCalendarPolicyV1)
+            : permissionDraftByUserId[member.userId] ?? parseOmCalendarPolicy(p?.metadata)
+          const departmentLabel = orgDepartmentForLinkedUser(orgChart, member.userId)
+          const permissionsDirty =
+            !member.isSelf &&
+            JSON.stringify(policy) !== JSON.stringify(savedPolicyForMember(member.userId))
           const displayName = (p?.display_name?.trim() || member.label || "User").trim()
           const tab: CardTab = cardTabByUser[member.userId] ?? "schedule"
 
@@ -991,7 +1093,10 @@ export default function CalendarTeamManagementPanel({
               savingUserId={savingUserId}
               setOmMeta={setOmMeta}
               persistOmColorForMember={persistOmColorForMember}
-              persistManagedPolicy={persistManagedPolicy}
+              updatePermissionDraft={updatePermissionDraft}
+              savePermissionsForMember={savePermissionsForMember}
+              permissionsDirty={permissionsDirty}
+              departmentLabel={departmentLabel}
               persistUserPref={persistUserPref}
               upcoming={upcomingByUser[member.userId] ?? []}
               jobTypeNames={jobTypesByUser[member.userId] ?? []}

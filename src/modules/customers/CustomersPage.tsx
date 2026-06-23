@@ -1667,10 +1667,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   }
 
   async function reRunCustomerFit() {
-    if (!supabase || !selectedCustomer?.id || !session) return
+    if (!supabase || !selectedCustomer?.id) return
     setFitReRunBusy(true)
     try {
       let token = await getFreshAccessToken(supabase, session)
+      if (!token) token = await forceRefreshAccessToken(supabase)
       if (!token) {
         alert("Please sign in again.")
         return

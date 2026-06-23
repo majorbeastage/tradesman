@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { teamMarkerColors, teamMemberDisplayIndex } from "../lib/teamMapStyle"
-import { addressLooksCyrillic, resolveJobMapCoords, reverseGeocodeLatLngToAddressEn } from "../lib/jobSiteLocation"
+import { addressLooksCyrillic, customerServiceAddressForMap, resolveJobMapCoordsAsync, reverseGeocodeLatLngToAddressEn } from "../lib/jobSiteLocation"
 import { filterRealUserIds, isSandboxDemoUserId } from "../lib/sandboxDemoTeam"
 import type { SandboxDemoLocationsV1 } from "../lib/sandboxDemoLocations"
 
@@ -274,7 +274,7 @@ export default function TeamLocationsMapModal({
         }
         for (const ev of byUser.values()) {
           const cust = ev.customers
-          const coords = resolveJobMapCoords({ eventMetadata: ev.metadata, customer: cust })
+          const coords = await resolveJobMapCoordsAsync({ eventMetadata: ev.metadata, customer: cust })
           if (!coords) continue
           const n = teamMemberDisplayIndex(ev.user_id ?? "", orderedIds)
           const { fill, stroke } = teamMarkerColors(n > 0 ? n : 0)
@@ -287,11 +287,14 @@ export default function TeamLocationsMapModal({
             dashArray: "4 3",
           })
           let addr =
-            (cust?.service_address && String(cust.service_address).trim()) ||
+            customerServiceAddressForMap(cust) ||
             (() => {
               const meta = ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata) ? (ev.metadata as Record<string, unknown>) : {}
               return typeof meta.job_site_address === "string" ? meta.job_site_address.trim() : ""
             })()
+          if (coords.source === "geocoded") {
+            await new Promise((r) => setTimeout(r, 700))
+          }
           if (addr && addressLooksCyrillic(addr)) {
             const enAddr = await reverseGeocodeLatLngToAddressEn(coords.lat, coords.lng)
             if (enAddr?.trim()) addr = enAddr.trim()
