@@ -14,7 +14,7 @@ type Props = {
 
 const DEFAULT_EXPANDED_ID: ProductPackageId = "office_manager_pro"
 
-/** Full-featured tiers shown as large cards; Estimate Tools only uses a compact callout below. */
+/** Full-featured tiers shown as large cards; 1 Tool - 1 User uses a compact callout below. */
 const MAIN_PRODUCT_PACKAGES = PRODUCT_PACKAGES.filter((p) => p.id !== "estimate_tools_only")
 const ESTIMATE_TOOLS_PACKAGE = PRODUCT_PACKAGES.find((p) => p.id === "estimate_tools_only")
 
@@ -45,11 +45,20 @@ const btnPrimary: CSSProperties = {
   cursor: "pointer",
 }
 
+const SHARED_BASE_BULLETS = (
+  <>
+    <li>Growth Management and Scoring Module</li>
+    <li>Inbound phone calls — auto attendant, screening, scoring, and lead information parsing</li>
+    <li>Access to Customer Payment tools</li>
+    <li>Custom reports and documentation management</li>
+  </>
+)
+
 const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
   estimate_tools_only:
-    "Estimate Tools workspace only — build and send estimates; Payments & support included. No Customers or Scheduling tabs.",
-  base: "1 user, conversations, estimates & calendar with receipts.",
-  office_manager_entry: "1 office manager + 1 user, internal messaging, map view & calendar control.",
+    "Perfect if you do not want to manage your entire business through Tradesman, or if you want to integrate slowly. Choose one focused tool for a single user.",
+  base: "1 user with conversations, estimates, calendar, and core platform modules.",
+  office_manager_entry: "1 office manager + 1 user, map view, calendar control, and team visibility.",
   office_manager_pro: "1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
   office_manager_elite: "2 OMs + 8 users, top-tier comms — built for larger operations.",
   corporate:
@@ -59,18 +68,24 @@ const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
 const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
   estimate_tools_only: (
     <ul style={ulStyle}>
-      <li>Estimates Tool (quotes, templates, customer-ready attachments)</li>
-      <li>Payments tab (subscription &amp; customer payment setup)</li>
-      <li>Web Support &amp; Tech Support</li>
-      <li>Account (My T)</li>
+      <li>1 User Sign-In</li>
+      <li style={{ marginTop: 8, fontWeight: 700, color: theme.charcoal, listStyle: "none", paddingLeft: 0 }}>
+        Choose one tool:
+      </li>
+      <li>Estimates Tool</li>
+      <li>Scheduling and Receipts</li>
+      <li>Team Management (may require additional internal-only users)</li>
       <li style={{ marginTop: 8, fontSize: 13, color: "#64748b", listStyle: "none", paddingLeft: 0 }}>
-        Does not include Customers or Scheduling modules.
+        Payments tab, Web Support, Tech Support, and Account (My T) included.
       </li>
     </ul>
   ),
   base: (
     <ul style={ulStyle}>
-      <li>1 User Sign-In</li>
+      <li>
+        1 User Sign-In
+        <ul style={{ marginTop: 6 }}>{SHARED_BASE_BULLETS}</ul>
+      </li>
       <li>
         Customer Conversations Module
         <ul style={{ marginTop: 6 }}>
@@ -97,13 +112,13 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         1 Office Manager Sign-In and 1 User Sign-In
         <ul style={{ marginTop: 6 }}>
           <li>Management customization for user view</li>
+          {SHARED_BASE_BULLETS}
         </ul>
       </li>
       <li>
         Customer Conversations Module
         <ul style={{ marginTop: 6 }}>
           <li>Limited to 1000 Voice Minutes and 500 SMS Messages per month***</li>
-          <li>Internal Conversations Module</li>
         </ul>
       </li>
       <li>
@@ -127,6 +142,7 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         1 Office Manager Sign-In and 4 User Sign-Ins
         <ul style={{ marginTop: 6 }}>
           <li>Management customization for user views</li>
+          {SHARED_BASE_BULLETS}
         </ul>
       </li>
       <li>
@@ -134,7 +150,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         <ul style={{ marginTop: 6 }}>
           <li>Limited to 1000 Voice Minutes and 500 SMS Messages per month for Office Manager***</li>
           <li>Limited to 200 Voice Minutes and 200 SMS Messages per month per user***</li>
-          <li>Internal Conversations Module</li>
         </ul>
       </li>
       <li>
@@ -151,6 +166,9 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         </ul>
       </li>
       <li>Customer Database</li>
+      <li>Team Management Module</li>
+      <li>Purchase Order / Work Order management</li>
+      <li>Business Workflow Charts and Organization Charts implemented into real-life workflow</li>
     </ul>
   ),
   office_manager_elite: (
@@ -159,6 +177,7 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         2 Office Manager Sign-Ins and 8 User Sign-Ins
         <ul style={{ marginTop: 6 }}>
           <li>Management customization for user views</li>
+          {SHARED_BASE_BULLETS}
         </ul>
       </li>
       <li>
@@ -166,7 +185,6 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         <ul style={{ marginTop: 6 }}>
           <li>Limited to 1000 Voice Minutes and 500 SMS Messages per month for Office Manager***</li>
           <li>Limited to 200 Voice Minutes and 200 SMS Messages per month per user***</li>
-          <li>Internal Conversations Module</li>
         </ul>
       </li>
       <li>
@@ -183,6 +201,9 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
         </ul>
       </li>
       <li>Customer Database</li>
+      <li>Team Management Module</li>
+      <li>Purchase Order / Work Order management</li>
+      <li>Business Workflow Charts and Organization Charts implemented into real-life workflow</li>
     </ul>
   ),
   corporate: (
@@ -190,6 +211,9 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
       <li>Everything in Office Manager Elite, plus:</li>
       <li>Work Orders, Purchase Orders, Parts &amp; Materials Inventory</li>
       <li>Organization chart &amp; business workflow chart (dashboard tools)</li>
+      <li>Team Management Module</li>
+      <li>Purchase Order / Work Order management</li>
+      <li>Business Workflow Charts and Organization Charts implemented into real-life workflow</li>
       <li>20 user logins — 10 internal (no assigned phone) + 10 external (Tradesman phone numbers)</li>
       <li>5 Office Manager logins</li>
       <li>Future routing: estimates, POs, work orders, scheduling, receipts &amp; approvals via org chart</li>
@@ -290,6 +314,11 @@ export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidin
             <strong style={{ color: theme.charcoal }}>{ESTIMATE_TOOLS_PACKAGE.title}</strong>
             <span style={{ marginLeft: 8, fontWeight: 700 }}>{ESTIMATE_TOOLS_PACKAGE.priceLine.replace(/\s*\*+\s*$/, "").trim()}</span>
             <p style={{ margin: "8px 0 10px", opacity: 0.92 }}>{PACKAGE_SUMMARY.estimate_tools_only}</p>
+            <ul style={{ ...ulStyle, marginTop: 4 }}>
+              <li>Estimates Tool</li>
+              <li>Scheduling and Receipts</li>
+              <li>Team Management (may require additional internal-only users)</li>
+            </ul>
             <button
               type="button"
               onClick={() => onSignupWithPackage("estimate_tools_only")}
@@ -302,9 +331,10 @@ export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidin
                 fontWeight: 700,
                 fontSize: 13,
                 cursor: "pointer",
+                marginTop: 10,
               }}
             >
-              Sign up — Estimate Tools only
+              Sign up — 1 Tool - 1 User
             </button>
           </div>
         ) : null}

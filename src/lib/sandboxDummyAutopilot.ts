@@ -438,21 +438,23 @@ async function processQuoteWorkflows(
     const sendApproval = computed.find((a) => a.kind === "send_for_approval" && !a.disabled)
     if (sendApproval) {
       const node = bundle.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
-      const member = node
-        ? resolveDemoMemberForWorkflowNode(node, bundle.orgChart, bundle.externalContacts, linkableUsers, demoTeam)
-        : null
-      if (node && member && memberCanActOnNode(member, node, bundle.orgChart, perms, "send")) {
-        state = applySendForApproval(state, node, member.id)
+      const sender =
+        demoTeam.find((m) => /maria|office|estimator|reception/i.test(m.label) || m.role === "office_manager") ??
+        demoTeam[0]
+      if (node && sender) {
+        state = applySendForApproval(state, node, sender.id)
         await persistQuoteWorkflow(supabase, userId, quote.id, quote.metadata, state)
         await syncCustomerWorkflowSnapshot(supabase, userId, quote.customer_id, bundle.workflow, bundle.orgChart, quote.id, state)
+        const approver = resolveDemoMemberForWorkflowNode(node, bundle.orgChart, bundle.externalContacts, linkableUsers, demoTeam)
         await logDemoAction(
           supabase,
           userId,
           quote.customer_id ?? null,
-          member,
-          `Routed job to “${node.label}” for the next workflow step.`,
+          sender,
+          `Routed estimate to “${node.label}”${approver ? ` (${approver.label})` : ""} for approval.`,
+          approver ? { internalHandoffTo: approver } : undefined,
         )
-        actions.push(`${member.label} sent job to “${node.label}”`)
+        actions.push(`${sender.label} sent estimate to “${node.label}”`)
         used++
       }
     }

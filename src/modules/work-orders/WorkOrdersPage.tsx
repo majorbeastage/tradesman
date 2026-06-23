@@ -14,6 +14,8 @@ import {
   type WorkOrderRecord,
 } from "../../lib/workOrders"
 import { queueQuotesCustomerPrefill } from "../../lib/workflowNavigation"
+import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
+import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
 
 type Props = {
   setPage?: (page: string) => void
@@ -30,6 +32,20 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const [selectedQuoteId, setSelectedQuoteId] = useState("")
   const [woNumber, setWoNumber] = useState("")
   const [busy, setBusy] = useState(false)
+  const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setWorkflow(null)
+      return
+    }
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => setWorkflow(loadBusinessWorkflowFromMetadata(data?.metadata)))
+  }, [userId])
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
@@ -79,6 +95,8 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
           generate one.
         </p>
       ) : null}
+
+      <WorkflowToolGuidanceBanner tool="work_order" workflow={workflow} />
 
       {err ? <p style={{ color: "#b91c1c", fontSize: 13, marginBottom: 12 }}>{err}</p> : null}
 

@@ -48,25 +48,25 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "home.openLoginReset": "Open User Login to request a new reset",
     "home.feature.workflow.title": "Business workflows",
     "home.feature.workflow.body":
-      "Build department and customer workflows, saved templates, org-chart routing, and AI-assisted flow design. Approve, deny, or bypass steps from one hub.",
-    "home.feature.comms.title": "Unified conversations",
-    "home.feature.comms.body":
-      "Phone calls, missed-call text-back, voicemails, SMS, and email in one timeline — with auto-attendant transcripts and customer context on every thread.",
-    "home.feature.screening.title": "Call screening & auto-attendant",
+      "Estimates, purchase orders, work orders, inventory, and org-chart routing — with approval steps that change what each tool shows (send to approvers vs. send to customer).",
+    "home.feature.screening.title": "Intelligent call screening",
     "home.feature.screening.body":
-      "Optional AI or recorded menus screen spam, capture intent, log answers on the customer record, and forward qualified callers. Collect SMS opt-in on the call when you need compliant text-back.",
-    "home.feature.leads.title": "Lead scoring & enrichment",
-    "home.feature.leads.body":
-      "AI-assisted fit scoring, address and intent parsing from inbound messages, and live lead injection in trial mode so your team can practice the full pipeline end to end.",
-    "home.feature.quotes.title": "Estimates, PDFs & scheduling",
-    "home.feature.quotes.body":
-      "Guided estimate wizard, branded PDF attachments on customer emails, calendar booking, and workflow handoffs from quote to scheduled job.",
-    "home.feature.payments.title": "Payment requests & billing",
+      "Auto-attendant wording, AI scoring and screening, spam filtering, and parsing that captures missed calls so qualified leads are logged on the customer record.",
+    "home.feature.comms.title": "Communications pipeline",
+    "home.feature.comms.body":
+      "Automated responses, AI assistance, SMS and email in one timeline, and quick options to handle customer requests accurately without switching tools.",
+    "home.feature.growth.title": "Business growth management & scoring",
+    "home.feature.growth.body":
+      "Growth tab insights, lead fit scoring, enrichment from inbound messages, and dashboards that show where revenue opportunities are in your pipeline.",
+    "home.feature.payments.title": "Customer payments tools",
     "home.feature.payments.body":
-      "Send payment requests, track customer payment activity, and connect operations billing steps to your workflow and customer record.",
-    "home.feature.assistant.title": "AI help desk & setup guides",
-    "home.feature.assistant.body":
-      "Built-in AI assistant explains settings and navigation. Setup wizards and the help desk chat get new users productive faster without hunting through menus.",
+      "Payment requests, customer pay links, subscription billing, and workflow-aware handoffs from estimates and receipts to collections.",
+    "home.feature.scheduling.title": "Scheduling & team management",
+    "home.feature.scheduling.body":
+      "Calendar, map view, assignees, team permissions, office-manager calendar control, and workflow-driven scheduling of field resources.",
+    "home.feature.archive.title": "Archiving & databasing",
+    "home.feature.archive.body":
+      "Customer database, custom reports, documentation management, archived estimates and receipts, and searchable records across the platform.",
     "about.backHome": "← Home",
     "about.loading": "Loading…",
     "login.backHome": "← Back to home",
@@ -391,25 +391,25 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "home.openLoginReset": "Abrir inicio de sesión de usuario para solicitar un restablecimiento",
     "home.feature.workflow.title": "Flujos de trabajo",
     "home.feature.workflow.body":
-      "Cree flujos por departamento y cliente, plantillas guardadas, enrutamiento por organigrama y diseño asistido por IA. Apruebe, rechace o omita pasos desde un solo centro.",
-    "home.feature.comms.title": "Conversaciones unificadas",
-    "home.feature.comms.body":
-      "Llamadas, devolución de llamada perdida, mensajes de voz, SMS y correo en una línea de tiempo — con transcripciones del auto-asistente y contexto del cliente en cada hilo.",
-    "home.feature.screening.title": "Filtrado de llamadas y auto-asistente",
+      "Presupuestos, órdenes de compra, órdenes de trabajo, inventario y enrutamiento por organigrama — con pasos de aprobación que cambian las acciones de cada herramienta.",
+    "home.feature.screening.title": "Filtrado inteligente de llamadas",
     "home.feature.screening.body":
-      "Menús opcionales con IA o grabados filtran spam, capturan intención, registran respuestas en el cliente y reenvían llamadas calificadas. Recoja opt-in SMS en la llamada cuando necesite cumplir con el text-back.",
-    "home.feature.leads.title": "Puntuación y enriquecimiento de prospectos",
-    "home.feature.leads.body":
-      "Puntuación de encaje con IA, análisis de dirección e intención en mensajes entrantes e inyección de prospectos en vivo en modo prueba para practicar el pipeline completo.",
-    "home.feature.quotes.title": "Presupuestos, PDF y agenda",
-    "home.feature.quotes.body":
-      "Asistente de presupuestos, PDF con marca en correos al cliente, reservas en calendario y traspasos de flujo desde cotización a trabajo programado.",
-    "home.feature.payments.title": "Solicitudes de pago y facturación",
+      "Auto-asistente, puntuación IA, filtrado de spam y captura de llamadas perdidas para registrar prospectos calificados en el cliente.",
+    "home.feature.comms.title": "Canal de comunicaciones",
+    "home.feature.comms.body":
+      "Respuestas automáticas, asistencia IA, SMS y correo en una línea de tiempo, y opciones rápidas para atender solicitudes con precisión.",
+    "home.feature.growth.title": "Crecimiento y puntuación",
+    "home.feature.growth.body":
+      "Perspectivas de crecimiento, puntuación de prospectos, enriquecimiento de mensajes entrantes y paneles de oportunidades de ingresos.",
+    "home.feature.payments.title": "Herramientas de pago del cliente",
     "home.feature.payments.body":
-      "Envíe solicitudes de pago, haga seguimiento de la actividad de pago del cliente y conecte pasos de facturación operativa con su flujo y registro del cliente.",
-    "home.feature.assistant.title": "Mesa de ayuda IA y guías",
-    "home.feature.assistant.body":
-      "El asistente de IA integrado explica ajustes y navegación. Los asistentes de configuración y el chat de ayuda ponen a los usuarios nuevos en marcha más rápido.",
+      "Solicitudes de pago, enlaces de pago, facturación de suscripción y traspasos desde presupuestos y recibos.",
+    "home.feature.scheduling.title": "Agenda y gestión de equipo",
+    "home.feature.scheduling.body":
+      "Calendario, mapa, asignados, permisos de equipo, control del office manager y programación de recursos de campo.",
+    "home.feature.archive.title": "Archivo y base de datos",
+    "home.feature.archive.body":
+      "Base de clientes, informes personalizados, documentación, presupuestos archivados y registros buscables en la plataforma.",
     "about.backHome": "← Inicio",
     "about.loading": "Cargando…",
     "login.backHome": "← Volver al inicio",

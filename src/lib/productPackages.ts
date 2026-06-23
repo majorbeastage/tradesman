@@ -38,13 +38,13 @@ export const PRODUCT_PACKAGES: {
   },
   {
     id: "estimate_tools_only",
-    title: "Estimate Tools only (1-tool user)",
+    title: "1 Tool - 1 User",
     priceLine: "$49.99/month + applicable taxes and fees*",
   },
 ]
 
 const LABEL_BY_ID: Record<ProductPackageId, string> = {
-  estimate_tools_only: "Estimate Tools only (1-tool user) — $49.99/mo",
+  estimate_tools_only: "1 Tool - 1 User — $49.99/mo",
   base: "Base Package — $124.99/mo",
   office_manager_entry: "Office Manager Entry Level — $159.99/mo",
   office_manager_pro: "Office Manager Pro — $199.99/mo",

@@ -15,7 +15,7 @@ type HomePageProps = {
   onPricing: () => void
 }
 
-const FEATURE_IDS = ["workflow", "comms", "screening", "leads", "quotes", "payments", "assistant"] as const
+const FEATURE_IDS = ["workflow", "screening", "comms", "growth", "payments", "scheduling", "archive"] as const
 
 export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onTraining, onPricing }: HomePageProps) {
   const { t } = useLocale()

@@ -247,10 +247,20 @@ function prerequisitesMet(
 ): boolean {
   const incoming = incomingEdges(doc, targetNodeId)
   if (incoming.length === 0) return true
+
+  const multi = incoming.filter((e) => e.approval === "needs_multiple_approvals")
+  if (multi.length > 0) {
+    return multi.every((e) => state.completedNodeIds.includes(e.fromId))
+  }
+
   for (const edge of incoming) {
     if (state.completedNodeIds.includes(edge.fromId)) continue
     if (edge.approval === "approved") {
-      if (!state.completedNodeIds.includes(edge.fromId)) return false
+      return false
+    }
+    if (edge.approval === "needs_approval" || edge.approval === "needs_multiple_approvals") {
+      const fromNode = nodeById(doc, edge.fromId)
+      if (fromNode && isApprovalStepNode(fromNode)) return false
       continue
     }
     return false
@@ -264,6 +274,18 @@ function isCustomerSendNode(node: WorkflowNode): boolean {
 
 function isShopSignoffNode(node: WorkflowNode): boolean {
   return nodeLabelMatches(node, ["signed by shop manager", "shop manager sign", "estimate signed"])
+}
+
+function isApprovalStepNode(node: WorkflowNode): boolean {
+  const l = norm(node.label)
+  if (isCustomerSendNode(node)) return false
+  return (
+    l.includes("approval") ||
+    l.includes("approve") ||
+    isShopSignoffNode(node) ||
+    l.includes("sign-off") ||
+    l.includes("signoff")
+  )
 }
 
 export function canSendEstimateToCustomer(
@@ -369,10 +391,19 @@ export function computeEstimateWorkflowActions(input: {
     if (!prerequisitesMet(workflow, node.id, state)) continue
 
     const assignee = resolveWorkflowNodeAssignee(node, orgChart, externalContacts, linkableUsers)
+    const approverLabel =
+      assignee.kind === "unassigned"
+        ? "approver(s)"
+        : assignee.kind === "external_contact"
+          ? assignee.displayName
+          : assignee.displayName
+    const sendLabel = nodeLabelMatches(node, ["approval", "approve", "sign"])
+      ? `Send to ${approverLabel}`
+      : `Send to ${node.label}`
     actions.push({
       kind: "send_for_approval",
       nodeId: node.id,
-      label: `Send to ${node.label}`,
+      label: sendLabel,
       detail:
         assignee.kind === "unassigned"
           ? "Choose approver email — or set assignee on workflow / org chart"

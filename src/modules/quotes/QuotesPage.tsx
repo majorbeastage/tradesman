@@ -27,6 +27,7 @@ import {
   type WorkflowActionButton,
 } from "../../lib/estimateWorkflowRuntime"
 import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
+import { resolveEstimatePrimaryDeliveryAction } from "../../lib/workflowStepIntention"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
@@ -712,6 +713,36 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!accountWorkflowBundle) return { allowed: true as const }
     return canSendEstimateToCustomer(accountWorkflowBundle.workflow, quoteInternalWorkflowState)
   }, [accountWorkflowBundle, quoteInternalWorkflowState])
+
+  const estimatePrimaryDelivery = useMemo(() => {
+    if (!accountWorkflowBundle) {
+      return {
+        mode: "customer_email" as const,
+        buttonLabel: "Email to customer",
+        detail: "",
+        workflowAction: null,
+        pendingApprovers: [],
+        customerSendAllowed: true,
+      }
+    }
+    return resolveEstimatePrimaryDeliveryAction({
+      workflow: accountWorkflowBundle.workflow,
+      orgChart: accountWorkflowBundle.orgChart,
+      externalContacts: accountWorkflowBundle.externalContacts,
+      linkableUsers: linkableOrgUsers,
+      state: quoteInternalWorkflowState,
+      quoteHasLineItems: selectedQuoteItems.length > 0,
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+    })
+  }, [
+    accountWorkflowBundle,
+    linkableOrgUsers,
+    quoteInternalWorkflowState,
+    selectedQuoteItems.length,
+    sandboxTraining,
+    profileRole,
+    profileMetadata,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -7179,20 +7210,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     disabled={
                       !selectedQuote?.customer_id ||
                       selectedQuoteItems.length === 0 ||
-                      !customerSendWorkflowGate.allowed
+                      (!estimatePrimaryDelivery.customerSendAllowed &&
+                        estimatePrimaryDelivery.mode !== "workflow_approval" &&
+                        estimatePrimaryDelivery.mode !== "workflow_review")
                     }
                     title={
                       !selectedQuote?.customer_id
                         ? "Select a customer first"
                         : selectedQuoteItems.length === 0
                           ? "Add quote items first"
-                          : !customerSendWorkflowGate.allowed
-                            ? customerSendWorkflowGate.reason
-                            : undefined
+                          : estimatePrimaryDelivery.customerBlockReason ??
+                            estimatePrimaryDelivery.detail ??
+                            undefined
                     }
                     onClick={() => {
-                      if (!customerSendWorkflowGate.allowed) {
-                        alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals first.")
+                      if (
+                        estimatePrimaryDelivery.mode === "workflow_approval" ||
+                        estimatePrimaryDelivery.mode === "workflow_review"
+                      ) {
+                        const action = estimatePrimaryDelivery.workflowAction
+                        if (action) void handleEstimateWorkflowAction(action)
+                        return
+                      }
+                      if (!estimatePrimaryDelivery.customerSendAllowed) {
+                        alert(
+                          estimatePrimaryDelivery.customerBlockReason ??
+                            "Complete internal workflow approvals first.",
+                        )
                         return
                       }
                       setBottomActionEmailOpen((v) => !v)
@@ -7204,21 +7248,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       background:
                         !selectedQuote?.customer_id ||
                         selectedQuoteItems.length === 0 ||
-                        !customerSendWorkflowGate.allowed
+                        (estimatePrimaryDelivery.mode === "blocked")
                           ? "#94a3b8"
-                          : theme.primary,
+                          : estimatePrimaryDelivery.mode === "workflow_approval" ||
+                              estimatePrimaryDelivery.mode === "workflow_review"
+                            ? "#0ea5e9"
+                            : theme.primary,
                       color: "#fff",
                       fontWeight: 600,
                       cursor:
                         !selectedQuote?.customer_id ||
                         selectedQuoteItems.length === 0 ||
-                        !customerSendWorkflowGate.allowed
+                        estimatePrimaryDelivery.mode === "blocked"
                           ? "not-allowed"
                           : "pointer",
                     }}
                   >
-                    {bottomActionEmailOpen ? "Hide email to customer" : "Email to Customer"}
+                    {estimatePrimaryDelivery.mode === "customer_email" && bottomActionEmailOpen
+                      ? "Hide email to customer"
+                      : estimatePrimaryDelivery.buttonLabel}
                   </button>
+                  {estimatePrimaryDelivery.mode !== "customer_email" && estimatePrimaryDelivery.detail ? (
+                    <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, maxWidth: 280, lineHeight: 1.4 }}>
+                      {estimatePrimaryDelivery.detail}
+                    </span>
+                  ) : null}
                 </div>
                 {bottomActionEmailOpen ? (
                   <div

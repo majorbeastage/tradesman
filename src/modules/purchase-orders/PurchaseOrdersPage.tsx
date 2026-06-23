@@ -10,6 +10,8 @@ import {
   loadPurchaseOrdersFromProfile,
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
+import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
+import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
 
 type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
@@ -23,6 +25,20 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
   const [description, setDescription] = useState("")
   const [poNumber, setPoNumber] = useState("")
   const [busy, setBusy] = useState(false)
+  const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setWorkflow(null)
+      return
+    }
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => setWorkflow(loadBusinessWorkflowFromMetadata(data?.metadata)))
+  }, [userId])
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
@@ -71,6 +87,7 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
           org-chart approvals.
         </p>
       ) : null}
+      <WorkflowToolGuidanceBanner tool="purchase_order" workflow={workflow} />
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
 
       <section style={card}>

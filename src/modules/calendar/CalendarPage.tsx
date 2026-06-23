@@ -2390,26 +2390,49 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         selectedEvent.user_id ?? (authUserId || userId),
       )
       const nextMeta = mergeCalendarAssigneeMetadata(selectedEvent.metadata, assignee)
-      const { data: updated, error } = await supabase
+      const ownerId = selectedEvent.user_id ?? calendarDbUserId
+      let { data: updated, error } = await supabase
         .from("calendar_events")
-        .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+        .update({ metadata: nextMeta })
         .eq("id", selectedEvent.id)
+        .eq("user_id", ownerId)
         .select("id, user_id, metadata")
         .maybeSingle()
+      if (error?.message?.toLowerCase().includes("metadata")) {
+        sandboxTrainingAlert(
+          sandboxTraining,
+          "Calendar assignee storage is not available yet. Run supabase/calendar-events-metadata.sql in Supabase.",
+        )
+        return
+      }
       if (error) {
         sandboxTrainingAlert(sandboxTraining, error.message)
         return
       }
-      if (!updated) {
-        sandboxTrainingAlert(sandboxTraining, "Assignee was not saved. Check that you can edit this event.")
-        return
+      let savedMeta = nextMeta
+      if (updated) {
+        if (updated.metadata && typeof updated.metadata === "object") {
+          savedMeta = updated.metadata as Record<string, unknown>
+        }
+      } else {
+        const { data: verify } = await supabase
+          .from("calendar_events")
+          .select("id, metadata")
+          .eq("id", selectedEvent.id)
+          .maybeSingle()
+        if (!verify || JSON.stringify(verify.metadata) !== JSON.stringify(nextMeta)) {
+          sandboxTrainingAlert(sandboxTraining, "Assignee was not saved. Check that you can edit this event.")
+          return
+        }
+        if (verify.metadata && typeof verify.metadata === "object") {
+          savedMeta = verify.metadata as Record<string, unknown>
+        }
       }
-      const patched = { ...selectedEvent, metadata: nextMeta }
+      const patched = { ...selectedEvent, metadata: savedMeta }
       setSelectedEvent(patched)
-      setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? { ...e, metadata: nextMeta } : e)))
+      setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? patched : e)))
       setEventAssigneePick(calendarEventAssigneeUserId(patched) || userId)
       setAssigneeSaveNote("Assignee saved.")
-      void loadEvents()
     } finally {
       setEventAssigneeSaving(false)
     }
