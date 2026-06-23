@@ -94,11 +94,27 @@ export async function handleNotifyAdminTrialSignup(req: VercelRequest, res: Verc
     signupUserId: userId,
   })
 
-  console.info("[notify-admin-trial-signup]", { userId, email: emailStr, push: result.push, customerEvent })
+  console.info("[notify-admin-trial-signup]", {
+    userId,
+    email: emailStr,
+    adminEmail: result.email,
+    push: result.push,
+    customerEvent,
+  })
+
+  if (!result.email.ok && result.email.disabled !== true) {
+    res.status(502).json({
+      error: result.email.error ?? "Resend rejected the admin alert email",
+      customerEvent,
+    })
+    return
+  }
+
   res.status(200).json({
     ok: true,
     email: result.email,
     push: result.push,
     customerEvent,
+    emailDisabled: result.email.disabled === true,
   })
 }

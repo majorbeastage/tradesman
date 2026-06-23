@@ -33,10 +33,54 @@ async function notifyAdminTrialProvisioned(params: {
   leadCount?: number | null
 }): Promise<void> {
   const site = Deno.env.get("VITE_SITE_URL")?.trim() || Deno.env.get("SITE_URL")?.trim() || Deno.env.get("VERCEL_URL")?.trim()
+  const loginUrl = (site?.startsWith("http") ? site : site ? `https://${site}` : "https://tradesman-us.vercel.app").replace(/\/+$/, "")
+  const ctaUrl = params.embedSlug ? `${loginUrl}/cta/${params.embedSlug}` : null
+  const subject = `New free trial: ${params.displayName} (${params.email})`
+  const text = [
+    "A new Tradesman free trial workspace was created.",
+    "",
+    `Email: ${params.email}`,
+    `Display name: ${params.displayName}`,
+    `Business: ${params.businessName?.trim() || "(none)"}`,
+    `User id: ${params.userId}`,
+    params.customerCount != null ? `Sample customers seeded: ${params.customerCount}` : "",
+    params.leadCount != null ? `Sample leads seeded: ${params.leadCount}` : "",
+    params.expiresAt ? `Trial expires: ${new Date(params.expiresAt).toLocaleString()}` : "",
+    ctaUrl ? `Lead capture link: ${ctaUrl}` : "",
+    "",
+    "The prospect was emailed their temporary login. Check the admin Customers tab for this thread.",
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+  const resendKey = Deno.env.get("RESEND_API_KEY")?.trim()
+  const resendFrom = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
+  if (resendKey && resendFrom) {
+    const configured = (Deno.env.get("ADMIN_SIGNUP_NOTIFY_EMAIL")?.trim() || "")
+      .split(/[,;]+/g)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.includes("@"))
+    const to = [...new Set(["admin@tradesman-us.com", "admin@mail.tradesman-us.com", ...configured])]
+    try {
+      const sendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: resendFrom, to, subject, text }),
+      })
+      if (!sendRes.ok) {
+        console.warn("[provision-sandbox] admin trial alert email", sendRes.status, await sendRes.text())
+      }
+    } catch (e) {
+      console.warn("[provision-sandbox] admin trial alert email", e instanceof Error ? e.message : e)
+    }
+  } else {
+    console.warn("[provision-sandbox] RESEND not configured — admin trial alert email skipped on Edge")
+  }
+
   const secret =
     Deno.env.get("COMPLETE_SIGNUP_NOTIFY_SECRET")?.trim() || Deno.env.get("ADMIN_SIGNUP_NOTIFY_SECRET")?.trim()
   if (!site || !secret) {
-    console.warn("[provision-sandbox] trial admin notify skipped — set SITE_URL + COMPLETE_SIGNUP_NOTIFY_SECRET on Edge")
+    console.warn("[provision-sandbox] trial portal notify skipped — set SITE_URL + COMPLETE_SIGNUP_NOTIFY_SECRET on Edge")
     return
   }
   const base = site.startsWith("http") ? site.replace(/\/+$/, "") : `https://${site.replace(/\/+$/, "")}`
@@ -59,10 +103,10 @@ async function notifyAdminTrialProvisioned(params: {
       }),
     })
     if (!res.ok) {
-      console.warn("[provision-sandbox] trial admin notify", res.status, await res.text())
+      console.warn("[provision-sandbox] trial admin portal notify", res.status, await res.text())
     }
   } catch (e) {
-    console.warn("[provision-sandbox] trial admin notify", e instanceof Error ? e.message : e)
+    console.warn("[provision-sandbox] trial admin portal notify", e instanceof Error ? e.message : e)
   }
 }
 
