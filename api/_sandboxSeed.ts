@@ -532,6 +532,7 @@ export async function seedSandboxWorkspace(
         sandbox_seed: true,
         job_site_lat: serviceLat,
         job_site_lng: serviceLng,
+        assigned_demo_user_id: DEFAULT_SANDBOX_DEMO_TEAM.find((m) => m.id.includes("jake"))?.id ?? null,
       },
     })
     if (!error) eventCount++

@@ -123,14 +123,17 @@ function useSandboxTrainingControls(
     const client = supabase
     const meta = profileMetadata as Record<string, unknown>
     const tick = () => {
-      void runSandboxDummyAutopilot(client, profileUserId, meta).then((r) => {
-        if (r.actions.length) setNote(r.actions.join(" · "))
+      void runSandboxDummyAutopilot(client, profileUserId, meta).then(async (r) => {
+        if (r.actions.length) {
+          setNote(r.actions.join(" · "))
+          await refetchProfile()
+        }
       })
     }
     tick()
     const id = window.setInterval(tick, Math.max(1, dummyAutopilotMin) * 60_000)
     return () => window.clearInterval(id)
-  }, [active, dummyAutopilot, dummyAutopilotMin, profileUserId, profileMetadata])
+  }, [active, dummyAutopilot, dummyAutopilotMin, profileUserId, profileMetadata, refetchProfile])
 
   const run = useCallback(async (fn: () => Promise<string | void>, fallbackSuccess = "") => {
     setBusy(true)
@@ -164,6 +167,7 @@ function useSandboxTrainingControls(
     ctaUrl,
     run,
     setNote,
+    refetchProfile,
   }
 }
 
@@ -246,6 +250,7 @@ function SandboxDummyAutopilotPanel({
   onIntervalChange,
   onPermissionsChange,
   onNote,
+  onAfterRun,
   busy,
 }: {
   enabled: boolean
@@ -258,6 +263,7 @@ function SandboxDummyAutopilotPanel({
   onIntervalChange: (min: number) => void
   onPermissionsChange: (patch: Partial<SandboxDummyAutopilotPermissions>) => void
   onNote: (msg: string) => void
+  onAfterRun?: () => void | Promise<unknown>
   busy: boolean
 }) {
   const permRow = (key: keyof SandboxDummyAutopilotPermissions, label: string, hint: string) => (
@@ -275,7 +281,7 @@ function SandboxDummyAutopilotPanel({
         }}
         style={{ marginTop: 3 }}
       />
-      <span>
+      <span style={{ color: "#0f172a" }}>
         <strong>{label}</strong>
         <span style={{ display: "block", fontSize: 11, color: "#64748b", fontWeight: 400 }}>{hint}</span>
       </span>
@@ -286,8 +292,9 @@ function SandboxDummyAutopilotPanel({
     <div>
       <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.55, color: "#334155" }}>
         When enabled, demo team members linked on your <strong>organization chart</strong> and{" "}
-        <strong>business workflow</strong> automatically advance their steps — approve estimates, complete scheduled
-        jobs, and record billing — so you can watch the full path with fake customers.
+        <strong>business workflow</strong> automatically contact fake customers, gather intake details, hand off between
+        departments, advance workflow steps, complete scheduled jobs, and record billing — so you can watch the full
+        path without manual clicks.
       </p>
 
       <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: "pointer" }}>
@@ -310,11 +317,11 @@ function SandboxDummyAutopilotPanel({
             }
           }}
         />
-        <strong>Dummy users work their job steps automatically</strong>
+        <strong>Demo team members work their job steps automatically</strong>
       </label>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
-        <span style={{ fontWeight: 700, fontSize: 13 }}>Run every:</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>Run every:</span>
         {[1, 2, 3, 5].map((m) => (
           <button
             key={m}
@@ -338,6 +345,7 @@ function SandboxDummyAutopilotPanel({
               borderRadius: 8,
               border: intervalMin === m ? "2px solid #0284c7" : "1px solid #94a3b8",
               background: intervalMin === m ? "#e0f2fe" : "#fff",
+              color: enabled ? "#0f172a" : "#64748b",
               cursor: busy || !enabled ? "not-allowed" : "pointer",
               fontSize: 13,
               fontWeight: 800,
@@ -360,7 +368,7 @@ function SandboxDummyAutopilotPanel({
         <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>Leadership permissions (demo personas)</div>
         {permRow("approveEstimates", "Estimate & work-order approvals", "Maria, Lee, and assigned approvers sign off workflow steps.")}
         {permRow("completeFieldJobs", "Complete scheduled field jobs", "Jake, Sam, and assigned techs mark calendar jobs done.")}
-        {permRow("customerReplies", "Customer-facing replies", "Reserved for office roles when customer comms are part of a step.")}
+        {permRow("customerReplies", "Reception / customer intake", "Maria contacts fake customers, gathers job details, and logs intake notes.")}
         {permRow("invoicing", "Billing / invoice steps", "Accounting demo users complete billing nodes on the workflow.")}
       </div>
 
@@ -374,12 +382,23 @@ function SandboxDummyAutopilotPanel({
         style={btnPrimary}
         onClick={() => {
           if (!supabase || !profileUserId || !profileMetadata) return
-          void runSandboxDummyAutopilot(supabase, profileUserId, profileMetadata as Record<string, unknown>).then((r) => {
-            onNote(r.actions.length ? r.actions.join(" · ") : r.reason === "too_soon" ? "Wait for the interval or change timing above." : "No pending demo steps right now.")
+          void runSandboxDummyAutopilot(supabase, profileUserId, profileMetadata as Record<string, unknown>, {
+            force: true,
+          }).then(async (r) => {
+            onNote(
+              r.actions.length
+                ? r.actions.join(" · ")
+                : r.reason === "too_soon"
+                  ? "Wait for the interval or change timing above."
+                  : r.reason === "autopilot_off"
+                    ? "Turn on Demo Team Autopilot first."
+                    : "No pending demo steps right now — try Live traffic to add a customer lead first.",
+            )
+            if (r.actions.length) await onAfterRun?.()
           })
         }}
       >
-        Run demo workers now
+        Run demo team now
       </button>
     </div>
   )
@@ -667,7 +686,7 @@ export function SandboxTrainingBanner({
             Demo team
           </button>
           <button type="button" style={tabBtn(tab === "autopilot")} onClick={() => setTab("autopilot")}>
-            Dummy autopilot
+            Demo Team Autopilot
           </button>
         </div>
 
@@ -709,6 +728,9 @@ export function SandboxTrainingBanner({
               state.setDummyPermissions((prev) => ({ ...prev, ...patch }))
             }
             onNote={state.setNote}
+            onAfterRun={async () => {
+              await state.refetchProfile?.()
+            }}
           />
         ) : null}
       </div>
