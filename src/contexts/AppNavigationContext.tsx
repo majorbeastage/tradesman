@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react"
 import { APP_NAV_PREFIX, buildAppHash, parseAppHash } from "../lib/appNavigationHistory"
+import { clearCustomerProfileReturn, shouldClearCustomerProfileReturnOnPage } from "../lib/customerProfileReturn"
 
 type OverlayCloser = () => void
 
@@ -35,6 +36,9 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
   const navigatePage = useCallback(
     (nextPage: string, opts?: { replace?: boolean }) => {
       overlaysRef.current.forEach((close) => close())
+      if (shouldClearCustomerProfileReturnOnPage(nextPage)) {
+        clearCustomerProfileReturn()
+      }
       setPage(nextPage)
       const hash = buildAppHash(nextPage)
       if (opts?.replace) {

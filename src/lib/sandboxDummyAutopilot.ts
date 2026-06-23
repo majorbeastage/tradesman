@@ -247,7 +247,7 @@ async function processCalendarJobs(
     if (!member || !demoCanCompleteField(member, perms)) continue
 
     const completedIso = new Date().toISOString()
-    const nextMeta = mergeCalendarAssigneeMetadata(row.metadata, demoId, {
+    const nextMeta = mergeCalendarAssigneeMetadata(row.metadata, { assignedDemoUserId: demoId, assignedUserId: null }, {
       sandbox_dummy_autopilot_completed: true,
       completion_note: `Marked complete by demo autopilot (${member.label}).`,
     })

@@ -3,20 +3,43 @@ import { buildQuotePdfBytes } from "./documentPdf"
 import { fetchQuoteLogoForExport } from "./quoteLogoImage"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "./defaultEstimateLegal"
+import { archiveEstimatePdfBytes, getLatestArchivedEstimatePdf } from "./estimatePdfArchive"
 
 function itemDescription(item: Record<string, unknown>): string {
   return String(item.description ?? item.item_description ?? item.name ?? "—")
 }
 
-export async function openEstimatePdfInBrowser(
+function formatPreparedLabel(iso: string | null | undefined): string | null {
+  if (!iso?.trim()) return null
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return null
+  return new Date(t).toLocaleDateString(undefined, { dateStyle: "medium" })
+}
+
+function pickPreparedDateIso(quoteMeta: Record<string, unknown>, createdAt: string | null | undefined): string {
+  const sent = quoteMeta.estimate_sent_at ?? quoteMeta.last_sent_at
+  if (typeof sent === "string" && sent.trim()) return sent.trim()
+  if (typeof createdAt === "string" && createdAt.trim()) return createdAt.trim()
+  return new Date().toISOString()
+}
+
+export type EstimatePdfViewResult = {
+  quoteId: string
+  url: string
+  mode: "archived" | "generated"
+  preparedAtLabel: string | null
+}
+
+async function buildEstimatePdfBytesForQuote(
   supabase: SupabaseClient,
   userId: string,
   quoteId: string,
-): Promise<void> {
+  preparedDateIso?: string | null,
+): Promise<Uint8Array> {
   const [{ data: quote, error: qErr }, { data: prof }] = await Promise.all([
     supabase
       .from("quotes")
-      .select("id, customer_id, metadata, customers ( display_name )")
+      .select("id, customer_id, metadata, created_at, customers ( display_name )")
       .eq("id", quoteId)
       .eq("user_id", userId)
       .maybeSingle(),
@@ -25,7 +48,11 @@ export async function openEstimatePdfInBrowser(
 
   if (qErr || !quote) throw qErr ?? new Error("Estimate not found.")
 
-  const { data: items, error: iErr } = await supabase.from("quote_items").select("*").eq("quote_id", quoteId).order("created_at", { ascending: true })
+  const { data: items, error: iErr } = await supabase
+    .from("quote_items")
+    .select("*")
+    .eq("quote_id", quoteId)
+    .order("created_at", { ascending: true })
   if (iErr) throw iErr
 
   const meta =
@@ -82,8 +109,9 @@ export async function openEstimatePdfInBrowser(
 
   const includeLegal = quoteMeta.estimate_include_legal === true || meta.quote_include_legal === true
   const showSignatures = quoteMeta.estimate_legal_signatures === true || meta.quote_legal_signatures === true
+  const preparedIso = preparedDateIso ?? pickPreparedDateIso(quoteMeta, (quote as { created_at?: string }).created_at)
 
-  const bytes = await buildQuotePdfBytes({
+  return buildQuotePdfBytes({
     title: `Quote ${quoteId.slice(0, 8)}`,
     businessLabel,
     customerName: customerName?.trim() || "Customer",
@@ -91,14 +119,75 @@ export async function openEstimatePdfInBrowser(
     templateHeader,
     templateFooter,
     includePreparedDate: meta.quote_include_prepared_date !== false,
+    preparedDateLabel: formatPreparedLabel(preparedIso),
     showLineNumbers: meta.quote_show_line_numbers === true,
     logo,
     legal: includeLegal || showSignatures ? { body: legalText, cancellation: cancelText, showSignatures } : null,
     customerCopyAttachments: [],
   })
+}
+
+/** Prefer a filed archived PDF; otherwise generate, archive, and return a view URL. */
+export async function openEstimatePdfForProfile(
+  supabase: SupabaseClient,
+  userId: string,
+  quoteId: string,
+  opts?: { archiveIfGenerated?: boolean },
+): Promise<EstimatePdfViewResult> {
+  const archived = await getLatestArchivedEstimatePdf(supabase, quoteId)
+  if (archived?.public_url) {
+    return {
+      quoteId,
+      url: archived.public_url,
+      mode: "archived",
+      preparedAtLabel: formatPreparedLabel(archived.prepared_at ?? archived.created_at),
+    }
+  }
+
+  const bytes = await buildEstimatePdfBytesForQuote(supabase, userId, quoteId)
+  const preparedAt = new Date().toISOString()
+  if (opts?.archiveIfGenerated !== false) {
+    const row = await archiveEstimatePdfBytes(supabase, userId, quoteId, bytes, {
+      source: "manual",
+      preparedAt,
+    })
+    if (row?.public_url) {
+      return {
+        quoteId,
+        url: row.public_url,
+        mode: "generated",
+        preparedAtLabel: formatPreparedLabel(row.prepared_at ?? preparedAt),
+      }
+    }
+  }
 
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
   const url = URL.createObjectURL(blob)
-  window.open(url, "_blank", "noopener,noreferrer")
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return { quoteId, url, mode: "generated", preparedAtLabel: formatPreparedLabel(preparedAt) }
+}
+
+export async function archiveEstimatePdfFromQuote(
+  supabase: SupabaseClient,
+  userId: string,
+  quoteId: string,
+  source: "email" | "download" | "manual",
+  preparedDateIso?: string | null,
+): Promise<void> {
+  const bytes = await buildEstimatePdfBytesForQuote(supabase, userId, quoteId, preparedDateIso)
+  const preparedAt = preparedDateIso ?? new Date().toISOString()
+  await archiveEstimatePdfBytes(supabase, userId, quoteId, bytes, { source, preparedAt })
+}
+
+export async function openEstimatePdfInBrowser(
+  supabase: SupabaseClient,
+  userId: string,
+  quoteId: string,
+): Promise<void> {
+  const view = await openEstimatePdfForProfile(supabase, userId, quoteId)
+  if (view.url.startsWith("blob:")) {
+    window.open(view.url, "_blank", "noopener,noreferrer")
+    window.setTimeout(() => URL.revokeObjectURL(view.url), 60_000)
+    return
+  }
+  window.open(view.url, "_blank", "noopener,noreferrer")
 }

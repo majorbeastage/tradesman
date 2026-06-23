@@ -2384,11 +2384,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setEventAssigneeSaving(true)
     setAssigneeSaveNote("")
     try {
-      const assignee = resolveCalendarAssigneeForSave(eventAssigneePick, authUserId || userId)
-      const nextMeta = mergeCalendarAssigneeMetadata(selectedEvent.metadata, assignee.assignedDemoUserId)
+      const assignee = resolveCalendarAssigneeForSave(
+        eventAssigneePick,
+        authUserId || userId,
+        selectedEvent.user_id ?? (authUserId || userId),
+      )
+      const nextMeta = mergeCalendarAssigneeMetadata(selectedEvent.metadata, assignee)
       const { data: updated, error } = await supabase
         .from("calendar_events")
-        .update({ user_id: assignee.dbUserId, metadata: nextMeta, updated_at: new Date().toISOString() })
+        .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
         .eq("id", selectedEvent.id)
         .select("id, user_id, metadata")
         .maybeSingle()
@@ -2400,11 +2404,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         sandboxTrainingAlert(sandboxTraining, "Assignee was not saved. Check that you can edit this event.")
         return
       }
-      const patched = { ...selectedEvent, user_id: assignee.dbUserId, metadata: nextMeta }
+      const patched = { ...selectedEvent, metadata: nextMeta }
       setSelectedEvent(patched)
-      setEvents((prev) =>
-        prev.map((e) => (e.id === selectedEvent.id ? { ...e, user_id: assignee.dbUserId, metadata: nextMeta } : e)),
-      )
+      setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? { ...e, metadata: nextMeta } : e)))
       setEventAssigneePick(calendarEventAssigneeUserId(patched) || userId)
       setAssigneeSaveNote("Assignee saved.")
       void loadEvents()
@@ -2416,11 +2418,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
     const assigneePick = addAssignToSelectedUser ? addTargetUserId || userId : authUserId || userId
-    const assignee = resolveCalendarAssigneeForSave(assigneePick, authUserId || userId)
-    const eventOwnerUserId = addAssignToSelectedUser
-      ? assignee.dbUserId
-      : resolveSandboxDataUserId(authUserId || userId, authUserId || userId)
-    const assignedDemoUserId = addAssignToSelectedUser ? assignee.assignedDemoUserId : null
+    const eventOwnerUserId = resolveSandboxDataUserId(authUserId || userId, authUserId || userId)
+    const assignee = resolveCalendarAssigneeForSave(assigneePick, authUserId || userId, eventOwnerUserId)
     setAddError("")
     const start = parseLocalDateTime(addStartDate, addStartTime)
     if (Number.isNaN(start.getTime())) {
@@ -2513,7 +2512,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           start_at: s.toISOString(),
           end_at: e.toISOString(),
         }
-        if (assignedDemoUserId) row.metadata = mergeCalendarAssigneeMetadata(null, assignedDemoUserId)
+        if (addAssignToSelectedUser && (assignee.assignedDemoUserId || assignee.assignedUserId)) {
+          row.metadata = mergeCalendarAssigneeMetadata(null, assignee)
+        }
         if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
         return row

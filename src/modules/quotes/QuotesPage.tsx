@@ -143,10 +143,12 @@ import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContex
 import {
   consumeOpenSpecialtyReportWizard,
   consumeQuotesCustomerPrefill,
+  consumeQuotesOpenQuote,
   notifyCustomersHubRefresh,
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
   peekQuotesCustomerPrefill,
 } from "../../lib/workflowNavigation"
+import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
@@ -2008,6 +2010,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
 
   useEffect(() => {
+    const openQuoteId = consumeQuotesOpenQuote()
+    if (openQuoteId) setSelectedQuoteId(openQuoteId)
+  }, [userId])
+
+  useEffect(() => {
     function openQueuedSpecialtyReport() {
       const req = consumeOpenSpecialtyReportWizard()
       if (!req) return
@@ -3802,6 +3809,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       } else {
         const bytes = await buildQuotePdfBytes(base)
         downloadPdfBlob(bytes, `quote-${shortId}.pdf`)
+        if (supabase && userId) {
+          void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "download").catch(() => undefined)
+        }
       }
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
@@ -4084,6 +4094,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
         throw new Error("Email was sent but the estimate PDF could not be attached. Try again or use Download.")
       }
       if (!sandboxTraining) alert("Email sent with estimate PDF attached.")
+      if (supabase && userId && selectedQuote?.id) {
+        void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "email").catch(() => undefined)
+      }
       setBottomActionEmailOpen(false)
     } catch (e) {
       sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")

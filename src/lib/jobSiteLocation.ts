@@ -71,15 +71,27 @@ export function resolveJobMapCoords(args: {
 export async function resolveJobMapCoordsAsync(args: {
   eventMetadata: unknown
   customer: (CustomerServiceLocation & { metadata?: unknown }) | null | undefined
-}): Promise<{ lat: number; lng: number; source: "event" | "customer" | "geocoded" } | null> {
+  /** Stable index for deterministic fallback when geocoding is unavailable. */
+  fallbackIndex?: number
+}): Promise<{ lat: number; lng: number; source: "event" | "customer" | "geocoded" | "fallback" } | null> {
   const direct = resolveJobMapCoords(args)
   if (direct) return direct
   const fromMeta = parseJobSiteFromEventMetadata(args.eventMetadata)
   const addr = fromMeta.address || customerServiceAddressForMap(args.customer)
-  if (!addr) return null
-  const geo = await geocodeAddressToLatLng(addr)
-  if (!geo) return null
-  return { ...geo, source: "geocoded" }
+  if (addr) {
+    try {
+      const geo = await geocodeAddressToLatLng(addr)
+      if (geo) return { ...geo, source: "geocoded" }
+    } catch {
+      /* ignore */
+    }
+  }
+  const idx = args.fallbackIndex ?? 0
+  return {
+    lat: 32.7767 + (idx % 7) * 0.018,
+    lng: -96.797 + Math.floor(idx / 7) * 0.022,
+    source: "fallback",
+  }
 }
 
 export function mergeJobSiteIntoMetadata(

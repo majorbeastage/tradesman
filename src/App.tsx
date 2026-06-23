@@ -57,6 +57,7 @@ import DashboardReportsPreview from "./components/DashboardReportsPreview"
 import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
+import CustomerProfileReturnBar from "./components/CustomerProfileReturnBar"
 import HelpDeskChatPanel from "./components/HelpDeskChatPanel"
 import SandboxControlPanel, { SandboxTrainingBanner, SandboxTrainingProvider } from "./components/SandboxControlPanel"
 import { isSandboxProfile } from "./lib/sandboxEnvironment"
@@ -526,6 +527,7 @@ function MainAppInner() {
         </div>
       )}
     </AppLayout>
+    <CustomerProfileReturnBar page={page} onNavigate={setPage} />
     </SandboxTrainingProvider>
     </GlobalAssistantProvider>
     </SetupWizardProvider>

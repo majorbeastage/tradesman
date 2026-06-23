@@ -3,14 +3,24 @@ import { theme } from "../styles/theme"
 import { calendarEventDisplayStatus, type CalendarEventProfileRow } from "../lib/calendarEventProfile"
 import { formatDisplayText } from "../lib/formatDisplayText"
 
+export type CalendarEventLinkedDoc = {
+  label: string
+  value: string
+  onOpen?: () => void
+}
+
 type Props = {
   event: CalendarEventProfileRow
   assigneeLabel?: string | null
+  scopeOfWork?: string | null
+  materialsUsed?: string | null
+  linkedDocs?: CalendarEventLinkedDoc[]
   onClose: () => void
-  /** Open this event in Scheduling for editing (upcoming jobs only). */
   onEditInCalendar?: () => void
   onViewPdf?: () => void
+  onExportPdf?: () => void
   pdfBusy?: boolean
+  exportBusy?: boolean
 }
 
 function formatWhen(iso: string | null | undefined): string {
@@ -41,10 +51,15 @@ function statusStyle(status: ReturnType<typeof calendarEventDisplayStatus>): CSS
 export default function CalendarEventViewModal({
   event,
   assigneeLabel,
+  scopeOfWork,
+  materialsUsed,
+  linkedDocs = [],
   onClose,
   onEditInCalendar,
   onViewPdf,
+  onExportPdf,
   pdfBusy,
+  exportBusy,
 }: Props) {
   const status = useMemo(() => calendarEventDisplayStatus(event), [event])
   const canEdit = status === "Upcoming" || status === "Recurring"
@@ -69,8 +84,8 @@ export default function CalendarEventViewModal({
     >
       <div
         style={{
-          width: "min(520px, 100%)",
-          maxHeight: "min(88vh, 720px)",
+          width: "min(640px, 100%)",
+          maxHeight: "min(90vh, 820px)",
           overflow: "auto",
           background: "#fff",
           borderRadius: 12,
@@ -113,12 +128,6 @@ export default function CalendarEventViewModal({
               <dd style={{ margin: "2px 0 0", color: theme.text }}>{assigneeLabel}</dd>
             </div>
           ) : null}
-          {event.quote_id ? (
-            <div>
-              <dt style={{ margin: 0, color: "#64748b", fontWeight: 600 }}>Estimate</dt>
-              <dd style={{ margin: "2px 0 0", color: theme.text }}>Linked to an estimate</dd>
-            </div>
-          ) : null}
         </dl>
 
         {notes ? (
@@ -128,62 +137,109 @@ export default function CalendarEventViewModal({
           </div>
         ) : null}
 
+        {scopeOfWork?.trim() ? (
+          <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>Scope of work</div>
+            <div style={{ fontSize: 13, color: "#334155", whiteSpace: "pre-wrap" }}>{scopeOfWork.trim()}</div>
+          </div>
+        ) : null}
+
+        {materialsUsed?.trim() ? (
+          <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>Materials used / planned</div>
+            <div style={{ fontSize: 13, color: "#334155", whiteSpace: "pre-wrap" }}>{materialsUsed.trim()}</div>
+          </div>
+        ) : null}
+
+        {linkedDocs.length > 0 ? (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>Linked paperwork</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {linkedDocs.map((doc) => (
+                <div
+                  key={`${doc.label}-${doc.value}`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, color: theme.text }}>{doc.label}</div>
+                    <div style={{ color: "#64748b", fontSize: 12 }}>{doc.value}</div>
+                  </div>
+                  {doc.onOpen ? (
+                    <button
+                      type="button"
+                      onClick={doc.onOpen}
+                      style={{
+                        padding: "5px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 }}>
           {canEdit && onEditInCalendar ? (
-            <button
-              type="button"
-              onClick={onEditInCalendar}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 8,
-                border: "none",
-                background: theme.primary,
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
+            <button type="button" onClick={onEditInCalendar} style={primaryBtn}>
               Edit in Scheduling
             </button>
           ) : null}
-          {status === "Complete" && onViewPdf ? (
-            <button
-              type="button"
-              disabled={pdfBusy}
-              onClick={onViewPdf}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                color: theme.text,
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: pdfBusy ? "wait" : "pointer",
-              }}
-            >
-              {pdfBusy ? "Opening PDF…" : "View PDF summary"}
+          {onExportPdf ? (
+            <button type="button" disabled={exportBusy} onClick={onExportPdf} style={secondaryBtn}>
+              {exportBusy ? "Exporting…" : "Export to PDF"}
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              color: theme.text,
-              fontWeight: 600,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
+          {status === "Complete" && onViewPdf ? (
+            <button type="button" disabled={pdfBusy} onClick={onViewPdf} style={secondaryBtn}>
+              {pdfBusy ? "Opening PDF…" : "View job summary PDF"}
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} style={secondaryBtn}>
             Close
           </button>
         </div>
       </div>
     </div>
   )
+}
+
+const primaryBtn: CSSProperties = {
+  padding: "8px 14px",
+  borderRadius: 8,
+  border: "none",
+  background: theme.primary,
+  color: "#fff",
+  fontWeight: 700,
+  fontSize: 13,
+  cursor: "pointer",
+}
+
+const secondaryBtn: CSSProperties = {
+  padding: "8px 14px",
+  borderRadius: 8,
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  color: theme.text,
+  fontWeight: 600,
+  fontSize: 13,
+  cursor: "pointer",
 }

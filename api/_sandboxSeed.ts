@@ -519,6 +519,8 @@ export async function seedSandboxWorkspace(
 
     const start = daysFromNow(i + 1, 10 + i)
     const end = daysFromNow(i + 1, 12 + i)
+    const serviceLat = SANDBOX_BASE_LAT + i * 0.012
+    const serviceLng = SANDBOX_BASE_LNG + i * 0.018
     const { error } = await supabase.from("calendar_events").insert({
       user_id: userId,
       customer_id: cid,
@@ -526,7 +528,11 @@ export async function seedSandboxWorkspace(
       start_at: start,
       end_at: end,
       notes: "Sandbox scheduled job",
-      metadata: { sandbox_seed: true },
+      metadata: {
+        sandbox_seed: true,
+        job_site_lat: serviceLat,
+        job_site_lng: serviceLng,
+      },
     })
     if (!error) eventCount++
   }

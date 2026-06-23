@@ -262,7 +262,7 @@ export default function TeamLocationsMapModal({
       }
 
       if (showNextJobs) {
-        const byUser = new Map<string, CalendarJobRow>()
+        let jobPinIndex = 0
         for (const ev of jobRows) {
           const uid = ev.user_id ?? ""
           if (!uid || !orgUserIdsForJobs.includes(uid)) continue
@@ -270,11 +270,13 @@ export default function TeamLocationsMapModal({
             const matchUid = resolveJobUserId && isSandboxDemoUserId(viewUserId) ? resolveJobUserId(viewUserId) : viewUserId
             if (uid !== matchUid && uid !== viewUserId) continue
           }
-          if (!byUser.has(uid)) byUser.set(uid, ev)
-        }
-        for (const ev of byUser.values()) {
           const cust = ev.customers
-          const coords = await resolveJobMapCoordsAsync({ eventMetadata: ev.metadata, customer: cust })
+          const coords = await resolveJobMapCoordsAsync({
+            eventMetadata: ev.metadata,
+            customer: cust,
+            fallbackIndex: jobPinIndex,
+          })
+          jobPinIndex += 1
           if (!coords) continue
           const n = teamMemberDisplayIndex(ev.user_id ?? "", orderedIds)
           const { fill, stroke } = teamMarkerColors(n > 0 ? n : 0)

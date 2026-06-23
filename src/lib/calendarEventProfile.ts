@@ -233,3 +233,57 @@ export async function openCalendarEventSummaryPdf(
   window.open(url, "_blank", "noopener,noreferrer")
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
+
+/** Export a scheduling event summary PDF (works before the job is marked complete). */
+export async function exportCalendarEventDetailPdf(
+  supabase: SupabaseClient,
+  userId: string,
+  ev: CalendarEventProfileRow,
+  extras?: {
+    assigneeLabel?: string | null
+    scopeOfWork?: string | null
+    materialsUsed?: string | null
+    linkedSummary?: string | null
+  },
+): Promise<void> {
+  const { buildReceiptPdfBytes } = await import("./documentPdf")
+  const status = calendarEventDisplayStatus(ev)
+  const startLabel = ev.start_at
+    ? new Date(ev.start_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : "—"
+  const endLabel = ev.end_at
+    ? new Date(ev.end_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : "—"
+  const bodyParts = [
+    `Status: ${status}`,
+    `Scheduled: ${startLabel} – ${endLabel}`,
+    ev.job_type_name ? `Job type: ${ev.job_type_name}` : null,
+    extras?.assigneeLabel ? `Assigned to: ${extras.assigneeLabel}` : null,
+    ev.quote_id ? `Estimate linked: ${ev.quote_id.slice(0, 8).toUpperCase()}` : null,
+    extras?.scopeOfWork?.trim() ? `Scope of work:\n${extras.scopeOfWork.trim()}` : null,
+    extras?.materialsUsed?.trim() ? `Materials:\n${extras.materialsUsed.trim()}` : null,
+    ev.notes?.trim() ? `Notes:\n${ev.notes.trim()}` : null,
+    extras?.linkedSummary?.trim() ? `Linked paperwork:\n${extras.linkedSummary.trim()}` : null,
+  ].filter(Boolean)
+
+  const { data: prof } = await supabase.from("profiles").select("display_name").eq("id", userId).maybeSingle()
+  const businessLabel =
+    typeof prof?.display_name === "string" && prof.display_name.trim() ? prof.display_name.trim() : "Job summary"
+
+  const bytes = await buildReceiptPdfBytes({
+    businessLabel,
+    customerName: ev.customer_name?.trim() || "Customer",
+    jobTitle: ev.title,
+    completedAtLabel: status,
+    amountLabel: ev.quote_total != null && ev.quote_total > 0 ? `Quote total: $${ev.quote_total.toFixed(2)}` : null,
+    templateHeader: bodyParts.join("\n\n"),
+    documentTitle: "Calendar event summary",
+    jobLabel: "Job",
+    completedLabel: "Status",
+  })
+
+  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
+  const url = URL.createObjectURL(blob)
+  window.open(url, "_blank", "noopener,noreferrer")
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}

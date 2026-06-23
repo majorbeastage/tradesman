@@ -18,7 +18,7 @@ import {
   SANDBOX_DEMO_TEAM_POLICIES_META_KEY,
 } from "../../lib/sandboxDemoTeamPolicies"
 import { loadOrganizationChartFromMetadata } from "../../lib/organizationChart"
-import { orgDepartmentForLinkedUser } from "../../lib/orgChartDepartment"
+import { resolveTeamMemberDepartmentLabel } from "../../lib/orgChartDepartment"
 import {
   buildDefaultSandboxDemoLocations,
   parseSandboxDemoLocations,
@@ -195,6 +195,19 @@ function TeamUserCard({
         >
           {displayName}
         </div>
+        {departmentLabel ? (
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.92)",
+              marginTop: 2,
+              textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+            }}
+          >
+            {departmentLabel}
+          </div>
+        ) : null}
         {clockedInAt ? (
           <div
             title={`Clocked in at ${new Date(clockedInAt).toLocaleString()}`}
@@ -804,7 +817,7 @@ export default function CalendarTeamManagementPanel({
       if (cancelled || e1 || !profs) return
       const map: Record<string, ProfileLite> = {}
       for (const p of profs as ProfileLite[]) map[p.id] = p
-      setProfilesById(map)
+      setProfilesById((prev) => ({ ...prev, ...map }))
       const { data: prefs, error: e2 } = await supabase.from("user_calendar_preferences").select("owner_user_id, ribbon_color, auto_assign_enabled").in("owner_user_id", ids)
       if (cancelled || e2) return
       const pm: Record<string, PrefLite> = {}
@@ -915,10 +928,12 @@ export default function CalendarTeamManagementPanel({
     })
   }
 
+  const demoTeam = useMemo(() => parseSandboxDemoTeam(omMeta.sandbox_demo_team), [omMeta])
+
   async function savePermissionsForMember(targetUserId: string) {
     if (!supabase) return
     const draft = permissionDraftByUserId[targetUserId] ?? savedPolicyForMember(targetUserId)
-    const dept = orgDepartmentForLinkedUser(orgChart, targetUserId)
+    const dept = resolveTeamMemberDepartmentLabel(orgChart, targetUserId, demoTeam)
     const toSave = parseOmCalendarPolicy(
       mergeOmCalendarPolicy({ om_calendar_policy: draft }, { department_label: dept }),
     )
@@ -933,12 +948,19 @@ export default function CalendarTeamManagementPanel({
           .maybeSingle()
         if (e1) throw e1
         const merged = mergeSandboxDemoTeamPolicy(row?.metadata, targetUserId, toSave)
-        const { error: e2 } = await supabase
+        const { data: saved, error: e2 } = await supabase
           .from("profiles")
           .update({ metadata: merged, updated_at: new Date().toISOString() })
           .eq("id", officeManagerUserId)
+          .select("metadata")
+          .maybeSingle()
         if (e2) throw e2
-        setOmMeta(merged)
+        if (!saved?.metadata) throw new Error("Permissions did not save — check your connection and try again.")
+        setOmMeta(
+          saved.metadata && typeof saved.metadata === "object" && !Array.isArray(saved.metadata)
+            ? (saved.metadata as Record<string, unknown>)
+            : merged,
+        )
         setProfilesById((prev) => ({
           ...prev,
           [targetUserId]: {
@@ -951,14 +973,17 @@ export default function CalendarTeamManagementPanel({
         const { data: row, error: e1 } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
         if (e1) throw e1
         const nextMeta = mergeOmCalendarPolicy(row?.metadata, toSave)
-        const { error: e2 } = await supabase
+        const { data: saved, error: e2 } = await supabase
           .from("profiles")
           .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
           .eq("id", targetUserId)
+          .select("metadata")
+          .maybeSingle()
         if (e2) throw e2
+        if (!saved?.metadata) throw new Error("Permissions did not save — you may not have access to update this user.")
         setProfilesById((prev) => ({
           ...prev,
-          [targetUserId]: { ...prev[targetUserId], id: targetUserId, metadata: nextMeta } as ProfileLite,
+          [targetUserId]: { ...prev[targetUserId], id: targetUserId, metadata: saved.metadata } as ProfileLite,
         }))
       }
       setPermissionDraftByUserId((prev) => {
@@ -1073,7 +1098,7 @@ export default function CalendarTeamManagementPanel({
           const policy = member.isSelf
             ? ({ allow_add_to_calendar: true, job_types_access: "edit" } as OmCalendarPolicyV1)
             : permissionDraftByUserId[member.userId] ?? parseOmCalendarPolicy(p?.metadata)
-          const departmentLabel = orgDepartmentForLinkedUser(orgChart, member.userId)
+          const departmentLabel = resolveTeamMemberDepartmentLabel(orgChart, member.userId, demoTeam)
           const permissionsDirty =
             !member.isSelf &&
             JSON.stringify(policy) !== JSON.stringify(savedPolicyForMember(member.userId))

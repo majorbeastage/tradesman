@@ -44,6 +44,7 @@ import DashboardReportsPreview from "../../components/DashboardReportsPreview"
 import CustomerProfilePage from "../customers/CustomerProfilePage"
 import SetupGuideModal from "../../components/SetupGuideModal"
 import GlobalAssistantFab from "../../components/GlobalAssistantFab"
+import CustomerProfileReturnBar from "../../components/CustomerProfileReturnBar"
 import HelpDeskChatPanel from "../../components/HelpDeskChatPanel"
 import SandboxControlPanel, { SandboxTrainingBanner, SandboxTrainingProvider } from "../../components/SandboxControlPanel"
 import { isSandboxProfile } from "../../lib/sandboxEnvironment"
@@ -663,6 +664,7 @@ function OfficeManagerAppContent() {
         <p style={{ color: theme.text, opacity: 0.8 }}>Assign users to your office manager account to use this section.</p>
       )}
     </AppLayout>
+    <CustomerProfileReturnBar page={page} onNavigate={setPage} />
     </SandboxTrainingProvider>
     </GlobalAssistantProvider>
     </SetupWizardProvider>

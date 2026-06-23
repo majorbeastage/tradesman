@@ -1,27 +1,32 @@
-import { isSandboxDemoUserId, resolveSandboxDataUserId } from "./sandboxDemoTeam"
+import { isSandboxDemoUserId } from "./sandboxDemoTeam"
 
 /** Sandbox training: which demo persona owns this job (real user_id stays the signed-in account). */
 export const CALENDAR_ASSIGNED_DEMO_USER_KEY = "assigned_demo_user_id"
+/** Real team member assigned while event user_id stays the account owner. */
+export const CALENDAR_ASSIGNED_USER_KEY = "assigned_user_id"
 
 export type CalendarAssigneeResolution = {
+  /** DB owner — never change on assignee-only edits (avoids RLS / event disappearing). */
   dbUserId: string
   assignedDemoUserId: string | null
+  assignedUserId: string | null
 }
 
 export function resolveCalendarAssigneeForSave(
   selectedUserId: string,
   authUserId: string,
+  eventOwnerUserId?: string | null,
 ): CalendarAssigneeResolution {
   const trimmed = selectedUserId.trim()
   const auth = authUserId.trim()
-  if (!trimmed) return { dbUserId: auth, assignedDemoUserId: null }
+  const owner = (eventOwnerUserId?.trim() || auth).trim()
+  if (!trimmed || trimmed === owner) {
+    return { dbUserId: owner, assignedDemoUserId: null, assignedUserId: null }
+  }
   if (isSandboxDemoUserId(trimmed)) {
-    return { dbUserId: auth, assignedDemoUserId: trimmed }
+    return { dbUserId: owner, assignedDemoUserId: trimmed, assignedUserId: null }
   }
-  return {
-    dbUserId: resolveSandboxDataUserId(trimmed, auth),
-    assignedDemoUserId: null,
-  }
+  return { dbUserId: owner, assignedDemoUserId: null, assignedUserId: trimmed }
 }
 
 export function readAssignedDemoUserId(metadata: unknown): string | null {
@@ -30,9 +35,15 @@ export function readAssignedDemoUserId(metadata: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null
 }
 
+export function readAssignedUserId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const v = (metadata as Record<string, unknown>)[CALENDAR_ASSIGNED_USER_KEY]
+  return typeof v === "string" && v.trim() ? v.trim() : null
+}
+
 export function mergeCalendarAssigneeMetadata(
   metadata: unknown,
-  assignedDemoUserId: string | null,
+  assignee: Pick<CalendarAssigneeResolution, "assignedDemoUserId" | "assignedUserId">,
   extra?: Record<string, unknown>,
 ): Record<string, unknown> {
   const base =
@@ -40,9 +51,24 @@ export function mergeCalendarAssigneeMetadata(
       ? { ...(metadata as Record<string, unknown>) }
       : {}
   if (extra) Object.assign(base, extra)
-  if (assignedDemoUserId?.trim()) base[CALENDAR_ASSIGNED_DEMO_USER_KEY] = assignedDemoUserId.trim()
-  else delete base[CALENDAR_ASSIGNED_DEMO_USER_KEY]
+  if (assignee.assignedDemoUserId?.trim()) {
+    base[CALENDAR_ASSIGNED_DEMO_USER_KEY] = assignee.assignedDemoUserId.trim()
+    delete base[CALENDAR_ASSIGNED_USER_KEY]
+  } else {
+    delete base[CALENDAR_ASSIGNED_DEMO_USER_KEY]
+    if (assignee.assignedUserId?.trim()) base[CALENDAR_ASSIGNED_USER_KEY] = assignee.assignedUserId.trim()
+    else delete base[CALENDAR_ASSIGNED_USER_KEY]
+  }
   return base
+}
+
+/** @deprecated Use mergeCalendarAssigneeMetadata with resolution object. */
+export function mergeCalendarAssigneeMetadataLegacy(
+  metadata: unknown,
+  assignedDemoUserId: string | null,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  return mergeCalendarAssigneeMetadata(metadata, { assignedDemoUserId, assignedUserId: null }, extra)
 }
 
 export function calendarEventAssigneeUserId(event: {
@@ -51,6 +77,8 @@ export function calendarEventAssigneeUserId(event: {
 }): string {
   const demo = readAssignedDemoUserId(event.metadata)
   if (demo) return demo
+  const assigned = readAssignedUserId(event.metadata)
+  if (assigned) return assigned
   return typeof event.user_id === "string" ? event.user_id : ""
 }
 

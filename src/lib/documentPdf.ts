@@ -85,6 +85,8 @@ export async function buildQuotePdfBytes(params: {
   templateFooter?: string | null
   /** Default true: show "Prepared: &lt;date&gt;" under the title. */
   includePreparedDate?: boolean
+  /** When set, used instead of today's date (archived estimate copies). */
+  preparedDateLabel?: string | null
   /** Number line items in the left margin of each row. */
   showLineNumbers?: boolean
   /** Optional logo above the business name (PNG or JPEG bytes). */
@@ -183,7 +185,9 @@ export async function buildQuotePdfBytes(params: {
   }
   draw(params.title, 12, true, 0.2)
   if (includeDate) {
-    const d = new Date().toLocaleDateString(undefined, { dateStyle: "medium" })
+    const d =
+      params.preparedDateLabel?.trim() ||
+      new Date().toLocaleDateString(undefined, { dateStyle: "medium" })
     draw(`Prepared: ${d}`, 10, false, 0.4)
   }
   y -= 8

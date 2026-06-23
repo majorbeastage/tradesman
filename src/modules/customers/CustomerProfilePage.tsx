@@ -7,13 +7,18 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import CommunicationUrgencyBadge from "../../components/CommunicationUrgencyBadge"
 import { consumeQueuedCustomerProfile, queueCustomerFocus, queueCustomerProfile } from "../../lib/customerNavigation"
+import { setCustomerProfileReturn } from "../../lib/customerProfileReturn"
 import {
   queueCustomReceiptCustomerPrefill,
   queueQuotesCustomerPrefill,
   queueSchedulingCustomerPrefill,
   queueSchedulingEventView,
+  queueQuotesOpenQuote,
 } from "../../lib/workflowNavigation"
-import CalendarEventViewModal from "../../components/CalendarEventViewModal"
+import CalendarEventViewModal, { type CalendarEventLinkedDoc } from "../../components/CalendarEventViewModal"
+import DocumentPdfViewerModal from "../../components/DocumentPdfViewerModal"
+import { calendarEventAssigneeUserId } from "../../lib/calendarAssignee"
+import { DEFAULT_SANDBOX_DEMO_TEAM, sandboxDemoMemberById } from "../../lib/sandboxDemoTeam"
 import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
 import { loadCustomerProfileBundle, type CustomerProfileBundle } from "../../lib/customerProfileData"
@@ -24,8 +29,8 @@ import CustomerContactSplitMergeModal from "../../components/CustomerContactSpli
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { estimateDisplayStatus, formatUsdAmount, receiptDisplayStatus } from "../../lib/customerDocumentStatus"
-import { calendarEventDisplayStatus, openCalendarEventSummaryPdf, type CalendarEventProfileRow } from "../../lib/calendarEventProfile"
-import { openEstimatePdfInBrowser } from "../../lib/estimatePdfExport"
+import { calendarEventDisplayStatus, exportCalendarEventDetailPdf, openCalendarEventSummaryPdf, type CalendarEventProfileRow } from "../../lib/calendarEventProfile"
+import { openEstimatePdfForProfile } from "../../lib/estimatePdfExport"
 import {
   buildCustomReceiptPdfBytes,
   customReceiptDraftToFormState,
@@ -260,6 +265,14 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
   const [profileMetadata, setProfileMetadata] = useState<unknown>(null)
   const [eventView, setEventView] = useState<CalendarEventProfileRow | null>(null)
+  const [eventExportBusy, setEventExportBusy] = useState(false)
+  const [estimatePdfView, setEstimatePdfView] = useState<{
+    quoteId: string
+    url: string
+    title: string
+    preparedAtLabel: string | null
+    revokeOnClose: boolean
+  } | null>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -283,6 +296,110 @@ export default function CustomerProfilePage({ setPage }: Props) {
       setLoading(false)
     }
   }, [userId, customerId, user?.id, viewAsDemoId])
+
+  const leaveProfileTo = useCallback(
+    (nextPage: string, run?: () => void) => {
+      const c = bundle?.customer
+      if (c?.id) {
+        setCustomerProfileReturn({
+          customerId: c.id,
+          customerName: formatDisplayText(c.display_name, "Customer"),
+        })
+      }
+      run?.()
+      setPage(nextPage)
+    },
+    [bundle?.customer, setPage],
+  )
+
+  function assigneeLabelForEvent(ev: CalendarEventProfileRow): string {
+    const assigneeId = calendarEventAssigneeUserId(ev)
+    if (!assigneeId) return "Unassigned"
+    const demo = sandboxDemoMemberById(DEFAULT_SANDBOX_DEMO_TEAM, assigneeId)
+    if (demo?.label) return demo.label
+    return assigneeId.slice(0, 8) + "…"
+  }
+
+  function linkedDocsForEvent(ev: CalendarEventProfileRow): CalendarEventLinkedDoc[] {
+    if (!bundle) return []
+    const docs: CalendarEventLinkedDoc[] = []
+    if (ev.quote_id) {
+      const q = bundle.quotes.find((row) => row.id === ev.quote_id)
+      docs.push({
+        label: "Estimate",
+        value: formatDisplayText(q?.title, ev.quote_id.slice(0, 8).toUpperCase()),
+        onOpen: () => void openEstimatePdf(ev.quote_id!),
+      })
+    }
+    for (const w of bundle.workOrders.filter((w) => !ev.quote_id || w.quote_id === ev.quote_id)) {
+      docs.push({
+        label: "Work order",
+        value: w.work_order_number,
+        onOpen: () => leaveProfileTo("operations-work_orders"),
+      })
+    }
+    for (const p of bundle.purchaseOrders.slice(0, 3)) {
+      docs.push({
+        label: "Purchase order",
+        value: p.po_number,
+        onOpen: () => leaveProfileTo("operations-purchase_orders"),
+      })
+    }
+    for (const inv of bundle.invoices.filter((i) => !ev.quote_id || i.quote_id === ev.quote_id).slice(0, 3)) {
+      docs.push({
+        label: "Invoice / payment",
+        value: formatUsdAmount(inv.amount) ?? inv.description ?? inv.id.slice(0, 8),
+        onOpen: () => leaveProfileTo("payments"),
+      })
+    }
+    for (const r of bundle.receipts.slice(0, 2)) {
+      docs.push({
+        label: "Receipt",
+        value: formatDisplayText(r.job_title, r.id.slice(0, 8).toUpperCase()),
+        onOpen: () => leaveProfileTo("calendar"),
+      })
+    }
+    return docs
+  }
+
+  function scopeOfWorkForEvent(ev: CalendarEventProfileRow): string | null {
+    const meta =
+      ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata)
+        ? (ev.metadata as Record<string, unknown>)
+        : {}
+    const fromMeta = typeof meta.scope_of_work === "string" ? meta.scope_of_work.trim() : ""
+    if (fromMeta) return fromMeta
+    if (ev.quote_id && bundle) {
+      const q = bundle.quotes.find((row) => row.id === ev.quote_id)
+      const title = formatDisplayText(q?.title, "")
+      if (title) return title
+    }
+    return ev.job_type_name?.trim() || null
+  }
+
+  function materialsForEvent(ev: CalendarEventProfileRow): string | null {
+    return ev.materials_list?.trim() || ev.job_type_materials_list?.trim() || null
+  }
+
+  async function openEstimatePdf(quoteId: string) {
+    if (!supabase || !userId) return
+    setPdfBusyId(`q-${quoteId}`)
+    try {
+      const view = await openEstimatePdfForProfile(supabase, userId, quoteId)
+      const q = bundle?.quotes.find((row) => row.id === quoteId)
+      setEstimatePdfView({
+        quoteId,
+        url: view.url,
+        title: formatDisplayText(q?.title, `Estimate ${quoteId.slice(0, 8).toUpperCase()}`),
+        preparedAtLabel: view.preparedAtLabel,
+        revokeOnClose: view.url.startsWith("blob:"),
+      })
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setPdfBusyId(null)
+    }
+  }
 
   useEffect(() => {
     void reload()
@@ -503,18 +620,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
     setPdfBusyId(`ev-${eventId}`)
     try {
       await openCalendarEventSummaryPdf(supabase, userId, ev)
-    } catch (e: unknown) {
-      alert(formatAppError(e))
-    } finally {
-      setPdfBusyId(null)
-    }
-  }
-
-  async function openEstimatePdf(quoteId: string) {
-    if (!supabase || !userId) return
-    setPdfBusyId(`q-${quoteId}`)
-    try {
-      await openEstimatePdfInBrowser(supabase, userId, quoteId)
     } catch (e: unknown) {
       alert(formatAppError(e))
     } finally {
@@ -984,41 +1089,35 @@ export default function CustomerProfilePage({ setPage }: Props) {
                   title: `Estimate · ${formatDisplayText(q.title, q.id.slice(0, 8))}`,
                   meta: `${estimateDisplayStatus(q.status, q.metadata)} · ${formatUsdAmount(q.total) ?? "—"} · ${formatWhen(q.updated_at ?? q.created_at)}`,
                   body: `Document ID: EST-${q.id.slice(0, 8).toUpperCase()}`,
-                  onClick: () => {
-                    queueQuotesCustomerPrefill(c.id)
-                    setPage("quotes")
-                  },
+                  onClick: () => void openEstimatePdf(q.id),
                 })),
                 ...bundle.workOrders.map((w) => ({
                   key: `wo-${w.id}`,
                   title: `Work order · ${w.work_order_number}`,
                   meta: `${w.status} · ${formatWhen(w.updated_at)}`,
                   body: w.estimate_title,
-                  onClick: () => setPage("operations-work_orders"),
+                  onClick: () => leaveProfileTo("operations-work_orders"),
                 })),
                 ...bundle.purchaseOrders.map((p) => ({
                   key: `po-${p.id}`,
                   title: `Purchase order · ${p.po_number}`,
                   meta: `${p.status} · ${formatWhen(p.updated_at)}`,
                   body: p.description,
-                  onClick: () => setPage("operations-purchase_orders"),
+                  onClick: () => leaveProfileTo("operations-purchase_orders"),
                 })),
                 ...bundle.invoices.map((inv) => ({
                   key: `inv-${inv.id}`,
                   title: `Invoice / payment · ${formatUsdAmount(inv.amount) ?? "—"}`,
                   meta: `${inv.status} · ${formatWhen(inv.created_at)}`,
                   body: inv.description,
-                  onClick: () => setPage("payments"),
+                  onClick: () => leaveProfileTo("payments"),
                 })),
                 ...bundle.receipts.map((r) => ({
                   key: `rcpt-${r.id}`,
                   title: `Receipt · ${formatDisplayText(r.job_title, "Custom receipt")}`,
                   meta: receiptDisplayStatus(r),
                   body: `Document ID: RCPT-${r.id.slice(0, 8).toUpperCase()}`,
-                  onClick: () => {
-                    queueCustomReceiptCustomerPrefill(c.id)
-                    setPage("calendar")
-                  },
+                  onClick: () => leaveProfileTo("calendar", () => queueCustomReceiptCustomerPrefill(c.id)),
                 })),
               ].slice(0, 40)}
             />
@@ -1297,14 +1396,17 @@ export default function CustomerProfilePage({ setPage }: Props) {
       {eventView ? (
         <CalendarEventViewModal
           event={eventView}
+          assigneeLabel={assigneeLabelForEvent(eventView)}
+          scopeOfWork={scopeOfWorkForEvent(eventView)}
+          materialsUsed={materialsForEvent(eventView)}
+          linkedDocs={linkedDocsForEvent(eventView)}
           onClose={() => setEventView(null)}
           onEditInCalendar={
             calendarEventDisplayStatus(eventView) === "Upcoming" ||
             calendarEventDisplayStatus(eventView) === "Recurring"
               ? () => {
-                  queueSchedulingEventView(eventView.id)
+                  leaveProfileTo("calendar", () => queueSchedulingEventView(eventView.id))
                   setEventView(null)
-                  setPage("calendar")
                 }
               : undefined
           }
@@ -1318,7 +1420,44 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 }
               : undefined
           }
+          onExportPdf={() => {
+            if (!supabase || !userId) return
+            setEventExportBusy(true)
+            const linkedSummary = linkedDocsForEvent(eventView)
+              .map((d) => `${d.label}: ${d.value}`)
+              .join("\n")
+            void exportCalendarEventDetailPdf(supabase, userId, eventView, {
+              assigneeLabel: assigneeLabelForEvent(eventView),
+              scopeOfWork: scopeOfWorkForEvent(eventView),
+              materialsUsed: materialsForEvent(eventView),
+              linkedSummary,
+            })
+              .catch((e: unknown) => alert(formatAppError(e)))
+              .finally(() => setEventExportBusy(false))
+          }}
           pdfBusy={pdfBusyId === `ev-${eventView.id}`}
+          exportBusy={eventExportBusy}
+        />
+      ) : null}
+
+      {estimatePdfView ? (
+        <DocumentPdfViewerModal
+          title={estimatePdfView.title}
+          pdfUrl={estimatePdfView.url}
+          preparedAtLabel={estimatePdfView.preparedAtLabel}
+          onClose={() => {
+            if (estimatePdfView.revokeOnClose) URL.revokeObjectURL(estimatePdfView.url)
+            setEstimatePdfView(null)
+          }}
+          onEditEstimate={() => {
+            const quoteId = estimatePdfView.quoteId
+            if (estimatePdfView.revokeOnClose) URL.revokeObjectURL(estimatePdfView.url)
+            setEstimatePdfView(null)
+            leaveProfileTo("quotes", () => {
+              queueQuotesCustomerPrefill(customerId)
+              queueQuotesOpenQuote(quoteId)
+            })
+          }}
         />
       ) : null}
     </div>

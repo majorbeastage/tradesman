@@ -11,7 +11,7 @@ import { parseLocalDateTime } from "./parseLocalDateTime"
 import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
 import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
-import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave } from "./calendarAssignee"
+import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave, type CalendarAssigneeResolution } from "./calendarAssignee"
 import type { PortalSettingItem } from "../types/portal-builder"
 
 export type ScheduleEstimateOnCalendarInput = {
@@ -54,14 +54,14 @@ function buildCalRows(
   materialsCombined: string | null,
   mileageMiles: number | null,
   contactTarget: string,
-  assignedDemoUserId: string | null,
+  assignee: Pick<CalendarAssigneeResolution, "assignedDemoUserId" | "assignedUserId">,
 ): Array<Record<string, unknown>> {
   return ranges.map(({ s, e }) => {
     const row: Record<string, unknown> = {
       ...rowBase,
       start_at: s.toISOString(),
       end_at: e.toISOString(),
-      metadata: mergeCalendarAssigneeMetadata(null, assignedDemoUserId, { contact_target: contactTarget }),
+      metadata: mergeCalendarAssigneeMetadata(null, assignee, { contact_target: contactTarget }),
     }
     if (materialsCombined) row.materials_list = materialsCombined
     if (mileageMiles != null) row.mileage_miles = mileageMiles
@@ -180,7 +180,7 @@ export async function scheduleEstimateOnCalendar(
       incMat ? materialsCombined : null,
       incMile && jtRow?.track_mileage ? input.mileageMiles : null,
       input.contactTarget,
-      assignee.assignedDemoUserId,
+      assignee,
     )
     const r = await input.supabase.from("calendar_events").insert(rows).select("id")
     if (!r.error) {
