@@ -47,8 +47,28 @@ export type GrowthCampaignDraft = {
   budget?: number
   radiusMiles?: number
   durationDays?: number
+  /** Public lead capture path segment — e.g. /cta/your-slug */
   landingSlug?: string
-  status: "draft" | "active" | "paused" | "completed"
+  description?: string
+  notes?: string
+  requiresApprovalBeforeLive?: boolean
+  submittedAt?: string
+  status: "draft" | "submitted" | "active" | "paused" | "completed"
+}
+
+export type GrowthPresencePages = {
+  google?: string
+  facebook?: string
+  instagram?: string
+  tiktok?: string
+  x?: string
+}
+
+export type WebsiteHealthCheckResult = {
+  checkedAt: string
+  url: string
+  score: number
+  checks: { id: string; ok: boolean; label: string; detail?: string }[]
 }
 
 export type GrowthModuleDoc = {
@@ -56,10 +76,12 @@ export type GrowthModuleDoc = {
   scores?: GrowthScores
   websiteUrl?: string
   websiteAuditNotes?: string
+  websiteHealthCheck?: WebsiteHealthCheckResult
   gbpConnected?: boolean
   gbpProfileUrl?: string
   gbpBusinessName?: string
   gbpLocation?: string
+  presencePages?: GrowthPresencePages
   campaigns?: GrowthCampaignDraft[]
   advisorNotes?: string[]
   checklist?: Record<string, boolean>
@@ -92,6 +114,14 @@ export function loadGrowthModuleFromMetadata(raw: unknown): GrowthModuleDoc {
     gbpProfileUrl: typeof o.gbpProfileUrl === "string" ? o.gbpProfileUrl : undefined,
     gbpBusinessName: typeof o.gbpBusinessName === "string" ? o.gbpBusinessName : undefined,
     gbpLocation: typeof o.gbpLocation === "string" ? o.gbpLocation : undefined,
+    presencePages:
+      typeof o.presencePages === "object" && o.presencePages && !Array.isArray(o.presencePages)
+        ? (o.presencePages as GrowthPresencePages)
+        : undefined,
+    websiteHealthCheck:
+      typeof o.websiteHealthCheck === "object" && o.websiteHealthCheck
+        ? (o.websiteHealthCheck as WebsiteHealthCheckResult)
+        : undefined,
     campaigns: Array.isArray(o.campaigns) ? (o.campaigns as GrowthCampaignDraft[]) : [],
     advisorNotes: Array.isArray(o.advisorNotes)
       ? o.advisorNotes.filter((x): x is string => typeof x === "string")
@@ -170,6 +200,46 @@ export function buildGrowthRecommendations(doc: GrowthModuleDoc): GrowthRecommen
     actionPage: "conversations",
   })
   return out
+}
+
+export function runBasicWebsiteHealthCheck(urlRaw: string): WebsiteHealthCheckResult {
+  const url = urlRaw.trim()
+  const checks: WebsiteHealthCheckResult["checks"] = []
+  let score = 0
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `https://${url}`)
+    checks.push({ id: "url", ok: true, label: "Valid URL format", detail: parsed.hostname })
+    score += 25
+    if (parsed.protocol === "https:") {
+      checks.push({ id: "ssl", ok: true, label: "Uses HTTPS", detail: "Secure connection expected" })
+      score += 25
+    } else {
+      checks.push({ id: "ssl", ok: false, label: "Uses HTTPS", detail: "Consider redirecting HTTP to HTTPS" })
+    }
+    if (!parsed.hostname.includes("localhost")) {
+      checks.push({ id: "host", ok: true, label: "Public hostname", detail: parsed.hostname })
+      score += 20
+    }
+    if (parsed.pathname === "/" || parsed.pathname.length > 1) {
+      checks.push({ id: "path", ok: true, label: "Page path present", detail: parsed.pathname })
+      score += 15
+    }
+    checks.push({
+      id: "cta",
+      ok: true,
+      label: "Lead capture ready",
+      detail: "Share your Tradesman /cta link on this site",
+    })
+    score += 15
+  } catch {
+    checks.push({ id: "url", ok: false, label: "Valid URL format", detail: "Enter a full URL like https://yourbusiness.com" })
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    url,
+    score: Math.min(100, score),
+    checks,
+  }
 }
 
 export const GROWTH_CAMPAIGN_TEMPLATES: { id: string; name: string; targetService: string }[] = [

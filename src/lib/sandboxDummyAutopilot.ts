@@ -32,6 +32,7 @@ import {
   snapshotFromQuoteWorkflow,
 } from "./customerWorkflowRouting"
 import { insertQuoteItemRowSafe } from "./quoteItemsDb"
+import { persistCustomerSmsConsent, parseCustomerSmsConsent } from "./customerSmsConsent"
 
 export type SandboxDummyAutopilotPermissions = {
   approveEstimates: boolean
@@ -179,6 +180,8 @@ async function syncCustomerWorkflowSnapshot(
     quoteId,
     activeNodeId: snapshot.activeNodeId,
     departmentKey: snapshot.departmentKey,
+    completedNodeIds: snapshot.completedNodeIds,
+    pendingNodeIds: snapshot.pendingNodeIds,
   })
   await supabase.from("customers").update({ metadata: merged, updated_at: new Date().toISOString() }).eq("id", customerId).eq("user_id", userId)
 }
@@ -353,6 +356,47 @@ async function processCustomerIntake(
       .eq("id", comm.customer_id)
       .eq("user_id", userId)
 
+    try {
+      if (!parseCustomerSmsConsent(custMeta)?.at) {
+        await persistCustomerSmsConsent(supabase, comm.customer_id, custMeta, {
+          source: "manual_entry",
+          businessName: "Demo Plumbing (sandbox)",
+          consentMethod: "phone_call",
+          consentNote: `${reception.label} recorded SMS opt-in during intake call (sandbox autopilot).`,
+        })
+      }
+    } catch {
+      /* best effort */
+    }
+
+    const { count: quoteCount } = await supabase
+      .from("quotes")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("customer_id", comm.customer_id)
+    if ((quoteCount ?? 0) === 0) {
+      const title = `Estimate — ${customerName}`
+      const { data: quote } = await supabase
+        .from("quotes")
+        .insert({
+          user_id: userId,
+          customer_id: comm.customer_id,
+          status: "draft",
+          metadata: { job_title: title, sandbox_autopilot_seed: true },
+        })
+        .select("id")
+        .maybeSingle()
+      if (quote?.id) {
+        await insertQuoteItemRowSafe(supabase, {
+          quote_id: quote.id as string,
+          description: jobSummary,
+          quantity: 1,
+          unit_price: 385,
+        })
+        actions.push(`${reception.label} started estimate for ${customerName}`)
+      }
+    }
+
     actions.push(`${reception.label} gathered intake info from ${customerName}`)
     used++
     break
@@ -435,26 +479,29 @@ async function processQuoteWorkflows(
       }
     }
 
-    const sendApproval = computed.find((a) => a.kind === "send_for_approval" && !a.disabled)
-    if (sendApproval) {
-      const node = bundle.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
+    const sendApprovals = computed.filter((a) => a.kind === "send_for_approval" && !a.disabled)
+    if (sendApprovals.length > 0) {
       const sender =
         demoTeam.find((m) => /maria|office|estimator|reception/i.test(m.label) || m.role === "office_manager") ??
         demoTeam[0]
-      if (node && sender) {
-        state = applySendForApproval(state, node, sender.id)
+      if (sender) {
+        const sentLabels: string[] = []
+        for (const sendApproval of sendApprovals) {
+          const node = bundle.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
+          if (!node) continue
+          state = applySendForApproval(state, node, sender.id)
+          sentLabels.push(node.label)
+        }
         await persistQuoteWorkflow(supabase, userId, quote.id, quote.metadata, state)
         await syncCustomerWorkflowSnapshot(supabase, userId, quote.customer_id, bundle.workflow, bundle.orgChart, quote.id, state)
-        const approver = resolveDemoMemberForWorkflowNode(node, bundle.orgChart, bundle.externalContacts, linkableUsers, demoTeam)
         await logDemoAction(
           supabase,
           userId,
           quote.customer_id ?? null,
           sender,
-          `Routed estimate to “${node.label}”${approver ? ` (${approver.label})` : ""} for approval.`,
-          approver ? { internalHandoffTo: approver } : undefined,
+          `Routed estimate to ${sentLabels.length} approver step(s): ${sentLabels.join(", ")}.`,
         )
-        actions.push(`${sender.label} sent estimate to “${node.label}”`)
+        actions.push(`${sender.label} sent estimate to ${sentLabels.length} approver(s)`)
         used++
       }
     }
@@ -706,8 +753,13 @@ export async function setSandboxDummyAutopilot(
   intervalMinutes = 2,
   permissions?: Partial<SandboxDummyAutopilotPermissions>,
 ): Promise<void> {
-  const prev = parseSandboxMeta(profileMetadata[SANDBOX_META_KEY])
-  const nextMeta = mergeSandboxMeta(profileMetadata, {
+  const { data: row } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  const baseMeta =
+    row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? ({ ...(row.metadata as Record<string, unknown>) } as Record<string, unknown>)
+      : { ...profileMetadata }
+  const prev = parseSandboxMeta(baseMeta[SANDBOX_META_KEY])
+  const nextMeta = mergeSandboxMeta(baseMeta, {
     dummyUsersAutopilotEnabled: enabled,
     dummyUsersAutopilotIntervalMinutes: Math.max(1, Math.min(15, intervalMinutes)),
     dummyUsersAutopilotPermissions: {

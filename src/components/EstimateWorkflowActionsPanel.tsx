@@ -3,6 +3,7 @@ import { theme } from "../styles/theme"
 import type { WorkflowActionButton, QuoteInternalWorkflowState } from "../lib/estimateWorkflowRuntime"
 import { workflowProgressSummary } from "../lib/estimateWorkflowRuntime"
 import type { BusinessWorkflowDoc } from "../lib/businessWorkflow"
+import { groupWorkflowActionsForDisplay } from "../lib/groupWorkflowActionsForDisplay"
 
 type Props = {
   workflow: BusinessWorkflowDoc
@@ -10,6 +11,7 @@ type Props = {
   actions: WorkflowActionButton[]
   busy: boolean
   onAction: (action: WorkflowActionButton) => void
+  onSendAll?: (actions: WorkflowActionButton[]) => void
   onOpenWorkflow?: () => void
   onOpenOrgChart?: () => void
 }
@@ -20,6 +22,7 @@ export default function EstimateWorkflowActionsPanel({
   actions,
   busy,
   onAction,
+  onSendAll,
   onOpenWorkflow,
   onOpenOrgChart,
 }: Props) {
@@ -33,6 +36,7 @@ export default function EstimateWorkflowActionsPanel({
   )
   const customerReady = actions.find((a) => a.kind === "send_to_customer")
   const progress = workflowProgressSummary(workflow, workflowState)
+  const grouped = groupWorkflowActionsForDisplay(sendActions)
 
   return (
     <div
@@ -67,67 +71,77 @@ export default function EstimateWorkflowActionsPanel({
         </div>
       </div>
 
-      {sendActions.length === 0 ? (
+      {grouped.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
           Add line items to activate internal routing, or configure approval steps in My Business Workflow.
         </p>
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {sendActions.map((action) => (
-            <button
-              key={`${action.kind}-${action.nodeId}`}
-              type="button"
-              disabled={busy || action.disabled}
-              title={action.disabledReason ?? action.detail}
-              onClick={() => onAction(action)}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 8,
-                border:
-                  action.kind === "mark_approved"
-                    ? `2px solid #16a34a`
-                    : action.kind === "deny_approval"
-                      ? `2px solid #dc2626`
-                      : action.kind === "bypass_approval"
-                        ? `2px solid #7c3aed`
-                        : `1px solid ${theme.border}`,
-                background:
-                  action.disabled
-                    ? "#f1f5f9"
-                    : action.kind === "deny_approval"
-                      ? "#fef2f2"
-                      : action.kind === "bypass_approval"
-                        ? "#faf5ff"
-                        : action.primary
-                          ? theme.primary
-                          : "#fff",
-                color:
-                  action.disabled
-                    ? "#94a3b8"
-                    : action.primary && action.kind !== "deny_approval" && action.kind !== "bypass_approval"
-                      ? "#fff"
-                      : theme.text,
-                fontWeight: 700,
-                fontSize: 13,
-                cursor: busy || action.disabled ? "not-allowed" : "pointer",
-                textAlign: "left",
-                maxWidth: 320,
-              }}
-            >
-              <span style={{ display: "block" }}>{action.label}</span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  opacity: 0.85,
-                  marginTop: 2,
-                }}
+          {grouped.map((group) => {
+            if (group.kind === "send_all") {
+              return (
+                <button
+                  key="send-all"
+                  type="button"
+                  disabled={busy}
+                  title={group.detail}
+                  onClick={() => (onSendAll ? onSendAll(group.actions) : onAction(group.actions[0]!))}
+                  style={primaryActionStyle(false, "send_for_approval")}
+                >
+                  <span style={{ display: "block" }}>{group.label}</span>
+                  <span style={detailStyle}>{group.detail}</span>
+                </button>
+              )
+            }
+            if (group.kind === "review_pending") {
+              return (
+                <div
+                  key="review-pending"
+                  style={{
+                    flex: "1 1 100%",
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, fontSize: 13, color: theme.text }}>{group.label}</div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, marginBottom: 8 }}>{group.detail}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {group.actions.map((action) => (
+                      <button
+                        key={`${action.kind}-${action.nodeId}`}
+                        type="button"
+                        disabled={busy || action.disabled}
+                        onClick={() => onAction(action)}
+                        style={{
+                          ...primaryActionStyle(action.disabled, action.kind),
+                          maxWidth: "none",
+                          padding: "8px 12px",
+                        }}
+                      >
+                        {action.label.replace(/^Mark approved — /i, "Approve: ")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            }
+            const action = group.action
+            return (
+              <button
+                key={`${action.kind}-${action.nodeId}`}
+                type="button"
+                disabled={busy || action.disabled}
+                title={action.disabledReason ?? action.detail}
+                onClick={() => onAction(action)}
+                style={primaryActionStyle(action.disabled, action.kind, action.primary)}
               >
-                {action.detail}
-              </span>
-            </button>
-          ))}
+                <span style={{ display: "block" }}>{action.label}</span>
+                <span style={detailStyle}>{action.detail}</span>
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -162,7 +176,9 @@ export default function EstimateWorkflowActionsPanel({
                       ? "Denied"
                       : h.action === "bypass_approval"
                         ? "Bypassed"
-                        : "Sent"}
+                        : h.action === "rollback"
+                          ? "Moved back"
+                          : "Sent"}
                 : {h.nodeLabel}
                 {h.note ? ` — ${h.note}` : ""}
               </li>
@@ -172,6 +188,52 @@ export default function EstimateWorkflowActionsPanel({
       ) : null}
     </div>
   )
+}
+
+function primaryActionStyle(
+  disabled: boolean | undefined,
+  kind: WorkflowActionButton["kind"],
+  primary?: boolean,
+): CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: 8,
+    border:
+      kind === "mark_approved"
+        ? `2px solid #16a34a`
+        : kind === "deny_approval"
+          ? `2px solid #dc2626`
+          : kind === "bypass_approval"
+            ? `2px solid #7c3aed`
+            : `1px solid ${theme.border}`,
+    background: disabled
+      ? "#f1f5f9"
+      : kind === "deny_approval"
+        ? "#fef2f2"
+        : kind === "bypass_approval"
+          ? "#faf5ff"
+          : primary || kind === "send_for_approval"
+            ? theme.primary
+            : "#fff",
+    color: disabled
+      ? "#94a3b8"
+      : (primary || kind === "send_for_approval") && kind !== "deny_approval" && kind !== "bypass_approval"
+        ? "#fff"
+        : theme.text,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: disabled ? "not-allowed" : "pointer",
+    textAlign: "left",
+    maxWidth: 320,
+  }
+}
+
+const detailStyle: CSSProperties = {
+  display: "block",
+  fontSize: 11,
+  fontWeight: 500,
+  opacity: 0.85,
+  marginTop: 2,
 }
 
 const linkBtnStyle: CSSProperties = {

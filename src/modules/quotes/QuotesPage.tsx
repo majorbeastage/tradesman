@@ -28,6 +28,7 @@ import {
 } from "../../lib/estimateWorkflowRuntime"
 import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
 import { resolveEstimatePrimaryDeliveryAction } from "../../lib/workflowStepIntention"
+import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
@@ -645,6 +646,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [linkableOrgUsers, setLinkableOrgUsers] = useState<LinkableOrgUser[]>([])
   const [workflowActionBusy, setWorkflowActionBusy] = useState(false)
   const [workflowRouteModal, setWorkflowRouteModal] = useState<WorkflowActionButton | null>(null)
+  const [workflowRouteBatch, setWorkflowRouteBatch] = useState<WorkflowActionButton[] | null>(null)
   const [workflowNoteModal, setWorkflowNoteModal] = useState<WorkflowActionButton | null>(null)
   const [profileRole, setProfileRole] = useState<string | null>(null)
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
@@ -721,6 +723,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         buttonLabel: "Email to customer",
         detail: "",
         workflowAction: null,
+        batchSendActions: [],
         pendingApprovers: [],
         customerSendAllowed: true,
       }
@@ -3901,6 +3904,32 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return
     }
     setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuote.id ? { ...q, metadata: nextMeta } : q))
+    if (accountWorkflowBundle && selectedQuote.customer_id) {
+      const snapshot = snapshotFromQuoteWorkflow(
+        accountWorkflowBundle.workflow,
+        accountWorkflowBundle.orgChart,
+        selectedQuote.id,
+        nextState,
+      )
+      const { data: custRow } = await supabase
+        .from("customers")
+        .select("metadata")
+        .eq("id", selectedQuote.customer_id)
+        .eq("user_id", userId)
+        .maybeSingle()
+      const merged = mergeCustomerWorkflowMeta(custRow?.metadata, {
+        quoteId: selectedQuote.id,
+        activeNodeId: snapshot.activeNodeId,
+        departmentKey: snapshot.departmentKey,
+        completedNodeIds: snapshot.completedNodeIds,
+        pendingNodeIds: snapshot.pendingNodeIds,
+      })
+      await supabase
+        .from("customers")
+        .update({ metadata: merged, updated_at: new Date().toISOString() })
+        .eq("id", selectedQuote.customer_id)
+        .eq("user_id", userId)
+    }
   }
 
   async function notifyWorkflowAssignee(
@@ -3952,6 +3981,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
     if (!node && action.kind !== "bypass_approval") return
     if (action.kind === "send_for_approval") {
+      setWorkflowRouteBatch(null)
       setWorkflowRouteModal(action)
       return
     }
@@ -3995,6 +4025,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
+  function openWorkflowRouteModal(actions: WorkflowActionButton[]): void {
+    if (actions.length === 0) return
+    if (actions.length > 1) {
+      setWorkflowRouteBatch(actions)
+      setWorkflowRouteModal(actions[0]!)
+    } else {
+      setWorkflowRouteBatch(null)
+      setWorkflowRouteModal(actions[0]!)
+    }
+  }
+
   async function confirmWorkflowRouteSend(payload: { to: string; cc: string; bcc: string; note: string }): Promise<void> {
     const action = workflowRouteModal
     if (!action || !accountWorkflowBundle || !selectedQuote?.id) return
@@ -4006,6 +4047,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
       await persistQuoteInternalWorkflowState(next)
       await notifyWorkflowAssignee(action, node.label, payload)
       setWorkflowRouteModal(null)
+      setWorkflowRouteBatch(null)
+    } finally {
+      setWorkflowActionBusy(false)
+    }
+  }
+
+  async function confirmWorkflowRouteSendAll(payload: { note: string }): Promise<void> {
+    const batch = workflowRouteBatch ?? []
+    if (!batch.length || !accountWorkflowBundle || !selectedQuote?.id) return
+    setWorkflowActionBusy(true)
+    try {
+      let next = quoteInternalWorkflowState
+      for (const action of batch) {
+        const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
+        if (!node) continue
+        next = applySendForApproval(next, node, authUserId ?? userId)
+      }
+      await persistQuoteInternalWorkflowState(next)
+      for (const action of batch) {
+        const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
+        if (!node) continue
+        const toEmail = action.assignee?.email?.trim()
+        if (!toEmail) continue
+        await notifyWorkflowAssignee(action, node.label, { to: toEmail, note: payload.note })
+      }
+      setWorkflowRouteModal(null)
+      setWorkflowRouteBatch(null)
     } finally {
       setWorkflowActionBusy(false)
     }
@@ -7059,6 +7127,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     actions={estimateWorkflowActions}
                     busy={workflowActionBusy}
                     onAction={(action) => void handleEstimateWorkflowAction(action)}
+                    onSendAll={(actions) => openWorkflowRouteModal(actions)}
                     onOpenWorkflow={setPage ? () => setPage("business-workflow") : undefined}
                     onOpenOrgChart={setPage ? () => setPage("organization-chart") : undefined}
                   />
@@ -7066,9 +7135,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <EstimateWorkflowRouteModal
                   open={workflowRouteModal != null}
                   action={workflowRouteModal}
+                  batchActions={workflowRouteBatch}
                   busy={workflowActionBusy}
-                  onClose={() => setWorkflowRouteModal(null)}
+                  onClose={() => {
+                    setWorkflowRouteModal(null)
+                    setWorkflowRouteBatch(null)
+                  }}
                   onSend={(payload) => void confirmWorkflowRouteSend(payload)}
+                  onSendAll={(payload) => void confirmWorkflowRouteSendAll(payload)}
                 />
                 <EstimateWorkflowNoteModal
                   open={workflowNoteModal != null}
@@ -7228,6 +7302,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         estimatePrimaryDelivery.mode === "workflow_approval" ||
                         estimatePrimaryDelivery.mode === "workflow_review"
                       ) {
+                        if (
+                          estimatePrimaryDelivery.mode === "workflow_approval" &&
+                          estimatePrimaryDelivery.batchSendActions.length > 1
+                        ) {
+                          openWorkflowRouteModal(estimatePrimaryDelivery.batchSendActions)
+                          return
+                        }
                         const action = estimatePrimaryDelivery.workflowAction
                         if (action) void handleEstimateWorkflowAction(action)
                         return

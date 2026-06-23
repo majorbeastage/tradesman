@@ -422,10 +422,11 @@ function TeamUserCard({
                   disabled={savingUserId === member.userId}
                   onChange={(e) => updatePermissionDraft(member.userId, { workflow_only_customers: e.target.checked })}
                 />
-                Only show customers active in this user&apos;s workflow
+                Only show customers assigned to this user&apos;s workflow steps
               </label>
               <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
-                When enabled, the Customers tab lists active-step matches plus an Upcoming folder for customers not at this department yet.
+                When enabled, this team member only sees customers at their active or pending approval steps. Leadership and
+                office managers still see the full list unless they use View as.
               </p>
 
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>

@@ -38,7 +38,7 @@ export type QuoteInternalWorkflowState = {
   pendingNodeIds: string[]
   history: Array<{
     at: string
-    action: "send_for_approval" | "mark_approved" | "request_updates" | "deny_approval" | "bypass_approval" | "note"
+    action: "send_for_approval" | "mark_approved" | "request_updates" | "deny_approval" | "bypass_approval" | "note" | "rollback"
     nodeId: string
     nodeLabel: string
     byUserId?: string | null
@@ -107,7 +107,7 @@ export function parseQuoteInternalWorkflow(metadata: unknown): QuoteInternalWork
       if (!row || typeof row !== "object") continue
       const h = row as Record<string, unknown>
       const action = h.action
-      if (action !== "send_for_approval" && action !== "mark_approved" && action !== "request_updates" && action !== "deny_approval" && action !== "bypass_approval" && action !== "note") continue
+      if (action !== "send_for_approval" && action !== "mark_approved" && action !== "request_updates" && action !== "deny_approval" && action !== "bypass_approval" && action !== "note" && action !== "rollback") continue
       const nodeId = typeof h.nodeId === "string" ? h.nodeId : ""
       const nodeLabel = typeof h.nodeLabel === "string" ? h.nodeLabel : ""
       if (!nodeId) continue

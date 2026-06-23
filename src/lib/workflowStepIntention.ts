@@ -102,6 +102,8 @@ export type EstimatePrimaryDeliveryAction = {
   buttonLabel: string
   detail: string
   workflowAction: WorkflowActionButton | null
+  /** All parallel send-for-approval actions when multiple approvers are required. */
+  batchSendActions: WorkflowActionButton[]
   pendingApprovers: WorkflowAssignee[]
   customerSendAllowed: boolean
   customerBlockReason?: string
@@ -130,6 +132,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       buttonLabel: intentionPrimaryButtonLabel(intention, assignees, node?.label),
       detail: sendApproval.detail,
       workflowAction: sendApproval,
+      batchSendActions: pendingSends,
       pendingApprovers: assignees,
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -145,6 +148,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       buttonLabel: assignees.length > 1 ? "Review pending approvals" : markApproval.label,
       detail: markApproval.detail,
       workflowAction: markApproval,
+      batchSendActions: [],
       pendingApprovers: assignees,
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -157,6 +161,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       buttonLabel: "Complete workflow first",
       detail: customerGate.reason ?? "Internal workflow steps must finish before customer delivery.",
       workflowAction: null,
+      batchSendActions: [],
       pendingApprovers: [],
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -168,6 +173,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
     buttonLabel: "Email to customer",
     detail: "Internal approvals complete — send the estimate to your customer.",
     workflowAction: null,
+    batchSendActions: [],
     pendingApprovers: [],
     customerSendAllowed: true,
   }

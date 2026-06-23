@@ -53,6 +53,10 @@ import {
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { formatAppError } from "../../lib/formatAppError"
+import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
+import { usePortalViewOptional } from "../../contexts/PortalViewContext"
+import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
+import { customerMatchesWorkflowScope, parseCustomerWorkflowMeta } from "../../lib/customerWorkflowRouting"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { getControlItemsForUser, getPageActionVisible } from "../../types/portal-builder"
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
@@ -294,10 +298,10 @@ function activityRowLabel(item: { kind: "msg" | "ev"; payload: any }): string {
 }
 
 function activityPreviewSnippet(item: { kind: "msg" | "ev"; payload: any }): string {
-  if (item.kind === "msg") return String(item.payload?.content ?? "").trim().slice(0, 200)
+  if (item.kind === "msg") return String(item.payload?.content ?? "").trim()
   const ev = item.payload
   const subj = ev?.subject?.trim() ? `${ev.subject.trim()} — ` : ""
-  return (subj + String(ev?.body ?? "")).trim().slice(0, 220)
+  return (subj + String(ev?.body ?? "")).trim()
 }
 
 function commChannelOneLineSummary(
@@ -339,6 +343,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const showCustomersCustomerPayment = getPageActionVisible(portalConfig, "customers", "customer_payment")
   const isMobile = useIsMobile()
   const globalAssistant = useGlobalAssistantOptional()
+  const omCalendarPolicy = useManagedOmCalendarPolicy()
+  const portalView = usePortalViewOptional()
+  const workflowScopeUserId = portalView?.showViewBar && portalView.targetUserId ? portalView.targetUserId : userId
+  const [accountProfileMetadata, setAccountProfileMetadata] = useState<Record<string, unknown> | null>(null)
+  const workflowBundle = useMemo(
+    () => (accountProfileMetadata ? loadAccountWorkflowBundleFromMetadata(accountProfileMetadata) : null),
+    [accountProfileMetadata],
+  )
   const [activeCustomers, setActiveCustomers] = useState<CustomerRow[]>([])
   const [inProcessCustomers, setInProcessCustomers] = useState<CustomerRow[]>([])
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
@@ -1121,7 +1133,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
-        hydrateLeadFilterPrefsFromMetadata(data.metadata as Record<string, unknown>)
+        const meta = data.metadata as Record<string, unknown>
+        setAccountProfileMetadata(meta)
+        hydrateLeadFilterPrefsFromMetadata(meta)
       })
     return () => {
       cancelled = true
@@ -1288,6 +1302,28 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const urgOk = !filterUrgency.trim() || urg === filterUrgency
     const searchOk =
       !searchLower || name.includes(searchLower) || contactValues.includes(searchLower)
+    if (omCalendarPolicy.workflow_only_customers && workflowScopeUserId && workflowBundle) {
+      const meta = parseCustomerWorkflowMeta(c.metadata)
+      const snapshot = meta
+        ? {
+            quoteId: meta.quoteId ?? null,
+            activeNodeId: meta.activeNodeId ?? null,
+            activeNodeLabel: null,
+            departmentKey: meta.departmentKey ?? null,
+            assignedUserId: null,
+            completedNodeIds: meta.completedNodeIds ?? [],
+            pendingNodeIds: meta.pendingNodeIds ?? [],
+          }
+        : null
+      const workflowOk = customerMatchesWorkflowScope(snapshot, {
+        userId: workflowScopeUserId,
+        departmentLabel: omCalendarPolicy.department_label,
+        workflowOnlyCustomers: true,
+        workflow: workflowBundle.workflow,
+        orgChart: workflowBundle.orgChart,
+      })
+      if (!workflowOk) return false
+    }
     return searchOk && urgOk
   })
   const sorted = [...filtered].sort((a, b) => {
@@ -3189,7 +3225,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                             ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
                                                             : ""}
                                                         </div>
-                                                        <div style={{ fontSize: 12, color: "#334155", marginTop: 4, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+                                                        <div style={{ fontSize: 12, color: "#334155", marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45, maxHeight: 240, overflowY: "auto" }}>
                                                           {activityPreviewSnippet(item) || "—"}
                                                         </div>
                                                       </div>

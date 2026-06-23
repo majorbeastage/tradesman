@@ -402,6 +402,18 @@ export async function seedSandboxWorkspace(
       liveTrafficEnabled: true,
       liveTrafficIntervalMinutes: 3,
       embedLeadSlug: embedSlug,
+      ...(prevMeta.sandbox_workspace_v1 &&
+      typeof prevMeta.sandbox_workspace_v1 === "object" &&
+      !Array.isArray(prevMeta.sandbox_workspace_v1)
+        ? {
+            dummyUsersAutopilotEnabled: (prevMeta.sandbox_workspace_v1 as Record<string, unknown>).dummyUsersAutopilotEnabled,
+            dummyUsersAutopilotIntervalMinutes: (prevMeta.sandbox_workspace_v1 as Record<string, unknown>)
+              .dummyUsersAutopilotIntervalMinutes,
+            dummyUsersAutopilotPermissions: (prevMeta.sandbox_workspace_v1 as Record<string, unknown>)
+              .dummyUsersAutopilotPermissions,
+            dummyUsersAutopilotLastAt: (prevMeta.sandbox_workspace_v1 as Record<string, unknown>).dummyUsersAutopilotLastAt,
+          }
+        : {}),
     },
     service_address_zip: SANDBOX_ZIP,
     service_address_city: SANDBOX_CITY,

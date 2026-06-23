@@ -11,9 +11,11 @@ import { setCustomerProfileReturn } from "../../lib/customerProfileReturn"
 import {
   queueCustomReceiptCustomerPrefill,
   queueQuotesCustomerPrefill,
+  queueSchedulingAddWizardPrefill,
   queueSchedulingCustomerPrefill,
   queueSchedulingEventView,
   queueQuotesOpenQuote,
+  notifySchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
 import CalendarEventViewModal, { type CalendarEventLinkedDoc } from "../../components/CalendarEventViewModal"
 import DocumentPdfViewerModal from "../../components/DocumentPdfViewerModal"
@@ -41,9 +43,20 @@ import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../component
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
-import { loadAccountWorkflowBundleFromMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
-import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
+import { loadAccountWorkflowBundleFromMetadata, mergeQuoteInternalWorkflowMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
+import { loadCustomerWorkflowSnapshotFromProfile, mergeCustomerWorkflowMeta, resolveWorkflowNodeDepartmentKey } from "../../lib/customerWorkflowRouting"
 import { CustomerWorkflowStatusPanel } from "../../components/CustomerWorkflowStatusPanel"
+import CustomerWorkflowProgressViewer from "../../components/CustomerWorkflowProgressViewer"
+import { loadLinkableOrgUsers } from "../../lib/orgChartMembers"
+import CustomerWorkflowRollbackModal, { type CustomerWorkflowRollbackSubmit } from "../../components/CustomerWorkflowRollbackModal"
+import {
+  applyWorkflowRollback,
+  buildCustomerWorkflowCalendarContext,
+  completedNodeIdsBeforeTarget,
+  listWorkflowRollbackTargets,
+  rollbackRemovesCalendarByDefault,
+  suggestRollbackTargetForCancellation,
+} from "../../lib/customerWorkflowRollback"
 import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 
@@ -84,8 +97,22 @@ function parseProfileNotesPast(raw: unknown): { id: string; text: string; saved_
   return out.sort((a, b) => (b.saved_at || "").localeCompare(a.saved_at || ""))
 }
 
-function ActivityHistoryTabs({ events }: { events: CustomerProfileBundle["commEvents"] }) {
-  const [tab, setTab] = useState<"phone" | "sms" | "email" | "notes">("phone")
+function ActivityHistoryTabs({
+  events,
+  userId,
+  customerId,
+  onSaved,
+  workflowHistory,
+}: {
+  events: CustomerProfileBundle["commEvents"]
+  userId: string | null
+  customerId: string | null
+  onSaved?: () => void
+  workflowHistory?: { at: string; nodeLabel: string; action: string; note?: string }[]
+}) {
+  const [tab, setTab] = useState<"phone" | "sms" | "email" | "notes" | "events">("phone")
+  const [phoneSummary, setPhoneSummary] = useState("")
+  const [phoneSummaryBusy, setPhoneSummaryBusy] = useState(false)
   const tabBtn = (id: typeof tab, label: string) => (
     <button
       type="button"
@@ -110,8 +137,33 @@ function ActivityHistoryTabs({ events }: { events: CustomerProfileBundle["commEv
     if (tab === "phone") return t === "call" || t === "voicemail" || t.includes("call")
     if (tab === "sms") return t === "sms"
     if (tab === "email") return t === "email"
+    if (tab === "events") return false
     return t === "note" || t === "internal_note"
   })
+
+  async function savePhoneSummary() {
+    const text = phoneSummary.trim()
+    if (!text || !supabase || !userId || !customerId) return
+    setPhoneSummaryBusy(true)
+    try {
+      const now = new Date().toISOString()
+      await supabase.from("communication_events").insert({
+        user_id: userId,
+        customer_id: customerId,
+        event_type: "note",
+        direction: "outbound",
+        subject: "Phone call summary",
+        body: text,
+        metadata: { phone_call_summary: true, summarized_at: now },
+        created_at: now,
+      })
+      setPhoneSummary("")
+      onSaved?.()
+    } finally {
+      setPhoneSummaryBusy(false)
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -119,8 +171,52 @@ function ActivityHistoryTabs({ events }: { events: CustomerProfileBundle["commEv
         {tabBtn("sms", "SMS")}
         {tabBtn("email", "Emails")}
         {tabBtn("notes", "Notes")}
+        {tabBtn("events", "Event logs")}
       </div>
-      {filtered.length === 0 ? (
+      {tab === "phone" ? (
+        <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc", display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Summarize phone call</div>
+          <textarea
+            value={phoneSummary}
+            onChange={(e) => setPhoneSummary(e.target.value)}
+            rows={3}
+            placeholder="Who called, what was discussed, next steps…"
+            style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, resize: "vertical" }}
+          />
+          <button
+            type="button"
+            disabled={phoneSummaryBusy || !phoneSummary.trim() || !userId || !customerId}
+            onClick={() => void savePhoneSummary()}
+            style={{
+              justifySelf: "start",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 12,
+              cursor: phoneSummaryBusy ? "wait" : "pointer",
+            }}
+          >
+            {phoneSummaryBusy ? "Saving…" : "Save as communication event"}
+          </button>
+        </div>
+      ) : null}
+      {tab === "events" ? (
+        (workflowHistory?.length ?? 0) === 0 ? (
+          <Empty text="No completed workflow steps logged for this job yet." />
+        ) : (
+          <Timeline
+            rows={(workflowHistory ?? []).map((h, i) => ({
+              key: `${h.at}-${i}`,
+              title: h.nodeLabel,
+              meta: `${new Date(h.at).toLocaleString()} · ${h.action}`,
+              body: h.note ?? "",
+            }))}
+          />
+        )
+      ) : filtered.length === 0 ? (
         <Empty text={`No ${tab === "phone" ? "phone" : tab} activity logged yet.`} />
       ) : (
         <Timeline
@@ -274,6 +370,12 @@ export default function CustomerProfilePage({ setPage }: Props) {
     revokeOnClose: boolean
   } | null>(null)
   const [assigneeLabelById, setAssigneeLabelById] = useState<Record<string, string>>({})
+  const [workflowRollbackOpen, setWorkflowRollbackOpen] = useState(false)
+  const [workflowRollbackInitialTarget, setWorkflowRollbackInitialTarget] = useState<string | null>(null)
+  const [workflowRollbackSuggestCalendar, setWorkflowRollbackSuggestCalendar] = useState(false)
+  const [workflowRollbackBusy, setWorkflowRollbackBusy] = useState(false)
+  const [workflowChartOpen, setWorkflowChartOpen] = useState(false)
+  const [linkableUsers, setLinkableUsers] = useState<Awaited<ReturnType<typeof loadLinkableOrgUsers>>>([])
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -520,6 +622,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
   }
 
   useEffect(() => {
+    if (!supabase || !userId) return
+    void loadLinkableOrgUsers(supabase, userId).then(setLinkableUsers)
+  }, [userId])
+
+  useEffect(() => {
     if (!bundle) return
     const c = bundle.customer
     const bc = formatDisplayText(c.best_contact_method, "")
@@ -735,12 +842,150 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const quoteWorkflowState = quoteForWorkflow ? parseQuoteInternalWorkflow(quoteForWorkflow.metadata) : null
   const workflowSnapshot =
     profileMetadata != null
-      ? loadCustomerWorkflowSnapshotFromProfile(profileMetadata, quoteForWorkflow?.id ?? null, quoteWorkflowState)
+      ? loadCustomerWorkflowSnapshotFromProfile(
+          profileMetadata,
+          quoteForWorkflow?.id ?? null,
+          quoteWorkflowState,
+          c?.metadata,
+        )
       : null
   const inferredWorkflow =
     bundle && workflowBundle
       ? inferCustomerWorkflowStep(workflowBundle.workflow, bundle, workflowSnapshot)
       : null
+  const workflowCalendarContext = bundle
+    ? buildCustomerWorkflowCalendarContext(bundle.calendarEvents)
+    : { upcoming: [], cancelled: [], recurring: [] }
+  const workflowRollbackTargets =
+    workflowBundle && inferredWorkflow
+      ? listWorkflowRollbackTargets(workflowBundle.workflow, inferredWorkflow.currentNodeId)
+      : []
+  const workflowEventLog = (quoteWorkflowState?.history ?? []).map((h) => ({
+    at: h.at,
+    nodeLabel: h.nodeLabel,
+    action:
+      h.action === "mark_approved"
+        ? "Approved"
+        : h.action === "request_updates"
+          ? "Updates requested"
+          : h.action === "deny_approval"
+            ? "Denied"
+            : h.action === "rollback"
+              ? "Moved back"
+              : h.action === "bypass_approval"
+                ? "Bypassed"
+                : "Sent for approval",
+    note: h.note,
+  }))
+
+  function openWorkflowRollbackModal(opts?: { initialTargetNodeId?: string | null; suggestRemoveCalendar?: boolean }) {
+    setWorkflowRollbackInitialTarget(opts?.initialTargetNodeId ?? null)
+    setWorkflowRollbackSuggestCalendar(opts?.suggestRemoveCalendar === true)
+    setWorkflowRollbackOpen(true)
+  }
+
+  function rescheduleCustomerOnCalendar(quoteId?: string | null) {
+    if (!c?.id) return
+    const latestQuote = quoteId ?? bundle?.quotes[0]?.id ?? null
+    if (latestQuote) {
+      queueSchedulingAddWizardPrefill({
+        customerId: c.id,
+        title: bundle?.quotes.find((q) => q.id === latestQuote)?.title ?? "Scheduled job",
+        notes: "Rescheduled from customer profile",
+      })
+      notifySchedulingAddWizardPrefill()
+    } else {
+      queueSchedulingCustomerPrefill(c.id)
+    }
+    setPage("calendar")
+  }
+
+  async function submitWorkflowRollback(payload: CustomerWorkflowRollbackSubmit) {
+    if (!supabase || !userId || !c?.id || !workflowBundle) return
+    setWorkflowRollbackBusy(true)
+    try {
+      const targetNode = workflowBundle.workflow.nodes.find((n) => n.id === payload.targetNodeId)
+      if (!targetNode) return
+
+      const completedIds = completedNodeIdsBeforeTarget(workflowBundle.workflow, payload.targetNodeId)
+      const departmentKey = resolveWorkflowNodeDepartmentKey(targetNode, workflowBundle.orgChart)
+
+      if (quoteForWorkflow) {
+        const prevState = parseQuoteInternalWorkflow(quoteForWorkflow.metadata)
+        const nextState = applyWorkflowRollback(
+          prevState,
+          workflowBundle.workflow,
+          payload.targetNodeId,
+          userId,
+          payload.note,
+        )
+        const prevMeta =
+          quoteForWorkflow.metadata && typeof quoteForWorkflow.metadata === "object" && !Array.isArray(quoteForWorkflow.metadata)
+            ? (quoteForWorkflow.metadata as Record<string, unknown>)
+            : {}
+        const { error: quoteErr } = await supabase
+          .from("quotes")
+          .update({
+            metadata: mergeQuoteInternalWorkflowMetadata(prevMeta, nextState),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", quoteForWorkflow.id)
+          .eq("user_id", userId)
+        if (quoteErr) throw quoteErr
+      }
+
+      const nextCustomerMeta = mergeCustomerWorkflowMeta(c.metadata, {
+        quoteId: quoteForWorkflow?.id ?? null,
+        activeNodeId: payload.targetNodeId,
+        departmentKey,
+        completedNodeIds: completedIds,
+        pendingNodeIds: [],
+        rollbackNote: payload.note || null,
+      })
+      const { error: custErr } = await supabase
+        .from("customers")
+        .update({ metadata: nextCustomerMeta, updated_at: new Date().toISOString() })
+        .eq("id", c.id)
+        .eq("user_id", userId)
+      if (custErr) throw custErr
+
+      const nowIso = new Date().toISOString()
+      const eventIdsToCancel = new Set<string>()
+      if (payload.removeUpcomingCalendar) {
+        for (const ev of workflowCalendarContext.upcoming) eventIdsToCancel.add(ev.id)
+      }
+      if (payload.removeRecurringCalendar) {
+        for (const ev of workflowCalendarContext.recurring) eventIdsToCancel.add(ev.id)
+      }
+      for (const eventId of eventIdsToCancel) {
+        await supabase
+          .from("calendar_events")
+          .update({ removed_at: nowIso })
+          .eq("id", eventId)
+          .eq("user_id", userId)
+      }
+
+      if (payload.note.trim()) {
+        await supabase.from("communication_events").insert({
+          user_id: userId,
+          customer_id: c.id,
+          event_type: "note",
+          direction: "outbound",
+          subject: `Workflow moved back to “${targetNode.label}”`,
+          body: payload.note.trim(),
+          unread: false,
+          metadata: { workflow_rollback: true, target_node_id: payload.targetNodeId },
+        })
+      }
+
+      setWorkflowRollbackOpen(false)
+      await reload()
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setWorkflowRollbackBusy(false)
+    }
+  }
   const selfOmPolicy = parseOmCalendarPolicy(profileMetadata)
   const allowWorkflowBypass = selfOmPolicy.allow_bypass_workflow_approval === true
 
@@ -1130,8 +1375,65 @@ export default function CustomerProfilePage({ setPage }: Props) {
               <CustomerWorkflowStatusPanel
                 workflow={workflowBundle.workflow}
                 inferred={inferredWorkflow}
+                calendarContext={workflowCalendarContext}
                 allowBypass={allowWorkflowBypass}
-                onOpenWorkflow={() => setPage("business-workflow")}
+                rollbackBusy={workflowRollbackBusy}
+                onOpenWorkflowChart={() => setWorkflowChartOpen(true)}
+                onOpenCurrentItem={
+                  quoteForWorkflow?.id
+                    ? () => {
+                        queueQuotesOpenQuote(quoteForWorkflow.id)
+                        setPage("quotes")
+                      }
+                    : undefined
+                }
+                currentItemLabel={quoteForWorkflow ? "estimate" : "current item"}
+                onMoveBack={() =>
+                  openWorkflowRollbackModal({
+                    suggestRemoveCalendar: rollbackRemovesCalendarByDefault(
+                      workflowBundle.workflow,
+                      inferredWorkflow.currentNodeId,
+                      workflowRollbackTargets[workflowRollbackTargets.length - 1]?.nodeId ?? "",
+                    ),
+                  })
+                }
+                onReschedule={() => rescheduleCustomerOnCalendar(quoteForWorkflow?.id ?? null)}
+              />
+              <CustomerWorkflowRollbackModal
+                open={workflowRollbackOpen}
+                busy={workflowRollbackBusy}
+                currentStepLabel={inferredWorkflow.currentNodeLabel}
+                targets={workflowRollbackTargets}
+                initialTargetNodeId={
+                  workflowRollbackInitialTarget ??
+                  (workflowCalendarContext.cancelled.length > 0
+                    ? suggestRollbackTargetForCancellation(workflowBundle.workflow, inferredWorkflow.currentNodeId)
+                    : null)
+                }
+                upcomingEvents={workflowCalendarContext.upcoming}
+                recurringEvents={workflowCalendarContext.recurring}
+                suggestRemoveCalendar={
+                  workflowRollbackSuggestCalendar ||
+                  (workflowRollbackInitialTarget != null &&
+                    rollbackRemovesCalendarByDefault(
+                      workflowBundle.workflow,
+                      inferredWorkflow.currentNodeId,
+                      workflowRollbackInitialTarget,
+                    ))
+                }
+                onClose={() => setWorkflowRollbackOpen(false)}
+                onSubmit={(payload) => void submitWorkflowRollback(payload)}
+              />
+              <CustomerWorkflowProgressViewer
+                open={workflowChartOpen}
+                onClose={() => setWorkflowChartOpen(false)}
+                workflow={workflowBundle.workflow}
+                orgChart={workflowBundle.orgChart}
+                externalContacts={workflowBundle.externalContacts}
+                linkableUsers={linkableUsers}
+                completedNodeIds={inferredWorkflow.completedNodeIds}
+                pendingNodeIds={quoteWorkflowState?.pendingNodeIds ?? []}
+                currentNodeId={inferredWorkflow.currentNodeId}
               />
             </div>
           ) : null}
@@ -1179,7 +1481,13 @@ export default function CustomerProfilePage({ setPage }: Props) {
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection title="Activity history" badge={bundle.commEvents.length || undefined}>
-            <ActivityHistoryTabs events={bundle.commEvents} />
+            <ActivityHistoryTabs
+              events={bundle.commEvents}
+              userId={userId}
+              customerId={c?.id ?? null}
+              onSaved={() => void reload()}
+              workflowHistory={workflowEventLog}
+            />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection title="Calendar events" badge={bundle.calendarEvents.length || undefined}>
@@ -1205,6 +1513,26 @@ export default function CustomerProfilePage({ setPage }: Props) {
                     actions: (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                         <MiniBtn label="View details" onClick={() => setEventView(ev)} />
+                        {status === "Cancelled" ? (
+                          <>
+                            <MiniBtn
+                              label="Move workflow back"
+                              onClick={() =>
+                                openWorkflowRollbackModal({
+                                  initialTargetNodeId: suggestRollbackTargetForCancellation(
+                                    workflowBundle!.workflow,
+                                    inferredWorkflow?.currentNodeId ?? null,
+                                  ),
+                                  suggestRemoveCalendar: false,
+                                })
+                              }
+                            />
+                            <MiniBtn
+                              label="Schedule again"
+                              onClick={() => rescheduleCustomerOnCalendar(ev.quote_id ?? quoteForWorkflow?.id ?? null)}
+                            />
+                          </>
+                        ) : null}
                         {(status === "Upcoming" || status === "Recurring") ? (
                           <MiniBtn
                             label="Edit in Scheduling"
@@ -1578,7 +1906,11 @@ function Timeline({
         >
           <div style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>{row.title}</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{row.meta}</div>
-          {row.body ? <div style={{ fontSize: 13, color: "#475569", marginTop: 6, whiteSpace: "pre-wrap" }}>{row.body}</div> : null}
+          {row.body ? (
+            <div style={{ fontSize: 13, color: "#475569", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+              {row.body}
+            </div>
+          ) : null}
           {row.actions ? (
             <div
               onClick={(e) => e.stopPropagation()}

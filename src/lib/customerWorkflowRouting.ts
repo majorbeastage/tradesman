@@ -23,10 +23,17 @@ export type CustomerWorkflowMetaV1 = {
   quoteId?: string | null
   activeNodeId?: string | null
   departmentKey?: string | null
+  completedNodeIds?: string[]
+  pendingNodeIds?: string[]
+  rollbackNote?: string | null
   updatedAt?: string
 }
 
 export const CUSTOMER_WORKFLOW_META_KEY = "customer_workflow_v1"
+
+export function resolveWorkflowNodeDepartmentKey(node: WorkflowNode, orgChart: OrganizationChartDoc): string | null {
+  return nodeDepartmentKey(node, orgChart)
+}
 
 function nodeDepartmentKey(node: WorkflowNode, orgChart: OrganizationChartDoc): string | null {
   if (node.orgChartNodeId) {
@@ -53,6 +60,13 @@ export function parseCustomerWorkflowMeta(metadata: unknown): CustomerWorkflowMe
     quoteId: typeof o.quoteId === "string" ? o.quoteId : null,
     activeNodeId: typeof o.activeNodeId === "string" ? o.activeNodeId : null,
     departmentKey: typeof o.departmentKey === "string" ? o.departmentKey : null,
+    completedNodeIds: Array.isArray(o.completedNodeIds)
+      ? o.completedNodeIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
+    pendingNodeIds: Array.isArray(o.pendingNodeIds)
+      ? o.pendingNodeIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
+    rollbackNote: typeof o.rollbackNote === "string" ? o.rollbackNote : null,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,
   }
 }
@@ -81,42 +95,84 @@ export function loadCustomerWorkflowSnapshotFromProfile(
   profileMetadata: unknown,
   quoteId: string | null,
   quoteWorkflowState: QuoteInternalWorkflowState | null,
+  customerMetadata?: unknown,
 ): CustomerWorkflowSnapshot | null {
-  if (!quoteId || !quoteWorkflowState) {
-    const cached = parseCustomerWorkflowMeta(profileMetadata)
-    if (!cached?.activeNodeId) return null
-    const bundle = loadAccountWorkflowBundleFromMetadata(profileMetadata)
-    const node = bundle.workflow.nodes.find((n) => n.id === cached.activeNodeId) ?? null
+  const bundle = loadAccountWorkflowBundleFromMetadata(profileMetadata)
+  const customerMeta = parseCustomerWorkflowMeta(customerMetadata)
+
+  if (quoteId && quoteWorkflowState && quoteWorkflowState.pendingNodeIds.length > 0) {
+    return snapshotFromQuoteWorkflow(bundle.workflow, bundle.orgChart, quoteId, quoteWorkflowState)
+  }
+
+  if (customerMeta?.activeNodeId) {
+    const node = bundle.workflow.nodes.find((n) => n.id === customerMeta.activeNodeId) ?? null
     return {
-      quoteId: cached.quoteId ?? null,
-      activeNodeId: cached.activeNodeId,
+      quoteId: customerMeta.quoteId ?? quoteId,
+      activeNodeId: customerMeta.activeNodeId,
       activeNodeLabel: node?.label ?? null,
-      departmentKey: cached.departmentKey ?? (node ? nodeDepartmentKey(node, bundle.orgChart) : null),
+      departmentKey: customerMeta.departmentKey ?? (node ? nodeDepartmentKey(node, bundle.orgChart) : null),
       assignedUserId: node?.assignedUserId ?? null,
-      completedNodeIds: [],
-      pendingNodeIds: cached.activeNodeId ? [cached.activeNodeId] : [],
+      completedNodeIds: customerMeta.completedNodeIds ?? [],
+      pendingNodeIds: customerMeta.pendingNodeIds ?? [],
     }
   }
-  const bundle = loadAccountWorkflowBundleFromMetadata(profileMetadata)
-  return snapshotFromQuoteWorkflow(bundle.workflow, bundle.orgChart, quoteId, quoteWorkflowState)
+
+  if (quoteId && quoteWorkflowState) {
+    return snapshotFromQuoteWorkflow(bundle.workflow, bundle.orgChart, quoteId, quoteWorkflowState)
+  }
+
+  return null
 }
 
-/** Match user department / assignee against active workflow step. */
+function departmentMatches(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  if (!x || !y) return false
+  return x.includes(y) || y.includes(x)
+}
+
+/** Match user department / assignee against active or pending workflow steps. */
 export function customerMatchesWorkflowScope(
   snapshot: CustomerWorkflowSnapshot | null,
   opts: {
     userId: string
     departmentLabel?: string | null
     workflowOnlyCustomers?: boolean
+    workflow?: BusinessWorkflowDoc | null
+    orgChart?: OrganizationChartDoc | null
   },
 ): boolean {
   if (!opts.workflowOnlyCustomers) return true
-  if (!snapshot?.activeNodeId) return false
-  if (snapshot.assignedUserId && snapshot.assignedUserId === opts.userId) return true
+  if (!snapshot) return false
+
   const dept = (opts.departmentLabel ?? "").trim().toLowerCase()
-  const stepDept = (snapshot.departmentKey ?? "").trim().toLowerCase()
-  if (dept && stepDept && (stepDept.includes(dept) || dept.includes(stepDept))) return true
-  return false
+  const workflow = opts.workflow
+  const orgChart = opts.orgChart
+
+  const nodeMatchesUser = (nodeId: string | null | undefined): boolean => {
+    if (!nodeId) return false
+    if (workflow && orgChart) {
+      const node = workflow.nodes.find((n) => n.id === nodeId)
+      if (node?.assignedUserId && node.assignedUserId === opts.userId) return true
+      if (node && dept) {
+        const stepDept = nodeDepartmentKey(node, orgChart)
+        if (stepDept && departmentMatches(stepDept, dept)) return true
+      }
+    }
+    if (snapshot.activeNodeId === nodeId && snapshot.assignedUserId === opts.userId) return true
+    if (
+      snapshot.activeNodeId === nodeId &&
+      dept &&
+      snapshot.departmentKey &&
+      departmentMatches(snapshot.departmentKey, dept)
+    ) {
+      return true
+    }
+    return false
+  }
+
+  if (snapshot.pendingNodeIds.some((id) => nodeMatchesUser(id))) return true
+  return nodeMatchesUser(snapshot.activeNodeId)
 }
 
 export function workflowProgressLabel(snapshot: CustomerWorkflowSnapshot | null): string {

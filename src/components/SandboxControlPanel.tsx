@@ -49,6 +49,16 @@ function useSandboxTrainingControls(
   const [seeded, setSeeded] = useState(Boolean(sandboxMeta?.seededAt))
   const [customerHint, setCustomerHint] = useState<number | null>(null)
 
+  useEffect(() => {
+    if (!sandboxMeta) return
+    setLiveTraffic(sandboxMeta.liveTrafficEnabled !== false)
+    setIntervalMin(sandboxMeta.liveTrafficIntervalMinutes ?? 2)
+    setDummyAutopilot(sandboxMeta.dummyUsersAutopilotEnabled === true)
+    setDummyAutopilotMin(sandboxMeta.dummyUsersAutopilotIntervalMinutes ?? 2)
+    setDummyPermissions(resolveDummyAutopilotPermissions(sandboxMeta.dummyUsersAutopilotPermissions))
+    if (sandboxMeta.seededAt) setSeeded(true)
+  }, [sandboxMeta])
+
   const ctaSlug = sandboxMeta?.embedLeadSlug ?? ""
   const ctaUrl =
     typeof window !== "undefined" && ctaSlug
@@ -251,6 +261,7 @@ function SandboxDummyAutopilotPanel({
   onPermissionsChange,
   onNote,
   onAfterRun,
+  onAfterPersist,
   busy,
 }: {
   enabled: boolean
@@ -264,8 +275,26 @@ function SandboxDummyAutopilotPanel({
   onPermissionsChange: (patch: Partial<SandboxDummyAutopilotPermissions>) => void
   onNote: (msg: string) => void
   onAfterRun?: () => void | Promise<unknown>
+  onAfterPersist?: () => void | Promise<unknown>
   busy: boolean
 }) {
+  const persistAutopilot = async (
+    enabled: boolean,
+    interval: number,
+    perms: SandboxDummyAutopilotPermissions,
+  ) => {
+    if (!supabase || !profileUserId || !profileMetadata) return
+    await setSandboxDummyAutopilot(
+      supabase,
+      profileUserId,
+      profileMetadata as Record<string, unknown>,
+      enabled,
+      interval,
+      perms,
+    )
+    await onAfterPersist?.()
+  }
+
   const permRow = (key: keyof SandboxDummyAutopilotPermissions, label: string, hint: string) => (
     <label key={key} style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer", marginBottom: 6 }}>
       <input
@@ -276,7 +305,7 @@ function SandboxDummyAutopilotPanel({
           onPermissionsChange({ [key]: e.target.checked })
           const next = { ...permissions, [key]: e.target.checked }
           if (supabase && profileUserId && profileMetadata) {
-            void setSandboxDummyAutopilot(supabase, profileUserId, profileMetadata as Record<string, unknown>, enabled, intervalMin, next)
+            void persistAutopilot(enabled, intervalMin, next)
           }
         }}
         style={{ marginTop: 3 }}
@@ -306,14 +335,7 @@ function SandboxDummyAutopilotPanel({
             const on = e.target.checked
             onEnabledChange(on)
             if (supabase && profileUserId && profileMetadata) {
-              void setSandboxDummyAutopilot(
-                supabase,
-                profileUserId,
-                profileMetadata as Record<string, unknown>,
-                on,
-                intervalMin,
-                permissions,
-              )
+              void persistAutopilot(on, intervalMin, permissions)
             }
           }}
         />
@@ -330,14 +352,7 @@ function SandboxDummyAutopilotPanel({
             onClick={() => {
               onIntervalChange(m)
               if (supabase && profileUserId && profileMetadata) {
-                void setSandboxDummyAutopilot(
-                  supabase,
-                  profileUserId,
-                  profileMetadata as Record<string, unknown>,
-                  enabled,
-                  m,
-                  permissions,
-                )
+                void persistAutopilot(enabled, m, permissions)
               }
             }}
             style={{
@@ -729,6 +744,9 @@ export function SandboxTrainingBanner({
             }
             onNote={state.setNote}
             onAfterRun={async () => {
+              await state.refetchProfile?.()
+            }}
+            onAfterPersist={async () => {
               await state.refetchProfile?.()
             }}
           />
