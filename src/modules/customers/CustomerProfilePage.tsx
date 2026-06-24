@@ -57,7 +57,7 @@ import {
   rollbackRemovesCalendarByDefault,
   suggestRollbackTargetForCancellation,
 } from "../../lib/customerWorkflowRollback"
-import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
+import { inferCustomerWorkflowStep, shouldOpenEstimatePdfFromWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 
 type Props = {
@@ -1382,12 +1382,22 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 onOpenCurrentItem={
                   quoteForWorkflow?.id
                     ? () => {
+                        if (shouldOpenEstimatePdfFromWorkflowStep(inferredWorkflow.currentNodeLabel)) {
+                          void openEstimatePdf(quoteForWorkflow.id)
+                          return
+                        }
                         queueQuotesOpenQuote(quoteForWorkflow.id)
                         setPage("quotes")
                       }
                     : undefined
                 }
-                currentItemLabel={quoteForWorkflow ? "estimate" : "current item"}
+                currentItemLabel={
+                  quoteForWorkflow
+                    ? shouldOpenEstimatePdfFromWorkflowStep(inferredWorkflow.currentNodeLabel)
+                      ? "estimate PDF"
+                      : "estimate"
+                    : "current item"
+                }
                 onMoveBack={() =>
                   openWorkflowRollbackModal({
                     suggestRemoveCalendar: rollbackRemovesCalendarByDefault(

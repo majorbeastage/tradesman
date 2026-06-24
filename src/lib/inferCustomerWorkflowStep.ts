@@ -159,3 +159,13 @@ export function inferCustomerWorkflowStep(
         : "Auto-detected from customer profile activity.",
   }
 }
+
+/** True when the active workflow step should open the estimate PDF on the profile (not the Estimates editor). */
+export function shouldOpenEstimatePdfFromWorkflowStep(nodeLabel: string | null | undefined): boolean {
+  if (!nodeLabel?.trim()) return true
+  const l = nodeLabel.toLowerCase()
+  if (/sent to customer|email to customer|deliver.*customer|customer delivery/.test(l)) return false
+  const stage = stageForNodeLabel(nodeLabel)
+  if (stage === "estimate" || stage === "approval") return true
+  return /estimate|quote|bid|proposal/.test(l) && !/work order|\bwo\b/.test(l)
+}
