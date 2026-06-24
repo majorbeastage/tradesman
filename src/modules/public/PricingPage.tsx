@@ -62,7 +62,7 @@ const PACKAGE_SUMMARY: Record<ProductPackageId, string> = {
   office_manager_pro: "1 OM + 4 users, full modules plus customer database — balanced for growing teams.",
   office_manager_elite: "2 OMs + 8 users, top-tier comms — built for larger operations.",
   corporate:
-    "Multi-department operations — work orders, purchase orders, org & workflow charts, 20 users, 5 office managers, 10 internal + 10 external phone logins.",
+    "Multi-department operations — work orders, purchase orders, org & workflow charts, 20 users, 3 office managers, 10 internal + 10 external phone logins.",
 }
 
 const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
@@ -215,7 +215,7 @@ const PACKAGE_INCLUDES: Record<ProductPackageId, ReactNode> = {
       <li>Purchase Order / Work Order management</li>
       <li>Business Workflow Charts and Organization Charts implemented into real-life workflow</li>
       <li>20 user logins — 10 internal (no assigned phone) + 10 external (Tradesman phone numbers)</li>
-      <li>5 Office Manager logins</li>
+      <li>3 Office Manager logins</li>
       <li>Future routing: estimates, POs, work orders, scheduling, receipts &amp; approvals via org chart</li>
     </ul>
   ),
@@ -506,6 +506,7 @@ export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidin
           <ul style={ulStyle}>
             <li>1 Additional Office Manager Login – $59.99/month</li>
             <li>1 Additional User Login – $49.99/month</li>
+            <li>1 Additional Internal User (no phone traffic) – $29.99/month</li>
           </ul>
         </div>
 

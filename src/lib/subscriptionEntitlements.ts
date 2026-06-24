@@ -68,7 +68,7 @@ export const PACKAGE_ENTITLEMENTS: Record<ProductPackageId, PackageEntitlements>
   corporate: {
     monthlyUsd: 649.99,
     maxUsers: 20,
-    maxOfficeManagers: 5,
+    maxOfficeManagers: 3,
     maxLeadsPerMonth: 50,
     voiceMinutesPerUser: 200,
     smsMessagesPerUser: 200,

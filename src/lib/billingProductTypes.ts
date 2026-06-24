@@ -31,7 +31,7 @@ export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string;
   { id: "corporate", label: "Corporate", monthlyUsd: 649.99 },
   { id: "additional_external_user", label: "Additional External User", monthlyUsd: 49.99 },
   { id: "additional_office_manager", label: "Additional Office Manager", monthlyUsd: 59.99 },
-  { id: "additional_internal_user", label: "Additional Internal User", monthlyUsd: 39.99 },
+  { id: "additional_internal_user", label: "Additional Internal User (no phone traffic)", monthlyUsd: 29.99 },
 ]
 
 const MONTHLY_BY_ID: Record<BillingProductTypeId, number> = BILLING_PRODUCT_OPTIONS.reduce(

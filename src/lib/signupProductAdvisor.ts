@@ -91,7 +91,7 @@ export function recommendSignupProducts(answers: SignupAdvisorAnswers): SignupAd
     modules.add("organization_chart")
     modules.add("business_workflow")
     bullets.push(
-      "Corporate includes work orders, purchase orders, org chart, workflow chart, 20 users (10 internal + 10 external phone), and 5 office managers.",
+      "Corporate includes work orders, purchase orders, org chart, workflow chart, 20 users (10 internal + 10 external phone), and 3 office managers.",
     )
   } else if (answers.employeesUsingTradesman >= 6 || answers.externalPhoneUsers >= 3) {
     packageId = "office_manager_elite"
