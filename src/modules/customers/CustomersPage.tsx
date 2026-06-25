@@ -18,6 +18,8 @@ import {
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
+import ShareContactModal from "../../components/ShareContactModal"
+import { loadOrganizationPeers, type OrganizationPeer } from "../../lib/organizationPeers"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
@@ -356,6 +358,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [promotionalCustomers, setPromotionalCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
+  const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
+  const [shareCustomerTarget, setShareCustomerTarget] = useState<{ id: string; name: string } | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
@@ -700,6 +704,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     return () => {
       cancelled = true
     }
+  }, [userId])
+
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setOrgPeers([])
+      return
+    }
+    void loadOrganizationPeers(supabase, userId).then(setOrgPeers)
   }, [userId])
 
   useEffect(() => {
@@ -2388,6 +2400,25 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   Full profile
                                 </button>
                               ) : null}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShareCustomerTarget({ id: c.id, name: c.display_name?.trim() || "Customer" })
+                                }
+                                style={{
+                                  padding: "10px 16px",
+                                  borderRadius: 6,
+                                  border: `2px solid ${theme.primary}`,
+                                  background: "#fff7ed",
+                                  color: theme.charcoal,
+                                  cursor: "pointer",
+                                  fontWeight: 700,
+                                  fontSize: 13,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                Share contact
+                              </button>
                               <div style={{ flex: "1 1 220px", minWidth: 0 }}>
                                 <div
                                   style={{
@@ -2469,6 +2500,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       Customer payment
                                     </button>
                                   ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setShareCustomerTarget({ id: c.id, name: c.display_name?.trim() || "Customer" })
+                                    }
+                                    style={{ ...customerQuickActionSmall, borderColor: "#0ea5e9", background: "#f0f9ff", color: "#0369a1" }}
+                                  >
+                                    Share contact
+                                  </button>
                                 </div>
                                 <p style={{ margin: "6px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.45 }}>
                                   Complete marks the job done. Archive moves the record out of Active — nothing is deleted.
@@ -3726,6 +3766,17 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           quoteId={customerPaymentQuoteOptions[0]?.quoteId ?? null}
           quoteOptions={customerPaymentQuoteOptions.length > 0 ? customerPaymentQuoteOptions : undefined}
           quoteMetadata={customerPaymentQuoteOptions[0]?.metadata ?? null}
+        />
+      ) : null}
+
+      {shareCustomerTarget ? (
+        <ShareContactModal
+          open
+          onClose={() => setShareCustomerTarget(null)}
+          orgPeers={orgPeers}
+          currentUserId={userId}
+          customerId={shareCustomerTarget.id}
+          customerName={shareCustomerTarget.name}
         />
       ) : null}
 

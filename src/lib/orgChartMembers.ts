@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
 import { parseJobTitleNickname } from "./jobTitleNickname"
 import { labelForProfileRole } from "./profileRoles"
+import { loadOrganizationPeerIds } from "./organizationPeers"
 import { parseSandboxDemoTeam, type SandboxDemoTeamMember } from "./sandboxDemoTeam"
 
 export type LinkableOrgUser = {
@@ -68,16 +69,6 @@ async function loadManagedOrgProfileIds(client: SupabaseClient, accountOwnerId: 
   return [...new Set((links ?? []).map((l) => l.user_id).filter((id): id is string => typeof id === "string" && id !== accountOwnerId))]
 }
 
-async function loadSameClientProfileIds(
-  client: SupabaseClient,
-  accountOwnerId: string,
-  clientId: string,
-): Promise<string[]> {
-  const { data, error } = await client.from("profiles").select("id").eq("client_id", clientId).neq("id", accountOwnerId)
-  if (error) throw error
-  return (data ?? []).map((r) => r.id as string).filter(Boolean)
-}
-
 /** Profiles the account can link on the organization chart (team, demo personas, managed users). */
 export async function loadLinkableOrgUsers(
   client: SupabaseClient,
@@ -136,18 +127,15 @@ export async function loadLinkableOrgUsers(
     }
   }
 
-  const clientId = typeof owner?.client_id === "string" ? owner.client_id : null
-  if (ownerRole === "corporate_management" && clientId) {
-    const peerIds = await loadSameClientProfileIds(client, accountOwnerId, clientId)
-    const missingPeerIds = peerIds.filter((id) => !seen.has(id))
-    if (missingPeerIds.length) {
-      const { data: peers, error: peerErr } = await client
-        .from("profiles")
-        .select("id, display_name, email, metadata")
-        .in("id", missingPeerIds)
-      if (peerErr) throw peerErr
-      for (const row of peers ?? []) pushProfileRow(out, seen, row)
-    }
+  const orgPeerIds = await loadOrganizationPeerIds(client, accountOwnerId)
+  const missingPeerIds = orgPeerIds.filter((id) => !seen.has(id))
+  if (missingPeerIds.length) {
+    const { data: peers, error: peerErr } = await client
+      .from("profiles")
+      .select("id, display_name, email, metadata")
+      .in("id", missingPeerIds)
+    if (peerErr) throw peerErr
+    for (const row of peers ?? []) pushProfileRow(out, seen, row)
   }
 
   return out.sort((a, b) => a.displayName.localeCompare(b.displayName))

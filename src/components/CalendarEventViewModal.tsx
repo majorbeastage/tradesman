@@ -19,6 +19,7 @@ type Props = {
   onEditInCalendar?: () => void
   onViewPdf?: () => void
   onExportPdf?: () => void
+  onShareContact?: () => void
   pdfBusy?: boolean
   exportBusy?: boolean
 }
@@ -58,6 +59,7 @@ export default function CalendarEventViewModal({
   onEditInCalendar,
   onViewPdf,
   onExportPdf,
+  onShareContact,
   pdfBusy,
   exportBusy,
 }: Props) {
@@ -198,6 +200,11 @@ export default function CalendarEventViewModal({
         ) : null}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 }}>
+          {onShareContact ? (
+            <button type="button" onClick={onShareContact} style={primaryBtn}>
+              Share contact
+            </button>
+          ) : null}
           {canEdit && onEditInCalendar ? (
             <button type="button" onClick={onEditInCalendar} style={primaryBtn}>
               Edit in Scheduling

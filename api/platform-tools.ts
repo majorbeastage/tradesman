@@ -53,6 +53,7 @@ import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
 import { handlePlatformAssistantVocabularyTrain } from "./_platformAssistantVocabularyTrain.js"
 import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
+import { handleShareOrgContact } from "./_shareOrgContact.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
@@ -1947,6 +1948,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       const auth = await getUserIdFromBearer(req, res)
       if (!auth) return
       await handleWorkflowFromVoice(req, res)
+      return
+    }
+    if (route === "share-org-contact") {
+      const auth = await getUserIdFromBearer(req, res)
+      if (!auth) return
+      await handleShareOrgContact(req, res, auth.userId)
       return
     }
     res.status(400).json({

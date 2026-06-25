@@ -48,6 +48,8 @@ import { loadCustomerWorkflowSnapshotFromProfile, mergeCustomerWorkflowMeta, res
 import { CustomerWorkflowStatusPanel } from "../../components/CustomerWorkflowStatusPanel"
 import CustomerWorkflowProgressViewer from "../../components/CustomerWorkflowProgressViewer"
 import { loadLinkableOrgUsers } from "../../lib/orgChartMembers"
+import { loadOrganizationPeers, type OrganizationPeer } from "../../lib/organizationPeers"
+import ShareContactModal from "../../components/ShareContactModal"
 import CustomerWorkflowRollbackModal, { type CustomerWorkflowRollbackSubmit } from "../../components/CustomerWorkflowRollbackModal"
 import {
   applyWorkflowRollback,
@@ -376,6 +378,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [workflowRollbackBusy, setWorkflowRollbackBusy] = useState(false)
   const [workflowChartOpen, setWorkflowChartOpen] = useState(false)
   const [linkableUsers, setLinkableUsers] = useState<Awaited<ReturnType<typeof loadLinkableOrgUsers>>>([])
+  const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
+  const [shareContactTarget, setShareContactTarget] = useState<{ eventId?: string; eventTitle?: string } | null>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId || !customerId) return
@@ -624,6 +628,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   useEffect(() => {
     if (!supabase || !userId) return
     void loadLinkableOrgUsers(supabase, userId).then(setLinkableUsers)
+    void loadOrganizationPeers(supabase, userId).then(setOrgPeers)
   }, [userId])
 
   useEffect(() => {
@@ -1069,6 +1074,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
         <button type="button" onClick={() => void reload()} disabled={loading} style={backBtnStyle}>
           {loading ? "Refreshing…" : "Refresh"}
         </button>
+        {c?.id ? (
+          <button type="button" onClick={() => setShareContactTarget({})} style={primaryBtnStyle}>
+            Share contact
+          </button>
+        ) : null}
       </div>
 
       {err ? <p style={{ color: "#b91c1c", marginBottom: 12 }}>{err}</p> : null}
@@ -1566,6 +1576,15 @@ export default function CustomerProfilePage({ setPage }: Props) {
                           quoteId={ev.quote_id ?? null}
                           onUpdated={() => void reload()}
                         />
+                        <MiniBtn
+                          label="Share contact"
+                          onClick={() =>
+                            setShareContactTarget({
+                              eventId: ev.id,
+                              eventTitle: formatDisplayText(ev.title, "Scheduled job"),
+                            })
+                          }
+                        />
                       </div>
                     ),
                   }
@@ -1830,6 +1849,31 @@ export default function CustomerProfilePage({ setPage }: Props) {
           }}
           pdfBusy={pdfBusyId === `ev-${eventView.id}`}
           exportBusy={eventExportBusy}
+          onShareContact={
+            c?.id
+              ? () => {
+                  setShareContactTarget({
+                    eventId: eventView.id,
+                    eventTitle: formatDisplayText(eventView.title, "Scheduled job"),
+                  })
+                  setEventView(null)
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
+      {shareContactTarget && c?.id ? (
+        <ShareContactModal
+          open
+          onClose={() => setShareContactTarget(null)}
+          orgPeers={orgPeers}
+          currentUserId={userId}
+          customerId={c.id}
+          customerName={formatDisplayText(c.display_name, "Customer")}
+          eventId={shareContactTarget.eventId}
+          eventTitle={shareContactTarget.eventTitle}
+          onShared={() => void reload()}
         />
       ) : null}
 

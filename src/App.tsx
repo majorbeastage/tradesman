@@ -17,6 +17,7 @@ import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
 import OperationsPage from "./modules/operations/OperationsPage"
 import GrowthPage from "./modules/growth/GrowthPage"
 import HomePage from "./modules/home/HomePage"
+import MarketingHomePreviewPage from "./modules/home/MarketingHomePreviewPage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
 import TrainingPage from "./modules/training/TrainingPage"
@@ -600,6 +601,21 @@ function App() {
   }
   if (pathname === "/about") {
     return <AboutUsPage onBack={() => (window.location.href = "/")} />
+  }
+  if (pathname === "/home-preview" || pathname.startsWith("/home-preview/")) {
+    return (
+      <MarketingHomePreviewPage
+        onLogin={() => {
+          window.location.href = "/"
+        }}
+        onTrial={() => {
+          window.location.href = "/"
+        }}
+        onPricing={() => {
+          window.location.href = "/pricing"
+        }}
+      />
+    )
   }
   if (pathname === "/pricing") {
     return (

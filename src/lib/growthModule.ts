@@ -51,9 +51,14 @@ export type GrowthCampaignDraft = {
   landingSlug?: string
   description?: string
   notes?: string
+  /** Data the marketing firm should collect for this campaign */
+  dataCollectionBrief?: string
   requiresApprovalBeforeLive?: boolean
   submittedAt?: string
+  activatedAt?: string
+  completedAt?: string
   status: "draft" | "submitted" | "active" | "paused" | "completed"
+  snapshots?: GrowthCampaignSnapshot[]
 }
 
 export type GrowthPresencePages = {
@@ -62,6 +67,52 @@ export type GrowthPresencePages = {
   instagram?: string
   tiktok?: string
   x?: string
+  linkedin?: string
+  yelp?: string
+}
+
+export type GrowthProfilePlatformId = keyof GrowthPresencePages | "website"
+
+export type GrowthProfileGrade = {
+  score: number
+  gradedAt: string
+  status: "missing" | "needs_work" | "fair" | "strong"
+  whatAiCanSee: string[]
+  gaps: string[]
+}
+
+export type GrowthProfileChangeEntry = {
+  id: string
+  at: string
+  field: string
+  label: string
+  oldValue?: string
+  newValue?: string
+  source: "manual" | "partner" | "crawl"
+}
+
+export type GrowthMarketingBudget = {
+  monthlyCap?: number
+  currency?: string
+  notes?: string
+  /** Reserved for Helcim / payment-requests integration */
+  paymentWiringStatus?: "not_connected" | "pending" | "connected"
+}
+
+export type GrowthCampaignMetrics = {
+  websiteVisits?: number
+  leadSubmissions?: number
+  socialEngagement?: number
+  reviewCount?: number
+  notes?: string
+}
+
+export type GrowthCampaignSnapshot = {
+  id: string
+  phase: "before" | "after"
+  capturedAt: string
+  metrics: GrowthCampaignMetrics
+  source: "manual" | "auto"
 }
 
 export type WebsiteHealthCheckResult = {
@@ -82,6 +133,10 @@ export type GrowthModuleDoc = {
   gbpBusinessName?: string
   gbpLocation?: string
   presencePages?: GrowthPresencePages
+  profileGrades?: Partial<Record<GrowthProfilePlatformId, GrowthProfileGrade>>
+  lastGradedAt?: string
+  marketingBudget?: GrowthMarketingBudget
+  changeLog?: GrowthProfileChangeEntry[]
   campaigns?: GrowthCampaignDraft[]
   advisorNotes?: string[]
   checklist?: Record<string, boolean>
@@ -101,10 +156,10 @@ export function labelForAttributionSource(id: LeadAttributionSource | string | u
 
 export function loadGrowthModuleFromMetadata(raw: unknown): GrowthModuleDoc {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { v: 1, scores: placeholderGrowthScores(), advisorNotes: defaultAdvisorNotes() }
+    return defaultGrowthModuleDoc()
   }
   const o = raw as Record<string, unknown>
-  if (o.v !== 1) return { v: 1, scores: placeholderGrowthScores(), advisorNotes: defaultAdvisorNotes() }
+  if (o.v !== 1) return defaultGrowthModuleDoc()
   return {
     v: 1,
     scores: typeof o.scores === "object" && o.scores ? (o.scores as GrowthScores) : placeholderGrowthScores(),
@@ -122,12 +177,46 @@ export function loadGrowthModuleFromMetadata(raw: unknown): GrowthModuleDoc {
       typeof o.websiteHealthCheck === "object" && o.websiteHealthCheck
         ? (o.websiteHealthCheck as WebsiteHealthCheckResult)
         : undefined,
+    profileGrades:
+      typeof o.profileGrades === "object" && o.profileGrades && !Array.isArray(o.profileGrades)
+        ? (o.profileGrades as Partial<Record<GrowthProfilePlatformId, GrowthProfileGrade>>)
+        : undefined,
+    lastGradedAt: typeof o.lastGradedAt === "string" ? o.lastGradedAt : undefined,
+    marketingBudget:
+      typeof o.marketingBudget === "object" && o.marketingBudget && !Array.isArray(o.marketingBudget)
+        ? (o.marketingBudget as GrowthMarketingBudget)
+        : undefined,
+    changeLog: Array.isArray(o.changeLog) ? (o.changeLog as GrowthProfileChangeEntry[]) : [],
     campaigns: Array.isArray(o.campaigns) ? (o.campaigns as GrowthCampaignDraft[]) : [],
     advisorNotes: Array.isArray(o.advisorNotes)
       ? o.advisorNotes.filter((x): x is string => typeof x === "string")
       : defaultAdvisorNotes(),
     checklist: typeof o.checklist === "object" && o.checklist ? (o.checklist as Record<string, boolean>) : {},
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,
+  }
+}
+
+/** Read growth doc from profiles.metadata (nested key + legacy root). */
+export function loadGrowthDocFromProfileMetadata(metadata: unknown): GrowthModuleDoc {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return defaultGrowthModuleDoc()
+  }
+  const meta = metadata as Record<string, unknown>
+  const nested = meta[GROWTH_METADATA_KEY]
+  if (nested && typeof nested === "object") return loadGrowthModuleFromMetadata(nested)
+  if (meta.v === 1 && (meta.presencePages || meta.campaigns || meta.profileGrades)) {
+    return loadGrowthModuleFromMetadata(meta)
+  }
+  return defaultGrowthModuleDoc()
+}
+
+function defaultGrowthModuleDoc(): GrowthModuleDoc {
+  return {
+    v: 1,
+    scores: placeholderGrowthScores(),
+    advisorNotes: defaultAdvisorNotes(),
+    changeLog: [],
+    marketingBudget: { currency: "USD", paymentWiringStatus: "not_connected" },
   }
 }
 
@@ -157,49 +246,159 @@ export function placeholderGrowthScores(): GrowthScores {
 
 export function defaultAdvisorNotes(): string[] {
   return [
-    "Connect your Google Business Profile to unlock a live health score and weekly recommendations.",
-    "Publish your lead capture link (/cta/your-slug) on your website and Google listing.",
-    "Tag lead sources on new Leads so attribution reports show which channels close.",
+    "Save your website and social profile URLs, then run Grade profiles to see what AI can infer today.",
+    "Set a monthly marketing budget — payment collection will connect to Tradesman Payments later.",
+    "When a campaign goes live, record a before snapshot; after the push, record an after snapshot to compare traffic.",
   ]
 }
 
 export function buildGrowthRecommendations(doc: GrowthModuleDoc): GrowthRecommendation[] {
   const out: GrowthRecommendation[] = []
-  if (!doc.gbpConnected) {
-    out.push({
-      id: "gbp-connect",
-      priority: "high",
-      text: "Connect Google Business Profile to monitor reviews, photos, and local ranking opportunities.",
-    })
-  }
   if (!doc.websiteUrl?.trim()) {
     out.push({
       id: "website-url",
       priority: "high",
-      text: "Add your website URL to run a health check (SSL, mobile, speed, SEO).",
+      text: "Add your website URL — it anchors campaign landing pages and traffic tracking.",
     })
   }
-  const gbp = doc.scores?.gbp ?? 0
-  if (gbp > 0 && gbp < 80) {
+  const socialCount = countSavedProfiles(doc)
+  if (socialCount < 2) {
     out.push({
-      id: "gbp-photos",
-      priority: "medium",
-      text: "Add recent project photos to Google Business — profiles with fresh photos earn more map clicks.",
+      id: "social-profiles",
+      priority: "high",
+      text: "Add at least Google Business plus one social profile so your marketing partner has sources to monitor.",
     })
   }
-  out.push({
-    id: "cta-link",
-    priority: "medium",
-    text: "Share your Tradesman lead capture link on Google, Facebook, and truck wraps.",
-    actionPage: "leads",
-  })
-  out.push({
-    id: "review-campaign",
-    priority: "low",
-    text: "Send a review request to five recent customers from Conversations (SMS or email).",
-    actionPage: "conversations",
-  })
+  if (!doc.lastGradedAt) {
+    out.push({
+      id: "grade-profiles",
+      priority: "medium",
+      text: "Run Grade profiles to see what AI can read from your saved links and what is missing.",
+    })
+  }
+  if (!doc.marketingBudget?.monthlyCap) {
+    out.push({
+      id: "set-budget",
+      priority: "medium",
+      text: "Set a monthly marketing budget so campaign requests include spend limits.",
+    })
+  }
+  const activeWithoutBefore = (doc.campaigns ?? []).some(
+    (c) => (c.status === "active" || c.status === "completed") && !c.snapshots?.some((s) => s.phase === "before"),
+  )
+  if (activeWithoutBefore) {
+    out.push({
+      id: "campaign-before",
+      priority: "high",
+      text: "Capture a before snapshot on live campaigns so you can compare traffic after the push.",
+    })
+  }
   return out
+}
+
+function countSavedProfiles(doc: GrowthModuleDoc): number {
+  let n = doc.websiteUrl?.trim() ? 1 : 0
+  const pages = doc.presencePages ?? {}
+  for (const v of Object.values(pages)) if (typeof v === "string" && v.trim()) n++
+  if (doc.gbpProfileUrl?.trim() && !pages.google?.trim()) n++
+  return n
+}
+
+export function detectProfileChanges(prev: GrowthModuleDoc, next: GrowthModuleDoc): GrowthProfileChangeEntry[] {
+  const entries: GrowthProfileChangeEntry[] = []
+  const now = new Date().toISOString()
+  const track = (field: string, label: string, oldVal?: string, newVal?: string) => {
+    const o = (oldVal ?? "").trim()
+    const n = (newVal ?? "").trim()
+    if (o === n) return
+    entries.push({
+      id: `${field}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      at: now,
+      field,
+      label,
+      oldValue: o || undefined,
+      newValue: n || undefined,
+      source: "manual",
+    })
+  }
+  track("websiteUrl", "Website", prev.websiteUrl, next.websiteUrl)
+  track("gbpBusinessName", "Business name", prev.gbpBusinessName, next.gbpBusinessName)
+  track("gbpLocation", "Service area", prev.gbpLocation, next.gbpLocation)
+  const prevPages = prev.presencePages ?? {}
+  const nextPages = next.presencePages ?? {}
+  const keys = new Set([...Object.keys(prevPages), ...Object.keys(nextPages)] as (keyof GrowthPresencePages)[])
+  for (const key of keys) {
+    track(`presencePages.${key}`, String(key), prevPages[key], nextPages[key])
+  }
+  track("gbpProfileUrl", "Google Business Profile", prev.gbpProfileUrl, next.gbpProfileUrl)
+  if (prev.marketingBudget?.monthlyCap !== next.marketingBudget?.monthlyCap) {
+    track(
+      "marketingBudget.monthlyCap",
+      "Monthly marketing budget",
+      prev.marketingBudget?.monthlyCap != null ? String(prev.marketingBudget.monthlyCap) : undefined,
+      next.marketingBudget?.monthlyCap != null ? String(next.marketingBudget.monthlyCap) : undefined,
+    )
+  }
+  return entries
+}
+
+export function mergeProfileChanges(
+  prevLog: GrowthProfileChangeEntry[] | undefined,
+  newEntries: GrowthProfileChangeEntry[],
+  max = 80,
+): GrowthProfileChangeEntry[] {
+  return [...newEntries, ...(prevLog ?? [])].slice(0, max)
+}
+
+export function createCampaignSnapshot(phase: "before" | "after", metrics?: GrowthCampaignMetrics): GrowthCampaignSnapshot {
+  return {
+    id: `snap-${phase}-${Date.now()}`,
+    phase,
+    capturedAt: new Date().toISOString(),
+    metrics: metrics ?? {},
+    source: metrics ? "manual" : "auto",
+  }
+}
+
+export function applyCampaignStatusTransition(
+  campaign: GrowthCampaignDraft,
+  nextStatus: GrowthCampaignDraft["status"],
+): GrowthCampaignDraft {
+  const snapshots = [...(campaign.snapshots ?? [])]
+  const hasBefore = snapshots.some((s) => s.phase === "before")
+  const hasAfter = snapshots.some((s) => s.phase === "after")
+  let updated = { ...campaign, status: nextStatus }
+
+  if (nextStatus === "active" && !hasBefore) {
+    snapshots.push(createCampaignSnapshot("before"))
+    updated = { ...updated, activatedAt: new Date().toISOString(), snapshots }
+  }
+  if (nextStatus === "completed" && !hasAfter) {
+    snapshots.push(createCampaignSnapshot("after"))
+    updated = { ...updated, completedAt: new Date().toISOString(), snapshots }
+  }
+  if (nextStatus === "submitted" && !updated.submittedAt) {
+    updated = { ...updated, submittedAt: new Date().toISOString() }
+  }
+  return updated
+}
+
+export function computeScoresFromGrades(doc: GrowthModuleDoc): GrowthScores {
+  const grades = doc.profileGrades ?? {}
+  const values = Object.values(grades).filter(Boolean) as GrowthProfileGrade[]
+  const avg = values.length ? Math.round(values.reduce((s, g) => s + g.score, 0) / values.length) : 0
+  const website = grades.website?.score ?? doc.websiteHealthCheck?.score ?? doc.scores?.website
+  const gbp = grades.google?.score ?? doc.scores?.gbp
+  return {
+    overall: avg || doc.scores?.overall,
+    leadHealth: doc.scores?.leadHealth,
+    gbp,
+    website,
+    reviews: doc.scores?.reviews,
+    conversionRate: doc.scores?.conversionRate,
+    marketingRoi: doc.scores?.marketingRoi,
+    revenueAttributed: doc.scores?.revenueAttributed,
+  }
 }
 
 export function runBasicWebsiteHealthCheck(urlRaw: string): WebsiteHealthCheckResult {

@@ -328,7 +328,16 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
                           <button
                             type="button"
                             onClick={() => openNoteEditor(note)}
-                            style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: 12,
+                              borderRadius: 6,
+                              border: `1px solid ${theme.primary}`,
+                              background: "#fff7ed",
+                              color: theme.charcoal,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                            }}
                           >
                             Read notes
                           </button>

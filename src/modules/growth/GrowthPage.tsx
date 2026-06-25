@@ -6,79 +6,51 @@ import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import {
   GROWTH_CAMPAIGN_TEMPLATES,
+  applyCampaignStatusTransition,
   buildGrowthRecommendations,
-  loadGrowthModuleFromMetadata,
+  computeScoresFromGrades,
+  createCampaignSnapshot,
+  detectProfileChanges,
+  loadGrowthDocFromProfileMetadata,
   mergeGrowthModuleMetadata,
-  runBasicWebsiteHealthCheck,
+  mergeProfileChanges,
+  type GrowthCampaignDraft,
+  type GrowthCampaignMetrics,
+  type GrowthCampaignSnapshot,
   type GrowthModuleDoc,
   type GrowthPresencePages,
+  type GrowthProfileGrade,
+  type GrowthProfilePlatformId,
 } from "../../lib/growthModule"
+import { GROWTH_PROFILE_PLATFORM_DEFS, gradeGrowthProfiles, gradesToRecord } from "../../lib/growthProfileGrading"
 
 type Props = {
   setPage: (page: string) => void
 }
 
-type SectionId =
-  | "dashboard"
-  | "acquisition"
-  | "pages"
-  | "website"
-  | "presence"
-  | "campaigns"
-  | "advisor"
+type SectionId = "overview" | "profiles" | "grades" | "budget" | "campaigns" | "changes"
 
 const SECTIONS: { id: SectionId; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "acquisition", label: "Lead acquisition" },
-  { id: "pages", label: "Pages" },
-  { id: "website", label: "Website health" },
-  { id: "presence", label: "Reviews & presence" },
-  { id: "campaigns", label: "Campaign requests" },
-  { id: "advisor", label: "AI advisor" },
+  { id: "overview", label: "Overview" },
+  { id: "profiles", label: "Business profiles" },
+  { id: "grades", label: "AI visibility" },
+  { id: "budget", label: "Marketing budget" },
+  { id: "campaigns", label: "Campaigns" },
+  { id: "changes", label: "Change log" },
 ]
-
-const PRESENCE_PAGE_FIELDS: { key: keyof GrowthPresencePages; label: string; placeholder: string }[] = [
-  { key: "google", label: "Google Business Profile", placeholder: "https://maps.google.com/..." },
-  { key: "facebook", label: "Facebook", placeholder: "https://facebook.com/your-page" },
-  { key: "instagram", label: "Instagram", placeholder: "https://instagram.com/your-handle" },
-  { key: "tiktok", label: "TikTok", placeholder: "https://tiktok.com/@your-handle" },
-  { key: "x", label: "X (Twitter)", placeholder: "https://x.com/your-handle" },
-]
-
-function ScoreCard({ label, value, suffix }: { label: string; value: number | undefined; suffix?: string }) {
-  const v = value ?? 0
-  return (
-    <div
-      style={{
-        padding: "14px 16px",
-        borderRadius: 12,
-        border: `1px solid ${theme.border}`,
-        background: "#fff",
-        minWidth: 0,
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-        {label}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 28, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>
-        {suffix === "%" ? `${v}%` : suffix === "$" ? `$${v.toLocaleString()}` : v}
-        {suffix === "/100" ? <span style={{ fontSize: 14, fontWeight: 600, color: "#64748b" }}>/100</span> : null}
-      </div>
-    </div>
-  )
-}
 
 export default function GrowthPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
-  const [doc, setDoc] = useState<GrowthModuleDoc>(() => loadGrowthModuleFromMetadata(null))
+  const [doc, setDoc] = useState<GrowthModuleDoc>(() => loadGrowthDocFromProfileMetadata(null))
   const [leadCaptureSlug, setLeadCaptureSlug] = useState("")
-  const [section, setSection] = useState<SectionId>("dashboard")
+  const [section, setSection] = useState<SectionId>("overview")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [healthCheckBusy, setHealthCheckBusy] = useState(false)
+  const [grading, setGrading] = useState(false)
   const [err, setErr] = useState("")
   const saveTimer = useRef<number | null>(null)
+  const docBeforeEdit = useRef<GrowthModuleDoc | null>(null)
 
   const ctaSlug = useMemo(() => {
     const configured = leadCaptureSlug.trim()
@@ -88,7 +60,8 @@ export default function GrowthPage({ setPage }: Props) {
     return local && local.length >= 3 ? local : "my-business"
   }, [user?.email, leadCaptureSlug])
 
-  const ctaUrl = typeof window !== "undefined" ? `${window.location.origin}/cta/${encodeURIComponent(ctaSlug)}` : `/cta/${ctaSlug}`
+  const ctaUrl =
+    typeof window !== "undefined" ? `${window.location.origin}/cta/${encodeURIComponent(ctaSlug)}` : `/cta/${ctaSlug}`
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -105,12 +78,13 @@ export default function GrowthPage({ setPage }: Props) {
         if (cancelled) return
         if (error) setErr(error.message)
         else {
-          setDoc(loadGrowthModuleFromMetadata(data?.metadata))
+          const loaded = loadGrowthDocFromProfileMetadata(data?.metadata)
+          if (typeof data?.website_url === "string" && data.website_url.trim() && !loaded.websiteUrl) {
+            loaded.websiteUrl = data.website_url.trim()
+          }
+          setDoc(loaded)
           if (typeof data?.embed_lead_slug === "string" && data.embed_lead_slug.trim()) {
             setLeadCaptureSlug(data.embed_lead_slug.trim())
-          }
-          if (typeof data?.website_url === "string" && data.website_url.trim() && !loadGrowthModuleFromMetadata(data?.metadata).websiteUrl) {
-            setDoc((prev) => ({ ...prev, websiteUrl: data.website_url!.trim() }))
           }
         }
         setLoading(false)
@@ -131,11 +105,12 @@ export default function GrowthPage({ setPage }: Props) {
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
               : {}
-          const { error } = await supabase
-            .from("profiles")
-            .update({ metadata: mergeGrowthModuleMetadata(prevMeta, next) })
-            .eq("id", userId)
+          const merged = mergeGrowthModuleMetadata(prevMeta, next)
+          const { error } = await supabase.from("profiles").update({ metadata: merged }).eq("id", userId)
           if (error) throw error
+          if (next.websiteUrl?.trim()) {
+            await supabase.from("profiles").update({ website_url: next.websiteUrl.trim() }).eq("id", userId)
+          }
         } catch (e: unknown) {
           setErr(formatAppError(e))
         } finally {
@@ -147,9 +122,17 @@ export default function GrowthPage({ setPage }: Props) {
   )
 
   const updateDoc = useCallback(
-    (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc)) => {
+    (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc), trackChanges = true) => {
       setDoc((prev) => {
+        if (trackChanges && !docBeforeEdit.current) docBeforeEdit.current = prev
         const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
+        if (trackChanges && docBeforeEdit.current) {
+          const changes = detectProfileChanges(docBeforeEdit.current, next)
+          if (changes.length) {
+            next.changeLog = mergeProfileChanges(prev.changeLog, changes)
+          }
+          docBeforeEdit.current = null
+        }
         if (saveTimer.current) window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => persist(next), 600)
         return next
@@ -158,30 +141,53 @@ export default function GrowthPage({ setPage }: Props) {
     [persist],
   )
 
-  const saveNow = useCallback(() => {
-    persist(doc)
-  }, [doc, persist])
+  const saveNow = useCallback(() => persist(doc), [doc, persist])
 
-  const runWebsiteHealthCheck = useCallback(() => {
-    const url = doc.websiteUrl?.trim()
-    if (!url) {
-      setErr("Enter and save your website URL first.")
-      return
-    }
-    setHealthCheckBusy(true)
+  const runGrading = useCallback(() => {
+    setGrading(true)
     setErr("")
-    const result = runBasicWebsiteHealthCheck(url)
-    updateDoc((prev) => ({
-      ...prev,
-      websiteHealthCheck: result,
-      scores: { ...prev.scores, website: result.score },
-    }))
-    setHealthCheckBusy(false)
-  }, [doc.websiteUrl, updateDoc])
+    const result = gradeGrowthProfiles(doc)
+    const profileGrades = gradesToRecord(result.platforms)
+    updateDoc(
+      (prev) => ({
+        ...prev,
+        profileGrades,
+        lastGradedAt: result.gradedAt,
+        scores: computeScoresFromGrades({ ...prev, profileGrades }),
+        changeLog: mergeProfileChanges(prev.changeLog, [
+          {
+            id: `grade-${Date.now()}`,
+            at: result.gradedAt,
+            field: "profileGrades",
+            label: "AI visibility grade run",
+            newValue: `${result.overall}/100 overall`,
+            source: "manual",
+          },
+        ]),
+      }),
+      false,
+    )
+    setGrading(false)
+    setSection("grades")
+  }, [doc, updateDoc])
 
+  const scores = useMemo(() => computeScoresFromGrades(doc), [doc])
   const recommendations = useMemo(() => buildGrowthRecommendations(doc), [doc])
+  const gradedPlatforms = useMemo(() => {
+    if (!doc.lastGradedAt) return gradeGrowthProfiles(doc).platforms
+    return GROWTH_PROFILE_PLATFORM_DEFS.map((def) => {
+      const grade = doc.profileGrades?.[def.id]
+      const url =
+        def.id === "website"
+          ? doc.websiteUrl
+          : def.id === "google"
+            ? doc.presencePages?.google ?? doc.gbpProfileUrl
+            : doc.presencePages?.[def.id as keyof GrowthPresencePages]
+      return { id: def.id, label: def.label, url, grade: grade ?? emptyGrade() }
+    })
+  }, [doc])
 
-  const navBtn = (id: SectionId, _label: string): CSSProperties => ({
+  const navBtn = (id: SectionId): CSSProperties => ({
     padding: "8px 12px",
     borderRadius: 8,
     border: section === id ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
@@ -198,499 +204,713 @@ export default function GrowthPage({ setPage }: Props) {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
-      <div style={{ marginBottom: 20 }}>
+      <header style={{ marginBottom: 20 }}>
         <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800, color: theme.text }}>Growth</h1>
-        <p style={{ margin: 0, maxWidth: 720, lineHeight: 1.6, color: "#475569", fontSize: 14 }}>
-          Attract better customers, improve your online presence, and measure which marketing turns into completed work.
-          Growth connects to Leads, Conversations, Estimates, and Operations — not a separate silo.
+        <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6, color: "#475569", fontSize: 14 }}>
+          Add your website and social profiles, grade what AI can see, set a marketing budget, and track campaigns before and
+          after your partner runs ads. Lead capture still lives in <strong>Leads</strong> — Growth focuses on presence and
+          campaign measurement.
         </p>
         {saving ? <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>Saving…</div> : null}
         {err ? <div style={{ marginTop: 8, fontSize: 12, color: "#b91c1c" }}>{err}</div> : null}
-      </div>
+      </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
         {SECTIONS.map((s) => (
-          <button key={s.id} type="button" style={navBtn(s.id, s.label)} onClick={() => setSection(s.id)}>
+          <button key={s.id} type="button" style={navBtn(s.id)} onClick={() => setSection(s.id)}>
             {s.label}
           </button>
         ))}
       </div>
 
-      {section === "dashboard" ? (
-        <div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-              gap: 10,
-              marginBottom: 20,
-            }}
-          >
-            <ScoreCard label="Overall growth" value={doc.scores?.overall} suffix="/100" />
-            <ScoreCard label="Lead health" value={doc.scores?.leadHealth} suffix="/100" />
-            <ScoreCard label="Google Business" value={doc.scores?.gbp} suffix="/100" />
-            <ScoreCard label="Website" value={doc.scores?.website} suffix="/100" />
-            <ScoreCard label="Reviews" value={doc.scores?.reviews} suffix="/100" />
-            <ScoreCard label="Conversion rate" value={doc.scores?.conversionRate} suffix="%" />
-            <ScoreCard label="Marketing ROI" value={doc.scores?.marketingRoi} suffix="%" />
-            <ScoreCard label="Revenue attributed" value={doc.scores?.revenueAttributed} suffix="$" />
-          </div>
-          <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>
-            Scores are placeholders until Google Business, website audit, and attribution rollups connect. Recommendations below
-            are actionable today.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {recommendations.slice(0, 4).map((r) => (
-              <div
-                key={r.id}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: 10,
-                  border: `1px solid ${theme.border}`,
-                  background: "#f8fafc",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ fontSize: 13, color: "#334155" }}>{r.text}</span>
-                {r.actionPage ? (
-                  <button
-                    type="button"
-                    onClick={() => setPage(r.actionPage!)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: theme.primary,
-                      color: "#fff",
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Open
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
+      {section === "overview" ? (
+        <OverviewSection
+          doc={doc}
+          scores={scores}
+          recommendations={recommendations}
+          ctaUrl={ctaUrl}
+          onGrade={runGrading}
+          grading={grading}
+          onOpenProfiles={() => setSection("profiles")}
+          onOpenCampaigns={() => setSection("campaigns")}
+          setPage={setPage}
+        />
       ) : null}
 
-      {section === "acquisition" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>Lead acquisition</h2>
-          <p style={p}>
-            Your <strong>Tradesman lead capture link</strong> is a public form at <code>/cta/your-slug</code>. Post it on
-            your website, Google listing, truck wraps, and social profiles — inbound submissions land in{" "}
-            <strong>Leads</strong> as qualified requests (not purchased lists).
-          </p>
-          <label style={labelStyle}>
-            Public lead capture URL
-            <input readOnly value={ctaUrl} style={inputStyle} onFocus={(e) => e.target.select()} />
-          </label>
-          <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b" }}>
-            Slug comes from Leads → Settings (<code>embed_lead_slug</code>
-            {leadCaptureSlug ? `: ${leadCaptureSlug}` : " — configure a custom slug there"}).
-          </p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-            <button type="button" style={primaryBtn} onClick={() => void navigator.clipboard?.writeText(ctaUrl)}>
-              Copy link
-            </button>
-            <button type="button" style={secondaryBtn} onClick={() => setPage("leads")}>
-              Configure in Leads
-            </button>
-          </div>
-        </div>
+      {section === "profiles" ? (
+        <ProfilesSection doc={doc} updateDoc={updateDoc} onSave={saveNow} onGrade={runGrading} grading={grading} />
       ) : null}
 
-      {section === "pages" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>Pages &amp; listings</h2>
-          <p style={p}>
-            Save URLs for the online presence pages your marketing partner (or AI advisor) should review. These are shared
-            with your Growth workspace — not a live API sync yet.
-          </p>
-          <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={doc.gbpConnected === true}
-              onChange={(e) => updateDoc({ gbpConnected: e.target.checked })}
-            />
-            I have claimed / manage my primary Google Business listing
-          </label>
-          <label style={{ ...labelStyle, marginTop: 12 }}>
-            Business name (public listing)
-            <input
-              value={doc.gbpBusinessName ?? ""}
-              onChange={(e) => updateDoc({ gbpBusinessName: e.target.value })}
-              placeholder="Demo Plumbing Co."
-              style={inputStyle}
-            />
-          </label>
-          {PRESENCE_PAGE_FIELDS.map((field) => (
-            <label key={field.key} style={{ ...labelStyle, marginTop: 10 }}>
-              {field.label}
-              <input
-                value={doc.presencePages?.[field.key] ?? (field.key === "google" ? doc.gbpProfileUrl ?? "" : "")}
-                onChange={(e) =>
-                  updateDoc((prev) => ({
-                    ...prev,
-                    presencePages: { ...prev.presencePages, [field.key]: e.target.value },
-                    ...(field.key === "google" ? { gbpProfileUrl: e.target.value } : {}),
-                  }))
-                }
-                placeholder={field.placeholder}
-                style={inputStyle}
-              />
-            </label>
-          ))}
-          <label style={{ ...labelStyle, marginTop: 10 }}>
-            Primary service area
-            <input
-              value={doc.gbpLocation ?? ""}
-              onChange={(e) => updateDoc({ gbpLocation: e.target.value })}
-              placeholder="City, ST or service radius"
-              style={inputStyle}
-            />
-          </label>
-          <button type="button" style={{ ...primaryBtn, marginTop: 14 }} onClick={saveNow}>
-            Save pages
-          </button>
-        </div>
+      {section === "grades" ? (
+        <GradesSection platforms={gradedPlatforms} lastGradedAt={doc.lastGradedAt} onRegrade={runGrading} grading={grading} />
       ) : null}
 
-      {section === "website" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>Website health</h2>
-          <p style={p}>Save your site URL once, then run a quick health check before sending work to a marketing partner.</p>
-          <label style={labelStyle}>
-            Website URL
-            <input
-              value={doc.websiteUrl ?? ""}
-              onChange={(e) => updateDoc({ websiteUrl: e.target.value })}
-              placeholder="https://yourbusiness.com"
-              style={inputStyle}
-            />
-          </label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-            <button type="button" style={secondaryBtn} onClick={saveNow}>
-              Save URL
-            </button>
-            <button type="button" style={primaryBtn} disabled={healthCheckBusy} onClick={runWebsiteHealthCheck}>
-              {healthCheckBusy ? "Checking…" : "Run health check"}
-            </button>
-          </div>
-          {doc.websiteHealthCheck ? (
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: "#f8fafc", border: `1px solid ${theme.border}` }}>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>
-                Score: {doc.websiteHealthCheck.score}/100 ·{" "}
-                {new Date(doc.websiteHealthCheck.checkedAt).toLocaleString()}
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.55 }}>
-                {doc.websiteHealthCheck.checks.map((c) => (
-                  <li key={c.id} style={{ color: c.ok ? "#166534" : "#991b1b" }}>
-                    {c.ok ? "✓" : "✗"} {c.label}
-                    {c.detail ? ` — ${c.detail}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <label style={{ ...labelStyle, marginTop: 14 }}>
-            Notes from your last audit (manual)
-            <textarea
-              value={doc.websiteAuditNotes ?? ""}
-              onChange={(e) => updateDoc({ websiteAuditNotes: e.target.value })}
-              placeholder="SSL OK, mobile needs work, missing meta description on services page…"
-              rows={4}
-              style={{ ...inputStyle, resize: "vertical" }}
-            />
-          </label>
-        </div>
-      ) : null}
-
-      {section === "presence" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>Reviews &amp; presence</h2>
-          <p style={p}>
-            Gather review and reputation pages from the <strong>Pages</strong> tab. Request reviews from recent customers via{" "}
-            <strong>Conversations</strong> (SMS or email). A third-party marketing firm can use saved page URLs for monitoring.
-          </p>
-          <button type="button" style={primaryBtn} onClick={() => setSection("pages")}>
-            Open Pages
-          </button>
-          <button type="button" style={{ ...secondaryBtn, marginLeft: 8 }} onClick={() => setPage("conversations")}>
-            Request reviews via Conversations
-          </button>
-        </div>
+      {section === "budget" ? (
+        <BudgetSection
+          budget={doc.marketingBudget}
+          onPatch={(marketingBudget) => updateDoc({ marketingBudget: { ...doc.marketingBudget, ...marketingBudget } })}
+          onSave={saveNow}
+        />
       ) : null}
 
       {section === "campaigns" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>Campaign requests</h2>
-          <p style={p}>
-            Submit campaign briefs to your marketing partner. Pick a template, describe what you want, and submit for approval
-            before anything goes live. <strong>Landing slug</strong> is the public lead form path segment (same as your{" "}
-            <code>/cta/slug</code> link).
-          </p>
-          <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-            {GROWTH_CAMPAIGN_TEMPLATES.map((t) => (
-              <div
-                key={t.id}
-                style={{
-                  padding: 12,
-                  borderRadius: 10,
-                  border: `1px solid ${theme.border}`,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 8,
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 800 }}>{t.name}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{t.targetService}</div>
-                </div>
-                <button
-                  type="button"
-                  style={secondaryBtn}
-                  onClick={() =>
-                    updateDoc((prev) => ({
-                      ...prev,
-                      campaigns: [
-                        ...(prev.campaigns ?? []),
-                        {
-                          id: `${t.id}-${Date.now()}`,
-                          name: t.name,
-                          targetService: t.targetService,
-                          budget: 500,
-                          radiusMiles: 15,
-                          durationDays: 30,
-                          landingSlug: ctaSlug,
-                          status: "draft",
-                        },
-                      ],
-                    }))
-                  }
-                >
-                  Add from template
-                </button>
-              </div>
-            ))}
-          </div>
-          {(doc.campaigns ?? []).length === 0 ? (
-            <p style={{ fontSize: 13, color: "#64748b" }}>No campaigns yet — add one from a template above.</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {(doc.campaigns ?? []).map((c) => (
-                <div key={c.id} style={{ padding: 14, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                    <input
-                      value={c.name}
-                      onChange={(e) =>
-                        updateDoc((prev) => ({
-                          ...prev,
-                          campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)),
-                        }))
-                      }
-                      style={{ ...inputStyle, fontWeight: 800, flex: "1 1 200px" }}
-                    />
-                    <select
-                      value={c.status}
-                      onChange={(e) =>
-                        updateDoc((prev) => ({
-                          ...prev,
-                          campaigns: (prev.campaigns ?? []).map((x) =>
-                            x.id === c.id ? { ...x, status: e.target.value as typeof c.status } : x,
-                          ),
-                        }))
-                      }
-                      style={{ ...inputStyle, width: 140 }}
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="submitted">Submitted to partner</option>
-                      <option value="active">Live</option>
-                      <option value="paused">Paused</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                  </div>
-                  <label style={labelStyle}>
-                    Campaign description
-                    <textarea
-                      value={c.description ?? ""}
-                      onChange={(e) =>
-                        updateDoc((prev) => ({
-                          ...prev,
-                          campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? { ...x, description: e.target.value } : x)),
-                        }))
-                      }
-                      rows={2}
-                      placeholder="What offer or message should this campaign promote?"
-                      style={{ ...inputStyle, resize: "vertical" }}
-                    />
-                  </label>
-                  <label style={{ ...labelStyle, marginTop: 8 }}>
-                    Notes for marketing partner
-                    <textarea
-                      value={c.notes ?? ""}
-                      onChange={(e) =>
-                        updateDoc((prev) => ({
-                          ...prev,
-                          campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? { ...x, notes: e.target.value } : x)),
-                        }))
-                      }
-                      rows={2}
-                      placeholder="Budget constraints, neighborhoods to avoid, brand voice…"
-                      style={{ ...inputStyle, resize: "vertical" }}
-                    />
-                  </label>
-                  <label style={{ ...labelStyle, marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={c.requiresApprovalBeforeLive !== false}
-                      onChange={(e) =>
-                        updateDoc((prev) => ({
-                          ...prev,
-                          campaigns: (prev.campaigns ?? []).map((x) =>
-                            x.id === c.id ? { ...x, requiresApprovalBeforeLive: e.target.checked } : x,
-                          ),
-                        }))
-                      }
-                    />
-                    Require my approval before campaign goes live
-                  </label>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
-                    <label style={labelStyle}>
-                      Budget ($)
-                      <input
-                        type="number"
-                        min={0}
-                        value={c.budget ?? ""}
-                        onChange={(e) =>
-                          updateDoc((prev) => ({
-                            ...prev,
-                            campaigns: (prev.campaigns ?? []).map((x) =>
-                              x.id === c.id ? { ...x, budget: Number(e.target.value) || 0 } : x,
-                            ),
-                          }))
-                        }
-                        style={inputStyle}
-                      />
-                    </label>
-                    <label style={labelStyle}>
-                      Radius (mi)
-                      <input
-                        type="number"
-                        min={1}
-                        value={c.radiusMiles ?? ""}
-                        onChange={(e) =>
-                          updateDoc((prev) => ({
-                            ...prev,
-                            campaigns: (prev.campaigns ?? []).map((x) =>
-                              x.id === c.id ? { ...x, radiusMiles: Number(e.target.value) || 0 } : x,
-                            ),
-                          }))
-                        }
-                        style={inputStyle}
-                      />
-                    </label>
-                    <label style={labelStyle}>
-                      Duration (days)
-                      <input
-                        type="number"
-                        min={1}
-                        value={c.durationDays ?? ""}
-                        onChange={(e) =>
-                          updateDoc((prev) => ({
-                            ...prev,
-                            campaigns: (prev.campaigns ?? []).map((x) =>
-                              x.id === c.id ? { ...x, durationDays: Number(e.target.value) || 0 } : x,
-                            ),
-                          }))
-                        }
-                        style={inputStyle}
-                      />
-                    </label>
-                    <label style={labelStyle}>
-                      Landing slug
-                      <input
-                        value={c.landingSlug ?? ""}
-                        onChange={(e) =>
-                          updateDoc((prev) => ({
-                            ...prev,
-                            campaigns: (prev.campaigns ?? []).map((x) =>
-                              x.id === c.id ? { ...x, landingSlug: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        placeholder={ctaSlug}
-                        style={inputStyle}
-                      />
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#64748b" }}>
-                        Leads land at /cta/{c.landingSlug?.trim() || ctaSlug}
-                      </span>
-                    </label>
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                    <button type="button" style={primaryBtn} onClick={saveNow}>
-                      Save campaign
-                    </button>
-                    {c.status === "draft" ? (
-                      <button
-                        type="button"
-                        style={secondaryBtn}
-                        onClick={() =>
-                          updateDoc((prev) => ({
-                            ...prev,
-                            campaigns: (prev.campaigns ?? []).map((x) =>
-                              x.id === c.id
-                                ? { ...x, status: "submitted", submittedAt: new Date().toISOString() }
-                                : x,
-                            ),
-                          }))
-                        }
-                      >
-                        Submit to marketing partner
-                      </button>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    style={{ ...secondaryBtn, marginTop: 10, color: "#b91c1c", borderColor: "#fecaca" }}
-                    onClick={() =>
-                      updateDoc((prev) => ({
-                        ...prev,
-                        campaigns: (prev.campaigns ?? []).filter((x) => x.id !== c.id),
-                      }))
-                    }
-                  >
-                    Remove campaign
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <CampaignsSection
+          doc={doc}
+          ctaSlug={ctaSlug}
+          updateDoc={updateDoc}
+          saveNow={saveNow}
+        />
       ) : null}
 
-      {section === "advisor" ? (
-        <div style={panelStyle}>
-          <h2 style={h2}>AI Growth Advisor</h2>
-          <p style={p}>Actionable recommendations instead of vanity charts. Full AI scheduling coming soon.</p>
-          <ul style={listStyle}>
-            {(doc.advisorNotes ?? []).map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
-        </div>
+      {section === "changes" ? (
+        <ChangesSection changeLog={doc.changeLog ?? []} campaigns={doc.campaigns ?? []} />
       ) : null}
     </div>
   )
+}
+
+function OverviewSection({
+  doc,
+  scores,
+  recommendations,
+  ctaUrl,
+  onGrade,
+  grading,
+  onOpenProfiles,
+  onOpenCampaigns,
+  setPage,
+}: {
+  doc: GrowthModuleDoc
+  scores: ReturnType<typeof computeScoresFromGrades>
+  recommendations: ReturnType<typeof buildGrowthRecommendations>
+  ctaUrl: string
+  onGrade: () => void
+  grading: boolean
+  onOpenProfiles: () => void
+  onOpenCampaigns: () => void
+  setPage: (p: string) => void
+}) {
+  const liveCampaigns = (doc.campaigns ?? []).filter((c) => c.status === "active" || c.status === "submitted").length
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 16 }}>
+        <ScoreCard label="AI visibility" value={scores.overall} suffix="/100" hint={doc.lastGradedAt ? "From profile grades" : "Run grade"} />
+        <ScoreCard label="Website" value={scores.website} suffix="/100" />
+        <ScoreCard label="Google profile" value={scores.gbp} suffix="/100" />
+        <ScoreCard label="Monthly budget" value={doc.marketingBudget?.monthlyCap} suffix="$" hint="Placeholder until payments" />
+        <ScoreCard label="Active campaigns" value={liveCampaigns} />
+      </div>
+
+      <div style={{ ...panelStyle, marginBottom: 14 }}>
+        <h2 style={h2}>Lead capture link</h2>
+        <p style={p}>Campaign landing pages use your public Tradesman form. Configure the slug in Leads.</p>
+        <input readOnly value={ctaUrl} style={inputStyle} onFocus={(e) => e.target.select()} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          <button type="button" style={primaryBtn} onClick={() => void navigator.clipboard?.writeText(ctaUrl)}>
+            Copy /cta link
+          </button>
+          <button type="button" style={secondaryBtn} onClick={() => setPage("leads")}>
+            Leads settings
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+        <button type="button" style={primaryBtn} disabled={grading} onClick={onGrade}>
+          {grading ? "Grading…" : "Grade my profiles"}
+        </button>
+        <button type="button" style={secondaryBtn} onClick={onOpenProfiles}>
+          Edit profiles
+        </button>
+        <button type="button" style={secondaryBtn} onClick={onOpenCampaigns}>
+          Campaigns
+        </button>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {recommendations.slice(0, 5).map((r) => (
+          <div key={r.id} style={recRowStyle}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: r.priority === "high" ? "#b91c1c" : "#64748b", textTransform: "uppercase" }}>
+              {r.priority}
+            </span>
+            <span style={{ fontSize: 13, color: "#334155", flex: 1 }}>{r.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ProfilesSection({
+  doc,
+  updateDoc,
+  onSave,
+  onGrade,
+  grading,
+}: {
+  doc: GrowthModuleDoc
+  updateDoc: (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc)) => void
+  onSave: () => void
+  onGrade: () => void
+  grading: boolean
+}) {
+  const onPatch = (patch: Partial<GrowthModuleDoc>) => updateDoc(patch)
+  return (
+    <div style={panelStyle}>
+      <h2 style={h2}>Business profiles</h2>
+      <p style={p}>
+        URLs your marketing partner (or our future crawl service) uses to monitor website and social presence. Changes are
+        logged automatically.
+      </p>
+      <label style={labelStyle}>
+        Business name (public)
+        <input value={doc.gbpBusinessName ?? ""} onChange={(e) => onPatch({ gbpBusinessName: e.target.value })} style={inputStyle} />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 10 }}>
+        Primary service area
+        <input value={doc.gbpLocation ?? ""} onChange={(e) => onPatch({ gbpLocation: e.target.value })} placeholder="City, ST" style={inputStyle} />
+      </label>
+      {GROWTH_PROFILE_PLATFORM_DEFS.map((field) => (
+        <label key={field.id} style={{ ...labelStyle, marginTop: 10 }}>
+          {field.label}
+          <input
+            value={
+              field.id === "website"
+                ? doc.websiteUrl ?? ""
+                : field.id === "google"
+                  ? doc.presencePages?.google ?? doc.gbpProfileUrl ?? ""
+                  : doc.presencePages?.[field.id as keyof GrowthPresencePages] ?? ""
+            }
+            onChange={(e) => {
+              const v = e.target.value
+              if (field.id === "website") onPatch({ websiteUrl: v })
+              else if (field.id === "google") {
+                onPatch({ presencePages: { ...doc.presencePages, google: v }, gbpProfileUrl: v })
+              } else {
+                onPatch({ presencePages: { ...doc.presencePages, [field.id]: v } as GrowthPresencePages })
+              }
+            }}
+            placeholder={field.placeholder}
+            style={inputStyle}
+          />
+        </label>
+      ))}
+      <label style={{ ...labelStyle, marginTop: 12, display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <input type="checkbox" checked={doc.gbpConnected === true} onChange={(e) => onPatch({ gbpConnected: e.target.checked })} />
+        I manage this Google Business listing
+      </label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+        <button type="button" style={primaryBtn} onClick={onSave}>
+          Save profiles
+        </button>
+        <button type="button" style={secondaryBtn} disabled={grading} onClick={onGrade}>
+          {grading ? "Grading…" : "Grade visibility"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function GradesSection({
+  platforms,
+  lastGradedAt,
+  onRegrade,
+  grading,
+}: {
+  platforms: { id: GrowthProfilePlatformId; label: string; url?: string; grade: GrowthProfileGrade }[]
+  lastGradedAt?: string
+  onRegrade: () => void
+  grading: boolean
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <p style={{ ...p, margin: 0 }}>
+          {lastGradedAt
+            ? `Last graded ${new Date(lastGradedAt).toLocaleString()} — based on saved URLs (full crawl when partner API connects).`
+            : "Run a grade to see what AI can infer from your saved profile links today."}
+        </p>
+        <button type="button" style={primaryBtn} disabled={grading} onClick={onRegrade}>
+          {grading ? "Grading…" : "Re-grade"}
+        </button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {platforms.map((row) => (
+          <div key={row.id} style={{ ...panelStyle, borderLeft: `4px solid ${gradeColor(row.grade.status)}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>{row.label}</div>
+                {row.url ? <div style={{ fontSize: 12, color: "#64748b", wordBreak: "break-all" }}>{row.url}</div> : null}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, lineHeight: 1 }}>{row.grade.score}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: gradeColor(row.grade.status), textTransform: "uppercase" }}>
+                  {row.grade.status.replace("_", " ")}
+                </div>
+              </div>
+            </div>
+            {row.grade.whatAiCanSee.length ? (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 4 }}>What AI can see</div>
+                <ul style={listStyle}>
+                  {row.grade.whatAiCanSee.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {row.grade.gaps.length ? (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginTop: 8, marginBottom: 4 }}>Gaps</div>
+                <ul style={{ ...listStyle, color: "#991b1b" }}>
+                  {row.grade.gaps.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function BudgetSection({
+  budget,
+  onPatch,
+  onSave,
+}: {
+  budget: GrowthModuleDoc["marketingBudget"]
+  onPatch: (b: NonNullable<GrowthModuleDoc["marketingBudget"]>) => void
+  onSave: () => void
+}) {
+  return (
+    <div style={panelStyle}>
+      <h2 style={h2}>Marketing budget</h2>
+      <p style={p}>
+        Set the monthly cap you are willing to spend on ads and partner services. <strong>Payment collection is not wired yet</strong>{" "}
+        — this will connect to Tradesman Payments (Helcim) so campaigns can draw from an approved budget later.
+      </p>
+      <div
+        style={{
+          padding: 12,
+          borderRadius: 10,
+          background: "#fff7ed",
+          border: "1px solid #fed7aa",
+          fontSize: 13,
+          color: "#9a3412",
+          marginBottom: 14,
+        }}
+      >
+        Status: {budget?.paymentWiringStatus === "connected" ? "Connected" : "Not connected — budget is planning only"}
+      </div>
+      <label style={labelStyle}>
+        Monthly cap (USD)
+        <input
+          type="number"
+          min={0}
+          step={50}
+          value={budget?.monthlyCap ?? ""}
+          onChange={(e) => onPatch({ monthlyCap: Number(e.target.value) || undefined, currency: "USD", paymentWiringStatus: "not_connected" })}
+          placeholder="e.g. 1500"
+          style={inputStyle}
+        />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 10 }}>
+        Notes for your marketing firm
+        <textarea
+          value={budget?.notes ?? ""}
+          onChange={(e) => onPatch({ notes: e.target.value })}
+          rows={3}
+          placeholder="Seasonal peaks, max per campaign, approval rules…"
+          style={{ ...inputStyle, resize: "vertical" }}
+        />
+      </label>
+      <button type="button" style={{ ...primaryBtn, marginTop: 12 }} onClick={onSave}>
+        Save budget
+      </button>
+    </div>
+  )
+}
+
+type UpdateDocFn = (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc), trackChanges?: boolean) => void
+
+function CampaignsSection({
+  doc,
+  ctaSlug,
+  updateDoc,
+  saveNow,
+}: {
+  doc: GrowthModuleDoc
+  ctaSlug: string
+  updateDoc: UpdateDocFn
+  saveNow: () => void
+}) {
+  const monthlyCap = doc.marketingBudget?.monthlyCap
+
+  return (
+    <div style={panelStyle}>
+      <h2 style={h2}>Campaigns</h2>
+      <p style={p}>
+        Request work from your marketing partner. When a campaign goes <strong>Live</strong>, Tradesman captures a{" "}
+        <em>before</em> snapshot; when marked <strong>Completed</strong>, an <em>after</em> snapshot — enter traffic and lead
+        numbers your firm reports (automated analytics when partner API connects).
+      </p>
+      {monthlyCap ? (
+        <p style={{ fontSize: 13, color: "#64748b", marginTop: -8 }}>Account monthly cap: ${monthlyCap.toLocaleString()}</p>
+      ) : null}
+
+      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+        {GROWTH_CAMPAIGN_TEMPLATES.map((t) => (
+          <div key={t.id} style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 800 }}>{t.name}</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>{t.targetService}</div>
+            </div>
+            <button
+              type="button"
+              style={secondaryBtn}
+              onClick={() =>
+                updateDoc((prev) => ({
+                  ...prev,
+                  campaigns: [
+                    ...(prev.campaigns ?? []),
+                    {
+                      id: `${t.id}-${Date.now()}`,
+                      name: t.name,
+                      targetService: t.targetService,
+                      budget: monthlyCap ? Math.min(500, monthlyCap) : 500,
+                      radiusMiles: 15,
+                      durationDays: 30,
+                      landingSlug: ctaSlug,
+                      status: "draft",
+                      dataCollectionBrief: "",
+                    },
+                  ],
+                }))
+              }
+            >
+              Add template
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {(doc.campaigns ?? []).length === 0 ? (
+        <p style={{ fontSize: 13, color: "#64748b" }}>No campaigns — add a template to start a brief for your marketing firm.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {(doc.campaigns ?? []).map((c) => (
+            <CampaignCard key={c.id} campaign={c} ctaSlug={ctaSlug} updateDoc={updateDoc} saveNow={saveNow} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CampaignCard({
+  campaign: c,
+  ctaSlug,
+  updateDoc,
+  saveNow,
+}: {
+  campaign: GrowthCampaignDraft
+  ctaSlug: string
+  updateDoc: UpdateDocFn
+  saveNow: () => void
+}) {
+  const patchCampaign = (patch: Partial<GrowthCampaignDraft>) =>
+    updateDoc((prev) => ({
+      ...prev,
+      campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? { ...x, ...patch } : x)),
+    }))
+
+  const setStatus = (status: GrowthCampaignDraft["status"]) =>
+    updateDoc((prev) => ({
+      ...prev,
+      campaigns: (prev.campaigns ?? []).map((x) => (x.id === c.id ? applyCampaignStatusTransition(x, status) : x)),
+    }))
+
+  const updateSnapshotMetrics = (phase: "before" | "after", metrics: GrowthCampaignMetrics) =>
+    updateDoc((prev) => ({
+      ...prev,
+      campaigns: (prev.campaigns ?? []).map((x) => {
+        if (x.id !== c.id) return x
+        const snapshots = [...(x.snapshots ?? [])]
+        const idx = snapshots.findIndex((s) => s.phase === phase)
+        if (idx >= 0) snapshots[idx] = { ...snapshots[idx], metrics: { ...snapshots[idx].metrics, ...metrics } }
+        else snapshots.push(createCampaignSnapshot(phase, metrics))
+        return { ...x, snapshots }
+      }),
+    }))
+
+  return (
+    <div style={{ padding: 14, borderRadius: 12, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <input value={c.name} onChange={(e) => patchCampaign({ name: e.target.value })} style={{ ...inputStyle, fontWeight: 800, flex: "1 1 200px" }} />
+        <select value={c.status} onChange={(e) => setStatus(e.target.value as GrowthCampaignDraft["status"])} style={{ ...inputStyle, width: 160 }}>
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted to partner</option>
+          <option value="active">Live</option>
+          <option value="paused">Paused</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+
+      <label style={labelStyle}>
+        What should the firm collect and run?
+        <textarea
+          value={c.dataCollectionBrief ?? ""}
+          onChange={(e) => patchCampaign({ dataCollectionBrief: e.target.value })}
+          rows={2}
+          placeholder="Audience, creative, keywords, GBP posts, landing page changes…"
+          style={{ ...inputStyle, resize: "vertical" }}
+        />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 8 }}>
+        Campaign description
+        <textarea value={c.description ?? ""} onChange={(e) => patchCampaign({ description: e.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
+      </label>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginTop: 8 }}>
+        <label style={labelStyle}>
+          Budget ($)
+          <input type="number" min={0} value={c.budget ?? ""} onChange={(e) => patchCampaign({ budget: Number(e.target.value) || 0 })} style={inputStyle} />
+        </label>
+        <label style={labelStyle}>
+          Radius (mi)
+          <input type="number" min={1} value={c.radiusMiles ?? ""} onChange={(e) => patchCampaign({ radiusMiles: Number(e.target.value) || 0 })} style={inputStyle} />
+        </label>
+        <label style={labelStyle}>
+          Days
+          <input type="number" min={1} value={c.durationDays ?? ""} onChange={(e) => patchCampaign({ durationDays: Number(e.target.value) || 0 })} style={inputStyle} />
+        </label>
+        <label style={labelStyle}>
+          Landing slug
+          <input value={c.landingSlug ?? ""} onChange={(e) => patchCampaign({ landingSlug: e.target.value })} placeholder={ctaSlug} style={inputStyle} />
+        </label>
+      </div>
+
+      <SnapshotPair campaign={c} onUpdateMetrics={updateSnapshotMetrics} />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <button type="button" style={primaryBtn} onClick={saveNow}>
+          Save
+        </button>
+        {c.status === "draft" ? (
+          <button type="button" style={secondaryBtn} onClick={() => setStatus("submitted")}>
+            Submit to partner
+          </button>
+        ) : null}
+        <button
+          type="button"
+          style={{ ...secondaryBtn, color: "#b91c1c", borderColor: "#fecaca" }}
+          onClick={() => updateDoc((prev) => ({ ...prev, campaigns: (prev.campaigns ?? []).filter((x) => x.id !== c.id) }))}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SnapshotPair({
+  campaign,
+  onUpdateMetrics,
+}: {
+  campaign: GrowthCampaignDraft
+  onUpdateMetrics: (phase: "before" | "after", metrics: GrowthCampaignMetrics) => void
+}) {
+  const before = campaign.snapshots?.find((s) => s.phase === "before")
+  const after = campaign.snapshots?.find((s) => s.phase === "after")
+
+  return (
+    <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+      <SnapshotEditor title="Before push" snapshot={before} onSave={(m) => onUpdateMetrics("before", m)} />
+      <SnapshotEditor title="After push" snapshot={after} onSave={(m) => onUpdateMetrics("after", m)} />
+      {before && after ? <SnapshotCompare before={before} after={after} /> : null}
+    </div>
+  )
+}
+
+function SnapshotEditor({
+  title,
+  snapshot,
+  onSave,
+}: {
+  title: string
+  snapshot?: GrowthCampaignSnapshot
+  onSave: (m: GrowthCampaignMetrics) => void
+}) {
+  const [visits, setVisits] = useState(String(snapshot?.metrics.websiteVisits ?? ""))
+  const [leads, setLeads] = useState(String(snapshot?.metrics.leadSubmissions ?? ""))
+  const [social, setSocial] = useState(String(snapshot?.metrics.socialEngagement ?? ""))
+  const [notes, setNotes] = useState(snapshot?.metrics.notes ?? "")
+
+  useEffect(() => {
+    setVisits(String(snapshot?.metrics.websiteVisits ?? ""))
+    setLeads(String(snapshot?.metrics.leadSubmissions ?? ""))
+    setSocial(String(snapshot?.metrics.socialEngagement ?? ""))
+    setNotes(snapshot?.metrics.notes ?? "")
+  }, [snapshot])
+
+  return (
+    <div style={{ padding: 12, borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
+      {snapshot ? (
+        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>Captured {new Date(snapshot.capturedAt).toLocaleString()}</div>
+      ) : (
+        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>Auto-captures when campaign goes live / completed — or save metrics manually.</div>
+      )}
+      <label style={labelStyle}>
+        Website visits
+        <input type="number" min={0} value={visits} onChange={(e) => setVisits(e.target.value)} style={inputStyle} />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>
+        Lead form submissions
+        <input type="number" min={0} value={leads} onChange={(e) => setLeads(e.target.value)} style={inputStyle} />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>
+        Social engagement (index)
+        <input type="number" min={0} value={social} onChange={(e) => setSocial(e.target.value)} style={inputStyle} />
+      </label>
+      <label style={{ ...labelStyle, marginTop: 6 }}>
+        Notes
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} style={inputStyle} placeholder="Profile or site changes during this phase" />
+      </label>
+      <button
+        type="button"
+        style={{ ...secondaryBtn, marginTop: 8 }}
+        onClick={() =>
+          onSave({
+            websiteVisits: Number(visits) || undefined,
+            leadSubmissions: Number(leads) || undefined,
+            socialEngagement: Number(social) || undefined,
+            notes: notes.trim() || undefined,
+          })
+        }
+      >
+        Save metrics
+      </button>
+    </div>
+  )
+}
+
+function SnapshotCompare({ before, after }: { before: GrowthCampaignSnapshot; after: GrowthCampaignSnapshot }) {
+  const delta = (a?: number, b?: number) => {
+    if (a == null || b == null) return "—"
+    const d = b - a
+    return d >= 0 ? `+${d}` : String(d)
+  }
+  return (
+    <div style={{ padding: 12, borderRadius: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", gridColumn: "1 / -1" }}>
+      <div style={{ fontWeight: 800, marginBottom: 8 }}>Before → after</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 14 }}>
+        <span>Visits: {delta(before.metrics.websiteVisits, after.metrics.websiteVisits)}</span>
+        <span>Leads: {delta(before.metrics.leadSubmissions, after.metrics.leadSubmissions)}</span>
+        <span>Social: {delta(before.metrics.socialEngagement, after.metrics.socialEngagement)}</span>
+      </div>
+    </div>
+  )
+}
+
+function ChangesSection({
+  changeLog,
+  campaigns,
+}: {
+  changeLog: NonNullable<GrowthModuleDoc["changeLog"]>
+  campaigns: GrowthCampaignDraft[]
+}) {
+  const campaignEvents = campaigns.flatMap((c) =>
+    (c.snapshots ?? []).map((s) => ({
+      at: s.capturedAt,
+      label: `Campaign “${c.name}” — ${s.phase} snapshot`,
+      detail: s.metrics.notes ?? formatMetrics(s.metrics),
+    })),
+  )
+  const merged = [
+    ...changeLog.map((e) => ({
+      at: e.at,
+      label: e.label,
+      detail: e.oldValue && e.newValue ? `${e.oldValue} → ${e.newValue}` : e.newValue ?? e.oldValue ?? "",
+    })),
+    ...campaignEvents.map((e) => ({ at: e.at, label: e.label, detail: e.detail ?? "" })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+
+  if (merged.length === 0) {
+    return (
+      <div style={panelStyle}>
+        <p style={p}>Profile URL edits and campaign snapshots will appear here.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={panelStyle}>
+      <h2 style={h2}>Change log</h2>
+      <p style={p}>Website and social URL changes, grade runs, and campaign before/after captures.</p>
+      <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        {merged.slice(0, 40).map((e, i) => (
+          <li
+            key={`${e.at}-${i}`}
+            style={{
+              padding: "12px 0",
+              borderBottom: i < merged.length - 1 ? `1px solid ${theme.border}` : undefined,
+            }}
+          >
+            <div style={{ fontSize: 11, color: "#64748b" }}>{new Date(e.at).toLocaleString()}</div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#334155" }}>{e.label}</div>
+            {e.detail ? <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>{e.detail}</div> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ScoreCard({
+  label,
+  value,
+  suffix,
+  hint,
+}: {
+  label: string
+  value: number | undefined
+  suffix?: string
+  hint?: string
+}) {
+  const v = value ?? 0
+  return (
+    <div style={{ padding: "14px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: "#fff", minWidth: 0 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ marginTop: 6, fontSize: 26, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>
+        {suffix === "%" ? `${v}%` : suffix === "$" ? (v ? `$${v.toLocaleString()}` : "—") : v || "—"}
+        {suffix === "/100" ? <span style={{ fontSize: 14, fontWeight: 600, color: "#64748b" }}>/100</span> : null}
+      </div>
+      {hint ? <div style={{ marginTop: 4, fontSize: 11, color: "#94a3b8" }}>{hint}</div> : null}
+    </div>
+  )
+}
+
+function emptyGrade(): GrowthProfileGrade {
+  return { score: 0, gradedAt: "", status: "missing", whatAiCanSee: [], gaps: [] }
+}
+
+function gradeColor(status: GrowthProfileGrade["status"]): string {
+  if (status === "strong") return "#059669"
+  if (status === "fair") return "#d97706"
+  if (status === "needs_work") return "#dc2626"
+  return "#94a3b8"
+}
+
+function formatMetrics(m: GrowthCampaignMetrics): string {
+  const parts: string[] = []
+  if (m.websiteVisits != null) parts.push(`visits ${m.websiteVisits}`)
+  if (m.leadSubmissions != null) parts.push(`leads ${m.leadSubmissions}`)
+  if (m.socialEngagement != null) parts.push(`social ${m.socialEngagement}`)
+  return parts.join(", ")
 }
 
 const panelStyle: CSSProperties = {
@@ -703,12 +923,7 @@ const panelStyle: CSSProperties = {
 const h2: CSSProperties = { margin: "0 0 10px", fontSize: 18, fontWeight: 800, color: theme.text }
 const p: CSSProperties = { margin: "0 0 14px", fontSize: 14, lineHeight: 1.55, color: "#475569" }
 const labelStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#334155" }
-const inputStyle: CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 8,
-  border: `1px solid ${theme.border}`,
-  fontSize: 14,
-}
+const inputStyle: CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14 }
 const primaryBtn: CSSProperties = {
   padding: "8px 14px",
   borderRadius: 8,
@@ -729,4 +944,14 @@ const secondaryBtn: CSSProperties = {
   cursor: "pointer",
   color: theme.text,
 }
-const listStyle: CSSProperties = { margin: "12px 0 0", paddingLeft: 20, fontSize: 13, lineHeight: 1.6, color: "#475569" }
+const listStyle: CSSProperties = { margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.55, color: "#475569" }
+const recRowStyle: CSSProperties = {
+  padding: "12px 14px",
+  borderRadius: 10,
+  border: `1px solid ${theme.border}`,
+  background: "#f8fafc",
+  display: "flex",
+  gap: 12,
+  alignItems: "flex-start",
+  flexWrap: "wrap",
+}
