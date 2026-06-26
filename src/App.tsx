@@ -236,7 +236,7 @@ function MainAppInner() {
 
   useEffect(() => {
     if (!estimateToolsOnlyPackage) return
-    if (page === "customers" || page === "calendar") setPage("dashboard")
+    if (page === "customers" || page === "calendar" || page === "customers-email") setPage("dashboard")
   }, [page, estimateToolsOnlyPackage, setPage])
 
   useEffect(() => {
@@ -294,7 +294,10 @@ function MainAppInner() {
   }, [])
 
   const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
-  const currentPageTitle = formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
+  const currentPageTitle =
+    page === "customers-email" ? t("nav.emailClient") : formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
+  const customersTabAvailable = portalTabs.some((t) => t.tab_id === "customers")
+  const showEmailClientShortcut = customersTabAvailable && !estimateToolsOnlyPackage
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
 
@@ -357,7 +360,7 @@ function MainAppInner() {
       authRole={authRole}
     >
     <SandboxControlPanel />
-    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle}>
+    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle} activePage={page}>
       {authRole === "demo_user" || portalConfig?.demo_account === true ? (
         <div
           style={{
@@ -425,6 +428,7 @@ function MainAppInner() {
             showPaymentsShortcut={paymentsTabAvailable}
             showTimeClockShortcut={showTimeClockShortcut}
             showCustomReceiptShortcut={showCustomReceiptShortcut}
+            showEmailClientShortcut={showEmailClientShortcut}
             profileUserId={effectiveUserId || null}
             dashboardDataUserId={effectiveUserId || null}
             labels={{
@@ -452,6 +456,7 @@ function MainAppInner() {
               operationsInventory: t("dashboard.quickOperationsInventory"),
               growth: t("dashboard.quickGrowth"),
               growthSub: t("dashboard.quickGrowthSub"),
+              emailClient: t("dashboard.quickEmailClient"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),

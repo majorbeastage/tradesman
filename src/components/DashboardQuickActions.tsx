@@ -59,6 +59,7 @@ type Props = {
   showPaymentsShortcut?: boolean
   showTimeClockShortcut?: boolean
   showCustomReceiptShortcut?: boolean
+  showEmailClientShortcut?: boolean
   /** Saves quick-link order under this profile's `metadata.dashboard_quick_links`. */
   profileUserId?: string | null
   /** Calendar/customer scope for Today&apos;s to-do (managed user when in office portal). */
@@ -88,6 +89,7 @@ type Props = {
     operationsInventory: string
     growth: string
     growthSub: string
+    emailClient: string
     customizeHint: string
     customizeDone: string
     customizePaletteTitle: string
@@ -702,6 +704,7 @@ export default function DashboardQuickActions(props: Props) {
       if (id === "setup_guide") return Boolean(onOpenSetupGuide)
       if (id.startsWith("operations")) return operationsQuickLinkVisible(id as DashboardOptionalQuickLinkId)
       if (id === "growth") return isGrowthTabEnabled(portalConfig)
+      if (id === "email_client") return Boolean(props.showEmailClientShortcut)
       return true
     },
     [
@@ -710,6 +713,7 @@ export default function DashboardQuickActions(props: Props) {
       showPaymentsShortcut,
       props.showTimeClockShortcut,
       props.showCustomReceiptShortcut,
+      props.showEmailClientShortcut,
       onOpenSetupGuide,
       operationsQuickLinkVisible,
       portalConfig,
@@ -1003,6 +1007,24 @@ export default function DashboardQuickActions(props: Props) {
           onContextMenu={(e) => openStyleMenu(id, e)}
           tileStyle={tileStyle}
           onClick={() => !customize && go("growth")}
+        />
+      )
+    }
+    if (id === "email_client") {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          uniformGrid={uniformGrid}
+          label={labels.emailClient}
+          accent="#0ea5e9"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          onContextMenu={(e) => openStyleMenu(id, e)}
+          tileStyle={tileStyle}
+          onClick={() => !customize && go("customers-email")}
         />
       )
     }
@@ -1390,6 +1412,8 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.growth
     case "setup_guide":
       return labels.setupGuide
+    case "email_client":
+      return labels.emailClient
     default:
       return id
   }

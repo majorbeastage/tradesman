@@ -104,7 +104,6 @@ import {
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
-import CustomersSectionSubnav, { customersSubnavWrapStyle } from "../../components/CustomersSectionSubnav"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -2067,10 +2066,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       )}
 
       {loadError && !sandboxTraining && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
-
-      <div style={customersSubnavWrapStyle}>
-        <CustomersSectionSubnav active="customers" setPage={setPage} isMobile={isMobile} />
-      </div>
 
       <div
         style={{

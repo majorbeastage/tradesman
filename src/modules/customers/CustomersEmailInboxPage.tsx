@@ -4,7 +4,6 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
-import CustomersSectionSubnav, { customersSubnavWrapStyle } from "../../components/CustomersSectionSubnav"
 import EmailComposeRich from "../../components/EmailComposeRich"
 import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
 import {
@@ -315,10 +314,6 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
   return (
     <div style={{ padding: isMobile ? "8px 8px 32px" : "8px 16px 40px", maxWidth: 1400, margin: "0 auto" }}>
-      <div style={customersSubnavWrapStyle}>
-        <CustomersSectionSubnav active="email" setPage={setPage} isMobile={isMobile} />
-      </div>
-
       <div
         style={{
           display: "flex",

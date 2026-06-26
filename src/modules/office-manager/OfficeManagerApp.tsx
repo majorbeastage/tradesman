@@ -24,6 +24,7 @@ import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useLocale } from "../../i18n/LocaleContext"
+import { formatPortalTabLabel } from "../../i18n/navLabel"
 import { supabase } from "../../lib/supabase"
 import {
   filterPortalTabsForV2,
@@ -415,6 +416,10 @@ function OfficeManagerAppContent() {
     getPageActionVisible(scopedPortalCfg, "calendar", "custom_receipt") &&
     getOmPageActionVisible(scopedPortalCfg, "calendar", "custom_receipt")
   const customReceiptQuickLabel = scopedPortalCfg?.controlLabels?.custom_receipt?.trim() || null
+  const currentTabMeta = resolvedPortalTabs.find((x) => x.tab_id === page)
+  const currentPageTitle =
+    page === "customers-email" ? t("nav.emailClient") : formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
+  const showEmailClientShortcut = hasClients && resolvedPortalTabs.some((tab) => tab.tab_id === "customers")
 
   useEffect(() => {
     if (page === "web-support") setPage("tech-support")
@@ -512,7 +517,7 @@ function OfficeManagerAppContent() {
       authRole={authRole}
     >
     <SandboxControlPanel />
-    <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs}>
+    <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs} currentPage={currentPageTitle} activePage={page}>
       <ManagedUserToolsStrip />
 
       {portalConfig?.demo_account === true ? (
@@ -557,6 +562,7 @@ function OfficeManagerAppContent() {
             showPaymentsShortcut={omPaymentsTabAvailable}
             showTimeClockShortcut={showTimeClockShortcut}
             showCustomReceiptShortcut={showCustomReceiptShortcut}
+            showEmailClientShortcut={showEmailClientShortcut}
             profileUserId={user?.id ?? null}
             dashboardDataUserId={scope?.selectedUserId ?? user?.id ?? null}
             labels={{
@@ -584,6 +590,7 @@ function OfficeManagerAppContent() {
               operationsInventory: t("dashboard.quickOperationsInventory"),
               growth: t("dashboard.quickGrowth"),
               growthSub: t("dashboard.quickGrowthSub"),
+              emailClient: t("dashboard.quickEmailClient"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),

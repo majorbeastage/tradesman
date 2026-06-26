@@ -16,10 +16,13 @@ type AppLayoutProps = {
   setPage: (page: string) => void
   /** Portal tabs from admin config (user or office manager). When set, sidebar is driven by config. */
   portalTabs?: Array<{ tab_id: string; label: string | null }>
+  /** Mobile header title */
   currentPage?: string
+  /** In-app page id for sidebar highlight */
+  activePage?: string
 }
 
-export default function AppLayout({ children, setPage, portalTabs, currentPage }: AppLayoutProps) {
+export default function AppLayout({ children, setPage, portalTabs, currentPage, activePage }: AppLayoutProps) {
   const [showMobileNav, setShowMobileNav] = useState(false)
   const { signOut, profilePhotoUrl, user } = useAuth()
   const { setView } = useView()
@@ -65,9 +68,10 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage }
           isMobile
           isOpen={showMobileNav}
           onClose={() => setShowMobileNav(false)}
+          activePage={activePage}
         />
       ) : (
-        <Sidebar setPage={setPage} onLogout={handleLogout} portalTabs={portalTabs} />
+        <Sidebar setPage={setPage} onLogout={handleLogout} portalTabs={portalTabs} activePage={activePage} />
       )}
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>

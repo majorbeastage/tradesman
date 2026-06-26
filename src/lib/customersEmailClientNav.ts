@@ -1,21 +1,15 @@
-import { buildAppHash } from "./appNavigationHistory"
-
 export const CUSTOMERS_EMAIL_PAGE = "customers-email"
 
-/** Desktop opens email client in a new browser tab; mobile navigates in-app. */
-export function openCustomersEmailClient(
-  setPage: ((page: string) => void) | undefined,
-  isMobile: boolean,
-): void {
-  if (typeof window === "undefined") return
-  if (isMobile) {
-    setPage?.(CUSTOMERS_EMAIL_PAGE)
-    return
-  }
-  const base = `${window.location.origin}${window.location.pathname}${buildAppHash(CUSTOMERS_EMAIL_PAGE)}`
-  window.open(base, "_blank", "noopener,noreferrer")
+/** Navigate to the in-app email client (same session — never opens a new tab). */
+export function navigateToCustomersEmail(setPage?: (page: string) => void): void {
+  setPage?.(CUSTOMERS_EMAIL_PAGE)
 }
 
-export function navigateToCustomersList(setPage: ((page: string) => void) | undefined): void {
+/** @deprecated Use navigateToCustomersEmail — kept for call-site compatibility. */
+export function openCustomersEmailClient(setPage?: (page: string) => void): void {
+  navigateToCustomersEmail(setPage)
+}
+
+export function navigateToCustomersList(setPage?: (page: string) => void): void {
   setPage?.("customers")
 }

@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react"
+import { Fragment, type CSSProperties } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../constants/helpDesk"
 import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
@@ -7,6 +7,7 @@ import { TAB_ID_LABELS, V2_SIDEBAR_DEFAULT_TAB_IDS } from "../types/portal-build
 import { useLocale } from "../i18n/LocaleContext"
 import { formatPortalTabLabel } from "../i18n/navLabel"
 import { useAuth } from "../contexts/AuthContext"
+import { CUSTOMERS_EMAIL_PAGE } from "../lib/customersEmailClientNav"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -16,6 +17,8 @@ type SidebarProps = {
   isMobile?: boolean
   isOpen?: boolean
   onClose?: () => void
+  /** Active in-app page id (e.g. customers, customers-email). */
+  activePage?: string
 }
 
 const DEFAULT_TABS = [...V2_SIDEBAR_DEFAULT_TAB_IDS]
@@ -30,10 +33,19 @@ const SIDEBAR_EXCLUDED_TAB_IDS = new Set([
   "settings",
 ])
 
-export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose }: SidebarProps) {
+export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose, activePage }: SidebarProps) {
   const { t } = useLocale()
   const { profilePhotoUrl } = useAuth()
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
+  const subItemStyle: CSSProperties = {
+    cursor: "pointer",
+    margin: "4px 0 8px",
+    paddingLeft: 14,
+    color: theme.primary,
+    fontSize: 13,
+    fontWeight: 600,
+    opacity: 0.92,
+  }
   const mobileTabButtonStyle: CSSProperties = {
     width: "100%",
     minHeight: 42,
@@ -83,6 +95,93 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     encodeURIComponent(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch"/></filter><rect width="200" height="200" filter="url(#n)" opacity="0.07"/></svg>'
     )
+
+  const navigate = (pageId: string) => {
+    setPage(pageId)
+    onClose?.()
+  }
+
+  const renderNavTab = (tab: { tab_id: string; label: string | null }) => {
+    if (tab.tab_id === "customers") {
+      const customersActive = activePage === "customers"
+      const emailActive = activePage === CUSTOMERS_EMAIL_PAGE
+      if (isMobile) {
+        return (
+          <Fragment key="customers-group">
+            <button
+              type="button"
+              onClick={() => navigate("customers")}
+              style={{
+                ...mobileTabButtonStyle,
+                borderColor: customersActive ? theme.primary : "rgba(249,115,22,0.35)",
+                background: customersActive ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+              }}
+            >
+              {formatPortalTabLabel("customers", tab.label, t)}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(CUSTOMERS_EMAIL_PAGE)}
+              style={{
+                ...mobileTabButtonStyle,
+                marginLeft: 12,
+                minHeight: 38,
+                fontSize: 13,
+                fontWeight: emailActive ? 800 : 600,
+                borderColor: emailActive ? theme.primary : "rgba(249,115,22,0.28)",
+                background: emailActive ? "rgba(249,115,22,0.14)" : "rgba(255,255,255,0.02)",
+              }}
+            >
+              {t("nav.emailClient")}
+            </button>
+          </Fragment>
+        )
+      }
+      return (
+        <Fragment key="customers-group">
+          <p
+            onClick={() => navigate("customers")}
+            style={{ ...itemStyle, fontWeight: customersActive ? 800 : undefined, marginBottom: 4 }}
+          >
+            {formatPortalTabLabel("customers", tab.label, t)}
+          </p>
+          <p
+            onClick={() => navigate(CUSTOMERS_EMAIL_PAGE)}
+            style={{ ...subItemStyle, fontWeight: emailActive ? 800 : 600, opacity: emailActive ? 1 : 0.88 }}
+          >
+            {t("nav.emailClient")}
+          </p>
+        </Fragment>
+      )
+    }
+
+    if (isMobile) {
+      return (
+        <button
+          key={tab.tab_id}
+          type="button"
+          onClick={() => navigate(tab.tab_id)}
+          style={{
+            ...mobileTabButtonStyle,
+            borderColor: activePage === tab.tab_id ? theme.primary : "rgba(249,115,22,0.35)",
+            background: activePage === tab.tab_id ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+          }}
+        >
+          {formatPortalTabLabel(tab.tab_id, tab.label, t)}
+        </button>
+      )
+    }
+
+    return (
+      <p
+        key={tab.tab_id}
+        onClick={() => navigate(tab.tab_id)}
+        style={{ ...itemStyle, fontWeight: activePage === tab.tab_id ? 800 : undefined }}
+      >
+        {formatPortalTabLabel(tab.tab_id, tab.label, t)}
+      </p>
+    )
+  }
 
   const sidebarBody = (
     <div
@@ -228,24 +327,9 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
 
       <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
         {isMobile ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            {tabs.map((tab) => (
-              <button
-                key={tab.tab_id}
-                type="button"
-                onClick={() => { setPage(tab.tab_id); onClose?.() }}
-                style={mobileTabButtonStyle}
-              >
-                {formatPortalTabLabel(tab.tab_id, tab.label, t)}
-              </button>
-            ))}
-          </div>
+          <div style={{ display: "grid", gap: 8 }}>{tabs.map((tab) => renderNavTab(tab))}</div>
         ) : (
-          tabs.map((tab) => (
-            <p key={tab.tab_id} onClick={() => { setPage(tab.tab_id); onClose?.() }} style={itemStyle}>
-              {formatPortalTabLabel(tab.tab_id, tab.label, t)}
-            </p>
-          ))
+          tabs.map((tab) => renderNavTab(tab))
         )}
       </div>
 
