@@ -7,14 +7,13 @@ import {
   type MarketingImagePresentation,
   type MarketingPillar,
 } from "../../../lib/marketingPillars"
-import {
-  MarketingPreviewCtas,
-  MarketingPreviewHeroCopy,
-  MarketingPreviewTopNav,
-} from "./MarketingPreviewShared"
+import { MarketingPreviewCtas, MarketingPreviewHeroCopy } from "./MarketingPreviewShared"
 import { theme } from "../../../styles/theme"
 
-const SLIDE_SCROLL_VH = 92
+/** Scroll distance per slide — taller track keeps the viewport pinned longer. */
+const SLIDE_SCROLL_VH = 100
+/** Preview banner (MarketingPreviewBanner) sits above the story track. */
+const PREVIEW_BANNER_PX = 48
 
 type Props = {
   onLogin?: () => void
@@ -28,20 +27,22 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
   const [progress, setProgress] = useState(0)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
 
-  const slideCount = MARKETING_PILLARS.length
+  const totalSlides = 1 + MARKETING_PILLARS.length
 
   useEffect(() => {
     const update = () => {
       const track = scrollTrackRef.current
       if (!track) return
       const rect = track.getBoundingClientRect()
-      const scrollable = track.offsetHeight - window.innerHeight
+      const viewportH = window.innerHeight
+      const scrollable = track.offsetHeight - viewportH
       if (scrollable <= 0) {
         setProgress(0)
         return
       }
-      const raw = Math.max(0, Math.min(1, -rect.top / scrollable))
-      setProgress(raw * Math.max(1, slideCount - 1))
+      const scrolled = Math.max(0, PREVIEW_BANNER_PX - rect.top)
+      const raw = Math.max(0, Math.min(1, scrolled / scrollable))
+      setProgress(raw * Math.max(1, totalSlides - 1))
     }
     window.addEventListener("scroll", update, { passive: true })
     window.addEventListener("resize", update)
@@ -50,7 +51,7 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
       window.removeEventListener("scroll", update)
       window.removeEventListener("resize", update)
     }
-  }, [slideCount])
+  }, [totalSlides])
 
   const activeIndex = Math.round(progress)
 
@@ -58,59 +59,48 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
     setLightbox({ src, alt })
   }, [])
 
+  const ctaProps = { onLogin, onTrial, onPricing }
+
   return (
     <div className="marketing-story-root">
-      <MarketingPreviewTopNav onLogin={onLogin} largeLogo />
-      <StoryHero onLogin={onLogin} onTrial={onTrial} onPricing={onPricing} onImageClick={openLightbox} />
+      <div
+        ref={scrollTrackRef}
+        className="marketing-story-track"
+        style={{ height: `${totalSlides * SLIDE_SCROLL_VH}vh`, position: "relative" }}
+      >
+        <div className="marketing-story-viewport">
+          <div className="marketing-story-logo-wrap" aria-hidden={false}>
+            <img src={logo} alt="Tradesman" className="marketing-story-logo" />
+          </div>
 
-      <section style={{ position: "relative", width: "100%", background: "#eef2f6" }}>
-        <div style={{ padding: "48px 24px 20px", textAlign: "center" }}>
-          <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: theme.primary, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            Seven pillars
-          </p>
-          <h2 style={{ margin: "10px 0 8px", fontSize: "clamp(1.5rem, 3vw, 2.2rem)", fontWeight: 900, color: theme.charcoal }}>
-            Scroll to explore
-          </h2>
-          <p style={{ margin: 0, color: "#64748b", fontSize: 15, maxWidth: 560, marginInline: "auto", lineHeight: 1.55 }}>
-            Each section glides in from the right as you scroll—screenshots show in full; click any image to expand.
-          </p>
-        </div>
-
-        <aside className="marketing-story-dots" aria-hidden>
-          {MARKETING_PILLARS.map((p, i) => (
-            <a
-              key={p.id}
-              href={`#${p.id}`}
-              title={p.title}
-              style={{
-                width: 10,
-                height: activeIndex === i ? 28 : 10,
-                borderRadius: 999,
-                background: activeIndex === i ? p.accent : "#cbd5e1",
-                transition: "height 0.3s, background 0.3s",
-              }}
-            />
-          ))}
-        </aside>
-
-        <div
-          ref={scrollTrackRef}
-          className="marketing-story-track"
-          style={{ height: `${slideCount * SLIDE_SCROLL_VH}vh`, position: "relative" }}
-        >
-          <div className="marketing-story-viewport">
-            {MARKETING_PILLARS.map((pillar, i) => (
-              <HorizontalFadeSlide
-                key={pillar.id}
-                pillar={pillar}
-                index={i}
-                progress={progress}
-                onImageClick={openLightbox}
+          <aside className="marketing-story-dots" aria-label="Slide progress">
+            <span className="marketing-story-dot" title="Overview" style={dotStyle(activeIndex === 0, theme.primary)} />
+            {MARKETING_PILLARS.map((p, i) => (
+              <a
+                key={p.id}
+                href={`#${p.id}`}
+                title={p.title}
+                aria-label={p.title}
+                style={dotStyle(activeIndex === i + 1, p.accent)}
               />
             ))}
-          </div>
+          </aside>
+
+          <HeroFadeSlide index={0} progress={progress} onImageClick={openLightbox} {...ctaProps} />
+
+          {MARKETING_PILLARS.map((pillar, i) => (
+            <HorizontalFadeSlide
+              key={pillar.id}
+              pillar={pillar}
+              index={i + 1}
+              pillarNumber={i + 1}
+              progress={progress}
+              onImageClick={openLightbox}
+              {...ctaProps}
+            />
+          ))}
         </div>
-      </section>
+      </div>
 
       <section style={{ position: "relative", zIndex: 20, background: theme.charcoal, color: "#fff", padding: "72px 24px" }}>
         <div style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
@@ -119,7 +109,7 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
             Trial mode uses sample customers so you can click through estimates, SMS, and scheduling before you commit.
           </p>
           <div style={{ display: "flex", justifyContent: "center" }}>
-            <MarketingPreviewCtas primaryLabel="Start trial" onPrimary={onTrial} onPricing={onPricing} />
+            <MarketingPreviewCtas primaryLabel="Start trial" onPrimary={onTrial} onTrial={onTrial} onPricing={onPricing} />
           </div>
         </div>
       </section>
@@ -132,119 +122,92 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
         </div>
       ) : null}
 
-      {lightbox ? (
-        <>
-          <div
-            role="presentation"
-            onClick={() => setLightbox(null)}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 200,
-              background: "rgba(15,23,42,0.88)",
-              cursor: "zoom-out",
-            }}
-          />
-          <div
-            role="dialog"
-            aria-modal
-            aria-label="Expanded screenshot"
-            style={{
-              position: "fixed",
-              zIndex: 201,
-              inset: "24px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "none",
-            }}
-          >
-            <img
-              src={lightbox.src}
-              alt={lightbox.alt}
-              style={{
-                maxWidth: "100%",
-                maxHeight: "100%",
-                objectFit: "contain",
-                borderRadius: 12,
-                boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
-                pointerEvents: "auto",
-                cursor: "zoom-out",
-              }}
-              onClick={() => setLightbox(null)}
-            />
-          </div>
-        </>
-      ) : null}
+      {lightbox ? <StoryLightbox lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
 
       <StoryScrollStyles />
     </div>
   )
 }
 
-function StoryHero({
+function dotStyle(active: boolean, color: string) {
+  return {
+    width: 10,
+    height: active ? 28 : 10,
+    borderRadius: 999,
+    background: active ? color : "#cbd5e1",
+    transition: "height 0.3s, background 0.3s",
+    display: "block" as const,
+  }
+}
+
+function HeroFadeSlide({
+  index,
+  progress,
+  onImageClick,
   onLogin,
   onTrial,
   onPricing,
-  onImageClick,
-}: Props & { onImageClick: (src: string, alt: string) => void }) {
+}: {
+  index: number
+  progress: number
+  onImageClick: (src: string, alt: string) => void
+  onLogin?: () => void
+  onTrial?: () => void
+  onPricing?: () => void
+}) {
+  const motion = slideMotion(index, progress)
+
   return (
-    <section
+    <article
+      className="marketing-story-slide-panel marketing-story-slide-hero"
       style={{
-        background: "linear-gradient(165deg, #fff 0%, #f8fafc 55%, #eef2f6 100%)",
-        borderBottom: `1px solid ${theme.border}`,
-        minHeight: "min(92vh, 920px)",
-        display: "flex",
-        alignItems: "center",
-        width: "100%",
+        opacity: motion.opacity,
+        transform: `translateX(${motion.translateX}vw)`,
+        zIndex: motion.zIndex,
+        pointerEvents: motion.opacity > 0.35 ? "auto" : "none",
       }}
     >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "min(1400px, 100%)",
-          margin: "0 auto",
-          padding: "32px clamp(20px, 4vw, 48px) 56px",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
-          gap: "clamp(24px, 4vw, 48px)",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <img
-            src={logo}
-            alt="Tradesman"
-            style={{ height: "clamp(56px, 8vw, 88px)", width: "auto", objectFit: "contain", marginBottom: 20 }}
-          />
+      <div className="marketing-story-slide-accent" style={{ background: `linear-gradient(90deg, ${theme.primary}, ${theme.primary}88, transparent)` }} />
+      <div className="marketing-story-hero-grid">
+        <div className="marketing-story-slide-copy">
           <MarketingPreviewHeroCopy hideEyebrow>
             <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
           </MarketingPreviewHeroCopy>
         </div>
-        <BrowserFrame
-          presentation={MARKETING_HERO_PRESENTATION}
-          src={MARKETING_HERO_SCREENSHOT}
-          alt="Tradesman dashboard"
-          onExpand={() => onImageClick(MARKETING_HERO_SCREENSHOT, "Tradesman dashboard")}
-        />
+        <div className="marketing-story-slide-shot">
+          <BrowserFrame
+            presentation={MARKETING_HERO_PRESENTATION}
+            src={MARKETING_HERO_SCREENSHOT}
+            alt="Tradesman dashboard"
+            onExpand={() => onImageClick(MARKETING_HERO_SCREENSHOT, "Tradesman dashboard")}
+          />
+        </div>
       </div>
-    </section>
+    </article>
   )
 }
 
 function HorizontalFadeSlide({
   pillar,
   index,
+  pillarNumber,
   progress,
   onImageClick,
+  onLogin,
+  onTrial,
+  onPricing,
 }: {
   pillar: MarketingPillar
   index: number
+  pillarNumber: number
   progress: number
   onImageClick: (src: string, alt: string) => void
+  onLogin?: () => void
+  onTrial?: () => void
+  onPricing?: () => void
 }) {
   const motion = slideMotion(index, progress)
-  const flip = index % 2 === 1
+  const flip = pillarNumber % 2 === 0
 
   return (
     <article
@@ -260,7 +223,10 @@ function HorizontalFadeSlide({
       <div className="marketing-story-slide-accent" style={{ background: `linear-gradient(90deg, ${pillar.accent}, ${pillar.accent}88, transparent)` }} />
       <div className={`marketing-story-slide-grid ${flip ? "marketing-story-slide-grid-flip" : ""}`}>
         <div className="marketing-story-slide-copy">
-          <PillarStoryBlock index={index + 1} pillar={pillar} />
+          <PillarStoryBlock index={pillarNumber} pillar={pillar} />
+          <div style={{ marginTop: 20 }}>
+            <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+          </div>
         </div>
         <div className="marketing-story-slide-shot">
           <BrowserFrame
@@ -341,7 +307,6 @@ function BrowserFrame({
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f87171" }} />
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#fbbf24" }} />
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#34d399" }} />
-        <img src={logo} alt="" style={{ marginLeft: 8, height: 18, width: "auto", opacity: 0.85 }} />
         {onExpand ? (
           <button
             type="button"
@@ -383,7 +348,7 @@ function BrowserFrame({
           style={{
             width: "100%",
             height: "auto",
-            maxHeight: compact ? "min(62vh, 720px)" : "min(68vh, 780px)",
+            maxHeight: compact ? "min(52vh, 640px)" : "min(58vh, 720px)",
             objectFit: "contain",
             objectPosition: p.objectPosition ?? "top center",
             display: "inline-block",
@@ -426,22 +391,74 @@ function PillarStoryBlock({ index, pillar }: { index: number; pillar: MarketingP
   )
 }
 
+function StoryLightbox({ lightbox, onClose }: { lightbox: { src: string; alt: string }; onClose: () => void }) {
+  return (
+    <>
+      <div role="presentation" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(15,23,42,0.88)", cursor: "zoom-out" }} />
+      <div
+        role="dialog"
+        aria-modal
+        aria-label="Expanded screenshot"
+        style={{
+          position: "fixed",
+          zIndex: 201,
+          inset: "24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          pointerEvents: "none",
+        }}
+      >
+        <img
+          src={lightbox.src}
+          alt={lightbox.alt}
+          style={{
+            maxWidth: "100%",
+            maxHeight: "100%",
+            objectFit: "contain",
+            borderRadius: 12,
+            boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+            pointerEvents: "auto",
+            cursor: "zoom-out",
+          }}
+          onClick={onClose}
+        />
+      </div>
+    </>
+  )
+}
+
 function StoryScrollStyles() {
   return (
     <style>{`
       .marketing-story-root {
         width: 100%;
         overflow-x: hidden;
+        background: linear-gradient(165deg, #fff 0%, #f8fafc 55%, #eef2f6 100%);
       }
       .marketing-story-viewport {
         position: sticky;
-        top: 0;
-        height: 100vh;
-        width: 100vw;
+        top: ${PREVIEW_BANNER_PX}px;
+        height: calc(100vh - ${PREVIEW_BANNER_PX}px);
+        width: 100%;
         max-width: 100%;
         overflow: hidden;
         display: flex;
         align-items: stretch;
+      }
+      .marketing-story-logo-wrap {
+        position: absolute;
+        top: clamp(12px, 2vh, 20px);
+        right: clamp(20px, 4vw, 48px);
+        z-index: 60;
+        pointer-events: none;
+      }
+      .marketing-story-logo {
+        height: clamp(72px, 10vw, 104px);
+        width: auto;
+        object-fit: contain;
+        display: block;
+        filter: drop-shadow(0 2px 8px rgba(15,23,42,0.08));
       }
       .marketing-story-slide-panel {
         position: absolute;
@@ -451,21 +468,25 @@ function StoryScrollStyles() {
         background: #fff;
         display: flex;
         flex-direction: column;
-        transition: opacity 0.12s linear, transform 0.12s linear;
+        transition: opacity 0.15s linear, transform 0.15s linear;
         will-change: opacity, transform;
         box-shadow: 0 0 0 1px rgba(15,23,42,0.06);
+      }
+      .marketing-story-slide-hero {
+        background: linear-gradient(165deg, #fff 0%, #f8fafc 70%, #eef2f6 100%);
       }
       .marketing-story-slide-accent {
         height: 4px;
         flex-shrink: 0;
       }
+      .marketing-story-hero-grid,
       .marketing-story-slide-grid {
         flex: 1;
         display: grid;
         grid-template-columns: minmax(280px, 0.95fr) minmax(320px, 1.35fr);
         gap: clamp(16px, 3vw, 40px);
         align-items: center;
-        padding: clamp(20px, 3vw, 40px) clamp(20px, 4vw, 48px);
+        padding: clamp(72px, 10vh, 96px) clamp(20px, 4vw, 48px) clamp(20px, 3vw, 40px);
         min-height: 0;
         width: 100%;
         box-sizing: border-box;
@@ -478,6 +499,7 @@ function StoryScrollStyles() {
       }
       .marketing-story-slide-copy {
         padding-right: clamp(0px, 2vw, 16px);
+        max-width: 560px;
       }
       .marketing-story-slide-shot {
         min-height: 0;
@@ -486,11 +508,11 @@ function StoryScrollStyles() {
         align-items: center;
       }
       .marketing-story-dots {
-        position: fixed;
-        right: 18px;
+        position: absolute;
+        right: clamp(12px, 2vw, 18px);
         top: 50%;
         transform: translateY(-50%);
-        z-index: 45;
+        z-index: 55;
         display: flex;
         flex-direction: column;
         gap: 8;
@@ -523,39 +545,32 @@ function StoryScrollStyles() {
         color: ${theme.charcoal};
       }
       @media (max-width: 899px) {
+        .marketing-story-hero-grid,
         .marketing-story-slide-grid {
           grid-template-columns: 1fr !important;
-          overflow-y: auto;
           align-items: start;
+          overflow-y: auto;
+          padding-top: clamp(88px, 14vh, 112px);
         }
         .marketing-story-slide-grid-flip .marketing-story-slide-copy,
         .marketing-story-slide-grid-flip .marketing-story-slide-shot {
           order: unset;
         }
-        .marketing-story-viewport {
-          position: relative;
-          height: auto;
-          min-height: 100vh;
-        }
-        .marketing-story-track {
-          height: auto !important;
-        }
-        .marketing-story-slide-panel {
-          position: relative;
-          min-height: 100vh;
-          opacity: 1 !important;
-          transform: none !important;
-          margin-bottom: 24px;
+        .marketing-story-logo {
+          height: clamp(64px, 14vw, 88px);
         }
         .marketing-story-dots {
-          display: none;
+          top: auto;
+          bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+          left: 50%;
+          right: auto;
+          transform: translateX(-50%);
+          flex-direction: row;
         }
       }
       @media (prefers-reduced-motion: reduce) {
         .marketing-story-slide-panel {
           transition: none !important;
-          transform: none !important;
-          opacity: 1 !important;
         }
       }
     `}</style>
