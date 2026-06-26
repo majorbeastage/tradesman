@@ -21,6 +21,7 @@ type Props = {
   onLogin?: () => void
   onTrial?: () => void
   onPricing?: () => void
+  onAdminLogin?: () => void
 }
 
 export function MarketingHomePreviewPage({
@@ -30,6 +31,7 @@ export function MarketingHomePreviewPage({
   onLogin,
   onTrial,
   onPricing,
+  onAdminLogin,
 }: Props) {
   const [variant, setVariantState] = useState<MarketingPreviewVariant>(() => parseVariant(pathname, search))
 
@@ -55,7 +57,7 @@ export function MarketingHomePreviewPage({
 
   const body =
     variant === "story" ? (
-      <MarketingPreviewStory onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} />
+      <MarketingPreviewStory onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} onAdminLogin={onAdminLogin} />
     ) : variant === "grid" ? (
       <MarketingPreviewGrid onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} />
     ) : (
@@ -63,7 +65,7 @@ export function MarketingHomePreviewPage({
     )
 
   return (
-    <MarketingPreviewShell banner={<MarketingPreviewBanner variant={variant} onVariantChange={setVariant} />}>
+    <MarketingPreviewShell banner={<MarketingPreviewBanner variant={variant} onVariantChange={setVariant} />} fullWidth={variant === "story"}>
       {body}
     </MarketingPreviewShell>
   )

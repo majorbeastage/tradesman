@@ -59,6 +59,7 @@ import DashboardQuickActions from "./components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
 import DashboardReportsPreview from "./components/DashboardReportsPreview"
 import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
+import CustomersEmailInboxPage from "./modules/customers/CustomersEmailInboxPage"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import CustomerProfileReturnBar from "./components/CustomerProfileReturnBar"
@@ -472,6 +473,7 @@ function MainAppInner() {
           <DashboardTodayWorkPreview
             isMobile={isMobile}
             dataUserId={effectiveUserId || null}
+            viewerUserId={user?.id ?? null}
             reportingAllowed={isOfficeManagerLikeRole(authRole)}
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}
@@ -493,6 +495,9 @@ function MainAppInner() {
               noRecent: t("dashboard.todayWorkNoRecent"),
               openCustomers: t("dashboard.todayWorkOpenCustomers"),
               openCalendar: t("dashboard.todayWorkOpenCalendar"),
+              nextUp: t("dashboard.todayWorkNextUp"),
+              nextUpEmpty: t("dashboard.todayWorkNextUpEmpty"),
+              manageTasks: t("dashboard.todayWorkManageTasks"),
             }}
           />
           {isOfficeManagerLikeRole(authRole) ? (
@@ -516,6 +521,7 @@ function MainAppInner() {
       )}
 
       {page === "customers" && <CustomersPage setPage={setPage} />}
+      {page === "customers-email" && <CustomersEmailInboxPage setPage={setPage} />}
       {page === "customer-profile" && <CustomerProfilePage setPage={setPage} />}
       {page === "leads" && <LeadsPage setPage={setPage} />}
       {page === "conversations" && <ConversationsPage />}
@@ -533,7 +539,7 @@ function MainAppInner() {
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}
-      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "customer-profile", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
+      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "customers-email", "customer-profile", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
           <p style={{ color: "var(--text, #6b7280)", margin: "0 0 8px" }}>{t("app.customTab.title")}</p>
@@ -557,11 +563,18 @@ function App() {
   const [loginError, setLoginError] = useState("")
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
+const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
+
   useEffect(() => {
     try {
       const advisor = sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
       if (advisor === "1") {
         setView("signup")
+        return
+      }
+      if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") {
+        sessionStorage.removeItem(ADMIN_LOGIN_FROM_PREVIEW_KEY)
+        setView("admin-login")
         return
       }
       const raw = sessionStorage.getItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
@@ -613,6 +626,14 @@ function App() {
         }}
         onPricing={() => {
           window.location.href = "/pricing"
+        }}
+        onAdminLogin={() => {
+          try {
+            sessionStorage.setItem("tradesman_open_admin_login", "1")
+          } catch {
+            /* ignore */
+          }
+          window.location.href = "/"
         }}
       />
     )

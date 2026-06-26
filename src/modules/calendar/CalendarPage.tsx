@@ -29,6 +29,7 @@ import CustomerCallButton from "../../components/CustomerCallButton"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
 import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
+import { CalendarEventEmailCompose, calendarEventEmailDetailsStyle } from "../../components/CalendarEventEmailCompose"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
 import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
@@ -5066,6 +5067,31 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </div>
               )
             })()}
+            <details style={calendarEventEmailDetailsStyle}>
+              <summary
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#111827",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                Email customer
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                <CalendarEventEmailCompose
+                  event={selectedEvent}
+                  userId={userId}
+                  displayName={
+                    typeof authUser?.user_metadata?.display_name === "string"
+                      ? authUser.user_metadata.display_name.trim()
+                      : null
+                  }
+                  role={authRole}
+                />
+              </div>
+            </details>
             <details
               style={{
                 borderRadius: 6,

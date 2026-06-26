@@ -145,6 +145,6 @@ export type MarketingPreviewVariant = "bento" | "story" | "grid"
 
 export const MARKETING_PREVIEW_VARIANTS: { id: MarketingPreviewVariant; label: string; blurb: string }[] = [
   { id: "bento", label: "Bento", blurb: "Hero + asymmetric product grid" },
-  { id: "story", label: "Story scroll", blurb: "Sticky stacked slides on scroll" },
+  { id: "story", label: "Story scroll", blurb: "Horizontal crossfade slides on scroll (Twilio-style)" },
   { id: "grid", label: "Compact grid", blurb: "Dense seven-pillar cards" },
 ]

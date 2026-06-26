@@ -2,9 +2,12 @@ import { useEffect, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { loadTodayWorkSnapshot, type TodayWorkSnapshot } from "../lib/todayWorkReport"
+import { loadPressingWorkQueue, type PressingWorkItem } from "../lib/pressingWorkQueue"
+import { requestOpenDashboardTodoModal } from "../lib/dashboardTodoUi"
 
 type Props = {
   dataUserId: string | null
+  viewerUserId: string | null
   isMobile: boolean
   reportingAllowed: boolean
   onOpenReporting?: () => void
@@ -28,6 +31,9 @@ type Props = {
     noRecent: string
     openCustomers: string
     openCalendar: string
+    nextUp: string
+    nextUpEmpty: string
+    manageTasks: string
   }
 }
 
@@ -44,6 +50,7 @@ function statChipStyle(): CSSProperties {
 
 export default function DashboardTodayWorkPreview({
   dataUserId,
+  viewerUserId,
   isMobile,
   reportingAllowed,
   onOpenReporting,
@@ -55,18 +62,27 @@ export default function DashboardTodayWorkPreview({
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
   const [snap, setSnap] = useState<TodayWorkSnapshot | null>(null)
+  const [pressing, setPressing] = useState<PressingWorkItem[]>([])
 
   useEffect(() => {
     if (!supabase || !dataUserId) {
       setSnap(null)
+      setPressing([])
       return
     }
+    const actorId = viewerUserId ?? dataUserId
     let cancelled = false
     setLoading(true)
     setErr("")
-    void loadTodayWorkSnapshot(supabase, dataUserId)
-      .then((data) => {
-        if (!cancelled) setSnap(data)
+    void Promise.all([
+      loadTodayWorkSnapshot(supabase, dataUserId),
+      loadPressingWorkQueue(supabase, dataUserId, actorId, { includeTeamTodos: false }),
+    ])
+      .then(([today, queue]) => {
+        if (!cancelled) {
+          setSnap(today)
+          setPressing(queue)
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
@@ -77,7 +93,7 @@ export default function DashboardTodayWorkPreview({
     return () => {
       cancelled = true
     }
-  }, [dataUserId])
+  }, [dataUserId, viewerUserId])
 
   const gridCols = isMobile ? "1fr" : "1fr 1fr"
 
@@ -119,6 +135,22 @@ export default function DashboardTodayWorkPreview({
             {labels.viewAllReports}
           </button>
         ) : null}
+        <button
+          type="button"
+          onClick={requestOpenDashboardTodoModal}
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            padding: "5px 10px",
+            borderRadius: 6,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            color: theme.text,
+            cursor: "pointer",
+          }}
+        >
+          {labels.manageTasks}
+        </button>
       </div>
 
       {!dataUserId ? (
@@ -147,6 +179,19 @@ export default function DashboardTodayWorkPreview({
               <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>{labels.recentlyAdded}</div>
             </div>
           </div>
+
+          <PreviewList
+            title={labels.nextUp}
+            empty={labels.nextUpEmpty}
+            actionLabel={labels.manageTasks}
+            onAction={requestOpenDashboardTodoModal}
+            items={pressing.slice(0, 5).map((item) => ({
+              key: item.id,
+              primary: item.title,
+              secondary: item.subtitle,
+              accent: item.urgencyScore >= 90 ? "#dc2626" : item.urgencyScore >= 70 ? "#d97706" : undefined,
+            }))}
+          />
 
           <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, marginTop: 10 }}>
             <PreviewList

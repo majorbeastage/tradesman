@@ -117,7 +117,17 @@ export default function ShareContactModal({
             <select
               value={recipientId}
               onChange={(e) => setRecipientId(e.target.value)}
-              style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14, color: theme.text }}
+              className="share-contact-member-select"
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                fontSize: 14,
+                fontWeight: 600,
+                color: theme.text,
+                background: "#fff",
+                colorScheme: "light",
+              }}
             >
               <option value="">Select team member…</option>
               {choices.map((p) => (

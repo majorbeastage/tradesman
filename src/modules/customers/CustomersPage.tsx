@@ -52,6 +52,8 @@ import {
   queueCustomReceiptCustomerPrefill,
   queueSchedulingQuotePrefill,
   CUSTOMERS_HUB_REFRESH_EVENT,
+  CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT,
+  notifyCustomersEmailSync,
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { formatAppError } from "../../lib/formatAppError"
@@ -77,10 +79,8 @@ import EmailComposeRich from "../../components/EmailComposeRich"
 import {
   appendHtmlEmailSignature,
   htmlToPlainText,
-  loadEmailSignatureFromMetadata,
-  mergeEmailSignatureMetadata,
-  type EmailSignatureDoc,
 } from "../../lib/emailSignature"
+import { useEmailComposeSignature } from "../../hooks/useEmailComposeSignature"
 import { useSandboxTrafficRefresh } from "../../components/SandboxControlPanel"
 import { loadCustomerPaymentQuoteOptions, type CustomerPaymentQuoteOption } from "../../lib/customerQuotePaymentOptions"
 import {
@@ -104,6 +104,7 @@ import {
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
+import CustomersSectionSubnav, { customersSubnavWrapStyle } from "../../components/CustomersSectionSubnav"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -337,6 +338,7 @@ const CUSTOMER_LIST_COMPACT_DETAIL = true
 
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
+  const emailSig = useEmailComposeSignature(userId)
   const { session } = useAuth()
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
@@ -416,7 +418,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [customerEmailSubject, setCustomerEmailSubject] = useState("")
   const [customerEmailBodyHtml, setCustomerEmailBodyHtml] = useState("")
   const [customerEmailComposeKey, setCustomerEmailComposeKey] = useState(0)
-  const [emailSignature, setEmailSignature] = useState("")
   const [customerEmailCc, setCustomerEmailCc] = useState("")
   const [customerEmailBcc, setCustomerEmailBcc] = useState("")
   const [customerSmsSending, setCustomerSmsSending] = useState(false)
@@ -440,6 +441,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null)
   /** profiles.display_name — used in SMS compliance footer preview and character budget. */
   const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
+  const emailTemplateVars = useMemo(
+    () => ({
+      customer_name: selectedCustomer?.display_name?.trim() || "there",
+      sender_name: contractorSmsDisplayName || "Our team",
+      company: "Our team",
+    }),
+    [selectedCustomer?.display_name, contractorSmsDisplayName],
+  )
   const [timelineExpanded, setTimelineExpanded] = useState<Record<string, boolean>>({})
   const [commCardOpen, setCommCardOpen] = useState({ phone: false, sms: false, email: false, notes: false })
   const [commHistoryChannel, setCommHistoryChannel] = useState<null | "phone" | "sms" | "email">(null)
@@ -820,8 +829,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           ? mr.receipt_template_logo_url.trim()
           : ""
     setBrandLogoUrl(logoGuess || null)
-    const sigDoc = loadEmailSignatureFromMetadata(metaRaw)
-    setEmailSignature(sigDoc?.text ?? "")
 
     const fullSelectPipeline = `
         id,
@@ -1181,6 +1188,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     window.addEventListener(CUSTOMERS_HUB_REFRESH_EVENT, onRefresh)
     return () => window.removeEventListener(CUSTOMERS_HUB_REFRESH_EVENT, onRefresh)
   }, [loadCustomers])
+
+  useEffect(() => {
+    const onEmailRefresh = () => {
+      if (selectedCustomer?.id) void loadCustomerActivity(selectedCustomer.id)
+    }
+    window.addEventListener(CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT, onEmailRefresh)
+    return () => window.removeEventListener(CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT, onEmailRefresh)
+  }, [loadCustomerActivity, selectedCustomer?.id])
 
   useEffect(() => {
     if (!selectedCustomer?.id || activityMaxSortMs <= 0) return
@@ -1556,28 +1571,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
-  async function persistEmailSignature(text: string) {
-    if (!supabase || !userId) return
-    const trimmed = text.trim()
-    const doc: EmailSignatureDoc = { v: 1, text: trimmed, updated_at: new Date().toISOString() }
-    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    const prevMeta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? { ...(data.metadata as Record<string, unknown>) }
-        : {}
-    await supabase
-      .from("profiles")
-      .update({ metadata: mergeEmailSignatureMetadata(prevMeta, doc) })
-      .eq("id", userId)
-  }
-
   async function sendCustomerEmail() {
     if (!userId || !selectedCustomer?.id) return
     const to = outboundEmail.trim() || customerEmailTo.trim()
     const subject = customerEmailSubject.trim()
     const bodyHtmlRaw = customerEmailBodyHtml.trim()
-    const sigDoc: EmailSignatureDoc | null = emailSignature.trim() ? { v: 1, text: emailSignature.trim() } : null
-    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, sigDoc)
+    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, emailSig.signatureDoc)
     const body = htmlToPlainText(bodyHtml)
     if (!to) {
       alert("Enter an email address.")
@@ -1615,6 +1614,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
+      notifyCustomersEmailSync()
     } catch (err) {
       sandboxTrainingAlert(sandboxTraining, formatAppError(err), "communication")
     } finally {
@@ -2067,6 +2067,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       )}
 
       {loadError && !sandboxTraining && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
+
+      <div style={customersSubnavWrapStyle}>
+        <CustomersSectionSubnav active="customers" setPage={setPage} isMobile={isMobile} />
+      </div>
 
       <div
         style={{
@@ -3386,9 +3390,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                       onSubjectChange={setCustomerEmailSubject}
                                                       bodyHtml={customerEmailBodyHtml}
                                                       onBodyHtmlChange={setCustomerEmailBodyHtml}
-                                                      signatureText={emailSignature}
-                                                      onSignatureTextChange={setEmailSignature}
-                                                      onSignatureBlur={() => void persistEmailSignature(emailSignature)}
+                                                      signatureText={emailSig.signatureText}
+                                                      onSignatureTextChange={emailSig.setSignatureText}
+                                                      onSignatureBlur={emailSig.onSignatureBlur}
+                                                      signatureLogoUrl={emailSig.signatureLogoUrl}
+                                                      onSignatureLogoUpload={(f) => void emailSig.uploadSignatureLogo(f)}
+                                                      onSignatureLogoClear={() => void emailSig.clearSignatureLogo()}
+                                                      signatureLogoUploading={emailSig.signatureLogoUploading}
+                                                      templateVars={emailTemplateVars}
                                                       composeFiles={[]}
                                                       onComposeFilesChange={() => {}}
                                                       sending={customerEmailSending}

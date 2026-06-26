@@ -30,12 +30,8 @@ import EmailComposeRich from "../../components/EmailComposeRich"
 import {
   appendHtmlEmailSignature,
   htmlToPlainText,
-  loadEmailSignatureFromMetadata,
-  loadStoredEmailSignature,
-  mergeEmailSignatureMetadata,
-  saveStoredEmailSignature,
-  type EmailSignatureDoc,
 } from "../../lib/emailSignature"
+import { useEmailComposeSignature } from "../../hooks/useEmailComposeSignature"
 import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
@@ -54,6 +50,7 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { notifyCustomersEmailSync } from "../../lib/workflowNavigation"
 
 type CustomerIdentifier = { type: string; value: string; is_primary?: boolean }
 type CustomerRow = {
@@ -363,6 +360,7 @@ function ExpandableTimelineRow({
 export default function ConversationsPage(_props: ConversationsPageProps) {
   void _props
   const userId = useScopedUserId()
+  const emailSig = useEmailComposeSignature(userId)
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const sandboxTraining = useSandboxTrainingMode()
@@ -410,7 +408,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   const [emailCc, setEmailCc] = useState("")
   const [emailBcc, setEmailBcc] = useState("")
   const [emailReplyToOverride, setEmailReplyToOverride] = useState("")
-  const [emailSignature, setEmailSignature] = useState("")
   const [emailComposeMountKey, setEmailComposeMountKey] = useState(0)
   const [communicationEvents, setCommunicationEvents] = useState<CommEventRow[]>([])
   const [commAttachmentsByEvent, setCommAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
@@ -422,6 +419,14 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   /** profiles.voicemail_conversations_display for the portal user (scoped). */
   const [voicemailProfileDisplay, setVoicemailProfileDisplay] = useState<string>("use_channel")
   const [contractorSmsDisplayName, setContractorSmsDisplayName] = useState("")
+  const emailTemplateVars = useMemo(
+    () => ({
+      customer_name: selectedConversation?.customers?.display_name?.trim() || "there",
+      sender_name: contractorSmsDisplayName || "Our team",
+      company: "Our team",
+    }),
+    [selectedConversation?.customers?.display_name, contractorSmsDisplayName],
+  )
   const [addConvoChannel, setAddConvoChannel] = useState<"sms" | "email">("sms")
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
@@ -492,31 +497,12 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
   }, [smsComposeMaxChars])
 
   useEffect(() => {
-    const stored = loadStoredEmailSignature()
-    if (stored) setEmailSignature(stored)
-  }, [])
-
-  async function persistEmailSignature(text: string) {
-    const trimmed = text.trim()
-    saveStoredEmailSignature(trimmed)
-    if (!supabase || !userId) return
-    const doc: EmailSignatureDoc = { v: 1, text: trimmed, updated_at: new Date().toISOString() }
-    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    const prevMeta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? { ...(data.metadata as Record<string, unknown>) }
-        : {}
-    const nextMeta = mergeEmailSignatureMetadata(prevMeta, doc)
-    await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
-  }
-
-  useEffect(() => {
     if (!supabase || !userId) return
     let cancelled = false
     void (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("voicemail_conversations_display, ai_thread_summary_enabled, display_name, metadata")
+        .select("voicemail_conversations_display, ai_thread_summary_enabled, display_name")
         .eq("id", userId)
         .maybeSingle()
       if (cancelled) return
@@ -526,11 +512,6 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       setAiThreadSummaryEnabled((data as { ai_thread_summary_enabled?: boolean }).ai_thread_summary_enabled === true)
       const dn = (data as { display_name?: string | null }).display_name
       setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
-      const sigDoc = loadEmailSignatureFromMetadata((data as { metadata?: unknown }).metadata)
-      if (sigDoc?.text) {
-        setEmailSignature(sigDoc.text)
-        saveStoredEmailSignature(sigDoc.text)
-      }
     })()
     return () => {
       cancelled = true
@@ -1479,10 +1460,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
     }
     const subject = replySubject.trim()
     const bodyHtmlRaw = emailReplyBody.trim()
-    const sigDoc: EmailSignatureDoc | null = emailSignature.trim()
-      ? { v: 1, text: emailSignature.trim() }
-      : null
-    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, sigDoc)
+    const bodyHtml = appendHtmlEmailSignature(bodyHtmlRaw, emailSig.signatureDoc)
     const body = htmlToPlainText(bodyHtml)
     if (!subject || !body) {
       alert("Enter a subject and email body.")
@@ -1545,6 +1523,7 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
       setEmailReplyBody("")
       setEmailComposeFiles([])
       await loadConversations()
+      notifyCustomersEmailSync()
     } catch (err) {
       sandboxTrainingAlert(sandboxTraining, err instanceof Error ? err.message : String(err), "communication")
     } finally {
@@ -3062,9 +3041,14 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                   onSubjectChange={setReplySubject}
                   bodyHtml={emailReplyBody}
                   onBodyHtmlChange={setEmailReplyBody}
-                  signatureText={emailSignature}
-                  onSignatureTextChange={setEmailSignature}
-                  onSignatureBlur={() => void persistEmailSignature(emailSignature)}
+                  signatureText={emailSig.signatureText}
+                  onSignatureTextChange={emailSig.setSignatureText}
+                  onSignatureBlur={emailSig.onSignatureBlur}
+                  signatureLogoUrl={emailSig.signatureLogoUrl}
+                  onSignatureLogoUpload={(f) => void emailSig.uploadSignatureLogo(f)}
+                  onSignatureLogoClear={() => void emailSig.clearSignatureLogo()}
+                  signatureLogoUploading={emailSig.signatureLogoUploading}
+                  templateVars={emailTemplateVars}
                   composeFiles={emailComposeFiles}
                   onComposeFilesChange={setEmailComposeFiles}
                   sending={emailSending}

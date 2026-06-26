@@ -195,10 +195,22 @@ export function notifySchedulingAddWizardPrefill(): void {
 }
 
 export const CUSTOMERS_HUB_REFRESH_EVENT = "tradesman-customers-hub-refresh"
+export const CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT = "tradesman-customers-email-inbox-refresh"
 
 export function notifyCustomersHubRefresh(): void {
   if (typeof window === "undefined") return
   window.dispatchEvent(new CustomEvent(CUSTOMERS_HUB_REFRESH_EVENT))
+}
+
+export function notifyCustomersEmailInboxRefresh(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT))
+}
+
+/** After any outbound/inbound email is logged — keep Customers tab and Email client in sync. */
+export function notifyCustomersEmailSync(): void {
+  notifyCustomersHubRefresh()
+  notifyCustomersEmailInboxRefresh()
 }
 
 export function queueCustomReceiptCustomerPrefill(customerId: string): void {

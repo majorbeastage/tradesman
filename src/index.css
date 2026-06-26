@@ -106,3 +106,47 @@ button:focus-visible {
   cursor: pointer;
   filter: invert(0.45) brightness(0.55);
 }
+
+/* Modals portaled under .portal-charcoal but outside main — keep native selects readable */
+.share-contact-member-select,
+.share-contact-member-select option {
+  background-color: #fff;
+  color: #111827;
+  color-scheme: light;
+}
+
+.dashboard-todo-assignee-select,
+.dashboard-todo-assignee-select option {
+  background-color: #fff;
+  color: #111827;
+  color-scheme: light;
+}
+
+.email-compose-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .email-compose-rich--mobile .email-compose-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .email-compose-rich--mobile .email-compose-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .email-compose-rich--mobile .email-compose-toolbar > * {
+    flex-shrink: 0;
+  }
+
+  .email-compose-rich input,
+  .email-compose-rich textarea,
+  .email-compose-rich select {
+    font-size: 16px;
+  }
+}

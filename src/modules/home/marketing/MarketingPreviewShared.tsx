@@ -103,12 +103,14 @@ export function MarketingPreviewCtas({
   )
 }
 
-export function MarketingPreviewHeroCopy({ children }: { children?: ReactNode }) {
+export function MarketingPreviewHeroCopy({ children, hideEyebrow }: { children?: ReactNode; hideEyebrow?: boolean }) {
   return (
     <>
-      <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: theme.primary, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-        Tradesman
-      </p>
+      {!hideEyebrow ? (
+        <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: theme.primary, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          Tradesman
+        </p>
+      ) : null}
       <h1
         style={{
           margin: "0 0 14px",
@@ -130,12 +132,12 @@ export function MarketingPreviewHeroCopy({ children }: { children?: ReactNode })
   )
 }
 
-export function MarketingPreviewShell({ banner, children }: { banner: ReactNode; children: ReactNode }) {
+export function MarketingPreviewShell({ banner, children, fullWidth }: { banner: ReactNode; children: ReactNode; fullWidth?: boolean }) {
   return (
-    <div style={{ minHeight: "100vh", background: "#fafafa" }}>
+    <div style={{ minHeight: "100vh", background: "#fafafa", width: "100%", overflowX: "hidden" }}>
       {banner}
       {children}
-      <footer style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 40px" }}>
+      <footer style={{ maxWidth: fullWidth ? "100%" : 1100, margin: "0 auto", padding: "32px 20px 56px" }}>
         <PublicLegalNav />
         <CopyrightVersionFooter variant="default" style={{ borderTop: `1px solid ${theme.border}`, marginTop: 12, paddingTop: 12 }} />
       </footer>
@@ -143,21 +145,27 @@ export function MarketingPreviewShell({ banner, children }: { banner: ReactNode;
   )
 }
 
-export function MarketingPreviewTopNav({ onLogin }: { onLogin?: () => void }) {
+export function MarketingPreviewTopNav({ onLogin, largeLogo }: { onLogin?: () => void; largeLogo?: boolean }) {
   return (
     <header
       style={{
-        maxWidth: 1180,
+        width: "100%",
+        maxWidth: "100%",
         margin: "0 auto",
-        padding: "20px 20px 0",
+        padding: "20px clamp(20px, 4vw, 48px) 0",
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
         gap: 16,
         flexWrap: "wrap",
+        boxSizing: "border-box",
       }}
     >
-      <img src={logo} alt="Tradesman" style={{ height: 44, width: "auto", objectFit: "contain" }} />
+      <img
+        src={logo}
+        alt="Tradesman"
+        style={{ height: largeLogo ? "clamp(52px, 7vw, 76px)" : 44, width: "auto", objectFit: "contain" }}
+      />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <a href="/pricing" style={ghostLinkStyle}>
           Pricing

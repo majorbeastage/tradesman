@@ -724,13 +724,13 @@ export default function TimeClockPortal({
               <option value="shift">Shift only</option>
               <option value="job">Job only</option>
             </select>
-            <button type="button" onClick={() => void loadReportRows()} style={{ padding: "6px 10px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>
+            <button type="button" onClick={() => void loadReportRows()} style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", color: theme.text, cursor: "pointer" }}>
               Refresh
             </button>
             <button
               type="button"
               onClick={() => downloadTimeSessionsCsv(`tradesman-time-${reportRange}.csv`, reportRows, rosterLabel)}
-              style={{ padding: "6px 10px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}
+              style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", color: theme.text, cursor: "pointer" }}
             >
               Export CSV
             </button>

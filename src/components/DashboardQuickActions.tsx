@@ -36,6 +36,7 @@ import {
 } from "../lib/dashboardQuickLinksPrefs"
 import DashboardQuickLinkGrid from "./DashboardQuickLinkGrid"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
+import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { isOfficeManagerLikeRole } from "../lib/profileRoles"
@@ -532,7 +533,7 @@ export default function DashboardQuickActions(props: Props) {
     onOpenSetupGuide,
   } = props
   const ga = useGlobalAssistantOptional()
-  const { portalConfig } = useAuth()
+  const { portalConfig, user } = useAuth()
 
   const operationsQuickLinkVisible = useCallback(
     (id: DashboardOptionalQuickLinkId): boolean => {
@@ -584,6 +585,12 @@ export default function DashboardQuickActions(props: Props) {
   const [dragFromSlot, setDragFromSlot] = useState<number | null>(null)
   const [styleMenu, setStyleMenu] = useState<{ id: DashboardQuickLinkId; x: number; y: number } | null>(null)
   const [todayOpen, setTodayOpen] = useState(false)
+
+  useEffect(() => {
+    const open = () => setTodayOpen(true)
+    window.addEventListener(OPEN_DASHBOARD_TODO_EVENT, open)
+    return () => window.removeEventListener(OPEN_DASHBOARD_TODO_EVENT, open)
+  }, [])
   const [prefsHydrated, setPrefsHydrated] = useState(false)
   const userModifiedRef = useRef(false)
 
@@ -1171,7 +1178,12 @@ export default function DashboardQuickActions(props: Props) {
           transform: translateY(-1px);
         }
       `}</style>
-      <DashboardTodayTodoModal open={todayOpen} onClose={() => setTodayOpen(false)} dataUserId={dashboardDataUserId ?? null} />
+      <DashboardTodayTodoModal
+        open={todayOpen}
+        onClose={() => setTodayOpen(false)}
+        dataUserId={dashboardDataUserId ?? null}
+        viewerUserId={user?.id ?? null}
+      />
 
       <div>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>

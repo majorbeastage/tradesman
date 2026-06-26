@@ -42,6 +42,7 @@ import DashboardQuickActions from "../../components/DashboardQuickActions"
 import DashboardTodayWorkPreview from "../../components/DashboardTodayWorkPreview"
 import DashboardReportsPreview from "../../components/DashboardReportsPreview"
 import CustomerProfilePage from "../customers/CustomerProfilePage"
+import CustomersEmailInboxPage from "../customers/CustomersEmailInboxPage"
 import SetupGuideModal from "../../components/SetupGuideModal"
 import GlobalAssistantFab from "../../components/GlobalAssistantFab"
 import CustomerProfileReturnBar from "../../components/CustomerProfileReturnBar"
@@ -604,6 +605,7 @@ function OfficeManagerAppContent() {
           <DashboardTodayWorkPreview
             isMobile={isMobile}
             dataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            viewerUserId={user?.id ?? null}
             reportingAllowed
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}
@@ -625,6 +627,9 @@ function OfficeManagerAppContent() {
               noRecent: t("dashboard.todayWorkNoRecent"),
               openCustomers: t("dashboard.todayWorkOpenCustomers"),
               openCalendar: t("dashboard.todayWorkOpenCalendar"),
+              nextUp: t("dashboard.todayWorkNextUp"),
+              nextUpEmpty: t("dashboard.todayWorkNextUpEmpty"),
+              manageTasks: t("dashboard.todayWorkManageTasks"),
             }}
           />
           <DashboardReportsPreview
@@ -643,6 +648,7 @@ function OfficeManagerAppContent() {
         </>
       )}
       {hasClients && page === "customers" && <CustomersPage setPage={setPage} />}
+      {hasClients && page === "customers-email" && <CustomersEmailInboxPage setPage={setPage} />}
       {hasClients && page === "customer-profile" && <CustomerProfilePage setPage={setPage} />}
       {hasClients && page === "leads" && <LeadsPage setPage={setPage} />}
       {hasClients && page === "conversations" && <ConversationsPage setPage={setPage} />}

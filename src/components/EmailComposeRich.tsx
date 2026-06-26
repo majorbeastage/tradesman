@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { theme } from "../styles/theme"
 import { htmlToPlainText } from "../lib/emailSignature"
+import { useIsMobile } from "../hooks/useIsMobile"
+import {
+  STARTER_EMAIL_TEMPLATES,
+  applyEmailTemplatePlaceholders,
+  type EmailTemplate,
+} from "../lib/emailTemplates"
 
 export type EmailComposeRichProps = {
   primaryTo: string
@@ -20,12 +26,18 @@ export type EmailComposeRichProps = {
   signatureText: string
   onSignatureTextChange: (v: string) => void
   onSignatureBlur?: () => void
+  signatureLogoUrl?: string | null
+  onSignatureLogoUpload?: (file: File) => void
+  onSignatureLogoClear?: () => void
+  signatureLogoUploading?: boolean
   composeFiles: File[]
   onComposeFilesChange: (files: File[]) => void
   sending?: boolean
   onSend: () => void
   footerNote?: ReactNode
   defaultExpanded?: boolean
+  templates?: EmailTemplate[]
+  templateVars?: Record<string, string>
 }
 
 const FONT_SIZES = [
@@ -33,6 +45,20 @@ const FONT_SIZES = [
   { id: "md", label: "Normal", css: "15px" },
   { id: "lg", label: "Large", css: "18px" },
 ]
+
+const FONT_FAMILIES = [
+  { id: "default", label: "Default", exec: "inherit" },
+  { id: "arial", label: "Arial", exec: "Arial" },
+  { id: "georgia", label: "Georgia", exec: "Georgia" },
+  { id: "verdana", label: "Verdana", exec: "Verdana" },
+  { id: "times", label: "Times", exec: "Times New Roman" },
+]
+
+const readableInputStyle: CSSProperties = {
+  ...theme.formInput,
+  color: theme.text,
+  background: "#fff",
+}
 
 export default function EmailComposeRich(props: EmailComposeRichProps) {
   const {
@@ -53,16 +79,24 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
     signatureText,
     onSignatureTextChange,
     onSignatureBlur,
+    signatureLogoUrl,
+    onSignatureLogoUpload,
+    onSignatureLogoClear,
+    signatureLogoUploading,
     composeFiles,
     onComposeFilesChange,
     sending,
     onSend,
     footerNote,
     defaultExpanded = true,
+    templates = STARTER_EMAIL_TEMPLATES,
+    templateVars = {},
   } = props
 
+  const isMobile = useIsMobile()
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [showCcBcc, setShowCcBcc] = useState(Boolean(cc.trim() || bcc.trim() || replyTo.trim()))
+  const [showSignaturePanel, setShowSignaturePanel] = useState(false)
   const editorRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -91,11 +125,23 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
     exec("createLink", url.trim())
   }, [exec])
 
+  const applyTemplate = useCallback(
+    (templateId: string) => {
+      const t = templates.find((x) => x.id === templateId)
+      if (!t) return
+      const applied = applyEmailTemplatePlaceholders(t, templateVars)
+      onSubjectChange(applied.subject)
+      onBodyHtmlChange(applied.bodyHtml)
+      if (editorRef.current) editorRef.current.innerHTML = applied.bodyHtml
+    },
+    [templates, templateVars, onSubjectChange, onBodyHtmlChange],
+  )
+
   const plainPreview = htmlToPlainText(bodyHtml).slice(0, 120)
 
   if (!expanded) {
     return (
-      <div style={shellStyle}>
+      <div style={isMobile ? mobileShellStyle : shellStyle} className="email-compose-rich">
         <button type="button" onClick={() => setExpanded(true)} style={minimizedBarStyle}>
           <span style={{ fontWeight: 700, color: theme.text }}>Compose email</span>
           <span style={{ flex: 1, color: "#64748b", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -108,9 +154,12 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
   }
 
   return (
-    <div style={shellStyle}>
+    <div
+      style={isMobile ? mobileShellStyle : shellStyle}
+      className={`email-compose-rich${isMobile ? " email-compose-rich--mobile" : ""}`}
+    >
       <div style={headerBarStyle}>
-        <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Compose email</span>
+        <span style={{ fontWeight: 800, fontSize: isMobile ? 13 : 14, color: theme.text }}>Compose email</span>
         <div style={{ display: "flex", gap: 8 }}>
           <button type="button" onClick={() => setExpanded(false)} style={ghostBtnStyle}>
             Minimize
@@ -118,16 +167,28 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px 14px" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: isMobile ? 8 : 10,
+          padding: isMobile ? "10px 10px 12px" : "12px 14px 14px",
+        }}
+      >
         <Field label="To">
-          <input value={primaryTo} onChange={(e) => onPrimaryToChange(e.target.value)} placeholder="customer@example.com" style={theme.formInput} />
+          <input
+            value={primaryTo}
+            onChange={(e) => onPrimaryToChange(e.target.value)}
+            placeholder="customer@example.com"
+            style={readableInputStyle}
+          />
         </Field>
         <Field label="Additional recipients (To)">
           <input
             value={additionalTo}
             onChange={(e) => onAdditionalToChange(e.target.value)}
             placeholder="Comma-separated"
-            style={theme.formInput}
+            style={readableInputStyle}
           />
         </Field>
         {!showCcBcc ? (
@@ -137,39 +198,60 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
         ) : (
           <>
             <Field label="CC">
-              <input value={cc} onChange={(e) => onCcChange(e.target.value)} placeholder="Optional" style={theme.formInput} />
+              <input value={cc} onChange={(e) => onCcChange(e.target.value)} placeholder="Optional" style={readableInputStyle} />
             </Field>
             <Field label="BCC">
-              <input value={bcc} onChange={(e) => onBccChange(e.target.value)} placeholder="Optional" style={theme.formInput} />
+              <input value={bcc} onChange={(e) => onBccChange(e.target.value)} placeholder="Optional" style={readableInputStyle} />
             </Field>
             <Field label="Reply-To">
-              <input value={replyTo} onChange={(e) => onReplyToChange(e.target.value)} placeholder="Optional override" style={theme.formInput} />
+              <input value={replyTo} onChange={(e) => onReplyToChange(e.target.value)} placeholder="Optional override" style={readableInputStyle} />
             </Field>
           </>
         )}
-        <input value={subject} onChange={(e) => onSubjectChange(e.target.value)} placeholder="Subject" style={theme.formInput} />
+        <input
+          value={subject}
+          onChange={(e) => onSubjectChange(e.target.value)}
+          placeholder="Subject"
+          style={{ ...readableInputStyle, fontSize: isMobile ? 16 : undefined }}
+        />
 
-        <div style={toolbarStyle}>
-          <ToolbarBtn label="Bold" onClick={() => exec("bold")} title="Bold">
+        <div style={toolbarStyle} className="email-compose-toolbar">
+          <ToolbarBtn label="Bold" onClick={() => exec("bold")} title="Bold" isMobile={isMobile}>
             <strong>B</strong>
           </ToolbarBtn>
-          <ToolbarBtn label="Italic" onClick={() => exec("italic")} title="Italic">
+          <ToolbarBtn label="Italic" onClick={() => exec("italic")} title="Italic" isMobile={isMobile}>
             <em>I</em>
           </ToolbarBtn>
-          <ToolbarBtn label="Underline" onClick={() => exec("underline")} title="Underline">
+          <ToolbarBtn label="Underline" onClick={() => exec("underline")} title="Underline" isMobile={isMobile}>
             <span style={{ textDecoration: "underline" }}>U</span>
           </ToolbarBtn>
           <span style={toolbarSep} />
-          <ToolbarBtn label="Bullets" onClick={() => exec("insertUnorderedList")} title="Bullet list">
+          <ToolbarBtn label="Bullets" onClick={() => exec("insertUnorderedList")} title="Bullet list" isMobile={isMobile}>
             •≡
           </ToolbarBtn>
-          <ToolbarBtn label="Numbered" onClick={() => exec("insertOrderedList")} title="Numbered list">
+          <ToolbarBtn label="Numbered" onClick={() => exec("insertOrderedList")} title="Numbered list" isMobile={isMobile}>
             1.
           </ToolbarBtn>
-          <ToolbarBtn label="Link" onClick={insertLink} title="Insert link">
+          <ToolbarBtn label="Link" onClick={insertLink} title="Insert link" isMobile={isMobile}>
             🔗
           </ToolbarBtn>
           <span style={toolbarSep} />
+          <select
+            defaultValue="default"
+            onChange={(e) => {
+              const family = FONT_FAMILIES.find((f) => f.id === e.target.value)
+              if (family && family.exec !== "inherit") exec("fontName", family.exec)
+              syncEditor()
+            }}
+            style={{ ...readableInputStyle, width: "auto", padding: "4px 8px", fontSize: 12, margin: 0, minHeight: isMobile ? 44 : undefined }}
+            title="Font family"
+          >
+            {FONT_FAMILIES.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
           <select
             defaultValue="md"
             onChange={(e) => {
@@ -178,7 +260,7 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
               if (editorRef.current) editorRef.current.style.fontSize = size
               syncEditor()
             }}
-            style={{ ...theme.formInput, width: "auto", padding: "4px 8px", fontSize: 12, margin: 0 }}
+            style={{ ...readableInputStyle, width: "auto", padding: "4px 8px", fontSize: 12, margin: 0, minHeight: isMobile ? 44 : undefined }}
             title="Font size"
           >
             {FONT_SIZES.map((f) => (
@@ -187,6 +269,35 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
               </option>
             ))}
           </select>
+          {templates.length > 0 ? (
+            <>
+              <span style={toolbarSep} />
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) applyTemplate(e.target.value)
+                  e.target.value = ""
+                }}
+                style={{
+                  ...readableInputStyle,
+                  width: "auto",
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  margin: 0,
+                  maxWidth: isMobile ? 140 : 180,
+                  minHeight: isMobile ? 44 : undefined,
+                }}
+                title="Insert template"
+              >
+                <option value="">Template…</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : null}
         </div>
 
         <div
@@ -196,7 +307,13 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
           onInput={syncEditor}
           onBlur={syncEditor}
           data-placeholder="Write your message…"
-          style={editorStyle}
+          className="email-compose-editor"
+          style={{
+            ...editorStyle,
+            minHeight: isMobile ? 140 : editorStyle.minHeight,
+            maxHeight: isMobile ? undefined : editorStyle.maxHeight,
+            fontSize: isMobile ? 16 : editorStyle.fontSize,
+          }}
         />
 
         <Field label="Attachments (optional)">
@@ -204,27 +321,88 @@ export default function EmailComposeRich(props: EmailComposeRichProps) {
             type="file"
             multiple
             onChange={(e) => onComposeFilesChange(Array.from(e.target.files ?? []))}
-            style={{ fontSize: 13 }}
+            style={{ fontSize: 13, color: theme.text }}
           />
           {composeFiles.length > 0 ? (
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b" }}>{composeFiles.length} file(s) selected</p>
           ) : null}
         </Field>
 
-        <Field label="Signature">
-          <textarea
-            value={signatureText}
-            onChange={(e) => onSignatureTextChange(e.target.value)}
-            onBlur={onSignatureBlur}
-            rows={3}
-            placeholder="Saved to your profile — appended to every send."
-            style={{ ...theme.formInput, resize: "vertical", fontSize: 13 }}
-          />
-        </Field>
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowSignaturePanel((v) => !v)}
+            style={{ ...ghostBtnStyle, padding: 0, marginBottom: showSignaturePanel ? 8 : 0 }}
+          >
+            {showSignaturePanel ? "− Hide signature" : "+ Email signature (saved to profile)"}
+          </button>
+          {showSignaturePanel ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <textarea
+                value={signatureText}
+                onChange={(e) => onSignatureTextChange(e.target.value)}
+                onBlur={onSignatureBlur}
+                rows={3}
+                placeholder="Appended to every send. Use {{placeholders}} for company info."
+                style={{ ...readableInputStyle, resize: "vertical", fontSize: 13 }}
+              />
+              {onSignatureLogoUpload ? (
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                  {signatureLogoUrl ? (
+                    <img
+                      src={signatureLogoUrl}
+                      alt="Signature logo"
+                      style={{ maxHeight: 48, maxWidth: 160, objectFit: "contain", border: `1px solid ${theme.border}`, borderRadius: 6 }}
+                    />
+                  ) : null}
+                  <label style={{ fontSize: 12, fontWeight: 600, color: theme.text, cursor: "pointer" }}>
+                    {signatureLogoUploading ? "Uploading…" : signatureLogoUrl ? "Replace logo" : "Add logo"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      disabled={signatureLogoUploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) onSignatureLogoUpload(f)
+                        e.target.value = ""
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  {signatureLogoUrl && onSignatureLogoClear ? (
+                    <button type="button" onClick={() => void onSignatureLogoClear()} style={ghostBtnStyle}>
+                      Remove logo
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div
+          className="email-compose-send-row"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: isMobile ? "stretch" : "center",
+            flexDirection: isMobile ? "column" : "row",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           {footerNote ?? <span style={{ fontSize: 12, color: "#64748b" }}>Replies use your Tradesman business address.</span>}
-          <button type="button" disabled={sending} onClick={onSend} style={sendBtnStyle}>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={onSend}
+            style={{
+              ...sendBtnStyle,
+              width: isMobile ? "100%" : undefined,
+              padding: isMobile ? "12px 18px" : sendBtnStyle.padding,
+              fontSize: isMobile ? 16 : sendBtnStyle.fontSize,
+            }}
+          >
             {sending ? "Sending…" : "Send email"}
           </button>
         </div>
@@ -242,9 +420,30 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function ToolbarBtn({ children, onClick, title }: { label: string; children: ReactNode; onClick: () => void; title: string }) {
+function ToolbarBtn({
+  children,
+  onClick,
+  title,
+  isMobile,
+}: {
+  label: string
+  children: ReactNode
+  onClick: () => void
+  title: string
+  isMobile?: boolean
+}) {
   return (
-    <button type="button" onClick={onClick} title={title} style={toolbarBtnStyle}>
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        ...toolbarBtnStyle,
+        minWidth: isMobile ? 44 : toolbarBtnStyle.minWidth,
+        minHeight: isMobile ? 44 : toolbarBtnStyle.height,
+        height: isMobile ? 44 : toolbarBtnStyle.height,
+      }}
+    >
       {children}
     </button>
   )
@@ -256,6 +455,12 @@ const shellStyle: CSSProperties = {
   background: "#fff",
   boxShadow: "0 8px 28px rgba(15,23,42,0.08)",
   overflow: "hidden",
+}
+
+const mobileShellStyle: CSSProperties = {
+  ...shellStyle,
+  borderRadius: 10,
+  boxShadow: "0 2px 12px rgba(15,23,42,0.06)",
 }
 
 const headerBarStyle: CSSProperties = {

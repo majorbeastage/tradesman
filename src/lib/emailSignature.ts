@@ -61,6 +61,40 @@ export function mergeEmailSignatureMetadata(
   }
 }
 
+export type EmailSignatureRoleHint = "field" | "office_manager" | "corporate_management" | "unknown"
+
+export function inferSignatureRoleHint(role: string | null | undefined): EmailSignatureRoleHint {
+  const r = (role ?? "").trim().toLowerCase()
+  if (r === "office_manager" || r === "om") return "office_manager"
+  if (r === "corporate_management" || r === "corp" || r === "admin") return "corporate_management"
+  if (r) return "field"
+  return "unknown"
+}
+
+/** Starter signature text when the user has not saved one yet (role-aware placeholders). */
+export function defaultSignatureTextForRole(
+  role: string | null | undefined,
+  displayName?: string | null,
+): string {
+  const name = displayName?.trim() || "Your name"
+  const hint = inferSignatureRoleHint(role)
+  switch (hint) {
+    case "office_manager":
+      return `${name}\nOffice Manager\n{{Company name}}\n{{Office phone}}`
+    case "corporate_management":
+      return `${name}\n{{Title}}\n{{Company name}}\n{{Office phone}}`
+    default:
+      return `${name}\n{{Your trade}} Specialist\n{{Mobile phone}}`
+  }
+}
+
+export function buildEmailSignatureDoc(text: string, logoUrl?: string | null): EmailSignatureDoc | null {
+  const trimmed = text.trim()
+  const logo = logoUrl?.trim() || null
+  if (!trimmed && !logo) return null
+  return { v: 1, text: trimmed, logoUrl: logo }
+}
+
 export function htmlToPlainText(html: string): string {
   if (typeof document === "undefined") {
     return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
