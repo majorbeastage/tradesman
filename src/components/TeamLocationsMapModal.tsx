@@ -48,6 +48,8 @@ type Props = {
   title?: string
   /** Thumbnail mode — expand to full embedded/map view. */
   onExpand?: () => void
+  /** Collapse embedded map to thumbnail, or thumbnail to hidden bar. */
+  onMinimize?: () => void
   /** Optional demo GPS pins keyed by sandbox-demo-* user id. */
   sandboxDemoLocations?: SandboxDemoLocationsV1
   /** Resolve demo persona id → auth user id for calendar job queries. */
@@ -72,6 +74,7 @@ export default function TeamLocationsMapModal({
   variant = "modal",
   title = "Team map",
   onExpand,
+  onMinimize,
   sandboxDemoLocations = {},
   resolveJobUserId,
   showTeamGps: showTeamGpsProp,
@@ -358,22 +361,42 @@ export default function TeamLocationsMapModal({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0, fontSize: thumbnail ? 15 : 17, color: theme.text }}>{title}</h3>
         {thumbnail ? (
-          <button
-            type="button"
-            onClick={() => (onExpand ? onExpand() : onClose())}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: `1px solid ${theme.border}`,
-              background: "#eff6ff",
-              color: theme.text,
-              fontWeight: 700,
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            Open full map
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => (onExpand ? onExpand() : onClose())}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#eff6ff",
+                color: theme.text,
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Open full map
+            </button>
+            {onMinimize ? (
+              <button
+                type="button"
+                onClick={onMinimize}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Minimize
+              </button>
+            ) : null}
+          </div>
         ) : !embedded ? (
           <button
             type="button"
@@ -391,22 +414,43 @@ export default function TeamLocationsMapModal({
             Close
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              color: theme.text,
-              fontWeight: 600,
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            Back
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {onMinimize ? (
+              <button
+                type="button"
+                onClick={onMinimize}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Minimize
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Back
+              </button>
+            )}
+          </div>
         )}
       </div>
 

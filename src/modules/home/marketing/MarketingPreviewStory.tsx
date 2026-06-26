@@ -27,8 +27,8 @@ const STORY_TRANSITION_UNITS = 7
 const LOGO_INTRO_UNITS = 7
 const STORY_LAST_UNLOCK_UNITS = 10
 const STORY_VH_PER_UNIT = 10
-/** Preview banner (MarketingPreviewBanner) sits above the story track. */
-const PREVIEW_BANNER_PX = 48
+/** Preview banner (MarketingPreviewBanner) sits above the story track; 0 on production homepage. */
+const DEFAULT_TOP_INSET_PX = 48
 const ABOUT_SLIDE_ACCENT = "#f97316"
 const LOGO_SCALE_START = 2.3
 const MOBILE_BREAKPOINT = 900
@@ -220,6 +220,7 @@ function logoLayoutStyle(logoT: number, isMobile: boolean): CSSProperties {
 }
 
 type Props = {
+  topInsetPx?: number
   onLogin?: () => void
   onTrial?: () => void
   onPricing?: () => void
@@ -227,7 +228,14 @@ type Props = {
   onAboutUs?: () => void
 }
 
-export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogin, onAboutUs }: Props) {
+export function MarketingPreviewStory({
+  topInsetPx = DEFAULT_TOP_INSET_PX,
+  onLogin,
+  onTrial,
+  onPricing,
+  onAdminLogin,
+  onAboutUs,
+}: Props) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT)
   const scrollTrackRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -277,14 +285,14 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
     const trackHeight = track.offsetHeight
     const scrollY = window.scrollY
 
-    const pinStart = Math.max(0, trackTop - PREVIEW_BANNER_PX)
+    const pinStart = Math.max(0, trackTop - topInsetPx)
     const pinEnd = trackTop + trackHeight - viewportH
     const span = Math.max(1, pinEnd - pinStart)
     const raw = scrollY < pinStart ? 0 : Math.max(0, Math.min(1, (scrollY - pinStart) / span))
     const story = rawToStoryState(raw, totalSlides, isMobile)
 
     viewport.style.position = "fixed"
-    viewport.style.top = `${PREVIEW_BANNER_PX}px`
+    viewport.style.top = `${topInsetPx}px`
     viewport.style.left = "0"
     viewport.style.width = "100vw"
 
@@ -304,7 +312,7 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
     setLogoT(story.logoT)
     setHeroShotReveal(story.heroShotReveal)
     setFooterReveal(story.footerReveal)
-  }, [maxProgress, totalSlides, isMobile])
+  }, [maxProgress, totalSlides, isMobile, topInsetPx])
 
   useLayoutEffect(() => {
     applyScrollState()
@@ -328,7 +336,7 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
       const trackTop = track.offsetTop
       const trackHeight = track.offsetHeight
       const scrollY = window.scrollY
-      const pinStart = Math.max(0, trackTop - PREVIEW_BANNER_PX)
+      const pinStart = Math.max(0, trackTop - topInsetPx)
       const pinEnd = trackTop + trackHeight - viewportH
 
       if (scrollY > pinEnd) return
@@ -533,7 +541,7 @@ export function MarketingPreviewStory({ onLogin, onTrial, onPricing, onAdminLogi
 
       {lightbox ? <StoryLightbox lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
 
-      <StoryScrollStyles />
+      <StoryScrollStyles topInsetPx={topInsetPx} />
     </div>
   )
 }
@@ -1294,7 +1302,7 @@ function MarketingStoryDockFooter({
   )
 }
 
-function StoryScrollStyles() {
+function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
   return (
     <style>{`
       .marketing-story-root {
@@ -1307,9 +1315,9 @@ function StoryScrollStyles() {
       }
       .marketing-story-viewport {
         position: fixed;
-        top: ${PREVIEW_BANNER_PX}px;
+        top: ${topInsetPx}px;
         left: 0;
-        height: calc(100vh - ${PREVIEW_BANNER_PX}px);
+        height: calc(100vh - ${topInsetPx}px);
         width: 100vw;
         max-width: 100vw;
         overflow: hidden;

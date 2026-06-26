@@ -105,6 +105,36 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
     if (tab.tab_id === "customers") {
       const customersActive = activePage === "customers"
       const emailActive = activePage === CUSTOMERS_EMAIL_PAGE
+      const showEmailSubmenu = customersActive || emailActive
+
+      if (!showEmailSubmenu) {
+        if (isMobile) {
+          return (
+            <button
+              key="customers"
+              type="button"
+              onClick={() => navigate("customers")}
+              style={{
+                ...mobileTabButtonStyle,
+                borderColor: activePage === "customers" ? theme.primary : "rgba(249,115,22,0.35)",
+                background: activePage === "customers" ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+              }}
+            >
+              {formatPortalTabLabel("customers", tab.label, t)}
+            </button>
+          )
+        }
+        return (
+          <p
+            key="customers"
+            onClick={() => navigate("customers")}
+            style={{ ...itemStyle, fontWeight: activePage === "customers" ? 800 : undefined }}
+          >
+            {formatPortalTabLabel("customers", tab.label, t)}
+          </p>
+        )
+      }
+
       if (isMobile) {
         return (
           <Fragment key="customers-group">

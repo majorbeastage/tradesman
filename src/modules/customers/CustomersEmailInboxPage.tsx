@@ -28,7 +28,7 @@ import {
   type EmailInboxFolder,
   type EmailInboxThread,
 } from "../../lib/customersEmailInboxData"
-import { navigateToCustomersList } from "../../lib/customersEmailClientNav"
+import { navigateToCustomersList, openCustomersEmailInNewTab } from "../../lib/customersEmailClientNav"
 
 type CustomerPickRow = {
   id: string
@@ -355,6 +355,14 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
             disabled={loading}
           >
             {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <button
+            type="button"
+            onClick={() => openCustomersEmailInNewTab()}
+            title="Open email client in a new browser tab"
+            style={{ ...ghostBtnStyle, flex: isMobile ? "1 1 auto" : undefined }}
+          >
+            Open in new tab
           </button>
         </div>
       </div>

@@ -31,9 +31,9 @@ export function MarketingPreviewBanner({ variant, onVariantChange }: NavProps) {
       }}
     >
       <div style={{ fontSize: 12, fontWeight: 700 }}>
-        Local marketing preview · not live on homepage yet
+        Layout previews · Story scroll is live on the homepage
         <a href="/" style={{ marginLeft: 12, color: "#fdba74", fontWeight: 600 }}>
-          ← Current home
+          ← Live home
         </a>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>

@@ -16,7 +16,7 @@ import BusinessWorkflowPage from "./modules/workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
 import OperationsPage from "./modules/operations/OperationsPage"
 import GrowthPage from "./modules/growth/GrowthPage"
-import HomePage from "./modules/home/HomePage"
+import MarketingHomePage from "./modules/home/MarketingHomePage"
 import MarketingHomePreviewPage from "./modules/home/MarketingHomePreviewPage"
 import LoginPage from "./modules/auth/LoginPage"
 import DemoPage from "./modules/demo/DemoPage"
@@ -700,7 +700,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
 
   if (view === "home") {
     return (
-      <HomePage
+      <MarketingHomePage
         onLogin={() => { setView("login"); setLoginError("") }}
         onAdminLogin={() => { setView("admin-login"); setLoginError("") }}
         onSignup={() => {
@@ -708,7 +708,6 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
           setView("signup")
         }}
         onAboutUs={() => setView("about")}
-        onTraining={() => setView("training")}
         onPricing={() => setView("pricing")}
       />
     )

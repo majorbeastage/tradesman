@@ -418,20 +418,6 @@ function TeamUserCard({
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
-                  checked={policy.workflow_only_customers === true}
-                  disabled={savingUserId === member.userId}
-                  onChange={(e) => updatePermissionDraft(member.userId, { workflow_only_customers: e.target.checked })}
-                />
-                Only show customers assigned to this user&apos;s workflow steps
-              </label>
-              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
-                When enabled, this team member only sees customers at their active or pending approval steps. Leadership and
-                office managers still see the full list unless they use View as.
-              </p>
-
-              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
                   checked={policy.allow_bypass_workflow_approval === true}
                   disabled={savingUserId === member.userId}
                   onChange={(e) => updatePermissionDraft(member.userId, { allow_bypass_workflow_approval: e.target.checked })}
@@ -638,7 +624,7 @@ export default function CalendarTeamManagementPanel({
   const [jobTypesByUser, setJobTypesByUser] = useState<Record<string, string[]>>({})
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
-  const [teamMapExpanded, setTeamMapExpanded] = useState(false)
+  const [teamMapView, setTeamMapView] = useState<"minimized" | "thumbnail" | "expanded">("thumbnail")
   const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
   const [permissionDraftByUserId, setPermissionDraftByUserId] = useState<Record<string, OmCalendarPolicyV1>>({})
 
@@ -988,18 +974,53 @@ export default function CalendarTeamManagementPanel({
       ) : null}
 
       {variant !== "time_clock_only" && teamMapUserIds.length > 0 ? (
-        <TeamLocationsMapModal
-          variant={teamMapExpanded ? "embedded" : "thumbnail"}
-          title="Team & jobs map"
-          members={teamMapMembers}
-          orgUserIdsForJobs={teamMapUserIds.length > 0 ? teamMapUserIds : [viewerUserId]}
-          sandboxDemoLocations={sandboxDemoLocations}
-          resolveJobUserId={(id) => (isSandboxDemoUserId(id) ? viewerUserId : id)}
-          showTeamGps
-          showJobPins
-          onClose={() => setTeamMapExpanded(false)}
-          onExpand={() => setTeamMapExpanded(true)}
-        />
+        teamMapView === "minimized" ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>Team & jobs map</span>
+            <button
+              type="button"
+              onClick={() => setTeamMapView("thumbnail")}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#eff6ff",
+                color: theme.text,
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Show map
+            </button>
+          </div>
+        ) : (
+          <TeamLocationsMapModal
+            variant={teamMapView === "expanded" ? "embedded" : "thumbnail"}
+            title="Team & jobs map"
+            members={teamMapMembers}
+            orgUserIdsForJobs={teamMapUserIds.length > 0 ? teamMapUserIds : [viewerUserId]}
+            sandboxDemoLocations={sandboxDemoLocations}
+            resolveJobUserId={(id) => (isSandboxDemoUserId(id) ? viewerUserId : id)}
+            showTeamGps
+            showJobPins
+            onClose={() => setTeamMapView("thumbnail")}
+            onExpand={() => setTeamMapView("expanded")}
+            onMinimize={() => setTeamMapView(teamMapView === "expanded" ? "thumbnail" : "minimized")}
+          />
+        )
       ) : null}
 
       {variant === "time_clock_only" ? null : (
