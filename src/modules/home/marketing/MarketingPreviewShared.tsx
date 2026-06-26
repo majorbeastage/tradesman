@@ -132,15 +132,34 @@ export function MarketingPreviewHeroCopy({ children, hideEyebrow }: { children?:
   )
 }
 
-export function MarketingPreviewShell({ banner, children, fullWidth }: { banner: ReactNode; children: ReactNode; fullWidth?: boolean }) {
+export function MarketingPreviewShell({
+  banner,
+  children,
+  fullWidth,
+  hideFooter,
+}: {
+  banner: ReactNode
+  children: ReactNode
+  fullWidth?: boolean
+  hideFooter?: boolean
+}) {
   return (
-    <div style={{ minHeight: "100vh", background: "#fafafa", width: "100%", overflowX: "hidden" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#fafafa",
+        width: "100%",
+        ...(fullWidth ? { overflowX: "clip" as const } : { overflowX: "hidden" }),
+      }}
+    >
       {banner}
       {children}
+      {hideFooter ? null : (
       <footer style={{ maxWidth: fullWidth ? "100%" : 1100, margin: "0 auto", padding: "32px 20px 56px" }}>
         <PublicLegalNav />
         <CopyrightVersionFooter variant="default" style={{ borderTop: `1px solid ${theme.border}`, marginTop: 12, paddingTop: 12 }} />
       </footer>
+      )}
     </div>
   )
 }

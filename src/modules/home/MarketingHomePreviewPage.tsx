@@ -57,7 +57,13 @@ export function MarketingHomePreviewPage({
 
   const body =
     variant === "story" ? (
-      <MarketingPreviewStory onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} onAdminLogin={onAdminLogin} />
+      <MarketingPreviewStory
+        onLogin={goLogin}
+        onTrial={goTrial}
+        onPricing={goPricing}
+        onAdminLogin={onAdminLogin}
+        onAboutUs={() => (onNavigate ? onNavigate("/about") : (window.location.href = "/about"))}
+      />
     ) : variant === "grid" ? (
       <MarketingPreviewGrid onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} />
     ) : (
@@ -65,7 +71,11 @@ export function MarketingHomePreviewPage({
     )
 
   return (
-    <MarketingPreviewShell banner={<MarketingPreviewBanner variant={variant} onVariantChange={setVariant} />} fullWidth={variant === "story"}>
+    <MarketingPreviewShell
+      banner={<MarketingPreviewBanner variant={variant} onVariantChange={setVariant} />}
+      fullWidth={variant === "story"}
+      hideFooter={variant === "story"}
+    >
       {body}
     </MarketingPreviewShell>
   )
