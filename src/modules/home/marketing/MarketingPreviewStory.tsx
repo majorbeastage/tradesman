@@ -35,7 +35,8 @@ const MOBILE_BREAKPOINT = 900
 
 function countStorySlides(isMobile: boolean): number {
   if (!isMobile) return 1 + MARKETING_PILLARS.length + 1
-  return 3 + MARKETING_PILLARS.length * 2 + 2
+  // logo + hero copy + hero shot + pillars (copy + shot each) + hero copy finale
+  return 3 + MARKETING_PILLARS.length * 2 + 1
 }
 
 function mobilePillarCopyIndex(pillarIdx: number): number {
@@ -46,12 +47,8 @@ function mobilePillarShotIndex(pillarIdx: number): number {
   return 4 + pillarIdx * 2
 }
 
-function mobileAboutCopyIndex(): number {
+function mobileHeroFinaleIndex(): number {
   return 3 + MARKETING_PILLARS.length * 2
-}
-
-function mobileAboutPhotosIndex(): number {
-  return mobileAboutCopyIndex() + 1
 }
 
 type StoryScrollState = {
@@ -190,10 +187,10 @@ function logoLayoutStyle(logoT: number, isMobile: boolean): CSSProperties {
     const mix = 1 - t
     return {
       top: `calc(${50 * mix}% + ${12 * t}px)`,
-      left: `calc(${50 * mix}% + ${0 * t}px)`,
-      right: "auto",
-      transform: `translate(-50%, -50%) scale(${scale})`,
-      transformOrigin: "50% 50%",
+      right: `calc(${50 * mix}% + ${12 * t}px)`,
+      left: "auto",
+      transform: `translate(${50 * mix}%, ${-50 * mix}%) scale(${scale})`,
+      transformOrigin: "100% 50%",
     }
   }
 
@@ -252,7 +249,7 @@ export function MarketingPreviewStory({
   })
 
   const totalSlides = countStorySlides(isMobile)
-  const aboutSlideIndex = isMobile ? mobileAboutPhotosIndex() : totalSlides - 1
+  const aboutSlideIndex = isMobile ? mobileHeroFinaleIndex() : totalSlides - 1
   const maxProgress = totalSlides - 1
   const { totalUnits } = storyScrollMetrics(totalSlides, isMobile)
   const trackHeightVh = totalUnits * STORY_VH_PER_UNIT
@@ -378,8 +375,7 @@ export function MarketingPreviewStory({
         theme.primary,
         theme.primary,
         ...MARKETING_PILLARS.flatMap((p) => [p.accent, p.accent]),
-        ABOUT_SLIDE_ACCENT,
-        ABOUT_SLIDE_ACCENT,
+        theme.primary,
       ]
     : []
 
@@ -400,6 +396,12 @@ export function MarketingPreviewStory({
               }}
               aria-hidden
             />
+          ) : null}
+
+          {isMobile ? (
+            <div className="marketing-story-mobile-cta-bar">
+              <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+            </div>
           ) : null}
 
           <div
@@ -439,7 +441,7 @@ export function MarketingPreviewStory({
           {isMobile ? (
             <>
               <MobileLogoIntroSlide index={0} progress={progress} totalSlides={totalSlides} />
-              <MobileHeroCopySlide index={1} progress={progress} totalSlides={totalSlides} {...ctaProps} />
+              <MobileHeroCopySlide index={1} progress={progress} totalSlides={totalSlides} />
               <MobileHeroShotSlide
                 index={2}
                 progress={progress}
@@ -453,7 +455,6 @@ export function MarketingPreviewStory({
                   index={mobilePillarCopyIndex(i)}
                   progress={progress}
                   totalSlides={totalSlides}
-                  {...ctaProps}
                 />
               ))}
               {MARKETING_PILLARS.map((pillar, i) => (
@@ -466,21 +467,10 @@ export function MarketingPreviewStory({
                   onImageClick={openLightbox}
                 />
               ))}
-              <MobileAboutCopySlide
-                index={mobileAboutCopyIndex()}
+              <MobileHeroCopySlide
+                index={mobileHeroFinaleIndex()}
                 progress={progress}
                 totalSlides={totalSlides}
-                content={aboutContent}
-                onAboutUs={onAboutUs}
-                {...ctaProps}
-              />
-              <MobileAboutPhotosSlide
-                index={mobileAboutPhotosIndex()}
-                progress={progress}
-                totalSlides={totalSlides}
-                content={aboutContent}
-                images={aboutImages}
-                onAboutUs={onAboutUs}
               />
             </>
           ) : (
@@ -619,22 +609,14 @@ function MobileHeroCopySlide({
   index,
   progress,
   totalSlides,
-  onLogin,
-  onTrial,
-  onPricing,
 }: {
   index: number
   progress: number
   totalSlides: number
-  onLogin?: () => void
-  onTrial?: () => void
-  onPricing?: () => void
 }) {
   return (
     <MobileStorySlideShell index={index} progress={progress} totalSlides={totalSlides} accent={theme.primary}>
-      <MarketingPreviewHeroCopy hideEyebrow>
-        <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
-      </MarketingPreviewHeroCopy>
+      <MarketingPreviewHeroCopy hideEyebrow />
     </MobileStorySlideShell>
   )
 }
@@ -668,24 +650,15 @@ function MobilePillarCopySlide({
   index,
   progress,
   totalSlides,
-  onLogin,
-  onTrial,
-  onPricing,
 }: {
   pillar: MarketingPillar
   index: number
   progress: number
   totalSlides: number
-  onLogin?: () => void
-  onTrial?: () => void
-  onPricing?: () => void
 }) {
   return (
     <MobileStorySlideShell index={index} progress={progress} totalSlides={totalSlides} accent={pillar.accent}>
       <PillarStoryBlock pillar={pillar} />
-      <div style={{ marginTop: 16 }}>
-        <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
-      </div>
     </MobileStorySlideShell>
   )
 }
@@ -712,134 +685,6 @@ function MobilePillarShotSlide({
         compact
         onExpand={() => onImageClick(pillar.image, pillar.title)}
       />
-    </MobileStorySlideShell>
-  )
-}
-
-function MobileAboutCopySlide({
-  index,
-  progress,
-  totalSlides,
-  content,
-  onAboutUs,
-  onLogin,
-  onTrial,
-  onPricing,
-}: {
-  index: number
-  progress: number
-  totalSlides: number
-  content: AboutUsContent
-  onAboutUs?: () => void
-  onLogin?: () => void
-  onTrial?: () => void
-  onPricing?: () => void
-}) {
-  const introText = content.blocks.find((b) => b.type === "text")?.body ?? content.subtitle
-  const goAbout = () => {
-    if (onAboutUs) onAboutUs()
-    else window.location.href = "/about"
-  }
-
-  return (
-    <MobileStorySlideShell
-      index={index}
-      progress={progress}
-      totalSlides={totalSlides}
-      accent={ABOUT_SLIDE_ACCENT}
-      className="marketing-story-slide-about"
-    >
-      <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 800, color: ABOUT_SLIDE_ACCENT, letterSpacing: "0.08em" }}>ABOUT US</p>
-      <h3 style={{ margin: "0 0 12px", fontSize: "clamp(1.35rem, 5vw, 1.75rem)", fontWeight: 900, color: theme.charcoal, lineHeight: 1.15 }}>
-        {content.title}
-      </h3>
-      <p style={{ margin: "0 0 12px", fontSize: 16, color: "#475569", lineHeight: 1.65 }}>{content.subtitle}</p>
-      <p style={{ margin: "0 0 16px", fontSize: 15, color: "#64748b", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{introText}</p>
-      <button
-        type="button"
-        onClick={goAbout}
-        style={{
-          marginBottom: 12,
-          padding: "10px 18px",
-          borderRadius: 10,
-          border: `2px solid ${ABOUT_SLIDE_ACCENT}`,
-          background: "transparent",
-          color: ABOUT_SLIDE_ACCENT,
-          fontWeight: 800,
-          fontSize: 14,
-          cursor: "pointer",
-        }}
-      >
-        Read our full story →
-      </button>
-      <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
-    </MobileStorySlideShell>
-  )
-}
-
-function MobileAboutPhotosSlide({
-  index,
-  progress,
-  totalSlides,
-  images,
-  onAboutUs,
-}: {
-  index: number
-  progress: number
-  totalSlides: number
-  content: AboutUsContent
-  images: AboutUsImageBlock[]
-  onAboutUs?: () => void
-}) {
-  const goAbout = () => {
-    if (onAboutUs) onAboutUs()
-    else window.location.href = "/about"
-  }
-
-  return (
-    <MobileStorySlideShell
-      index={index}
-      progress={progress}
-      totalSlides={totalSlides}
-      accent={ABOUT_SLIDE_ACCENT}
-      className="marketing-story-slide-about"
-    >
-      {images.length > 0 ? (
-        <div className="marketing-story-about-photo-grid marketing-story-about-photo-grid-mobile">
-          {images.slice(0, 3).map((img) => (
-            <figure key={img.id} style={{ margin: 0 }}>
-              <div className="marketing-story-about-photo-frame">
-                <img src={img.url} alt={img.alt?.trim() || "Tradesman team"} />
-              </div>
-            </figure>
-          ))}
-        </div>
-      ) : (
-        <div className="marketing-story-about-photo-placeholder">
-          <img src={logo} alt="" style={{ width: 64, opacity: 0.35, marginBottom: 12 }} />
-          <p style={{ margin: 0, fontSize: 14, color: "#94a3b8", textAlign: "center", lineHeight: 1.5 }}>
-            Veteran-founded. Built for contractors who want to focus on the work—not the paperwork.
-          </p>
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={goAbout}
-        style={{
-          marginTop: 16,
-          padding: "10px 18px",
-          borderRadius: 10,
-          border: `2px solid ${ABOUT_SLIDE_ACCENT}`,
-          background: "transparent",
-          color: ABOUT_SLIDE_ACCENT,
-          fontWeight: 800,
-          fontSize: 14,
-          cursor: "pointer",
-          alignSelf: "center",
-        }}
-      >
-        Full About Us page →
-      </button>
     </MobileStorySlideShell>
   )
 }
@@ -1533,12 +1378,20 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
         .marketing-story-root-mobile .marketing-story-viewport {
           background: linear-gradient(165deg, #fff 0%, #f8fafc 70%, #eef2f6 100%);
         }
-        .marketing-story-logo-wrap-mobile.marketing-story-logo-wrap-visible {
-          top: 50%;
-          right: auto;
-          left: 50%;
-          transform: translate(-50%, -50%) scale(${LOGO_SCALE_START});
-          transform-origin: 50% 50%;
+        .marketing-story-mobile-cta-bar {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          z-index: 85;
+          display: flex;
+          justify-content: center;
+          padding: calc(8px + env(safe-area-inset-top, 0px)) clamp(12px, 4vw, 72px) 10px clamp(12px, 4vw, 24px);
+          background: linear-gradient(to bottom, rgba(248,250,252,0.98) 72%, rgba(248,250,252,0.85) 88%, transparent);
+          pointer-events: none;
+        }
+        .marketing-story-mobile-cta-bar > div {
+          pointer-events: auto;
         }
         .marketing-story-mobile-slide {
           background: linear-gradient(165deg, #fff 0%, #f8fafc 70%, #eef2f6 100%);
@@ -1553,7 +1406,7 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
           flex-direction: column;
           justify-content: center;
           align-items: stretch;
-          padding: clamp(72px, 12vh, 96px) clamp(16px, 5vw, 24px) clamp(80px, 14vh, 108px);
+          padding: calc(56px + env(safe-area-inset-top, 0px)) clamp(16px, 5vw, 24px) clamp(80px, 14vh, 108px);
           min-height: 0;
           overflow-y: auto;
           -webkit-overflow-scrolling: touch;
@@ -1591,6 +1444,9 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
         }
         .marketing-story-logo {
           height: clamp(64px, 14vw, 88px);
+        }
+        .marketing-story-root-mobile .marketing-story-logo-wrap {
+          z-index: 90;
         }
         .marketing-story-dots {
           top: auto;
