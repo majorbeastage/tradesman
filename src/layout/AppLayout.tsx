@@ -4,13 +4,13 @@ import { CopyrightVersionFooter } from "../components/CopyrightVersionFooter"
 import mytIcon from "../assets/MyT.png"
 import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
-import { theme } from "../styles/theme"
 import { useIsMobile } from "../hooks/useIsMobile"
 import { useLocale } from "../i18n/LocaleContext"
 import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 import PortalViewBar from "../components/PortalViewBar"
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
+import { useAppScheme } from "../contexts/AppSchemeContext"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -80,8 +80,19 @@ export default function AppLayout({
     })
   }
 
+  const { schemeId, portalStyle } = useAppScheme()
+
   return (
-    <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", alignItems: "stretch", background: theme.portalShellBackground }}>
+    <div
+      className="portal-charcoal"
+      data-app-scheme={schemeId}
+      style={{
+        display: "flex",
+        minHeight: "100vh",
+        alignItems: "stretch",
+        ...portalStyle,
+      }}
+    >
       {!hideSidebar && isMobile ? (
         <Sidebar
           setPage={setPage}
@@ -115,7 +126,7 @@ export default function AppLayout({
               justifyContent: "space-between",
               gap: 12,
               padding: "12px 14px",
-              background: theme.charcoalSmoke,
+              background: "var(--scheme-sidebar-bg, #2a2a2a)",
               color: "#fff",
               boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
             }}
@@ -207,7 +218,7 @@ export default function AppLayout({
           </div>
         )}
         <main
-          className="app-main-safe"
+          className="app-main-safe scheme-main-content"
           style={{
             flex: 1,
             padding: isMobile

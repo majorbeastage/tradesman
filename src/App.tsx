@@ -76,8 +76,8 @@ import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
-import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId } from "./contexts/PortalViewContext"
-import { PortalViewProvider } from "./contexts/PortalViewContext"
+import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId, PortalViewProvider } from "./contexts/PortalViewContext"
+import { AppSchemeProvider } from "./contexts/AppSchemeContext"
 import type { PortalShell } from "./lib/portalViewRules"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
 import { APP_NAV_PREFIX, parseAppHash } from "./lib/appNavigationHistory"
@@ -86,6 +86,12 @@ import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 
 /** Contractor portal (user + office shells) with shared view-as context. */
+function AppSchemeBridge({ children }: { children: React.ReactNode }) {
+  const effectiveUserId = useEffectiveUserId()
+  const { user } = useAuth()
+  return <AppSchemeProvider profileUserId={effectiveUserId || user?.id}>{children}</AppSchemeProvider>
+}
+
 function ContractorPortal({
   initialShell,
   setView,
@@ -110,7 +116,9 @@ function ContractorPortal({
   return (
     <ViewProvider setView={setView}>
       <PortalViewProvider onShellChange={handleShellChange}>
-        {shell === "office" ? <OfficeManagerApp /> : <MainApp />}
+        <AppSchemeBridge>
+          {shell === "office" ? <OfficeManagerApp /> : <MainApp />}
+        </AppSchemeBridge>
       </PortalViewProvider>
     </ViewProvider>
   )

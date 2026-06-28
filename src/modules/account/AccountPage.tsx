@@ -18,6 +18,7 @@ import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
+import AppSchemePicker from "../../components/AppSchemePicker"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
@@ -260,6 +261,7 @@ export function AccountProfilePanel({
     business_address: false,
     service_area: false,
     mobile_app: false,
+    app_scheme: false,
     business_hours: false,
     call_forwarding: false,
     call_screening: false,
@@ -901,6 +903,18 @@ export function AccountProfilePanel({
                     onToggle={toggleFold("mobile_app")}
                   >
                     <MobileAppPreferencesCard profileUserId={profileUserId} hideTitle />
+                  </AccountFold>
+                </Fragment>
+              )
+              if (sectionId === "app_scheme") return (
+                <Fragment key={sectionId}>
+                  <AccountFold
+                    title={t("account.section.schemeTitle")}
+                    subtitle={t("account.section.schemeSub")}
+                    open={foldOpen.app_scheme}
+                    onToggle={toggleFold("app_scheme")}
+                  >
+                    <AppSchemePicker profileUserId={profileUserId} canEdit={profileUserId === user?.id} />
                   </AccountFold>
                 </Fragment>
               )

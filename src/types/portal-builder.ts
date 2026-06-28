@@ -631,6 +631,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "business_address", label: "Business address" },
   { id: "service_area", label: "Service radius (miles from business address)" },
   { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },
+  { id: "app_scheme", label: "Appearance — color scheme & custom logo" },
   { id: "business_hours", label: "Timezone & business hours" },
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
   { id: "call_screening", label: "Optional call screening / auto-attendant (AI or recorded menu)" },

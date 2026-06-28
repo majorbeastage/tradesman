@@ -1,8 +1,8 @@
 import { Fragment, type CSSProperties } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../constants/helpDesk"
-import { theme } from "../styles/theme"
 import logo from "../assets/logo.png"
 import accountIcon from "../assets/MyT.png"
+import { useAppScheme } from "../contexts/AppSchemeContext"
 import { TAB_ID_LABELS, V2_SIDEBAR_DEFAULT_TAB_IDS } from "../types/portal-builder"
 import { useLocale } from "../i18n/LocaleContext"
 import { formatPortalTabLabel } from "../i18n/navLabel"
@@ -50,12 +50,14 @@ export default function Sidebar({
 }: SidebarProps) {
   const { t } = useLocale()
   const { profilePhotoUrl } = useAuth()
-  const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
+  const { logoUrl, schemeId } = useAppScheme()
+  const sidebarLogo = logoUrl || logo
+  const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: "var(--scheme-sidebar-text, #F97316)" }
   const subItemStyle: CSSProperties = {
     cursor: "pointer",
     margin: "4px 0 8px",
     paddingLeft: 14,
-    color: theme.primary,
+    color: "var(--scheme-sidebar-text, #F97316)",
     fontSize: 13,
     fontWeight: 600,
     opacity: 0.92,
@@ -65,9 +67,9 @@ export default function Sidebar({
     minHeight: 42,
     padding: "10px 12px",
     borderRadius: 10,
-    border: "1px solid rgba(249,115,22,0.35)",
+    border: "1px solid var(--scheme-primary-border, rgba(249,115,22,0.35))",
     background: "rgba(255,255,255,0.04)",
-    color: theme.primary,
+    color: "var(--scheme-sidebar-text, #F97316)",
     fontWeight: 700,
     fontSize: 14,
     textAlign: "left",
@@ -97,7 +99,7 @@ export default function Sidebar({
     border: "none",
     background: "transparent",
     fontWeight: 700,
-    color: theme.primary,
+    color: "var(--scheme-sidebar-text, #F97316)",
     fontSize: 11,
     letterSpacing: 0.3,
     textAlign: "left",
@@ -130,8 +132,8 @@ export default function Sidebar({
               onClick={() => navigate("customers")}
               style={{
                 ...mobileTabButtonStyle,
-                borderColor: activePage === "customers" ? theme.primary : "rgba(249,115,22,0.35)",
-                background: activePage === "customers" ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+                borderColor: activePage === "customers" ? "var(--scheme-primary, #F97316)" : "var(--scheme-primary-border, rgba(249,115,22,0.35))",
+                background: activePage === "customers" ? "var(--scheme-nav-active-bg, rgba(249,115,22,0.18))" : mobileTabButtonStyle.background,
               }}
             >
               {formatPortalTabLabel("customers", tab.label, t)}
@@ -157,8 +159,8 @@ export default function Sidebar({
               onClick={() => navigate("customers")}
               style={{
                 ...mobileTabButtonStyle,
-                borderColor: customersActive ? theme.primary : "rgba(249,115,22,0.35)",
-                background: customersActive ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+                borderColor: customersActive ? "var(--scheme-primary, #F97316)" : "var(--scheme-primary-border, rgba(249,115,22,0.35))",
+                background: customersActive ? "var(--scheme-nav-active-bg, rgba(249,115,22,0.18))" : mobileTabButtonStyle.background,
               }}
             >
               {formatPortalTabLabel("customers", tab.label, t)}
@@ -172,8 +174,8 @@ export default function Sidebar({
                 minHeight: 38,
                 fontSize: 13,
                 fontWeight: emailActive ? 800 : 600,
-                borderColor: emailActive ? theme.primary : "rgba(249,115,22,0.28)",
-                background: emailActive ? "rgba(249,115,22,0.14)" : "rgba(255,255,255,0.02)",
+                borderColor: emailActive ? "var(--scheme-primary, #F97316)" : "var(--scheme-primary-border, rgba(249,115,22,0.28))",
+                background: emailActive ? "var(--scheme-nav-active-bg, rgba(249,115,22,0.14))" : "rgba(255,255,255,0.02)",
               }}
             >
               {t("nav.emailClient")}
@@ -207,8 +209,8 @@ export default function Sidebar({
           onClick={() => navigate(tab.tab_id)}
           style={{
             ...mobileTabButtonStyle,
-            borderColor: activePage === tab.tab_id ? theme.primary : "rgba(249,115,22,0.35)",
-            background: activePage === tab.tab_id ? "rgba(249,115,22,0.18)" : mobileTabButtonStyle.background,
+            borderColor: activePage === tab.tab_id ? "var(--scheme-primary, #F97316)" : "var(--scheme-primary-border, rgba(249,115,22,0.35))",
+            background: activePage === tab.tab_id ? "var(--scheme-nav-active-bg, rgba(249,115,22,0.18))" : mobileTabButtonStyle.background,
           }}
         >
           {formatPortalTabLabel(tab.tab_id, tab.label, t)}
@@ -231,9 +233,9 @@ export default function Sidebar({
     <div
       style={{
         width: isMobile ? "min(88vw, 300px)" : collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
-        background: theme.charcoalSmoke,
+        background: "var(--scheme-sidebar-bg, #2a2a2a)",
         backgroundImage: grainUrl,
-        color: theme.primary,
+        color: "var(--scheme-sidebar-text, #F97316)",
         padding: isMobile ? "16px 14px 20px" : collapsed ? "12px 8px 16px" : "20px",
         display: "flex",
         flexDirection: "column",
@@ -262,7 +264,7 @@ export default function Sidebar({
           width: 85%;
           height: 85%;
           transform: translate(-50%, -50%);
-          background: ${theme.primary};
+          background: var(--scheme-logo-glow, #F97316);
           border-radius: 8px;
           filter: blur(22px);
           z-index: 0;
@@ -287,9 +289,9 @@ export default function Sidebar({
             height: 32,
             padding: 0,
             borderRadius: 8,
-            border: "1px solid rgba(249,115,22,0.35)",
+            border: "1px solid var(--scheme-primary-border, rgba(249,115,22,0.35))",
             background: "rgba(255,255,255,0.06)",
-            color: theme.primary,
+            color: "var(--scheme-sidebar-text, #F97316)",
             fontWeight: 800,
             fontSize: 16,
             lineHeight: 1,
@@ -304,8 +306,8 @@ export default function Sidebar({
       <div className="logo-glow-wrapper">
         <div className="logo-glow" aria-hidden />
         <img
-          src={logo}
-          alt="Tradesman"
+          src={sidebarLogo}
+          alt={schemeId === "custom" ? "Company logo" : "Tradesman"}
           style={{
             maxHeight: isMobile ? "72px" : "128px",
             width: "100%",
@@ -340,7 +342,7 @@ export default function Sidebar({
                 borderRadius: 10,
                 border: `1px solid rgba(249,115,22,0.45)`,
                 background: "rgba(249,115,22,0.12)",
-                color: theme.primary,
+                color: "var(--scheme-sidebar-text, #F97316)",
                 fontWeight: 700,
                 fontSize: 14,
                 cursor: "pointer",
@@ -369,7 +371,7 @@ export default function Sidebar({
                 border: `1px solid rgba(249,115,22,0.45)`,
                 background: "rgba(249,115,22,0.12)",
                 cursor: "pointer",
-                color: theme.primary,
+                color: "var(--scheme-sidebar-text, #F97316)",
                 fontWeight: 700,
               }}
             >
@@ -389,7 +391,7 @@ export default function Sidebar({
                 border: "none",
                 background: "transparent",
                 cursor: "pointer",
-                color: theme.primary,
+                color: "var(--scheme-sidebar-text, #F97316)",
                 fontWeight: 600,
                 fontSize: 14,
                 textAlign: "left",
@@ -530,7 +532,7 @@ export default function Sidebar({
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              color: theme.primary,
+              color: "var(--scheme-sidebar-text, #F97316)",
               fontSize: 14,
               fontWeight: 500,
               textAlign: "left",

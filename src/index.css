@@ -67,9 +67,9 @@ button:focus-visible {
   }
 }
 
-/* User / office-manager portal: sidebar stays dark; main column uses theme.background + dark text */
+/* User / office-manager portal — scheme tokens live in appSchemes.css */
 .portal-charcoal {
-  color: #e5e7eb;
+  color: var(--scheme-sidebar-text, #e5e7eb);
 }
 .portal-charcoal a {
   color: #93c5fd;
@@ -79,7 +79,7 @@ button:focus-visible {
 }
 
 .portal-charcoal main.app-main-safe {
-  color: #111827;
+  color: var(--scheme-main-text, #111827);
 }
 .portal-charcoal main.app-main-safe a {
   color: #1d4ed8;
