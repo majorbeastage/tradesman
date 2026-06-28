@@ -27,7 +27,7 @@ export const PRODUCT_PACKAGES: {
   title: string
   priceLine: string
 }[] = [
-  { id: "base", title: "Base Package", priceLine: "$124.99/month + applicable taxes and fees*" },
+  { id: "base", title: "Base Package · 1 User", priceLine: "$124.99/month + applicable taxes and fees*" },
   { id: "office_manager_entry", title: "Office Manager Entry Level", priceLine: "$159.99/month + applicable taxes and fees*" },
   { id: "office_manager_pro", title: "Office Manager Pro", priceLine: "$199.99/month + applicable taxes and fees*" },
   { id: "office_manager_elite", title: "Office Manager Elite", priceLine: "$369.99/month + applicable taxes and fees*" },

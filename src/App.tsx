@@ -25,6 +25,7 @@ import SignupPage from "./modules/auth/SignupPage"
 import ResetPasswordPage from "./modules/auth/ResetPasswordPage"
 import AboutUsPage from "./modules/public/AboutUsPage"
 import PricingPage from "./modules/public/PricingPage"
+import PricingPreviewPage from "./modules/public/PricingPreviewPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
 import AdminApp from "./modules/admin/AdminApp"
 import SmsConsentPage from "./modules/public/SmsConsentPage"
@@ -660,6 +661,31 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
         onAdminLogin={() => {
           try {
             sessionStorage.setItem("tradesman_open_admin_login", "1")
+          } catch {
+            /* ignore */
+          }
+          window.location.href = "/"
+        }}
+      />
+    )
+  }
+  if (pathname === "/pricing-preview" || pathname.startsWith("/pricing-preview/")) {
+    return (
+      <PricingPreviewPage
+        onBack={() => {
+          window.location.href = "/"
+        }}
+        onSignupWithPackage={(packageId) => {
+          try {
+            sessionStorage.setItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, packageId)
+          } catch {
+            /* ignore */
+          }
+          window.location.href = "/"
+        }}
+        onHelpDecidingProduct={() => {
+          try {
+            sessionStorage.setItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, "1")
           } catch {
             /* ignore */
           }
