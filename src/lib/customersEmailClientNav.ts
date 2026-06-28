@@ -39,14 +39,14 @@ export type EmailClientLayoutFlags = {
   hidePortalChrome: boolean
 }
 
-/** Desktop email client uses full width; standalone tab also drops portal view bar. */
+/** Sidebar hidden only in standalone pop-out tab; in-app email keeps the taskbar. */
 export function emailClientLayoutFlags(page: string, hash?: string): EmailClientLayoutFlags {
   const onEmailPage = page === CUSTOMERS_EMAIL_PAGE
   const standalone = onEmailPage && isEmailClientStandaloneFromHash(hash)
   return {
     onEmailPage,
     standalone,
-    hideSidebar: onEmailPage,
+    hideSidebar: standalone,
     hidePortalChrome: standalone,
   }
 }

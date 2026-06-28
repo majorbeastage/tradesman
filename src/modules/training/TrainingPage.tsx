@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
+import SignupPoliciesAcknowledgement from "../../components/SignupPoliciesAcknowledgement"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { provisionSandboxAccount } from "../../lib/sandboxApi"
@@ -22,6 +23,9 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
   const [embedSlug, setEmbedSlug] = useState("")
   const [seededCustomers, setSeededCustomers] = useState<number | null>(null)
   const [loginBusy, setLoginBusy] = useState(false)
+  const [ackTerms, setAckTerms] = useState(false)
+  const [ackPrivacy, setAckPrivacy] = useState(false)
+  const [ackSms, setAckSms] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -34,11 +38,26 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
       setError("Valid email is required.")
       return
     }
+    if (!ackTerms) {
+      setError("Please confirm that you agree to the Terms & Conditions.")
+      return
+    }
+    if (!ackPrivacy) {
+      setError("Please confirm that you acknowledge the Privacy Policy.")
+      return
+    }
+    if (!ackSms) {
+      setError("Please confirm the SMS consent & messaging policy.")
+      return
+    }
     setSubmitting(true)
     const result = await provisionSandboxAccount({
       email: email.trim(),
       name: name.trim(),
       businessName: businessName.trim(),
+      ackTerms: true,
+      ackPrivacy: true,
+      ackSms: true,
     })
     setSubmitting(false)
     if (!result.ok) {
@@ -177,6 +196,14 @@ export default function TrainingPage({ onBack, onLogin }: TrainingPageProps) {
               Email for this trial workspace (not your live account email)
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
             </label>
+            <SignupPoliciesAcknowledgement
+              ackTerms={ackTerms}
+              onAckTermsChange={setAckTerms}
+              ackPrivacy={ackPrivacy}
+              onAckPrivacyChange={setAckPrivacy}
+              ackSms={ackSms}
+              onAckSmsChange={setAckSms}
+            />
             {error ? <div style={{ color: "#b91c1c", fontSize: 13 }}>{error}</div> : null}
             {submitting ? (
               <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>

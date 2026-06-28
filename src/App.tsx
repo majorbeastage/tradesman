@@ -80,6 +80,7 @@ import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId } fr
 import { PortalViewProvider } from "./contexts/PortalViewContext"
 import type { PortalShell } from "./lib/portalViewRules"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
+import { APP_NAV_PREFIX, parseAppHash } from "./lib/appNavigationHistory"
 import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
@@ -571,7 +572,7 @@ function MainAppInner() {
 
 function App() {
   if (typeof window !== "undefined") normalizePasswordRecoveryUrlInBrowser()
-  const { refetchProfile } = useAuth()
+  const { refetchProfile, user, role, loading: authLoading } = useAuth()
   const [view, setView] = useState<View>("home")
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
@@ -602,6 +603,21 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       /* ignore */
     }
   }, [])
+
+  /** Deep links like #/app/customers-email?standalone=1 must open the portal, not the marketing home page. */
+  useEffect(() => {
+    if (authLoading) return
+    if (typeof window === "undefined" || !window.location.hash.startsWith(APP_NAV_PREFIX)) return
+    const parsed = parseAppHash(window.location.hash)
+    if (!parsed.page) return
+    if (!user) {
+      setView("login")
+      return
+    }
+    if (role === "admin") setView("app")
+    else if (shouldUseOfficeManagerPortal(role ?? "user")) setView("office")
+    else setView("app")
+  }, [authLoading, user, role])
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 

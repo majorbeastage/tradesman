@@ -130,11 +130,37 @@ Deno.serve(async (req) => {
 
   const admin = createClient(supabaseUrl, serviceRoleKey)
 
-  let body: { email?: string; name?: string; business_name?: string | null }
+  let body: {
+    email?: string
+    name?: string
+    business_name?: string | null
+    ack_terms?: boolean
+    ack_privacy?: boolean
+    ack_sms?: boolean
+  }
   try {
     body = await req.json()
   } catch {
     return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
+  if (body.ack_terms !== true) {
+    return new Response(JSON.stringify({ error: "Terms acknowledgment is required." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+  if (body.ack_privacy !== true) {
+    return new Response(JSON.stringify({ error: "Privacy acknowledgment is required." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+  if (body.ack_sms !== true) {
+    return new Response(JSON.stringify({ error: "SMS consent acknowledgment is required." }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -240,11 +266,18 @@ Deno.serve(async (req) => {
     },
   }
 
+  const policyAckAt = new Date().toISOString()
   const profileMeta = {
     sandbox_account: true,
     demo_account: false,
     demo_communications_blocked: false,
     sandbox_expires_at: expiresAt,
+    trial_signup_policy_ack: {
+      terms: true,
+      privacy: true,
+      sms: true,
+      at: policyAckAt,
+    },
     sandbox_workspace_v1: {
       v: 1,
       companyName,

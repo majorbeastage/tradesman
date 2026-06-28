@@ -90,6 +90,9 @@ export async function provisionSandboxAccount(params: {
   email: string
   name: string
   businessName?: string
+  ackTerms?: boolean
+  ackPrivacy?: boolean
+  ackSms?: boolean
 }): Promise<{
   ok: boolean
   error?: string
@@ -117,6 +120,9 @@ export async function provisionSandboxAccount(params: {
         email: params.email.trim(),
         name: params.name.trim(),
         business_name: params.businessName?.trim() || null,
+        ack_terms: params.ackTerms === true,
+        ack_privacy: params.ackPrivacy === true,
+        ack_sms: params.ackSms === true,
       }),
       signal: ac.signal,
     })

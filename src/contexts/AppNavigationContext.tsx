@@ -40,11 +40,12 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
         clearCustomerProfileReturn()
       }
       setPage(nextPage)
-      const hash = buildAppHash(nextPage)
+      const parsed = parseAppHash(window.location.hash)
+      const hash = buildAppHash(nextPage, { standalone: parsed.standalone ? true : undefined })
       if (opts?.replace) {
-        history.replaceState({ appNav: true, page: nextPage }, "", hash)
+        history.replaceState({ appNav: true, page: nextPage, standalone: parsed.standalone || undefined }, "", hash)
       } else {
-        history.pushState({ appNav: true, page: nextPage }, "", hash)
+        history.pushState({ appNav: true, page: nextPage, standalone: parsed.standalone || undefined }, "", hash)
       }
     },
     [setPage],
@@ -98,7 +99,11 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
     }
     const parsed = parseAppHash(window.location.hash)
     if (parsed.page === page && !parsed.overlay) return
-    history.pushState({ appNav: true, page }, "", buildAppHash(page))
+    history.pushState(
+      { appNav: true, page, standalone: parsed.standalone || undefined },
+      "",
+      buildAppHash(page, { standalone: parsed.standalone ? true : undefined }),
+    )
   }, [page])
 
   useEffect(() => {
