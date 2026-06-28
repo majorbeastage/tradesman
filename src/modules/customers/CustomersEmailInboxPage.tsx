@@ -398,8 +398,36 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
   const layoutCols = isMobile ? "1fr" : "240px minmax(280px, 340px) minmax(0, 1fr)"
 
+  const pageShellStyle: CSSProperties = {
+    width: "100%",
+    maxWidth: isMobile ? undefined : "none",
+    margin: 0,
+    padding: isMobile ? "8px 8px 32px" : "0 0 32px",
+    boxSizing: "border-box",
+    ...(isMobile
+      ? {}
+      : {
+          display: "flex",
+          flexDirection: "column",
+          minHeight: "calc(100vh - 140px)",
+        }),
+  }
+
+  const inboxGridStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: layoutCols,
+    gap: 12,
+    alignItems: "stretch",
+    ...(isMobile
+      ? {}
+      : {
+          flex: 1,
+          minHeight: 560,
+        }),
+  }
+
   return (
-    <div style={{ padding: isMobile ? "8px 8px 32px" : "8px 16px 40px", maxWidth: 1400, margin: "0 auto" }}>
+    <div style={pageShellStyle}>
       <div
         style={{
           display: "flex",
@@ -544,15 +572,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         </div>
       ) : null}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: layoutCols,
-          gap: 12,
-          alignItems: "stretch",
-          minHeight: isMobile ? undefined : 560,
-        }}
-      >
+      <div style={inboxGridStyle}>
         {!isMobile ? (
           <aside style={panelStyle}>
             <p style={sectionTitleStyle}>Folders</p>
@@ -583,7 +603,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         ) : null}
 
         {showBrowseList ? (
-        <section style={{ ...panelStyle, display: "flex", flexDirection: "column", minHeight: isMobile ? undefined : 320 }}>
+        <section style={{ ...panelStyle, display: "flex", flexDirection: "column", minWidth: 0, minHeight: isMobile ? undefined : 0 }}>
           <p style={sectionTitleStyle}>
             {loading ? "Loading…" : `${filteredThreads.length} conversation${filteredThreads.length === 1 ? "" : "s"}`}
           </p>
@@ -684,7 +704,15 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         ) : null}
 
         {showThreadDetail ? (
-        <section style={{ ...panelStyle, minHeight: isMobile ? undefined : 320 }}>
+        <section
+          style={{
+            ...panelStyle,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            ...(isMobile ? { minHeight: undefined } : { minHeight: 0, flex: 1 }),
+          }}
+        >
           {isMobile ? (
             <button
               type="button"
@@ -698,7 +726,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
             <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>Select a conversation to read and reply.</p>
           ) : (
             <>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
                 <div style={{ flex: 1, minWidth: 180 }}>
                   <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: theme.text }}>{selectedThread.subject}</h2>
                   <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b" }}>
@@ -730,7 +758,8 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
               <div
                 style={{
-                  maxHeight: isMobile ? "none" : 340,
+                  flex: isMobile ? undefined : 1,
+                  minHeight: isMobile ? undefined : 0,
                   overflowY: isMobile ? "visible" : "auto",
                   display: "flex",
                   flexDirection: "column",
