@@ -11,6 +11,7 @@ import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 import PortalViewBar from "../components/PortalViewBar"
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
 import { useAppScheme } from "../contexts/AppSchemeContext"
+import { resolveSchemeTone } from "../lib/appSchemes"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -80,12 +81,14 @@ export default function AppLayout({
     })
   }
 
-  const { schemeId, portalStyle } = useAppScheme()
+  const { schemeId, scheme, portalStyle } = useAppScheme()
+  const schemeTone = resolveSchemeTone(schemeId, scheme.custom)
 
   return (
     <div
       className="portal-charcoal"
       data-app-scheme={schemeId}
+      data-scheme-tone={schemeTone}
       style={{
         display: "flex",
         minHeight: "100vh",

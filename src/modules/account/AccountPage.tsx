@@ -23,6 +23,7 @@ import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { usePortalTheme } from "../../lib/useSchemeStyles"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -671,7 +672,7 @@ export function AccountProfilePanel({
   }
 
   return (
-    <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
+    <div className="scheme-page scheme-card" style={{ padding: 20, borderRadius: 12 }}>
       {adminContext && (
         <div style={{ marginBottom: 16 }}>
           <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>{t("account.adminHeader")}</h2>
@@ -1366,14 +1367,15 @@ export function AccountProfilePanel({
 export default function AccountPage() {
   const { user } = useAuth()
   const { t } = useLocale()
+  const portalTheme = usePortalTheme()
   if (!user?.id) {
-    return <p style={{ padding: 24, color: theme.text }}>{t("account.signInPrompt")}</p>
+    return <p style={{ padding: 24, color: portalTheme.text }}>{t("account.signInPrompt")}</p>
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ padding: 20, borderRadius: 12, background: "#ffffff", border: `1px solid ${theme.border}` }}>
-        <h1 style={{ margin: "0 0 8px", color: theme.text }}>{t("account.pageTitle")}</h1>
-        <p style={{ margin: 0, color: "#6b7280" }}>{t("account.pageSubtitle")}</p>
+    <div className="scheme-page" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div className="scheme-card" style={{ padding: 20, borderRadius: 12 }}>
+        <h1 style={{ margin: "0 0 8px", color: portalTheme.text }}>{t("account.pageTitle")}</h1>
+        <p style={{ margin: 0, color: portalTheme.textMuted }}>{t("account.pageSubtitle")}</p>
       </div>
       <AccountProfilePanel profileUserId={user.id} loginEmail={user.email ?? undefined} showPasswordReset />
     </div>

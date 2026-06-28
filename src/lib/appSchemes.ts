@@ -152,8 +152,36 @@ export function getSchemeDefinition(id: AppSchemeId): AppSchemeDefinition {
   return APP_SCHEME_DEFINITIONS.find((d) => d.id === id) ?? APP_SCHEME_DEFINITIONS[0]
 }
 
+export type SchemeTone = "dark" | "light"
+
+const DARK_SHELL_SCHEMES = new Set<AppSchemeId>(["dark", "matrix", "garage"])
+
+function hexToLuminance(hex: string): number {
+  const h = hex.replace(/^#/, "")
+  if (h.length < 6) return 1
+  const r = parseInt(h.slice(0, 2), 16) / 255
+  const g = parseInt(h.slice(2, 4), 16) / 255
+  const b = parseInt(h.slice(4, 6), 16) / 255
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+/** Dark shell → light default text; light shell → dark default text. */
+export function resolveSchemeTone(schemeId: AppSchemeId, custom?: AppSchemeCustomConfig): SchemeTone {
+  if (DARK_SHELL_SCHEMES.has(schemeId)) return "dark"
+  if (schemeId === "custom" && custom?.backgroundColor) {
+    return hexToLuminance(custom.backgroundColor) < 0.45 ? "dark" : "light"
+  }
+  return "light"
+}
+
 /** CSS custom properties applied on `.portal-charcoal[data-app-scheme]`. */
 export function customSchemeCssVars(custom: AppSchemeCustomConfig): Record<string, string> {
+  const darkShell = hexToLuminance(custom.backgroundColor) < 0.45
+  const mainText = darkShell ? "#e2e8f0" : "#111827"
+  const muted = darkShell ? "#94a3b8" : "#6b7280"
+  const cardBg = darkShell ? "rgba(30, 41, 59, 0.92)" : "#ffffff"
+  const border = darkShell ? "rgba(148, 163, 184, 0.22)" : "#E5E7EB"
   return {
     "--scheme-primary": custom.primaryColor,
     "--scheme-primary-soft": `${custom.primaryColor}33`,
@@ -162,15 +190,19 @@ export function customSchemeCssVars(custom: AppSchemeCustomConfig): Record<strin
     "--scheme-sidebar-bg": custom.sidebarColor,
     "--scheme-shell-bg": custom.backgroundColor,
     "--scheme-main-bg": custom.backgroundColor,
-    "--scheme-card-bg": "#ffffff",
-    "--scheme-text": "#111827",
-    "--scheme-text-muted": "#6b7280",
-    "--scheme-border": "#E5E7EB",
+    "--scheme-card-bg": cardBg,
+    "--scheme-text": mainText,
+    "--scheme-text-muted": muted,
+    "--scheme-border": border,
     "--scheme-sidebar-text": custom.primaryColor,
-    "--scheme-main-text": "#111827",
+    "--scheme-main-text": mainText,
+    "--scheme-on-light-surface": "#111827",
+    "--scheme-on-primary": "#ffffff",
     "--scheme-logo-glow": custom.accentColor,
     "--scheme-nav-active-bg": `${custom.primaryColor}2e`,
-    "--scheme-card-shadow": "0 8px 24px rgba(15, 23, 42, 0.08)",
+    "--scheme-card-shadow": darkShell
+      ? "0 0 32px rgba(0,0,0,0.35), 0 12px 40px rgba(0,0,0,0.45)"
+      : "0 8px 24px rgba(15, 23, 42, 0.08)",
     "--scheme-pattern-opacity": "0",
   }
 }

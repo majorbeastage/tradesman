@@ -1,0 +1,222 @@
+/**
+ * Platform-wide intelligent contrast for app schemes.
+ * Requires: .portal-charcoal[data-scheme-tone="dark"|"light"] + main.scheme-main-content
+ *
+ * Rules:
+ * - Dark shell → default light text on page/cards
+ * - Light button surfaces → dark text
+ * - Primary/dark buttons → light text
+ * - Status colors (red/green/amber) preserved
+ */
+
+/* ── Light tone: ensure readable dark text on light shells ── */
+.portal-charcoal[data-scheme-tone="light"] main.app-main-safe.scheme-main-content {
+  color: var(--scheme-main-text, #111827);
+}
+
+/* ── Dark tone: base text on shell ── */
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content {
+  color: var(--scheme-main-text, #e2e8f0);
+}
+
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h1,
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h2,
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h3,
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h4,
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h5,
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content h6 {
+  color: var(--scheme-main-text, #e2e8f0);
+}
+
+.portal-charcoal[data-scheme-tone="dark"] main.app-main-safe.scheme-main-content a:not([style*="background"]) {
+  color: #93c5fd;
+}
+
+/* ── Override hardcoded dark body text colors (React inline styles) ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #111827"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#111827"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: rgb(17, 24, 39)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: rgb(17,24,39)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #0f172a"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#0f172a"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: rgb(15, 23, 42)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #1f2937"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#1f2937"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #374151"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#374151"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #334155"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#334155"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #475569"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#475569"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #64748b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#64748b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #6b7280"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#6b7280"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #9ca3af"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#9ca3af"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #000"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#000"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: black"] {
+  color: var(--scheme-main-text, #e2e8f0) !important;
+}
+
+/* Muted grays → scheme muted (slightly dimmer than body) */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #64748b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#64748b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #6b7280"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#6b7280"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #9ca3af"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#9ca3af"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #475569"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#475569"] {
+  color: var(--scheme-text-muted, #94a3b8) !important;
+}
+
+/* Preserve semantic / status colors on dark tone */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #b91c1c"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#b91c1c"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #991b1b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#991b1b"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #dc2626"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #059669"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#059669"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #15803d"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #16a34a"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #b45309"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color: #9a3412"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="color:#9a3412"] {
+  /* keep inline color */
+}
+
+/* ── Light-surface panels → dark text (even on dark shell) ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content .scheme-light-surface,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background:#fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #ffffff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background:#ffffff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: rgb(255, 255, 255)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: white"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background:#fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #f8fafc"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background:#f8fafc"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #eff6ff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background:#eff6ff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #fff7ed"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #ecfdf5"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: rgba(249, 115, 22, 0.08)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: rgba(249,115,22,0.08)"] {
+  color: var(--scheme-on-light-surface, #111827);
+}
+
+/* Descendants inside explicit light panels (not converted to dark cards) */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content .scheme-light-surface *,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #fff7ed"] *,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #ecfdf5"] *,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #eff6ff"] *,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: rgba(249, 115, 22, 0.08)"] * {
+  color: inherit;
+}
+
+/* ── Buttons: light bg → dark text; primary/dark bg → light text ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background:#fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: white"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background:#fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #f8fafc"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #eff6ff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: rgba(249, 115, 22, 0.08)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: rgba(249,115,22,0.08)"] {
+  color: var(--scheme-on-light-surface, #111827) !important;
+  background: #f1f5f9 !important;
+  border-color: var(--scheme-border, rgba(148, 163, 184, 0.35)) !important;
+}
+
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #F97316"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background:#F97316"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: #f97316"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: rgb(249, 115, 22)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="background: var(--scheme-primary"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="color: white"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="color:#fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button[style*="color: #fff"] {
+  color: var(--scheme-on-primary, #ffffff) !important;
+}
+
+/* Secondary buttons without explicit light bg → dark surface + light text */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content button:not([style*="background: #fff"]):not([style*="background:#fff"]):not([style*="background: white"]):not([style*="background: #F97316"]):not([style*="background:#F97316"]):not([style*="background: #f97316"]):not([style*="background: var(--scheme-primary"]) {
+  background: rgba(30, 41, 59, 0.85) !important;
+  color: var(--scheme-main-text, #e2e8f0) !important;
+  border-color: var(--scheme-border, rgba(148, 163, 184, 0.3)) !important;
+}
+
+/* ── Convert white/light cards to scheme cards on dark tone ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background: #fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background:#fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background: rgb(255, 255, 255)"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background:#ffffff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background: #fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background:#fafafa"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background: #f8fafc"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content div[style*="background:#f8fafc"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content section[style*="background: #fff"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content section[style*="background:#fff"] {
+  background: var(--scheme-card-bg, rgba(30, 41, 59, 0.92)) !important;
+  color: var(--scheme-main-text, #e2e8f0) !important;
+  border-color: var(--scheme-border, rgba(148, 163, 184, 0.22)) !important;
+  box-shadow: var(--scheme-card-shadow);
+}
+
+/* Tinted info panels stay tinted but readable */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #fff7ed"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #ecfdf5"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content [style*="background: #eff6ff"] {
+  background: rgba(30, 41, 59, 0.75) !important;
+  color: var(--scheme-main-text, #e2e8f0) !important;
+  border-color: var(--scheme-border) !important;
+}
+
+/* ── Form controls on dark tone ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content select,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content textarea {
+  background: rgba(15, 23, 42, 0.72) !important;
+  color: var(--scheme-main-text, #e2e8f0) !important;
+  border-color: var(--scheme-border, rgba(148, 163, 184, 0.3)) !important;
+}
+
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content option {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+/* ── Tables ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content table th,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content table td {
+  color: var(--scheme-main-text, #e2e8f0);
+  border-color: var(--scheme-border, rgba(148, 163, 184, 0.2));
+}
+
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content table td[style*="background: white"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content table td[style*="background: #f9fafb"],
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content table td[style*="background:#f9fafb"] {
+  background: rgba(30, 41, 59, 0.55) !important;
+  color: var(--scheme-main-text, #e2e8f0) !important;
+}
+
+/* ── Labels & strong ── */
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content label,
+.portal-charcoal[data-scheme-tone="dark"] main.scheme-main-content strong {
+  color: var(--scheme-main-text, #e2e8f0);
+}
+
+/* ── PortalViewBar / footer on dark ── */
+.portal-charcoal[data-scheme-tone="dark"] .portal-view-bar,
+.portal-charcoal[data-scheme-tone="dark"] footer {
+  color: var(--scheme-text-muted, #94a3b8);
+}
+
+.portal-charcoal[data-scheme-tone="dark"] .portal-view-bar * {
+  color: inherit;
+}

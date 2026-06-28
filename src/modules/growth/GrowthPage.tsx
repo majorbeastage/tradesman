@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
+import { usePortalTheme } from "../../lib/useSchemeStyles"
 import { formatAppError } from "../../lib/formatAppError"
 import {
   GROWTH_CAMPAIGN_TEMPLATES,
@@ -41,6 +42,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 
 export default function GrowthPage({ setPage }: Props) {
   const { user } = useAuth()
+  const portalTheme = usePortalTheme()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [doc, setDoc] = useState<GrowthModuleDoc>(() => loadGrowthDocFromProfileMetadata(null))
   const [leadCaptureSlug, setLeadCaptureSlug] = useState("")
@@ -190,23 +192,23 @@ export default function GrowthPage({ setPage }: Props) {
   const navBtn = (id: SectionId): CSSProperties => ({
     padding: "8px 12px",
     borderRadius: 8,
-    border: section === id ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-    background: section === id ? "rgba(249,115,22,0.08)" : "#fff",
+    border: section === id ? `2px solid ${portalTheme.primary}` : `1px solid ${portalTheme.border}`,
+    background: section === id ? "rgba(249,115,22,0.08)" : portalTheme.isDark ? "rgba(30,41,59,0.85)" : "#fff",
     fontWeight: 700,
     fontSize: 12,
     cursor: "pointer",
-    color: theme.text,
+    color: portalTheme.text,
   })
 
   if (loading) {
-    return <div style={{ padding: 24, color: theme.text }}>Loading Growth…</div>
+    return <div style={{ padding: 24, color: portalTheme.text }}>Loading Growth…</div>
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
+    <div className="scheme-page" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800, color: theme.text }}>Growth</h1>
-        <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6, color: "#475569", fontSize: 14 }}>
+        <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800, color: portalTheme.text }}>Growth</h1>
+        <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6, color: portalTheme.textMuted, fontSize: 14 }}>
           Add your website and social profiles, grade what AI can see, set a marketing budget, and track campaigns before and
           after your partner runs ads. Lead capture still lives in <strong>Leads</strong> — Growth focuses on presence and
           campaign measurement.
