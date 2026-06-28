@@ -27,7 +27,6 @@ import {
   resolveConversationIdForCustomer,
   setEmailEventsUnreadState,
   emailEventIsUnread,
-  type EmailInboxFolder,
   type EmailInboxThread,
 } from "../../lib/customersEmailInboxData"
 import {
@@ -38,6 +37,21 @@ import {
 import type { AttachmentStripItem } from "../../components/AttachmentStrip"
 import SaveInboundAttachmentToEstimate from "../../components/SaveInboundAttachmentToEstimate"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
+import { useEmailClientWorkspace } from "../../hooks/useEmailClientWorkspace"
+import { emailClientThemeById, emailThemePanelStyle } from "../../lib/emailClientThemes"
+import {
+  assignThreadToFolder,
+  systemFolderToLegacyFilter,
+  threadsInCustomFolder,
+  isSystemFolderId,
+  SYSTEM_FOLDER_INBOX,
+  SYSTEM_FOLDER_UNREAD,
+  SYSTEM_FOLDER_SENT,
+  SYSTEM_FOLDER_ALL,
+} from "../../lib/emailClientWorkspace"
+import EmailClientFolderSidebar, { defaultActiveFolderId } from "../../components/email/EmailClientFolderSidebar"
+import EmailClientOptionsModal from "../../components/email/EmailClientOptionsModal"
+import EmailClientContextMenu, { type ContextMenuItem } from "../../components/email/EmailClientContextMenu"
 
 type CustomerPickRow = {
   id: string
@@ -63,14 +77,12 @@ type Props = {
   setPage?: (page: string) => void
 }
 
-const FOLDER_OPTIONS: EmailInboxFolder[] = ["inbox", "unread", "sent", "all"]
-
-function folderLabel(folder: EmailInboxFolder, mobile: boolean): string {
-  if (folder === "inbox") return "Inbox"
-  if (folder === "unread") return "Unread"
-  if (folder === "sent") return "Sent"
-  return mobile ? "All" : "All mail"
-}
+const MOBILE_FOLDER_OPTIONS = [
+  { id: SYSTEM_FOLDER_INBOX, label: "Inbox" },
+  { id: SYSTEM_FOLDER_UNREAD, label: "Unread" },
+  { id: SYSTEM_FOLDER_SENT, label: "Sent" },
+  { id: SYSTEM_FOLDER_ALL, label: "All" },
+] as const
 
 export default function CustomersEmailInboxPage({ setPage }: Props) {
   const userId = useScopedUserId()
@@ -83,7 +95,16 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [threads, setThreads] = useState<EmailInboxThread[]>([])
   const [attachmentsByEvent, setAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
-  const [folder, setFolder] = useState<EmailInboxFolder>("inbox")
+  const [activeFolderId, setActiveFolderId] = useState(defaultActiveFolderId())
+  const [showOptions, setShowOptions] = useState(false)
+  const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadKey: string } | null>(null)
+  const [aiSummary, setAiSummary] = useState<string | null>(null)
+  const [aiSummaryBusy, setAiSummaryBusy] = useState(false)
+
+  const { workspace, orgInboxes, saving: workspaceSaving, saveWorkspacePatch } = useEmailClientWorkspace(userId)
+  const emailTheme = emailClientThemeById(workspace.themeId)
+  const themedPanelStyle: CSSProperties = emailThemePanelStyle(emailTheme)
+
   const [search, setSearch] = useState("")
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
   const [showCompose, setShowCompose] = useState(false)
@@ -103,9 +124,25 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
   const [composeMountKey, setComposeMountKey] = useState(0)
 
   const filteredThreads = useMemo(() => {
-    const byFolder = filterThreadsByFolder(threads, folder)
+    let byFolder = threads
+    const legacy = systemFolderToLegacyFilter(activeFolderId)
+    if (legacy) {
+      byFolder = filterThreadsByFolder(threads, legacy)
+    } else if (!isSystemFolderId(activeFolderId)) {
+      byFolder = threadsInCustomFolder(threads, workspace.threadFolderMap, activeFolderId, workspace.folders) as EmailInboxThread[]
+    }
+    if (workspace.activeInboxRouteId) {
+      byFolder = byFolder.filter((t) =>
+        t.events.some((e) => {
+          const meta = e.metadata
+          if (!meta || typeof meta !== "object") return false
+          const rid = (meta as Record<string, unknown>).route_id
+          return typeof rid === "string" && rid === workspace.activeInboxRouteId
+        }),
+      )
+    }
     return filterThreadsBySearch(byFolder, search)
-  }, [threads, folder, search])
+  }, [threads, activeFolderId, workspace.threadFolderMap, workspace.folders, workspace.activeInboxRouteId, search])
 
   const selectedThread = useMemo(
     () => filteredThreads.find((t) => t.threadKey === selectedThreadKey) ?? filteredThreads[0] ?? null,
@@ -149,6 +186,10 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
       setMobilePane("browse")
     }
   }, [isMobile, mobilePane, selectedThread])
+
+  useEffect(() => {
+    setAiSummary(null)
+  }, [selectedThreadKey])
 
   const openThread = useCallback(
     (threadKey: string) => {
@@ -396,6 +437,75 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
     navigateToCustomersList(setPage)
   }
 
+  const handleDropThreadOnFolder = (threadKey: string, folderId: string) => {
+    const nextMap = assignThreadToFolder(workspace.threadFolderMap, threadKey, isSystemFolderId(folderId) ? null : folderId)
+    void saveWorkspacePatch({ threadFolderMap: nextMap })
+  }
+
+  const threadMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!threadMenu) return []
+    const thread = threads.find((t) => t.threadKey === threadMenu.threadKey)
+    if (!thread) return []
+    const customFolders = workspace.folders.filter((f: { system?: boolean }) => !f.system)
+    return [
+      {
+        id: "mark-unread",
+        label: "Mark unread",
+        disabled: !thread.events.some((e) => e.direction === "inbound"),
+        onClick: () => void markThreadUnread(thread),
+      },
+      ...customFolders.map((f: { id: string; name: string }) => ({
+        id: `move-${f.id}`,
+        label: `Move to ${f.name}`,
+        onClick: () => handleDropThreadOnFolder(thread.threadKey, f.id),
+      })),
+      {
+        id: "new-subfolder",
+        label: "New folder & move here…",
+        onClick: () => {
+          const name = window.prompt("Folder name:")
+          if (!name?.trim()) return
+          const folders = [...workspace.folders, { id: `fld_${Date.now()}`, name: name.trim(), parentId: null }]
+          const nextMap = assignThreadToFolder(workspace.threadFolderMap, thread.threadKey, folders[folders.length - 1]!.id)
+          void saveWorkspacePatch({ folders, threadFolderMap: nextMap })
+        },
+      },
+    ]
+  }, [threadMenu, threads, workspace.folders, workspace.threadFolderMap])
+
+  async function summarizeSelectedThread() {
+    if (!selectedThread) return
+    setAiSummaryBusy(true)
+    setAiSummary(null)
+    try {
+      const { data: sessionData } = await supabase!.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) throw new Error("Sign in required")
+      if (selectedThread.conversationId) {
+        const res = await fetch("/api/platform-tools?__route=ai-summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ conversationId: selectedThread.conversationId }),
+        })
+        const raw = await res.text()
+        if (!res.ok) throw new Error(raw || `Summary failed (${res.status})`)
+        const j = JSON.parse(raw) as { summary?: string }
+        setAiSummary(j.summary?.trim() || raw.trim())
+        return
+      }
+      const lines = selectedThread.events.map(
+        (e) => `[${e.direction}] ${e.subject ?? ""}\n${(e.body ?? "").slice(0, 800)}`,
+      )
+      setAiSummary(
+        `Thread summary (offline preview):\n\n${lines.join("\n\n---\n\n").slice(0, 2000)}`,
+      )
+    } catch (e) {
+      setAiSummary(formatAppError(e))
+    } finally {
+      setAiSummaryBusy(false)
+    }
+  }
+
   const layoutCols = isMobile ? "1fr" : "240px minmax(280px, 340px) minmax(0, 1fr)"
 
   const pageShellStyle: CSSProperties = {
@@ -404,6 +514,8 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
     margin: 0,
     padding: isMobile ? "8px 8px 32px" : "0 0 32px",
     boxSizing: "border-box",
+    background: emailTheme.shellBackground,
+    color: emailTheme.text,
     ...(isMobile
       ? {}
       : {
@@ -438,11 +550,11 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         }}
       >
         <div style={{ flex: isMobile ? "1 1 100%" : undefined }}>
-          <h1 style={{ margin: 0, fontSize: isMobile ? "1.35rem" : "1.6rem", fontWeight: 800, color: theme.text }}>
+          <h1 style={{ margin: 0, fontSize: isMobile ? "1.35rem" : "1.6rem", fontWeight: 800, color: emailTheme.text }}>
             Email
           </h1>
           {!isMobile ? (
-            <span style={{ fontSize: 13, color: "#64748b" }}>
+            <span style={{ fontSize: 13, color: emailTheme.textMuted }}>
               Synced with Customers — sends and replies appear in both places.
             </span>
           ) : (
@@ -470,6 +582,9 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
+          <button type="button" onClick={() => setShowOptions(true)} style={{ ...ghostBtnStyle, flex: isMobile ? "1 1 auto" : undefined }}>
+            Options
+          </button>
           {!emailStandalone ? (
             <button
               type="button"
@@ -487,20 +602,21 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
       {isMobile && showBrowseList ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {FOLDER_OPTIONS.map((f) => (
+          {MOBILE_FOLDER_OPTIONS.map((f) => (
             <button
-              key={f}
+              key={f.id}
               type="button"
-              onClick={() => setFolder(f)}
+              onClick={() => setActiveFolderId(f.id)}
               style={{
                 ...folderPillStyle,
-                fontWeight: folder === f ? 800 : 600,
-                background: folder === f ? "#fff7ed" : "#fff",
-                borderColor: folder === f ? theme.primary : theme.border,
+                fontWeight: activeFolderId === f.id ? 800 : 600,
+                background: activeFolderId === f.id ? emailTheme.accentSoft : emailTheme.panelBackground,
+                borderColor: activeFolderId === f.id ? emailTheme.accent : emailTheme.panelBorder,
+                color: emailTheme.text,
               }}
             >
-              {folderLabel(f, true)}
-              {f === "unread" && unreadThreadCount > 0 ? ` (${unreadThreadCount})` : ""}
+              {f.label}
+              {f.id === SYSTEM_FOLDER_UNREAD && unreadThreadCount > 0 ? ` (${unreadThreadCount})` : ""}
             </button>
           ))}
           <input
@@ -574,39 +690,32 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
       <div style={inboxGridStyle}>
         {!isMobile ? (
-          <aside style={panelStyle}>
-            <p style={sectionTitleStyle}>Folders</p>
-            {FOLDER_OPTIONS.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFolder(f)}
-                style={{
-                  ...folderBtnStyle,
-                  fontWeight: folder === f ? 800 : 600,
-                  background: folder === f ? "#fff7ed" : "#fff",
-                  borderColor: folder === f ? theme.primary : theme.border,
-                }}
-              >
-                {folderLabel(f, false)}
-                {f === "unread" && unreadThreadCount > 0 ? ` (${unreadThreadCount})` : ""}
-              </button>
-            ))}
+          <EmailClientFolderSidebar
+            folders={workspace.folders}
+            activeFolderId={activeFolderId}
+            onSelectFolder={setActiveFolderId}
+            onFoldersChange={(folders) => void saveWorkspacePatch({ folders })}
+            unreadCount={unreadThreadCount}
+            theme={emailTheme}
+            panelStyle={themedPanelStyle}
+            onDropThread={handleDropThreadOnFolder}
+          />
+        ) : null}
+
+        {showBrowseList ? (
+        <section style={{ ...themedPanelStyle, display: "flex", flexDirection: "column", minWidth: 0, minHeight: isMobile ? undefined : 0 }}>
+          <p style={{ ...sectionTitleStyle, color: emailTheme.textMuted }}>
+            {loading ? "Loading…" : `${filteredThreads.length} conversation${filteredThreads.length === 1 ? "" : "s"}`}
+          </p>
+          {!isMobile ? (
             <input
               type="search"
               placeholder="Search mail…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ ...theme.formInput, marginTop: 12, fontSize: 13 }}
+              style={{ ...theme.formInput, marginBottom: 10, fontSize: 13, background: emailTheme.panelBackground, color: emailTheme.text, borderColor: emailTheme.panelBorder }}
             />
-          </aside>
-        ) : null}
-
-        {showBrowseList ? (
-        <section style={{ ...panelStyle, display: "flex", flexDirection: "column", minWidth: 0, minHeight: isMobile ? undefined : 0 }}>
-          <p style={sectionTitleStyle}>
-            {loading ? "Loading…" : `${filteredThreads.length} conversation${filteredThreads.length === 1 ? "" : "s"}`}
-          </p>
+          ) : null}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
             {!loading && filteredThreads.length === 0 ? (
               <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>No email yet. Compose a message or wait for inbound mail.</p>
@@ -618,14 +727,24 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                 <button
                   key={t.threadKey}
                   type="button"
+                  draggable={!isMobile}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/tradesman-email-thread", t.threadKey)
+                    e.dataTransfer.effectAllowed = "move"
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setThreadMenu({ x: e.clientX, y: e.clientY, threadKey: t.threadKey })
+                  }}
                   onClick={() => handleOpenThread(t.threadKey)}
                   style={{
                     textAlign: "left",
                     padding: "10px 12px",
                     borderRadius: 8,
-                    border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                    background: active ? "#fff7ed" : unread ? "#f8fafc" : "#fff",
+                    border: active ? `2px solid ${emailTheme.accent}` : `1px solid ${emailTheme.panelBorder}`,
+                    background: active ? emailTheme.threadActiveBackground : unread ? emailTheme.messageOutboundBackground : emailTheme.panelBackground,
                     cursor: "pointer",
+                    color: emailTheme.text,
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
@@ -706,7 +825,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         {showThreadDetail ? (
         <section
           style={{
-            ...panelStyle,
+            ...themedPanelStyle,
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
@@ -727,9 +846,17 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
           ) : (
             <>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  disabled={aiSummaryBusy}
+                  onClick={() => void summarizeSelectedThread()}
+                  style={{ ...ghostBtnStyle, color: emailTheme.accent, borderColor: emailTheme.panelBorder }}
+                >
+                  {aiSummaryBusy ? "Summarizing…" : "AI summary"}
+                </button>
                 <div style={{ flex: 1, minWidth: 180 }}>
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: theme.text }}>{selectedThread.subject}</h2>
-                  <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b" }}>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: emailTheme.text }}>{selectedThread.subject}</h2>
+                  <p style={{ margin: "4px 0 0", fontSize: 13, color: emailTheme.textMuted }}>
                     {selectedThread.customerName}
                     {selectedThread.customerEmail ? ` · ${selectedThread.customerEmail}` : ""}
                   </p>
@@ -755,6 +882,25 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                   </button>
                 ) : null}
               </div>
+
+              {aiSummary ? (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    border: `1px solid ${emailTheme.panelBorder}`,
+                    background: emailTheme.accentSoft,
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    color: emailTheme.text,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  <strong style={{ display: "block", marginBottom: 6 }}>AI summary</strong>
+                  {aiSummary}
+                </div>
+              ) : null}
 
               <div
                 style={{
@@ -846,6 +992,19 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
       {!user?.id ? (
         <p style={{ color: "#b91c1c", marginTop: 12 }}>Sign in to use the email client.</p>
       ) : null}
+
+      <EmailClientOptionsModal
+        open={showOptions}
+        onClose={() => setShowOptions(false)}
+        workspace={workspace}
+        orgInboxes={orgInboxes}
+        saving={workspaceSaving}
+        onSave={(patch) => void saveWorkspacePatch(patch)}
+      />
+
+      {threadMenu ? (
+        <EmailClientContextMenu x={threadMenu.x} y={threadMenu.y} items={threadMenuItems} onClose={() => setThreadMenu(null)} theme={emailTheme} />
+      ) : null}
     </div>
   )
 }
@@ -894,20 +1053,6 @@ const folderPillStyle: CSSProperties = {
   fontSize: 13,
   color: theme.text,
   fontWeight: 600,
-}
-
-const folderBtnStyle: CSSProperties = {
-  display: "block",
-  width: "100%",
-  textAlign: "left",
-  padding: "8px 10px",
-  marginBottom: 6,
-  borderRadius: 8,
-  border: `1px solid ${theme.border}`,
-  background: "#fff",
-  cursor: "pointer",
-  fontSize: 13,
-  color: theme.text,
 }
 
 const primaryBtnStyle: CSSProperties = {

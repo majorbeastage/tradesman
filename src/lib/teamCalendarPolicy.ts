@@ -33,7 +33,14 @@ export type OmCalendarPolicyV1 = {
    * Example: { "install": "preferred" }
    */
   job_qualifications?: Record<string, "not_qualified" | "qualified" | "preferred" | "required">
-  /** Future: nested scheduling / alerts flags */
+  /** When true, user may access the Email Client and granted org inboxes. */
+  allow_email_client?: boolean
+  /** Org email route ids this user may read/send from (subset configured by leadership). */
+  email_inbox_route_ids?: string[]
+  /** When true, late punch alerts fire for this user per workforce schedule. */
+  late_punch_alerts_enabled?: boolean
+  /** User ids notified when this employee punches in late. */
+  late_punch_notify_user_ids?: string[]
   _v?: 1
 }
 
@@ -102,6 +109,14 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     backup_user_id: backupUserId,
     teammate_user_id: teammateUserId,
     job_qualifications: quals,
+    allow_email_client: o.allow_email_client === true,
+    email_inbox_route_ids: Array.isArray(o.email_inbox_route_ids)
+      ? o.email_inbox_route_ids.filter((x): x is string => typeof x === "string")
+      : [],
+    late_punch_alerts_enabled: o.late_punch_alerts_enabled === true,
+    late_punch_notify_user_ids: Array.isArray(o.late_punch_notify_user_ids)
+      ? o.late_punch_notify_user_ids.filter((x): x is string => typeof x === "string")
+      : [],
     _v: 1,
   }
 }

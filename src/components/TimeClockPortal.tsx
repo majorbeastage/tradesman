@@ -23,6 +23,32 @@ import {
   type TimeClockSessionRow,
 } from "../lib/timeClockSessions"
 import { filterRealUserIds } from "../lib/sandboxDemoTeam"
+import {
+  defaultLatePunchConfig,
+  defaultOrgWorkforceSchedule,
+  defaultWeeklySchedule,
+  formatScheduleDaySummary,
+  isLatePunch,
+  mergeOrgWorkforceSchedule,
+  parseOrgWorkforceSchedule,
+  scheduledStartToday,
+  WEEKDAY_LABELS,
+  type LatePunchAlertConfig,
+  type OrgWorkforceScheduleV1,
+  type WeekdayIndex,
+} from "../lib/timeClockSchedule"
+import {
+  adjustPtoBalance,
+  computePtoBalance,
+  defaultOrgPtoEngine,
+  defaultUserPtoPolicy,
+  mergeOrgPtoEngine,
+  parseOrgPtoEngine,
+  reviewPtoRequest,
+  submitPtoRequest,
+  type OrgPtoEngineV1,
+  type PtoAccrualPeriod,
+} from "../lib/timeClockPto"
 
 type UpcomingEventRow = {
   id: string
@@ -31,7 +57,7 @@ type UpcomingEventRow = {
   start_at: string
 }
 
-type PortalTab = "shift" | "job" | "hours" | "reports"
+type PortalTab = "shift" | "job" | "hours" | "reports" | "schedule" | "pto"
 
 type EntryFormState = {
   id?: string
@@ -53,6 +79,8 @@ type Props = {
   timeClockWorkspacePage?: boolean
   /** When true, viewer may add/edit punches for anyone on the roster (office manager). */
   canManageTeamEntries?: boolean
+  /** Business account user id for org-wide schedule/PTO metadata. */
+  accountUserId?: string
   onOpenShiftSessionsChange?: (openShiftByUser: Record<string, string>) => void
 }
 
@@ -77,6 +105,7 @@ export default function TimeClockPortal({
   onOpenTimeClockWorkspace,
   timeClockWorkspacePage,
   canManageTeamEntries = false,
+  accountUserId,
   onOpenShiftSessionsChange,
 }: Props) {
   const [tab, setTab] = useState<PortalTab>("shift")
@@ -101,6 +130,14 @@ export default function TimeClockPortal({
   const [entryForm, setEntryForm] = useState<EntryFormState | null>(null)
   const [entrySaving, setEntrySaving] = useState(false)
 
+  const orgAccountId = accountUserId || viewerUserId
+  const [workforce, setWorkforce] = useState<OrgWorkforceScheduleV1>(() => defaultOrgWorkforceSchedule())
+  const [ptoEngine, setPtoEngine] = useState<OrgPtoEngineV1>(() => defaultOrgPtoEngine())
+  const [workforceSaving, setWorkforceSaving] = useState(false)
+  const [scheduleUserId, setScheduleUserId] = useState(viewerUserId)
+  const [ptoUserId, setPtoUserId] = useState(viewerUserId)
+  const [lateNotice, setLateNotice] = useState<string | null>(null)
+
   const rosterIds = useMemo(
     () => filterRealUserIds(roster.map((r) => r.userId).filter(Boolean)),
     [roster],
@@ -121,6 +158,38 @@ export default function TimeClockPortal({
   }, [canManageTeamEntries, rosterIds, viewerUserId])
 
   const canEditUser = useCallback((userId: string) => editableUserIds.has(userId), [editableUserIds])
+
+  useEffect(() => {
+    if (!supabase || !orgAccountId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", orgAccountId).maybeSingle()
+      if (cancelled) return
+      const meta = data?.metadata
+      setWorkforce(parseOrgWorkforceSchedule(meta))
+      setPtoEngine(parseOrgPtoEngine(meta))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [orgAccountId])
+
+  const persistOrgMetadata = useCallback(
+    async (patchMeta: Record<string, unknown>) => {
+      if (!supabase || !orgAccountId) return
+      setWorkforceSaving(true)
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", orgAccountId).maybeSingle()
+      const prev =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const nextMeta = { ...prev, ...patchMeta }
+      const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", orgAccountId)
+      setWorkforceSaving(false)
+      if (error) setClockError(error.message)
+    },
+    [orgAccountId],
+  )
 
   const notifyShiftOpen = useCallback(
     (next: Record<string, string>) => {
@@ -298,6 +367,19 @@ export default function TimeClockPortal({
     if (!supabase) return
     setClockActionBusy(true)
     setClockError("")
+    const now = new Date()
+    const schedule = workforce.schedules[viewerUserId] ?? defaultWeeklySchedule(viewerUserId)
+    const lateCfg = workforce.latePunchByUser[viewerUserId] ?? defaultLatePunchConfig()
+    if (isLatePunch(schedule, now, lateCfg)) {
+      const expected = scheduledStartToday(schedule, now)
+      setLateNotice(
+        expected
+          ? `Late punch — scheduled start was ${expected.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+          : "Late punch recorded.",
+      )
+    } else {
+      setLateNotice(null)
+    }
     const { error } = await insertSession({ user_id: viewerUserId, session_kind: "shift" })
     setClockActionBusy(false)
     if (error) {
@@ -480,6 +562,17 @@ export default function TimeClockPortal({
     color: "#334155",
   }
 
+  const secondaryBtnStyle: CSSProperties = {
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    borderRadius: 8,
+    border: `1px solid ${theme.border}`,
+    background: "#fff",
+    color: theme.text,
+    cursor: "pointer",
+  }
+
   const tabBtn = (id: PortalTab, label: string) => (
     <button
       key={id}
@@ -523,6 +616,8 @@ export default function TimeClockPortal({
         {tabBtn("job", "Job clock")}
         {tabBtn("hours", "Hours")}
         {tabBtn("reports", "Reports")}
+        {tabBtn("schedule", "Schedule")}
+        {tabBtn("pto", "PTO")}
         {!timeClockWorkspacePage && onOpenTimeClockWorkspace ? (
           <button
             type="button"
@@ -578,6 +673,11 @@ export default function TimeClockPortal({
           </div>
           {viewerOnRoster ? (
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
+              {lateNotice ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "4px 8px", borderRadius: 6, background: "#fffbeb", border: "1px solid #fcd34d" }}>
+                  ⚠ {lateNotice}
+                </span>
+              ) : null}
               <span style={{ fontSize: 12, fontWeight: 700 }}>Your shift</span>
               {myOpenShift ? (
                 <>
@@ -789,7 +889,7 @@ export default function TimeClockPortal({
                                 notes: row.notes?.trim() ?? "",
                               })
                             }
-                            style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, border: `1px solid ${theme.border}`, background: "#f8fafc", cursor: "pointer" }}
+                            style={secondaryBtnStyle}
                           >
                             Edit
                           </button>
@@ -801,6 +901,293 @@ export default function TimeClockPortal({
               </tbody>
             </table>
           </div>
+        </div>
+      ) : null}
+
+      {tab === "schedule" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
+              Employee
+              <select
+                value={scheduleUserId}
+                onChange={(e) => setScheduleUserId(e.target.value)}
+                disabled={!canManageTeamEntries && scheduleUserId !== viewerUserId}
+                style={{ ...theme.formInput, display: "block", marginTop: 4, minWidth: 200, fontSize: 12 }}
+              >
+                {(canManageTeamEntries ? roster : roster.filter((m) => m.userId === viewerUserId)).map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {rosterLabel(m.userId)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {workforceSaving ? <span style={{ fontSize: 11, color: "#64748b" }}>Saving…</span> : null}
+          </div>
+          {(() => {
+            const schedule = workforce.schedules[scheduleUserId] ?? defaultWeeklySchedule(scheduleUserId)
+            const lateCfg = workforce.latePunchByUser[scheduleUserId] ?? defaultLatePunchConfig()
+            const updateSchedule = (patch: Partial<typeof schedule>) => {
+              const next = { ...workforce, schedules: { ...workforce.schedules, [scheduleUserId]: { ...schedule, ...patch } } }
+              setWorkforce(next)
+              void persistOrgMetadata(mergeOrgWorkforceSchedule({}, next))
+            }
+            const updateLate = (patch: Partial<LatePunchAlertConfig>) => {
+              const nextCfg = { ...lateCfg, ...patch }
+              const next = { ...workforce, latePunchByUser: { ...workforce.latePunchByUser, [scheduleUserId]: nextCfg } }
+              setWorkforce(next)
+              void persistOrgMetadata(mergeOrgWorkforceSchedule({}, next))
+            }
+            return (
+              <>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>{formatScheduleDaySummary(schedule)}</p>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {WEEKDAY_LABELS.map((label, idx) => {
+                    const day = idx as WeekdayIndex
+                    const block = schedule.days[day]
+                    return (
+                      <div key={label} style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr auto", gap: 8, alignItems: "center", fontSize: 12 }}>
+                        <label style={{ fontWeight: 700, color: theme.text }}>
+                          <input
+                            type="checkbox"
+                            checked={block.enabled}
+                            disabled={!canManageTeamEntries && scheduleUserId !== viewerUserId}
+                            onChange={(e) =>
+                              updateSchedule({
+                                days: { ...schedule.days, [day]: { ...block, enabled: e.target.checked } },
+                              })
+                            }
+                          />{" "}
+                          {label}
+                        </label>
+                        <input
+                          type="time"
+                          value={block.startTime}
+                          disabled={!block.enabled || (!canManageTeamEntries && scheduleUserId !== viewerUserId)}
+                          onChange={(e) =>
+                            updateSchedule({ days: { ...schedule.days, [day]: { ...block, startTime: e.target.value } } })
+                          }
+                          style={{ ...theme.formInput, fontSize: 12 }}
+                        />
+                        <input
+                          type="time"
+                          value={block.endTime}
+                          disabled={!block.enabled || (!canManageTeamEntries && scheduleUserId !== viewerUserId)}
+                          onChange={(e) =>
+                            updateSchedule({ days: { ...schedule.days, [day]: { ...block, endTime: e.target.value } } })
+                          }
+                          style={{ ...theme.formInput, fontSize: 12 }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+                {canManageTeamEntries ? (
+                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12, display: "grid", gap: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>
+                      <input type="checkbox" checked={lateCfg.enabled} onChange={(e) => updateLate({ enabled: e.target.checked })} /> Late punch
+                      notification to managers
+                    </label>
+                    {lateCfg.enabled ? (
+                      <>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>
+                          Grace period (minutes)
+                          <input
+                            type="number"
+                            min={0}
+                            value={lateCfg.graceMinutes}
+                            onChange={(e) => updateLate({ graceMinutes: Number(e.target.value) || 0 })}
+                            style={{ ...theme.formInput, display: "block", marginTop: 4, maxWidth: 120, fontSize: 12 }}
+                          />
+                        </label>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>
+                          Notify managers
+                          <select
+                            multiple
+                            value={lateCfg.notifyManagerUserIds}
+                            onChange={(e) =>
+                              updateLate({
+                                notifyManagerUserIds: Array.from(e.target.selectedOptions).map((o) => o.value),
+                              })
+                            }
+                            style={{ ...theme.formInput, display: "block", marginTop: 4, minHeight: 88, fontSize: 12 }}
+                          >
+                            {roster.map((m) => (
+                              <option key={m.userId} value={m.userId}>
+                                {rosterLabel(m.userId)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )
+          })()}
+        </div>
+      ) : null}
+
+      {tab === "pto" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>
+              Employee
+              <select
+                value={ptoUserId}
+                onChange={(e) => setPtoUserId(e.target.value)}
+                style={{ ...theme.formInput, display: "block", marginTop: 4, minWidth: 200, fontSize: 12 }}
+              >
+                {roster.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {rosterLabel(m.userId)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {(() => {
+            const policy = ptoEngine.policies[ptoUserId] ?? defaultUserPtoPolicy(ptoUserId)
+            const balance = computePtoBalance(ptoEngine, ptoUserId, new Date(Date.now() - 365 * 86400000))
+            const pending = ptoEngine.requests.filter((r) => r.userId === ptoUserId && r.status === "pending")
+            const savePto = (next: OrgPtoEngineV1) => {
+              setPtoEngine(next)
+              void persistOrgMetadata(mergeOrgPtoEngine({}, next))
+            }
+            return (
+              <>
+                <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc", fontSize: 12 }}>
+                  <strong style={{ fontSize: 14, color: theme.text }}>{balance.toFixed(2)} hrs</strong> PTO available
+                </div>
+                {canManageTeamEntries ? (
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>
+                      Accrual rate (hrs)
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.25}
+                        value={policy.accrualRateHours}
+                        onChange={(e) =>
+                          savePto({
+                            ...ptoEngine,
+                            policies: {
+                              ...ptoEngine.policies,
+                              [ptoUserId]: { ...policy, accrualRateHours: Number(e.target.value) || 0 },
+                            },
+                          })
+                        }
+                        style={{ ...theme.formInput, display: "block", marginTop: 4, fontSize: 12 }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>
+                      Per
+                      <select
+                        value={policy.accrualPeriod}
+                        onChange={(e) =>
+                          savePto({
+                            ...ptoEngine,
+                            policies: {
+                              ...ptoEngine.policies,
+                              [ptoUserId]: { ...policy, accrualPeriod: e.target.value as PtoAccrualPeriod },
+                            },
+                          })
+                        }
+                        style={{ ...theme.formInput, display: "block", marginTop: 4, fontSize: 12 }}
+                      >
+                        <option value="week">Week</option>
+                        <option value="month">Month</option>
+                        <option value="year">Year</option>
+                      </select>
+                    </label>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>
+                      Manual adjust (hrs)
+                      <input
+                        type="number"
+                        step={0.25}
+                        value={policy.adjustmentHours}
+                        onChange={(e) =>
+                          savePto({
+                            ...ptoEngine,
+                            policies: {
+                              ...ptoEngine.policies,
+                              [ptoUserId]: { ...policy, adjustmentHours: Number(e.target.value) || 0 },
+                            },
+                          })
+                        }
+                        style={{ ...theme.formInput, display: "block", marginTop: 4, fontSize: 12 }}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <button
+                    type="button"
+                    style={secondaryBtnStyle}
+                    onClick={() => {
+                      const hours = window.prompt("PTO hours to request:", "8")
+                      if (!hours) return
+                      const start = window.prompt("Start date (YYYY-MM-DD):", new Date().toISOString().slice(0, 10))
+                      if (!start) return
+                      const end = window.prompt("End date (YYYY-MM-DD):", start)
+                      if (!end) return
+                      const next = submitPtoRequest(ptoEngine, {
+                        userId: viewerUserId,
+                        startAt: new Date(`${start}T08:00:00`).toISOString(),
+                        endAt: new Date(`${end}T17:00:00`).toISOString(),
+                        hoursRequested: Number(hours) || 0,
+                        note: "",
+                        createOutOfOfficeEmail: window.confirm("Create out-of-office email when approved?"),
+                      })
+                      savePto(next)
+                    }}
+                  >
+                    Request PTO
+                  </button>
+                  {canManageTeamEntries ? (
+                    <button
+                      type="button"
+                      style={secondaryBtnStyle}
+                      onClick={() => {
+                        const delta = window.prompt("Adjust balance (+/- hours):", "4")
+                        if (!delta) return
+                        savePto(adjustPtoBalance(ptoEngine, ptoUserId, Number(delta) || 0, "Manager adjustment"))
+                      }}
+                    >
+                      Adjust balance
+                    </button>
+                  ) : null}
+                </div>
+                {canManageTeamEntries && ptoEngine.requests.some((r) => r.status === "pending") ? (
+                  <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <strong>Pending approvals</strong>
+                    <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                      {ptoEngine.requests
+                        .filter((r) => r.status === "pending")
+                        .map((r) => (
+                          <li key={r.id} style={{ marginBottom: 8 }}>
+                            {rosterLabel(r.userId)} — {r.hoursRequested}h ({new Date(r.startAt).toLocaleDateString()} –{" "}
+                            {new Date(r.endAt).toLocaleDateString()})
+                            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                              <button type="button" style={secondaryBtnStyle} onClick={() => savePto(reviewPtoRequest(ptoEngine, r.id, viewerUserId, true))}>
+                                Approve
+                              </button>
+                              <button type="button" style={secondaryBtnStyle} onClick={() => savePto(reviewPtoRequest(ptoEngine, r.id, viewerUserId, false))}>
+                                Deny
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {pending.length > 0 && !canManageTeamEntries ? (
+                  <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>{pending.length} PTO request(s) awaiting approval.</p>
+                ) : null}
+              </>
+            )
+          })()}
         </div>
       ) : null}
 
@@ -857,7 +1244,7 @@ export default function TimeClockPortal({
             <button type="button" disabled={entrySaving} onClick={() => void saveEntryForm()} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, borderRadius: 8, border: "none", background: theme.primary, color: "#fff", cursor: entrySaving ? "wait" : "pointer" }}>
               {entrySaving ? "Saving…" : "Save entry"}
             </button>
-            <button type="button" onClick={() => setEntryForm(null)} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>
+            <button type="button" onClick={() => setEntryForm(null)} style={secondaryBtnStyle}>
               Cancel
             </button>
           </div>

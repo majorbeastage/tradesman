@@ -539,6 +539,26 @@ function TeamUserCard({
                 </div>
               ) : null}
 
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_email_client === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) =>
+                    updatePermissionDraft(member.userId, {
+                      allow_email_client: e.target.checked,
+                      ...(e.target.checked ? {} : { email_inbox_route_ids: [] }),
+                    })
+                  }
+                />
+                Allow Email Client access
+              </label>
+              {policy.allow_email_client ? (
+                <p style={{ margin: "0 0 0 16px", fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+                  Additional org inboxes (department/custom routes) can be enabled per user in Email → Options once routes exist under Account → Email.
+                </p>
+              ) : null}
+
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 Select Backup
                 <select
@@ -959,6 +979,7 @@ export default function CalendarTeamManagementPanel({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <TimeClockPortal
         viewerUserId={viewerUserId}
+        accountUserId={officeManagerUserId ?? viewerUserId}
         roster={roster}
         rosterLabel={rosterLabel}
         upcomingByUser={upcomingByUser}
