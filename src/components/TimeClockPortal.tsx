@@ -46,9 +46,14 @@ import {
   parseOrgPtoEngine,
   reviewPtoRequest,
   submitPtoRequest,
+  updatePtoRequestCalendarEventId,
   type OrgPtoEngineV1,
   type PtoAccrualPeriod,
+  type PtoRequest,
 } from "../lib/timeClockPto"
+import { parseOrganizationChart, type OrganizationChartDoc } from "../lib/organizationChart"
+import { canUserApprovePtoRequest, resolveOrgChartManagerUserIds } from "../lib/orgChartApprovalRouting"
+import { enableEmailOutOfOfficeForPto, syncApprovedPtoToCalendar } from "../lib/workforceCalendarSync"
 
 type UpcomingEventRow = {
   id: string
@@ -137,6 +142,7 @@ export default function TimeClockPortal({
   const [scheduleUserId, setScheduleUserId] = useState(viewerUserId)
   const [ptoUserId, setPtoUserId] = useState(viewerUserId)
   const [lateNotice, setLateNotice] = useState<string | null>(null)
+  const [orgChart, setOrgChart] = useState<OrganizationChartDoc | null>(null)
 
   const rosterIds = useMemo(
     () => filterRealUserIds(roster.map((r) => r.userId).filter(Boolean)),
@@ -168,6 +174,7 @@ export default function TimeClockPortal({
       const meta = data?.metadata
       setWorkforce(parseOrgWorkforceSchedule(meta))
       setPtoEngine(parseOrgPtoEngine(meta))
+      setOrgChart(parseOrganizationChart(meta))
     })()
     return () => {
       cancelled = true
@@ -189,6 +196,47 @@ export default function TimeClockPortal({
       if (error) setClockError(error.message)
     },
     [orgAccountId],
+  )
+
+  const applyPtoEngine = useCallback(
+    async (next: OrgPtoEngineV1, prev: OrgPtoEngineV1) => {
+      setPtoEngine(next)
+      await persistOrgMetadata(mergeOrgPtoEngine({}, next))
+      if (!supabase) return
+
+      let engineWithCal = next
+      let needsCalPersist = false
+      for (const req of next.requests) {
+        const prevReq = prev.requests.find((r) => r.id === req.id)
+        if (req.status !== "approved" || prevReq?.status === "approved") continue
+
+        const eventId = await syncApprovedPtoToCalendar(supabase, orgAccountId, req)
+        if (eventId && eventId !== req.calendarEventId) {
+          engineWithCal = updatePtoRequestCalendarEventId(engineWithCal, req.id, eventId)
+          needsCalPersist = true
+        }
+        if (req.createOutOfOfficeEmail) {
+          await enableEmailOutOfOfficeForPto(supabase, req.userId, req, orgAccountId)
+        }
+      }
+
+      if (needsCalPersist) {
+        setPtoEngine(engineWithCal)
+        await persistOrgMetadata(mergeOrgPtoEngine({}, engineWithCal))
+      }
+    },
+    [orgAccountId, persistOrgMetadata],
+  )
+
+  const canApprovePto = useCallback(
+    (request: PtoRequest) =>
+      canUserApprovePtoRequest(orgChart, viewerUserId, request, { isOrgManager: canManageTeamEntries }),
+    [canManageTeamEntries, orgChart, viewerUserId],
+  )
+
+  const approvablePending = useMemo(
+    () => ptoEngine.requests.filter((r) => r.status === "pending" && canApprovePto(r)),
+    [canApprovePto, ptoEngine.requests],
   )
 
   const notifyShiftOpen = useCallback(
@@ -370,8 +418,9 @@ export default function TimeClockPortal({
     const now = new Date()
     const schedule = workforce.schedules[viewerUserId] ?? defaultWeeklySchedule(viewerUserId)
     const lateCfg = workforce.latePunchByUser[viewerUserId] ?? defaultLatePunchConfig()
-    if (isLatePunch(schedule, now, lateCfg)) {
-      const expected = scheduledStartToday(schedule, now)
+    const expected = scheduledStartToday(schedule, now)
+    const wasLate = isLatePunch(schedule, now, lateCfg)
+    if (wasLate) {
       setLateNotice(
         expected
           ? `Late punch — scheduled start was ${expected.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
@@ -381,6 +430,26 @@ export default function TimeClockPortal({
       setLateNotice(null)
     }
     const { error } = await insertSession({ user_id: viewerUserId, session_kind: "shift" })
+    if (!error && wasLate && lateCfg.enabled) {
+      const managerUserIds = [
+        ...new Set([
+          ...lateCfg.notifyManagerUserIds,
+          ...(orgChart ? resolveOrgChartManagerUserIds(orgChart, viewerUserId) : []),
+        ]),
+      ]
+      if (managerUserIds.length > 0) {
+        const { error: notifyErr } = await supabase.functions.invoke("notify-late-punch", {
+          body: {
+            accountUserId: orgAccountId,
+            employeeUserId: viewerUserId,
+            clockedInAt: now.toISOString(),
+            expectedStartAt: expected?.toISOString() ?? null,
+            managerUserIds,
+          },
+        })
+        if (notifyErr) console.warn("notify-late-punch:", notifyErr.message)
+      }
+    }
     setClockActionBusy(false)
     if (error) {
       setClockError(error.message)
@@ -1051,9 +1120,16 @@ export default function TimeClockPortal({
             const policy = ptoEngine.policies[ptoUserId] ?? defaultUserPtoPolicy(ptoUserId)
             const balance = computePtoBalance(ptoEngine, ptoUserId, new Date(Date.now() - 365 * 86400000))
             const pending = ptoEngine.requests.filter((r) => r.userId === ptoUserId && r.status === "pending")
-            const savePto = (next: OrgPtoEngineV1) => {
+            const savePtoSimple = (next: OrgPtoEngineV1) => {
               setPtoEngine(next)
               void persistOrgMetadata(mergeOrgPtoEngine({}, next))
+            }
+            const reviewPto = (requestId: string, approve: boolean) => {
+              const prev = ptoEngine
+              const req = ptoEngine.requests.find((r) => r.id === requestId)
+              if (!req || !canApprovePto(req)) return
+              const next = reviewPtoRequest(ptoEngine, requestId, viewerUserId, approve)
+              void applyPtoEngine(next, prev)
             }
             return (
               <>
@@ -1070,7 +1146,7 @@ export default function TimeClockPortal({
                         step={0.25}
                         value={policy.accrualRateHours}
                         onChange={(e) =>
-                          savePto({
+                          savePtoSimple({
                             ...ptoEngine,
                             policies: {
                               ...ptoEngine.policies,
@@ -1086,7 +1162,7 @@ export default function TimeClockPortal({
                       <select
                         value={policy.accrualPeriod}
                         onChange={(e) =>
-                          savePto({
+                          savePtoSimple({
                             ...ptoEngine,
                             policies: {
                               ...ptoEngine.policies,
@@ -1108,7 +1184,7 @@ export default function TimeClockPortal({
                         step={0.25}
                         value={policy.adjustmentHours}
                         onChange={(e) =>
-                          savePto({
+                          savePtoSimple({
                             ...ptoEngine,
                             policies: {
                               ...ptoEngine.policies,
@@ -1132,6 +1208,9 @@ export default function TimeClockPortal({
                       if (!start) return
                       const end = window.prompt("End date (YYYY-MM-DD):", start)
                       if (!end) return
+                      const assignedApproverUserIds = orgChart
+                        ? resolveOrgChartManagerUserIds(orgChart, viewerUserId)
+                        : []
                       const next = submitPtoRequest(ptoEngine, {
                         userId: viewerUserId,
                         startAt: new Date(`${start}T08:00:00`).toISOString(),
@@ -1139,8 +1218,10 @@ export default function TimeClockPortal({
                         hoursRequested: Number(hours) || 0,
                         note: "",
                         createOutOfOfficeEmail: window.confirm("Create out-of-office email when approved?"),
+                        assignedApproverUserIds,
                       })
-                      savePto(next)
+                      setPtoEngine(next)
+                      void persistOrgMetadata(mergeOrgPtoEngine({}, next))
                     }}
                   >
                     Request PTO
@@ -1152,28 +1233,26 @@ export default function TimeClockPortal({
                       onClick={() => {
                         const delta = window.prompt("Adjust balance (+/- hours):", "4")
                         if (!delta) return
-                        savePto(adjustPtoBalance(ptoEngine, ptoUserId, Number(delta) || 0, "Manager adjustment"))
+                        savePtoSimple(adjustPtoBalance(ptoEngine, ptoUserId, Number(delta) || 0, "Manager adjustment"))
                       }}
                     >
                       Adjust balance
                     </button>
                   ) : null}
                 </div>
-                {canManageTeamEntries && ptoEngine.requests.some((r) => r.status === "pending") ? (
+                {approvablePending.length > 0 ? (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12 }}>
                     <strong>Pending approvals</strong>
                     <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                      {ptoEngine.requests
-                        .filter((r) => r.status === "pending")
-                        .map((r) => (
+                      {approvablePending.map((r) => (
                           <li key={r.id} style={{ marginBottom: 8 }}>
                             {rosterLabel(r.userId)} — {r.hoursRequested}h ({new Date(r.startAt).toLocaleDateString()} –{" "}
                             {new Date(r.endAt).toLocaleDateString()})
                             <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                              <button type="button" style={secondaryBtnStyle} onClick={() => savePto(reviewPtoRequest(ptoEngine, r.id, viewerUserId, true))}>
+                              <button type="button" style={secondaryBtnStyle} onClick={() => reviewPto(r.id, true)}>
                                 Approve
                               </button>
-                              <button type="button" style={secondaryBtnStyle} onClick={() => savePto(reviewPtoRequest(ptoEngine, r.id, viewerUserId, false))}>
+                              <button type="button" style={secondaryBtnStyle} onClick={() => reviewPto(r.id, false)}>
                                 Deny
                               </button>
                             </div>

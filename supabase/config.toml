@@ -56,7 +56,7 @@ verify_jwt = false
 verify_jwt = false
 
 # helcim-match-customers: admin-only; matches Helcim customers to profiles by email (HELCIM_API_TOKEN).
-# Mobile / notifications (default verify_jwt = true): notify-quote-status, notify-calendar-status
+# Mobile / notifications (default verify_jwt = true): notify-quote-status, notify-calendar-status, notify-late-punch
 # Secrets: FCM_SERVICE_ACCOUNT_JSON (Firebase service account JSON for FCM HTTP v1),
 #   RESEND_API_KEY, RESEND_FROM_EMAIL (quote status email), TWILIO_* (SMS + bridge call).
 # SQL: supabase/user-push-devices-and-locations.sql

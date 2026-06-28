@@ -186,7 +186,7 @@ async function dispatchOutboundSms(opts: {
   }).catch((e) => console.warn("[conversationAutoReply] auto SMS", e))
 }
 
-async function dispatchOutboundEmail(opts: {
+export async function dispatchOutboundEmail(opts: {
   supabase: SupabaseClient
   userId: string
   to: string

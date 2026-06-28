@@ -16,6 +16,8 @@ export type EmailClientOutOfOffice = {
   endAt: string | null
   shareWithOrg: boolean
   syncCalendar: boolean
+  /** Linked calendar_events row when syncCalendar is enabled. */
+  calendarEventId?: string | null
 }
 
 export type EmailClientInboxOption = {
@@ -97,6 +99,7 @@ export function parseEmailClientWorkspace(metadata: unknown): EmailClientWorkspa
       endAt: typeof ooo.endAt === "string" ? ooo.endAt : null,
       shareWithOrg: ooo.shareWithOrg === true,
       syncCalendar: ooo.syncCalendar !== false,
+      calendarEventId: typeof ooo.calendarEventId === "string" ? ooo.calendarEventId : null,
     },
     folders,
     threadFolderMap,

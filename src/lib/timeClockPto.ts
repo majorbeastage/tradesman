@@ -26,6 +26,10 @@ export type PtoRequest = {
   reviewedAt: string | null
   createOutOfOfficeEmail: boolean
   createdAt: string
+  /** Org-chart managers who may approve (set on submit). */
+  assignedApproverUserIds?: string[]
+  /** Linked calendar_events row when approved with calendar sync. */
+  calendarEventId?: string | null
 }
 
 export type UserPtoLedgerEntry = {
@@ -114,6 +118,10 @@ function parsePtoRequest(raw: unknown): PtoRequest | null {
     reviewedAt: typeof o.reviewedAt === "string" ? o.reviewedAt : null,
     createOutOfOfficeEmail: o.createOutOfOfficeEmail === true,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
+    assignedApproverUserIds: Array.isArray(o.assignedApproverUserIds)
+      ? o.assignedApproverUserIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
+    calendarEventId: typeof o.calendarEventId === "string" ? o.calendarEventId : null,
   }
 }
 
@@ -176,7 +184,9 @@ export function computePtoBalance(engine: OrgPtoEngineV1, userId: string, employ
 
 export function submitPtoRequest(
   engine: OrgPtoEngineV1,
-  input: Omit<PtoRequest, "id" | "status" | "approverUserId" | "reviewedAt" | "createdAt">,
+  input: Omit<PtoRequest, "id" | "status" | "approverUserId" | "reviewedAt" | "createdAt" | "calendarEventId"> & {
+    assignedApproverUserIds?: string[]
+  },
 ): OrgPtoEngineV1 {
   const req: PtoRequest = {
     ...input,
@@ -185,6 +195,8 @@ export function submitPtoRequest(
     approverUserId: null,
     reviewedAt: null,
     createdAt: new Date().toISOString(),
+    calendarEventId: null,
+    assignedApproverUserIds: input.assignedApproverUserIds?.filter(Boolean),
   }
   return { ...engine, requests: [req, ...engine.requests] }
 }
@@ -232,4 +244,15 @@ export function pendingPtoForUser(engine: OrgPtoEngineV1, userId: string): PtoRe
 
 export function ptoRequestsAwaitingApproval(engine: OrgPtoEngineV1): PtoRequest[] {
   return engine.requests.filter((r) => r.status === "pending")
+}
+
+export function updatePtoRequestCalendarEventId(
+  engine: OrgPtoEngineV1,
+  requestId: string,
+  calendarEventId: string | null,
+): OrgPtoEngineV1 {
+  return {
+    ...engine,
+    requests: engine.requests.map((r) => (r.id === requestId ? { ...r, calendarEventId } : r)),
+  }
 }

@@ -27,7 +27,7 @@ import {
   shouldSuppressInboundEmail,
 } from "./_inbound-email-loop-guard.js"
 import { extractMessageIdsFromHeaders } from "./_emailThreadHeaders.js"
-import { findConversationIdByEmailThread } from "./_emailThreadResolve.js"
+import { runInboundEmailPostInsertHooks } from "./_inboundEmailHooks.js"
 
 /** Required for Svix signature verification (raw body). */
 export const config = {
@@ -420,6 +420,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (messageErr) {
       return res.status(500).json({ error: messageErr.message, step: "messages_insert" })
     }
+  }
+
+  try {
+    await runInboundEmailPostInsertHooks(supabase, {
+      userId: channel.user_id,
+      customerId,
+      customerEmail: fromEmail,
+      conversationId,
+      leadId,
+      inboundBody: bodyForMessage,
+      subject,
+    })
+  } catch (e) {
+    console.warn("[incoming-email] post-insert hooks", e instanceof Error ? e.message : e)
   }
 
   const forwardTo = channel.forward_to_email?.trim()

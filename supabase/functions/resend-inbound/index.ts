@@ -412,6 +412,48 @@ async function forwardCopyViaResend(params: {
   return { ok: false, status: res.status, detail: detail.slice(0, 500) }
 }
 
+async function invokeInboundEmailHooks(payload: {
+  userId: string
+  customerId: string
+  customerEmail: string
+  conversationId: string
+  inboundBody: string
+  subject: string
+}): Promise<void> {
+  const rawBase =
+    Deno.env.get("PUBLIC_APP_URL")?.trim() ||
+    Deno.env.get("VITE_SITE_URL")?.trim() ||
+    Deno.env.get("SITE_URL")?.trim() ||
+    ""
+  const base = rawBase
+    ? rawBase.startsWith("http")
+      ? rawBase.replace(/\/+$/, "")
+      : `https://${rawBase.replace(/\/+$/, "")}`
+    : ""
+  const secret =
+    Deno.env.get("INBOUND_EMAIL_HOOKS_SECRET")?.trim() || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() || ""
+  if (!base || !secret) {
+    console.warn("resend-inbound: skip inbound-email-hooks (PUBLIC_APP_URL or secret missing)")
+    return
+  }
+  try {
+    const r = await fetch(`${base}/api/inbound-email-hooks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-tradesman-inbound-hooks": secret,
+      },
+      body: JSON.stringify(payload),
+    })
+    if (!r.ok) {
+      const t = await r.text()
+      console.warn("resend-inbound inbound-email-hooks HTTP", r.status, t.slice(0, 300))
+    }
+  } catch (e) {
+    console.warn("resend-inbound inbound-email-hooks", e instanceof Error ? e.message : e)
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: cors })
@@ -665,6 +707,15 @@ Deno.serve(async (req) => {
   }
 
   await supabase.from("customers").update({ last_activity_at: new Date().toISOString() }).eq("id", customerId)
+
+  await invokeInboundEmailHooks({
+    userId: channel.user_id,
+    customerId,
+    customerEmail: fromEmail,
+    conversationId,
+    inboundBody: bodyForMessage,
+    subject,
+  })
 
   const forwardTo = channel.forward_to_email?.trim()
   let forwardResult: { skipped?: string; sent?: boolean; error?: string } = {}

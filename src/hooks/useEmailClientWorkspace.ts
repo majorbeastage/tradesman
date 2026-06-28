@@ -6,6 +6,7 @@ import {
   type EmailClientInboxOption,
   type EmailClientWorkspaceV1,
 } from "../lib/emailClientWorkspace"
+import { syncOutOfOfficeToCalendar } from "../lib/workforceCalendarSync"
 
 export function useEmailClientWorkspace(userId: string | null | undefined) {
   const [workspace, setWorkspace] = useState<EmailClientWorkspaceV1>(() => parseEmailClientWorkspace(null))
@@ -59,7 +60,30 @@ export function useEmailClientWorkspace(userId: string | null | undefined) {
       if (!userId || !supabase) return
       setSaving(true)
       const nextMeta = mergeEmailClientWorkspace(metadata, patch)
-      const nextWs = parseEmailClientWorkspace(nextMeta)
+      let nextWs = parseEmailClientWorkspace(nextMeta)
+
+      if (patch.outOfOffice && supabase) {
+        const eventId = await syncOutOfOfficeToCalendar(
+          supabase,
+          userId,
+          userId,
+          nextWs.outOfOffice,
+          nextWs.outOfOffice.calendarEventId,
+        )
+        if (eventId !== nextWs.outOfOffice.calendarEventId) {
+          const withCal = mergeEmailClientWorkspace(nextMeta, {
+            outOfOffice: { ...nextWs.outOfOffice, calendarEventId: eventId },
+          })
+          nextWs = parseEmailClientWorkspace(withCal)
+          setMetadata(withCal)
+          setWorkspace(nextWs)
+          const { error } = await supabase.from("profiles").update({ metadata: withCal }).eq("id", userId)
+          setSaving(false)
+          if (error) throw new Error(error.message)
+          return
+        }
+      }
+
       setMetadata(nextMeta)
       setWorkspace(nextWs)
       const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
