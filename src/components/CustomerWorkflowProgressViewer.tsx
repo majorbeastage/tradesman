@@ -1,6 +1,7 @@
 import { type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import type { BusinessWorkflowDoc } from "../lib/businessWorkflow"
+import { sortedWorkflowNodes } from "../lib/businessWorkflow"
 import type { OrganizationChartDoc } from "../lib/organizationChart"
 import { resolveWorkflowNodeAssignee } from "../lib/estimateWorkflowRuntime"
 import type { ExternalContactsDoc } from "../lib/externalContacts"
@@ -16,6 +17,8 @@ type Props = {
   completedNodeIds: string[]
   pendingNodeIds: string[]
   currentNodeId: string | null
+  onCompleteStep?: (nodeId: string) => void
+  completeBusy?: boolean
 }
 
 export default function CustomerWorkflowProgressViewer({
@@ -28,9 +31,12 @@ export default function CustomerWorkflowProgressViewer({
   completedNodeIds,
   pendingNodeIds,
   currentNodeId,
+  onCompleteStep,
+  completeBusy,
 }: Props) {
   if (!open) return null
 
+  const nodes = sortedWorkflowNodes(workflow)
   const completed = new Set(completedNodeIds)
   const pending = new Set(pendingNodeIds)
   const activeId = currentNodeId ?? pendingNodeIds[0] ?? null
@@ -62,7 +68,7 @@ export default function CustomerWorkflowProgressViewer({
           <div>
             <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>Workflow progress</h3>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              {workflow.title || "Company workflow"} — read-only view. Completed steps are grayed; the active step is highlighted.
+              {workflow.title || "Company workflow"} — mark steps complete as you work the job. The active step drives Job status on the Customers list.
             </p>
           </div>
           <button type="button" onClick={onClose} style={closeBtnStyle}>
@@ -71,7 +77,7 @@ export default function CustomerWorkflowProgressViewer({
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
-          {workflow.nodes.map((node, idx) => {
+          {nodes.map((node, idx) => {
             const isDone = completed.has(node.id)
             const isPending = pending.has(node.id)
             const isActive = node.id === activeId || (isPending && !activeId)
@@ -126,8 +132,28 @@ export default function CustomerWorkflowProgressViewer({
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
                     {assigneeLabel}
-                    {isDone ? " · Completed" : isPending ? " · Awaiting approval" : isActive ? " · Current step" : " · Upcoming"}
+                    {isDone ? " · Completed" : isPending ? " · Awaiting approval" : isActive ? " · Current step" : " · Not complete"}
                   </div>
+                  {!isDone && onCompleteStep ? (
+                    <button
+                      type="button"
+                      disabled={completeBusy}
+                      onClick={() => onCompleteStep(node.id)}
+                      style={{
+                        marginTop: 8,
+                        padding: "5px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.primary}`,
+                        background: "#eff6ff",
+                        color: theme.primary,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: completeBusy ? "wait" : "pointer",
+                      }}
+                    >
+                      {completeBusy ? "Saving…" : "Mark step complete"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             )

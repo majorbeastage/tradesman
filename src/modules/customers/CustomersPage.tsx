@@ -35,6 +35,9 @@ import {
 } from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
 import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
+import type { AttachmentStripItem } from "../../components/AttachmentStrip"
+import SaveInboundAttachmentToEstimate from "../../components/SaveInboundAttachmentToEstimate"
+import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
@@ -104,6 +107,7 @@ import {
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
+import { customerHubJobStatusLabel } from "../../lib/customerWorkflowProgress"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -328,6 +332,14 @@ function isPromotionalCustomer(c: CustomerRow): boolean {
   return customerBelongsInPromotionsHub(c)
 }
 
+function displayJobStatus(
+  c: CustomerRow,
+  section: "active" | "in_process" | "archived" | "promotions",
+  workflow: ReturnType<typeof loadAccountWorkflowBundleFromMetadata> | null,
+): string {
+  return customerHubJobStatusLabel(c, section, workflow?.workflow ?? null, JOB_PIPELINE_OPTIONS[0])
+}
+
 function isCompletedJobStatus(status: string | null | undefined): boolean {
   return String(status ?? "").trim().toLowerCase() === "completed"
 }
@@ -370,8 +382,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [outboundEmail, setOutboundEmail] = useState("")
   const [search, setSearch] = useState("")
   const [filterUrgency, setFilterUrgency] = useState<string>("")
-  const [sortField, setSortField] = useState<string>("name")
-  const [sortAsc, setSortAsc] = useState(true)
+  const [sortField, setSortField] = useState<string>("last_update")
+  const [sortAsc, setSortAsc] = useState(false)
   const [section, setSection] = useState<"active" | "in_process" | "archived" | "promotions">("active")
   const [loadError, setLoadError] = useState<string>("")
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
@@ -410,6 +422,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   const [customerMessages, setCustomerMessages] = useState<any[]>([])
   const [customerCommEvents, setCustomerCommEvents] = useState<any[]>([])
+  const [commAttachmentsByEvent, setCommAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
   const [customerActivityLoading, setCustomerActivityLoading] = useState(false)
   const [primaryConversationId, setPrimaryConversationId] = useState<string | null>(null)
   const [customerReplySms, setCustomerReplySms] = useState("")
@@ -456,12 +469,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
+  const [contactGatherBusy, setContactGatherBusy] = useState(false)
   const [customerReports, setCustomerReports] = useState<SpecialtyReportRegistryItem[]>([])
   const [customerCalendarEvents, setCustomerCalendarEvents] = useState<CustomerCalendarEventRow[]>([])
   const orgGroupingRef = useRef<CustomerOrgGroupingMaps>({
     siblingIdsByCustomerId: new Map(),
     canonicalIdByCustomerId: new Map(),
   })
+  const autoContactGatherRef = useRef(new Set<string>())
 
   const conversationPortalDefaults = useMemo(() => {
     const items = getControlItemsForUser(portalConfig, "conversations", "conversation_settings", { aiAutomationsEnabled })
@@ -1082,6 +1097,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         }
         merged.sort((a, b) => Date.parse(a.created_at || "") - Date.parse(b.created_at || ""))
         setCustomerCommEvents(merged)
+        const eventIds = merged.map((e) => e.id).filter(Boolean)
+        const attMap = await loadAttachmentsByCommunicationEventIds(eventIds)
+        setCommAttachmentsByEvent(attMap)
         setCustomerCalendarEvents(await loadCustomerCalendarEvents(supabase, userId, customerId))
       } finally {
         setCustomerActivityLoading(false)
@@ -1627,7 +1645,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     try {
       const nowIso = new Date().toISOString()
       const nextMeta = mergeCustomerHubMetadata(selectedCustomer.metadata, { manualArchived: true })
-      const patch: Record<string, unknown> = { metadata: nextMeta, last_activity_at: nowIso }
+      const patch: Record<string, unknown> = {
+        metadata: nextMeta,
+        job_pipeline_status: "Archived",
+        last_activity_at: nowIso,
+      }
       let { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
       if (error && String(error.message || "").toLowerCase().includes("last_activity")) {
         const { last_activity_at: _la, ...rest } = patch
@@ -1771,6 +1793,73 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       setFitReRunBusy(false)
     }
   }
+
+  async function reGatherCustomerContact(opts?: { silent?: boolean }) {
+    if (!supabase || !selectedCustomer?.id) return
+    setContactGatherBusy(true)
+    try {
+      let token = await getFreshAccessToken(supabase, session)
+      if (!token) token = await forceRefreshAccessToken(supabase)
+      if (!token) {
+        alert("Please sign in again.")
+        return
+      }
+      const run = (t: string) =>
+        fetch("/api/platform-tools?__route=customer-gather-contact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+          body: platformToolsJsonBody({ customerId: selectedCustomer.id }),
+        })
+      let res = await run(token)
+      if (res.status === 401) {
+        const t2 = await forceRefreshAccessToken(supabase)
+        if (t2) res = await run(t2)
+      }
+      const raw = await res.text()
+      if (!res.ok) {
+        alert(formatFetchApiError(res, raw))
+        return
+      }
+      let message = "Contact scan finished."
+      try {
+        const j = JSON.parse(raw) as { message?: string; updatedFields?: string[] }
+        if (j.message) message = j.message
+        else if (j.updatedFields?.length) message = `Updated: ${j.updatedFields.join(", ")}.`
+      } catch {
+        /* ignore */
+      }
+      await loadCustomers()
+      if (selectedCustomer.id) {
+        const refreshed = await supabase
+          .from("customers")
+          .select(
+            `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, communication_urgency, last_activity_at, metadata, fit_classification, fit_confidence, fit_reason, fit_source, fit_manually_overridden, fit_evaluated_at, customer_identifiers ( type, value )`,
+          )
+          .eq("id", selectedCustomer.id)
+          .maybeSingle()
+        if (!refreshed.error && refreshed.data) {
+          const row = refreshed.data as CustomerRow
+          setSelectedCustomer(row)
+          applyDetailFromCustomer(row)
+        }
+        void loadCustomerActivity(selectedCustomer.id)
+      }
+      if (!opts?.silent) alert(message)
+    } finally {
+      setContactGatherBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedCustomer?.id || customerActivityLoading || contactGatherBusy) return
+    const phones = listCustomerPhoneValues(selectedCustomer.customer_identifiers ?? null)
+    const emails = listCustomerEmailValues(selectedCustomer.customer_identifiers ?? null)
+    const hasAddr = Boolean(selectedCustomer.service_address?.trim())
+    if (phones.length > 0 && emails.length > 0 && hasAddr) return
+    if (autoContactGatherRef.current.has(selectedCustomer.id)) return
+    autoContactGatherRef.current.add(selectedCustomer.id)
+    void reGatherCustomerContact({ silent: true })
+  }, [selectedCustomer?.id, customerActivityLoading, contactGatherBusy, selectedCustomer?.service_address, selectedCustomer?.customer_identifiers])
 
   async function focusCustomerAfterCreate(customerId: string, reusedExisting: boolean) {
     if (!supabase) return
@@ -2300,8 +2389,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                       >
                         {customerContactLine(c)}
                       </td>
-                      <td style={{ ...cellBase, maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis" }} title={c.job_pipeline_status || JOB_PIPELINE_OPTIONS[0]}>
-                        {c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]}
+                      <td style={{ ...cellBase, maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis" }} title={displayJobStatus(c, section, workflowBundle)}>
+                        {displayJobStatus(c, section, workflowBundle)}
                       </td>
                       <td style={{ ...cellBase, fontSize: 13, color: isRowSelected ? selectedRowText : "#64748b" }}>{lastUpdateDisplay(c)}</td>
                       <td style={{ ...cellBase, maxWidth: "220px" }} onClick={(e) => e.stopPropagation()}>
@@ -2399,25 +2488,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   Full profile
                                 </button>
                               ) : null}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setShareCustomerTarget({ id: c.id, name: c.display_name?.trim() || "Customer" })
-                                }
-                                style={{
-                                  padding: "10px 16px",
-                                  borderRadius: 6,
-                                  border: `2px solid ${theme.primary}`,
-                                  background: "#fff7ed",
-                                  color: theme.charcoal,
-                                  cursor: "pointer",
-                                  fontWeight: 700,
-                                  fontSize: 13,
-                                  flexShrink: 0,
-                                }}
-                              >
-                                Share contact
-                              </button>
                               <div style={{ flex: "1 1 220px", minWidth: 0 }}>
                                 <div
                                   style={{
@@ -2815,7 +2885,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 >
                                   {contactJobDetailsOpen
                                     ? "Hide"
-                                    : `${(c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]).slice(0, 28)} · ${displayBestContact(c).slice(0, 36)}${displayBestContact(c).length > 36 ? "…" : ""} · Show`}
+                                    : `${displayJobStatus(c, section, workflowBundle).slice(0, 28)} · ${displayBestContact(c).slice(0, 36)}${displayBestContact(c).length > 36 ? "…" : ""} · Show`}
                                 </span>
                               </button>
                               {contactJobDetailsOpen ? (
@@ -2903,7 +2973,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       ))}
                                     </select>
                                   ) : (
-                                    <div style={{ marginTop: 2 }}>{c.job_pipeline_status?.trim() || JOB_PIPELINE_OPTIONS[0]}</div>
+                                    <div style={{ marginTop: 2 }}>{displayJobStatus(c, section, workflowBundle)}</div>
                                   )}
                                 </div>
                                 <div>
@@ -3149,7 +3219,27 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </>
                                   ) : null}
 
-                                  <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>Communications</div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>
+                                    <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
+                                    <button
+                                      type="button"
+                                      onClick={() => void reGatherCustomerContact()}
+                                      disabled={contactGatherBusy || !selectedCustomer?.id}
+                                      title="Search all calls, texts, and emails for phone, email, and address to fill empty profile fields."
+                                      style={{
+                                        padding: "6px 10px",
+                                        borderRadius: 6,
+                                        border: `1px solid ${theme.border}`,
+                                        background: "#fff",
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        cursor: contactGatherBusy ? "wait" : "pointer",
+                                        color: theme.primary,
+                                      }}
+                                    >
+                                      {contactGatherBusy ? "Scanning…" : "Re-scan for contact info"}
+                                    </button>
+                                  </div>
                                   {(() => {
                                     const groupedEmails = customerEmailsFromIdentifiers(c.customer_identifiers ?? null)
                                     const orgLabel = orgGroupSummaryLabel(
@@ -3267,6 +3357,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                         <div style={{ fontSize: 12, color: "#334155", marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45, maxHeight: 240, overflowY: "auto" }}>
                                                           {activityPreviewSnippet(item) || "—"}
                                                         </div>
+                                                        {item.kind === "ev" && item.payload?.id ? (
+                                                          <SaveInboundAttachmentToEstimate
+                                                            items={commAttachmentsByEvent[item.payload.id] ?? []}
+                                                            userId={userId}
+                                                            customerId={selectedCustomer?.id ?? item.payload?.customer_id ?? null}
+                                                            compact
+                                                          />
+                                                        ) : null}
                                                       </div>
                                                     ))}
                                                   </div>
@@ -3546,6 +3644,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                           <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4 }}>{ev.subject.trim()}</div>
                                                         ) : null}
                                                         <p style={{ margin: 0, fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev?.body || "—"}</p>
+                                                        <SaveInboundAttachmentToEstimate
+                                                          items={commAttachmentsByEvent[ev.id] ?? []}
+                                                          userId={userId}
+                                                          customerId={selectedCustomer?.id ?? ev?.customer_id ?? null}
+                                                          compact
+                                                        />
                                                         {(() => {
                                                           const metaFrom =
                                                             ev?.metadata &&

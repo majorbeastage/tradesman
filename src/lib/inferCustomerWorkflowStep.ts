@@ -6,6 +6,7 @@
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
 import type { CustomerProfileBundle } from "./customerProfileData"
 import type { CustomerWorkflowSnapshot } from "./customerWorkflowRouting"
+import { resolveSequentialWorkflowProgress } from "./customerWorkflowProgress"
 import { calendarEventDisplayStatus } from "./calendarEventProfile"
 import { estimateDisplayStatus } from "./customerDocumentStatus"
 
@@ -62,7 +63,6 @@ function collectSignals(bundle: CustomerProfileBundle): Record<StageKey, boolean
     const st = estimateDisplayStatus(q.status, q.metadata).toLowerCase()
     return st.includes("sent") || st.includes("accepted") || st.includes("approved")
   })
-  const hasDraftQuote = quotes.length > 0
   const hasUpcomingJob = events.some((ev) => {
     const st = calendarEventDisplayStatus(ev)
     return st === "Upcoming" || st === "Recurring"
@@ -76,7 +76,7 @@ function collectSignals(bundle: CustomerProfileBundle): Record<StageKey, boolean
 
   return {
     intake: bundle.leads.length > 0 || bundle.commEvents.length > 0 || quotes.length > 0,
-    estimate: hasDraftQuote,
+    estimate: hasSentQuote,
     approval: hasSentQuote,
     schedule: hasUpcomingJob || hasCompletedJob,
     field: hasCompletedJob || hasWorkOrder,
@@ -116,6 +116,20 @@ export function inferCustomerWorkflowStep(
     }
   }
 
+  if (quoteSnapshot?.pendingNodeIds?.length) {
+    const pendingId = quoteSnapshot.pendingNodeIds[0] ?? null
+    const pendingNode = pendingId ? nodes.find((n) => n.id === pendingId) ?? null : null
+    if (pendingNode) {
+      return {
+        currentNodeId: pendingNode.id,
+        currentNodeLabel: pendingNode.label,
+        completedNodeIds: quoteSnapshot.completedNodeIds,
+        summary: `Awaiting approval: ${pendingNode.label}`,
+        reason: "An estimate workflow step is waiting for approval.",
+      }
+    }
+  }
+
   if (quoteSnapshot?.activeNodeId) {
     const active = nodes.find((n) => n.id === quoteSnapshot.activeNodeId) ?? null
     if (active) {
@@ -126,6 +140,23 @@ export function inferCustomerWorkflowStep(
         summary: `Currently at: ${active.label}`,
         reason: "Based on estimate workflow approvals and sign-offs on file.",
       }
+    }
+  }
+
+  const sequential = resolveSequentialWorkflowProgress(workflow, bundle.customer.metadata)
+  if (sequential.currentNodeLabel) {
+    return {
+      currentNodeId: sequential.currentNodeId,
+      currentNodeLabel: sequential.currentNodeLabel,
+      completedNodeIds: sequential.completedNodeIds,
+      summary:
+        sequential.currentNodeLabel === "Completed"
+          ? "Workflow complete"
+          : `Currently at: ${sequential.currentNodeLabel}`,
+      reason:
+        sequential.completedNodeIds.length > 0
+          ? "Based on workflow steps marked complete for this customer."
+          : "Mark earlier steps complete in the workflow chart as you work the job.",
     }
   }
 

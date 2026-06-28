@@ -25,10 +25,19 @@ import {
   groupEmailEventsIntoThreads,
   loadEmailInboxEvents,
   resolveConversationIdForCustomer,
+  setEmailEventsUnreadState,
+  emailEventIsUnread,
   type EmailInboxFolder,
   type EmailInboxThread,
 } from "../../lib/customersEmailInboxData"
-import { navigateToCustomersList, openCustomersEmailInNewTab } from "../../lib/customersEmailClientNav"
+import {
+  navigateToCustomersList,
+  openCustomersEmailInNewTab,
+  isEmailClientStandaloneFromHash,
+} from "../../lib/customersEmailClientNav"
+import type { AttachmentStripItem } from "../../components/AttachmentStrip"
+import SaveInboundAttachmentToEstimate from "../../components/SaveInboundAttachmentToEstimate"
+import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 
 type CustomerPickRow = {
   id: string
@@ -54,6 +63,15 @@ type Props = {
   setPage?: (page: string) => void
 }
 
+const FOLDER_OPTIONS: EmailInboxFolder[] = ["inbox", "unread", "sent", "all"]
+
+function folderLabel(folder: EmailInboxFolder, mobile: boolean): string {
+  if (folder === "inbox") return "Inbox"
+  if (folder === "unread") return "Unread"
+  if (folder === "sent") return "Sent"
+  return mobile ? "All" : "All mail"
+}
+
 export default function CustomersEmailInboxPage({ setPage }: Props) {
   const userId = useScopedUserId()
   const { user, role } = useAuth()
@@ -64,6 +82,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [threads, setThreads] = useState<EmailInboxThread[]>([])
+  const [attachmentsByEvent, setAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
   const [folder, setFolder] = useState<EmailInboxFolder>("inbox")
   const [search, setSearch] = useState("")
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
@@ -115,6 +134,11 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
   const [replyFiles, setReplyFiles] = useState<File[]>([])
   const [replySending, setReplySending] = useState(false)
   const [replyMountKey, setReplyMountKey] = useState(0)
+  const [readStateBusy, setReadStateBusy] = useState(false)
+
+  const emailStandalone = isEmailClientStandaloneFromHash()
+
+  const unreadThreadCount = useMemo(() => threads.filter((t) => t.hasUnread).length, [threads])
 
   useEffect(() => {
     if (!isMobile) setMobilePane("browse")
@@ -145,12 +169,74 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
       const events = await loadEmailInboxEvents(userId)
       const grouped = groupEmailEventsIntoThreads(events)
       setThreads(grouped)
+      const eventIds = events.map((e) => e.id).filter(Boolean)
+      const attMap = await loadAttachmentsByCommunicationEventIds(eventIds)
+      setAttachmentsByEvent(attMap)
     } catch (e) {
       setLoadError(formatAppError(e))
     } finally {
       setLoading(false)
     }
   }, [userId])
+
+  const applyThreadReadState = useCallback((threadKey: string, unread: boolean) => {
+    setThreads((prev) =>
+      prev.map((t) => {
+        if (t.threadKey !== threadKey) return t
+        const events = t.events.map((e) =>
+          e.direction === "inbound" ? { ...e, unread } : e,
+        )
+        return {
+          ...t,
+          events,
+          hasUnread: events.some((e) => emailEventIsUnread(e)),
+        }
+      }),
+    )
+  }, [])
+
+  const markThreadRead = useCallback(
+    async (thread: EmailInboxThread) => {
+      if (!userId || !thread.hasUnread) return
+      const ids = thread.events.filter((e) => emailEventIsUnread(e)).map((e) => e.id)
+      if (ids.length === 0) return
+      applyThreadReadState(thread.threadKey, false)
+      try {
+        await setEmailEventsUnreadState(userId, ids, false)
+      } catch {
+        await reloadInbox()
+      }
+    },
+    [userId, applyThreadReadState, reloadInbox],
+  )
+
+  const markThreadUnread = useCallback(
+    async (thread: EmailInboxThread) => {
+      if (!userId) return
+      const ids = thread.events.filter((e) => e.direction === "inbound").map((e) => e.id)
+      if (ids.length === 0) return
+      setReadStateBusy(true)
+      applyThreadReadState(thread.threadKey, true)
+      try {
+        await setEmailEventsUnreadState(userId, ids, true)
+      } catch (e) {
+        sandboxTrainingAlert(sandboxTraining, formatAppError(e), "communication")
+        await reloadInbox()
+      } finally {
+        setReadStateBusy(false)
+      }
+    },
+    [userId, applyThreadReadState, reloadInbox, sandboxTraining],
+  )
+
+  const handleOpenThread = useCallback(
+    (threadKey: string) => {
+      openThread(threadKey)
+      const thread = threads.find((t) => t.threadKey === threadKey)
+      if (thread) void markThreadRead(thread)
+    },
+    [openThread, threads, markThreadRead],
+  )
 
   useEffect(() => {
     void reloadInbox()
@@ -356,14 +442,16 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
-          <button
-            type="button"
-            onClick={() => openCustomersEmailInNewTab()}
-            title="Open email client in a new browser tab"
-            style={{ ...ghostBtnStyle, flex: isMobile ? "1 1 auto" : undefined }}
-          >
-            Open in new tab
-          </button>
+          {!emailStandalone ? (
+            <button
+              type="button"
+              onClick={() => openCustomersEmailInNewTab()}
+              title="Open email client in a new browser tab"
+              style={{ ...ghostBtnStyle, flex: isMobile ? "1 1 auto" : undefined }}
+            >
+              Open in new tab
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -371,7 +459,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
 
       {isMobile && showBrowseList ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {(["inbox", "sent", "all"] as EmailInboxFolder[]).map((f) => (
+          {FOLDER_OPTIONS.map((f) => (
             <button
               key={f}
               type="button"
@@ -383,7 +471,8 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                 borderColor: folder === f ? theme.primary : theme.border,
               }}
             >
-              {f === "inbox" ? "Inbox" : f === "sent" ? "Sent" : "All"}
+              {folderLabel(f, true)}
+              {f === "unread" && unreadThreadCount > 0 ? ` (${unreadThreadCount})` : ""}
             </button>
           ))}
           <input
@@ -467,7 +556,7 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         {!isMobile ? (
           <aside style={panelStyle}>
             <p style={sectionTitleStyle}>Folders</p>
-            {(["inbox", "sent", "all"] as EmailInboxFolder[]).map((f) => (
+            {FOLDER_OPTIONS.map((f) => (
               <button
                 key={f}
                 type="button"
@@ -479,7 +568,8 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                   borderColor: folder === f ? theme.primary : theme.border,
                 }}
               >
-                {f === "inbox" ? "Inbox" : f === "sent" ? "Sent" : "All mail"}
+                {folderLabel(f, false)}
+                {f === "unread" && unreadThreadCount > 0 ? ` (${unreadThreadCount})` : ""}
               </button>
             ))}
             <input
@@ -503,32 +593,84 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
             ) : null}
             {filteredThreads.map((t) => {
               const active = selectedThread?.threadKey === t.threadKey
+              const unread = t.hasUnread
               return (
                 <button
                   key={t.threadKey}
                   type="button"
-                  onClick={() => openThread(t.threadKey)}
+                  onClick={() => handleOpenThread(t.threadKey)}
                   style={{
                     textAlign: "left",
                     padding: "10px 12px",
                     borderRadius: 8,
                     border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                    background: active ? "#fff7ed" : "#fff",
+                    background: active ? "#fff7ed" : unread ? "#f8fafc" : "#fff",
                     cursor: "pointer",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-                    <span style={{ fontWeight: 700, fontSize: 13, color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {t.customerName}
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      {unread ? (
+                        <span
+                          aria-hidden
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: theme.primary,
+                            flexShrink: 0,
+                          }}
+                        />
+                      ) : null}
+                      <span
+                        style={{
+                          fontWeight: unread ? 700 : 500,
+                          fontSize: 13,
+                          color: theme.text,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t.customerName}
+                      </span>
                     </span>
                     <span style={{ fontSize: 11, color: "#64748b", flexShrink: 0 }}>
                       {formatShortDate(t.latestAt)}
                     </span>
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: unread ? 700 : 400,
+                      color: unread ? theme.text : "#475569",
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {t.subject}
                   </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: unread ? 500 : 400,
+                      color: unread ? "#64748b" : "#94a3b8",
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {t.preview}
                   </div>
                   {t.messageCount > 1 ? (
@@ -573,6 +715,17 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                     View in Customers
                   </button>
                 ) : null}
+                {selectedThread.events.some((e) => e.direction === "inbound") ? (
+                  <button
+                    type="button"
+                    style={ghostBtnStyle}
+                    disabled={readStateBusy || selectedThread.hasUnread}
+                    onClick={() => void markThreadUnread(selectedThread)}
+                    title="Mark this conversation unread"
+                  >
+                    Mark unread
+                  </button>
+                ) : null}
               </div>
 
               <div
@@ -610,6 +763,12 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
                     >
                       {ev.body?.trim() || "(Empty body)"}
                     </div>
+                    <SaveInboundAttachmentToEstimate
+                      items={attachmentsByEvent[ev.id] ?? []}
+                      userId={userId}
+                      customerId={selectedThread?.customerId ?? ev.customer_id}
+                      compact
+                    />
                   </article>
                 ))}
               </div>

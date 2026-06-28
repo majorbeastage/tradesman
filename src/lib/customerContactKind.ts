@@ -1,4 +1,4 @@
-/** How this contact appears in the Customers hub (stored in customers.metadata). */
+import { customerEmailsFromIdentifiers, customerPhonesFromIdentifiers } from "./customerIdentifiers"
 export type CustomerHubKind = "customer" | "promotional"
 
 export const CUSTOMER_HUB_KIND_META_KEY = "customer_hub_kind"
@@ -248,6 +248,13 @@ export function customerBelongsInPromotionsHub(customer: {
   const explicit = parseCustomerHubKindExplicit(customer.metadata)
   if (explicit === "promotional") return true
   if (explicit === "customer") return false
+
+  const phones = customerPhonesFromIdentifiers(customer.customer_identifiers)
+  if (phones.length > 0) return false
+
+  const emails = customerEmailsFromIdentifiers(customer.customer_identifiers)
+  if (emails.some((e) => !isPromotionalEmailAddress(e))) return false
+
   return customerHasPromotionalEmail(customer.customer_identifiers)
 }
 

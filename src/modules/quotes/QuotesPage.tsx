@@ -151,6 +151,12 @@ import {
   peekQuotesCustomerPrefill,
 } from "../../lib/workflowNavigation"
 import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
+import {
+  CUSTOMER_SIGNED_ESTIMATE_LABEL,
+  filterCustomerSignedEstimateAttachments,
+  filterQuoteMediaAttachments,
+} from "../../lib/estimatePdfArchive"
+import { canStartEstimateForCustomer } from "../../lib/customerWorkflowProgress"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
@@ -526,6 +532,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteCommEvents, setQuoteCommEvents] = useState<any[]>([])
   const [quoteAttachmentsByEvent, setQuoteAttachmentsByEvent] = useState<Record<string, AttachmentStripItem[]>>({})
   const [quoteEntityRows, setQuoteEntityRows] = useState<EntityAttachmentRow[]>([])
+  const quoteMediaRows = useMemo(() => filterQuoteMediaAttachments(quoteEntityRows), [quoteEntityRows])
+  const customerSignedEstimateRows = useMemo(
+    () => filterCustomerSignedEstimateAttachments(quoteEntityRows),
+    [quoteEntityRows],
+  )
   const [quoteEntityUploadBusy, setQuoteEntityUploadBusy] = useState(false)
   const [quotePdfBusy, setQuotePdfBusy] = useState(false)
   const [quotePdfTemplate, setQuotePdfTemplate] = useState<string | null>(null)
@@ -2202,6 +2213,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
       }
 
       const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
+      if (accountWorkflowBundle) {
+        const { data: custRow } = await supabase
+          .from("customers")
+          .select("metadata")
+          .eq("id", cid)
+          .eq("user_id", userId)
+          .maybeSingle()
+        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata)
+        if (!gate.allowed) {
+          alert(
+            `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,
+          )
+          return false
+        }
+      }
       const { data, error } = await supabase
         .from("quotes")
         .insert({
@@ -2531,8 +2557,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   function handleGuideMediaContinue() {
     if (selectedQuote?.id) {
-      saveEstimateGuideFlags(selectedQuote.id, { mediaAdded: quoteEntityRows.length > 0, mediaSkipped: false })
-      setEstimateGuideFlags((f) => ({ ...f, mediaAdded: quoteEntityRows.length > 0, mediaSkipped: false }))
+      saveEstimateGuideFlags(selectedQuote.id, { mediaAdded: quoteMediaRows.length > 0, mediaSkipped: false })
+      setEstimateGuideFlags((f) => ({ ...f, mediaAdded: quoteMediaRows.length > 0, mediaSkipped: false }))
     }
     setEstimateStartGuideStep(5)
   }
@@ -3309,10 +3335,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
         jobTypeId: typeof (selectedQuote as QuoteRow | null)?.job_type_id === "string"
           ? (selectedQuote as QuoteRow).job_type_id
           : undefined,
-        entityCount: quoteEntityRows.length,
+        entityCount: quoteMediaRows.length,
         jobDetailsText,
       }),
-    [estimateGuideFlags, selectedQuote, quoteEntityRows.length, jobDetailsText],
+    [estimateGuideFlags, selectedQuote, quoteMediaRows.length, jobDetailsText],
   )
 
   const mergedScopeForAi = useMemo(() => {
@@ -3327,9 +3353,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (conv) parts.push(`Conversation summary (AI bullets):\n${conv}`)
     const pack = estimateGuideFlags.jobScopePackBullets?.trim()
     if (pack) parts.push(`Job scope bullets (AI):\n${pack}`)
-    if (quoteEntityRows.length > 0) {
+    if (quoteMediaRows.length > 0) {
       parts.push(
-        `Attached files:\n${quoteEntityRows
+        `Attached files:\n${quoteMediaRows
           .map((r) => r.file_name?.trim() || r.storage_path || "file")
           .join("\n")}`,
       )
@@ -3342,7 +3368,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     quoteDetailJobTypes,
     estimateGuideFlags.conversationScopeBullets,
     estimateGuideFlags.jobScopePackBullets,
-    quoteEntityRows,
+    quoteMediaRows,
     jobDetailsText,
   ])
 
@@ -4106,8 +4132,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       alert("Add at least one quote item before sending an estimate.")
       return
     }
-    const hasFileOrPhoto = quoteEntityRows.length > 0
-    const hasAttachmentDescription = quoteEntityRows.some((row) => {
+    const hasFileOrPhoto = quoteMediaRows.length > 0
+    const hasAttachmentDescription = quoteMediaRows.some((row) => {
       const p = parseQuoteAttachmentMeta(row.metadata)
       return Boolean(p.note.trim())
     })
@@ -4399,8 +4425,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     const conv = estimateGuideFlags.conversationScopeBullets?.trim()
     if (conv) chunks.push(`Conversation AI summary:\n${conv}`)
-    if (quoteEntityRows.length > 0) {
-      chunks.push(`Files:\n${quoteEntityRows.map((r) => r.file_name?.trim() || r.storage_path || "file").join("\n")}`)
+    if (quoteMediaRows.length > 0) {
+      chunks.push(`Files:\n${quoteMediaRows.map((r) => r.file_name?.trim() || r.storage_path || "file").join("\n")}`)
     }
     const notes = jobDetailsText.trim()
     if (notes) chunks.push(`Contractor notes:\n${notes}`)
@@ -5396,7 +5422,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       const resume = getResumeEstimateWizardStep(estimateGuideFlags, {
                                         customerId: selectedQuote.customer_id,
                                         jobTypeId: (selectedQuote as QuoteRow).job_type_id,
-                                        entityCount: quoteEntityRows.length,
+                                        entityCount: quoteMediaRows.length,
                                         jobDetailsText,
                                         lineItemCount: selectedQuoteItems.length,
                                       })
@@ -6242,6 +6268,48 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               </div>
                             </details>
 
+                            {customerSignedEstimateRows.length > 0 ? (
+                              <details
+                                open
+                                style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f0fdf4", borderColor: "#bbf7d0" }}
+                              >
+                                <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                                  {CUSTOMER_SIGNED_ESTIMATE_LABEL}
+                                  <span style={{ fontWeight: 600, color: "#64748b", marginLeft: "auto", fontSize: 13 }}>
+                                    {customerSignedEstimateRows.length} file{customerSignedEstimateRows.length === 1 ? "" : "s"}
+                                  </span>
+                                </summary>
+                                <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", fontSize: 13, color: theme.text }}>
+                                  {customerSignedEstimateRows.map((row) => (
+                                    <li
+                                      key={row.id}
+                                      style={{
+                                        marginBottom: 10,
+                                        padding: 10,
+                                        border: "1px solid #bbf7d0",
+                                        borderRadius: 8,
+                                        background: "#fff",
+                                      }}
+                                    >
+                                      <a
+                                        href={row.public_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{ color: theme.primary, fontWeight: 700, textDecoration: "none" }}
+                                      >
+                                        {row.file_name || CUSTOMER_SIGNED_ESTIMATE_LABEL}
+                                      </a>
+                                      {row.created_at ? (
+                                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                                          Saved {new Date(row.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                                        </div>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : null}
+
                             <details
                               ref={mediaSectionRef}
                               open={estimateMediaFoldOpen}
@@ -6252,11 +6320,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 Upload photos or files
                                 <EstimateGuideStatusMarker
                                   show={showEstimateWizardMarkers}
-                                  variant={quoteEntityRows.length > 0 ? "done" : estimateGuideFlags.mediaSkipped ? "skipped" : "none"}
+                                  variant={quoteMediaRows.length > 0 ? "done" : estimateGuideFlags.mediaSkipped ? "skipped" : "none"}
                                   label="Photos/files"
                                 />
                                 <span style={{ fontWeight: 600, color: "#64748b", marginLeft: "auto", fontSize: 13 }}>
-                                  {quoteEntityRows.length} file{quoteEntityRows.length === 1 ? "" : "s"}
+                                  {quoteMediaRows.length} file{quoteMediaRows.length === 1 ? "" : "s"}
                                 </span>
                               </summary>
                             <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -6272,9 +6340,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               </label>
                               {quoteEntityUploadBusy ? <span style={{ fontSize: 12, color: "#6b7280" }}>Uploading…</span> : null}
                             </div>
-                            {quoteEntityRows.length > 0 ? (
+                            {quoteMediaRows.length > 0 ? (
                               <ul style={{ margin: "0 0 16px", paddingLeft: 0, listStyle: "none", fontSize: 13, color: theme.text }}>
-                                {quoteEntityRows.map((row) => {
+                                {quoteMediaRows.map((row) => {
                                   const parsed = parseQuoteAttachmentMeta(row.metadata)
                                   const showThumb = isProbablyImageAttachment(row.content_type, row.public_url, row.file_name)
                                   return (

@@ -35,6 +35,8 @@ import { useEmailComposeSignature } from "../../hooks/useEmailComposeSignature"
 import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddresses"
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
+import { canStartEstimateForCustomer } from "../../lib/customerWorkflowProgress"
+import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
 import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
@@ -3067,6 +3069,23 @@ export default function ConversationsPage(_props: ConversationsPageProps) {
                 type="button"
                 onClick={async () => {
                   if (!supabase || !selectedConversation?.customer_id) return
+                  const customerId = selectedConversation.customer_id
+                  const [{ data: custRow }, { data: profRow }] = await Promise.all([
+                    supabase.from("customers").select("metadata").eq("id", customerId).eq("user_id", userId).maybeSingle(),
+                    supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
+                  ])
+                  const workflowBundle = profRow?.metadata
+                    ? loadAccountWorkflowBundleFromMetadata(profRow.metadata as Record<string, unknown>)
+                    : null
+                  if (workflowBundle) {
+                    const gate = canStartEstimateForCustomer(workflowBundle.workflow, custRow?.metadata)
+                    if (!gate.allowed) {
+                      alert(
+                        `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,
+                      )
+                      return
+                    }
+                  }
                   const { error } = await supabase.from("quotes").insert({
                     user_id: userId,
                     customer_id: selectedConversation.customer_id,

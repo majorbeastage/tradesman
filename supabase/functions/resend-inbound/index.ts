@@ -34,6 +34,7 @@ import {
   orgGroupKeysForEmail,
   parseSplitOrgEmails,
 } from "../_shared/customer-contact-kind.ts"
+import { mirrorResendInboundEmailAttachments } from "../_shared/inbound-email-attachments.ts"
 
 type ResendReceivedPayload = {
   id?: string
@@ -296,14 +297,19 @@ async function logCommunicationEvent(
     previous_customer?: boolean
     metadata?: Record<string, unknown>
   }
-): Promise<void> {
-  const { error } = await supabase.from("communication_events").insert({
-    ...payload,
-    metadata: payload.metadata ?? {},
-  })
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("communication_events")
+    .insert({
+      ...payload,
+      metadata: payload.metadata ?? {},
+    })
+    .select("id")
+    .single()
   if (error && !String(error.message || "").includes("communication_events")) {
     throw error
   }
+  return data?.id ? String(data.id) : null
 }
 
 function parseEmailAddressFromHeader(from: string): string {
@@ -624,7 +630,7 @@ Deno.serve(async (req) => {
     return json(500, { error: messageErr.message, step: "messages_insert" })
   }
 
-  await logCommunicationEvent(supabase, {
+  const eventId = await logCommunicationEvent(supabase, {
     user_id: channel.user_id,
     customer_id: customerId,
     conversation_id: conversationId,
@@ -648,6 +654,15 @@ Deno.serve(async (req) => {
       message_id: typeof received.message_id === "string" ? received.message_id : undefined,
     },
   })
+
+  if (eventId) {
+    await mirrorResendInboundEmailAttachments(supabase, {
+      apiKey,
+      resendReceivedId: received.id,
+      userId: channel.user_id,
+      eventId,
+    })
+  }
 
   await supabase.from("customers").update({ last_activity_at: new Date().toISOString() }).eq("id", customerId)
 

@@ -15,6 +15,7 @@ import BusinessWorkflowPage from "../workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "../org-chart/OrganizationChartPage"
 import OperationsPage from "../operations/OperationsPage"
 import GrowthPage from "../growth/GrowthPage"
+import { useEmailClientLayoutFlags } from "../../lib/customersEmailClientNav"
 import { useAuth } from "../../contexts/AuthContext"
 import {
   useOfficeManagerScopeOptional,
@@ -420,6 +421,7 @@ function OfficeManagerAppContent() {
   const currentPageTitle =
     page === "customers-email" ? t("nav.emailClient") : formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
   const showEmailClientShortcut = hasClients && resolvedPortalTabs.some((tab) => tab.tab_id === "customers")
+  const emailLayout = useEmailClientLayoutFlags(page)
 
   useEffect(() => {
     if (page === "web-support") setPage("tech-support")
@@ -508,17 +510,24 @@ function OfficeManagerAppContent() {
       onMetadataPatch={setProfileMetadata}
       setPage={setPage}
     />
-    <GlobalAssistantFab />
-    <HelpDeskChatPanel />
+    {!emailLayout.standalone ? <GlobalAssistantFab /> : null}
+    {!emailLayout.standalone ? <HelpDeskChatPanel /> : null}
     <SandboxTrainingProvider
       profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       portalConfig={portalConfig}
       authRole={authRole}
     >
-    <SandboxControlPanel />
-    <AppLayout setPage={setPage} portalTabs={resolvedPortalTabs} currentPage={currentPageTitle} activePage={page}>
-      <ManagedUserToolsStrip />
+    {!emailLayout.standalone ? <SandboxControlPanel /> : null}
+    <AppLayout
+      setPage={setPage}
+      portalTabs={resolvedPortalTabs}
+      currentPage={currentPageTitle}
+      activePage={page}
+      hideSidebar={emailLayout.hideSidebar && !isMobile}
+      hidePortalChrome={emailLayout.hidePortalChrome}
+    >
+      {!emailLayout.standalone ? <ManagedUserToolsStrip /> : null}
 
       {portalConfig?.demo_account === true ? (
         <div

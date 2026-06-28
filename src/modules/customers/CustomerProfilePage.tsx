@@ -60,6 +60,7 @@ import {
   suggestRollbackTargetForCancellation,
 } from "../../lib/customerWorkflowRollback"
 import { inferCustomerWorkflowStep, shouldOpenEstimatePdfFromWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
+import { applyManualWorkflowNodeComplete } from "../../lib/customerWorkflowProgress"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 
 type Props = {
@@ -376,6 +377,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [workflowRollbackInitialTarget, setWorkflowRollbackInitialTarget] = useState<string | null>(null)
   const [workflowRollbackSuggestCalendar, setWorkflowRollbackSuggestCalendar] = useState(false)
   const [workflowRollbackBusy, setWorkflowRollbackBusy] = useState(false)
+  const [workflowStepCompleteBusy, setWorkflowStepCompleteBusy] = useState(false)
   const [workflowChartOpen, setWorkflowChartOpen] = useState(false)
   const [linkableUsers, setLinkableUsers] = useState<Awaited<ReturnType<typeof loadLinkableOrgUsers>>>([])
   const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
@@ -991,6 +993,53 @@ export default function CustomerProfilePage({ setPage }: Props) {
       setWorkflowRollbackBusy(false)
     }
   }
+
+  async function completeWorkflowStepManually(nodeId: string) {
+    if (!supabase || !userId || !c?.id || !workflowBundle || !inferredWorkflow) return
+    setWorkflowStepCompleteBusy(true)
+    try {
+      const targetNode = workflowBundle.workflow.nodes.find((n) => n.id === nodeId)
+      if (!targetNode) return
+
+      const progress = applyManualWorkflowNodeComplete(
+        workflowBundle.workflow,
+        inferredWorkflow.completedNodeIds,
+        nodeId,
+      )
+      const nextNode = progress.currentNodeId
+        ? workflowBundle.workflow.nodes.find((n) => n.id === progress.currentNodeId) ?? null
+        : null
+      const departmentKey = nextNode ? resolveWorkflowNodeDepartmentKey(nextNode, workflowBundle.orgChart) : null
+
+      const nextCustomerMeta = mergeCustomerWorkflowMeta(c.metadata, {
+        quoteId: quoteForWorkflow?.id ?? null,
+        activeNodeId: progress.currentNodeId,
+        departmentKey,
+        completedNodeIds: progress.completedNodeIds,
+        pendingNodeIds: [],
+      })
+
+      const nowIso = new Date().toISOString()
+      const { error: custErr } = await supabase
+        .from("customers")
+        .update({
+          metadata: nextCustomerMeta,
+          job_pipeline_status: progress.currentNodeLabel ?? "Completed",
+          last_activity_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq("id", c.id)
+        .eq("user_id", userId)
+      if (custErr) throw custErr
+
+      await reload()
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setWorkflowStepCompleteBusy(false)
+    }
+  }
+
   const selfOmPolicy = parseOmCalendarPolicy(profileMetadata)
   const allowWorkflowBypass = selfOmPolicy.allow_bypass_workflow_approval === true
 
@@ -1454,6 +1503,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 completedNodeIds={inferredWorkflow.completedNodeIds}
                 pendingNodeIds={quoteWorkflowState?.pendingNodeIds ?? []}
                 currentNodeId={inferredWorkflow.currentNodeId}
+                onCompleteStep={(nodeId) => void completeWorkflowStepManually(nodeId)}
+                completeBusy={workflowStepCompleteBusy}
               />
             </div>
           ) : null}

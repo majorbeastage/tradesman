@@ -60,6 +60,7 @@ import DashboardTodayWorkPreview from "./components/DashboardTodayWorkPreview"
 import DashboardReportsPreview from "./components/DashboardReportsPreview"
 import CustomerProfilePage from "./modules/customers/CustomerProfilePage"
 import CustomersEmailInboxPage from "./modules/customers/CustomersEmailInboxPage"
+import { useEmailClientLayoutFlags } from "./lib/customersEmailClientNav"
 import SetupGuideModal from "./components/SetupGuideModal"
 import GlobalAssistantFab from "./components/GlobalAssistantFab"
 import CustomerProfileReturnBar from "./components/CustomerProfileReturnBar"
@@ -298,6 +299,7 @@ function MainAppInner() {
     page === "customers-email" ? t("nav.emailClient") : formatPortalTabLabel(page, currentTabMeta?.label ?? null, t)
   const customersTabAvailable = portalTabs.some((t) => t.tab_id === "customers")
   const showEmailClientShortcut = customersTabAvailable && !estimateToolsOnlyPackage
+  const emailLayout = useEmailClientLayoutFlags(page)
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
 
@@ -351,16 +353,23 @@ function MainAppInner() {
       onMetadataPatch={setProfileMetadata}
       setPage={setPage}
     />
-    <GlobalAssistantFab />
-    <HelpDeskChatPanel />
+    {!emailLayout.standalone ? <GlobalAssistantFab /> : null}
+    {!emailLayout.standalone ? <HelpDeskChatPanel /> : null}
     <SandboxTrainingProvider
       profileUserId={user?.id ?? null}
       profileMetadata={profileMetadata}
       portalConfig={portalConfig}
       authRole={authRole}
     >
-    <SandboxControlPanel />
-    <AppLayout setPage={setPage} portalTabs={portalTabs} currentPage={currentPageTitle} activePage={page}>
+    {!emailLayout.standalone ? <SandboxControlPanel /> : null}
+    <AppLayout
+      setPage={setPage}
+      portalTabs={portalTabs}
+      currentPage={currentPageTitle}
+      activePage={page}
+      hideSidebar={emailLayout.hideSidebar && !isMobile}
+      hidePortalChrome={emailLayout.hidePortalChrome}
+    >
       {authRole === "demo_user" || portalConfig?.demo_account === true ? (
         <div
           style={{
@@ -552,7 +561,7 @@ function MainAppInner() {
         </div>
       )}
     </AppLayout>
-    <CustomerProfileReturnBar page={page} onNavigate={setPage} />
+    {!emailLayout.standalone ? <CustomerProfileReturnBar page={page} onNavigate={setPage} /> : null}
     </SandboxTrainingProvider>
     </GlobalAssistantProvider>
     </SetupWizardProvider>

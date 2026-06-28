@@ -59,7 +59,7 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
 
   const openOverlay = useCallback(
     (overlayId: string) => {
-      history.pushState({ appNav: true, page, overlay: overlayId }, "", buildAppHash(page, overlayId))
+      history.pushState({ appNav: true, page, overlay: overlayId }, "", buildAppHash(page, { overlay: overlayId }))
     },
     [page],
   )
@@ -84,9 +84,9 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
       setPage(parsed.page)
     }
     history.replaceState(
-      { appNav: true, page: parsed.page ?? page, overlay: parsed.overlay ?? undefined },
+      { appNav: true, page: parsed.page ?? page, overlay: parsed.overlay ?? undefined, standalone: parsed.standalone },
       "",
-      buildAppHash(parsed.page ?? page, parsed.overlay),
+      buildAppHash(parsed.page ?? page, { overlay: parsed.overlay, standalone: parsed.standalone }),
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time bootstrap
   }, [])

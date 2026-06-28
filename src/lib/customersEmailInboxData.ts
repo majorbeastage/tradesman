@@ -8,6 +8,7 @@ export type EmailInboxEventRow = {
   subject: string | null
   body: string | null
   direction: string | null
+  unread: boolean | null
   created_at: string | null
   metadata: Record<string, unknown> | null
   customers?: {
@@ -16,7 +17,7 @@ export type EmailInboxEventRow = {
   } | null
 }
 
-export type EmailInboxFolder = "inbox" | "sent" | "all"
+export type EmailInboxFolder = "inbox" | "unread" | "sent" | "all"
 
 export type EmailInboxThread = {
   threadKey: string
@@ -29,6 +30,7 @@ export type EmailInboxThread = {
   latestAt: string
   latestDirection: string | null
   messageCount: number
+  hasUnread: boolean
   events: EmailInboxEventRow[]
 }
 
@@ -39,6 +41,7 @@ const EVENT_SELECT = `
   subject,
   body,
   direction,
+  unread,
   created_at,
   metadata,
   customers (
@@ -46,6 +49,15 @@ const EVENT_SELECT = `
     customer_identifiers ( type, value )
   )
 `
+
+export function emailEventIsUnread(ev: EmailInboxEventRow): boolean {
+  if (ev.direction !== "inbound") return false
+  return ev.unread !== false
+}
+
+export function threadHasUnread(thread: EmailInboxThread): boolean {
+  return thread.events.some((e) => emailEventIsUnread(e))
+}
 
 export function normalizeEmailSubject(subject: string | null | undefined): string {
   return (subject ?? "")
@@ -114,6 +126,7 @@ export function groupEmailEventsIntoThreads(events: EmailInboxEventRow[]): Email
       latestAt: latest.created_at || new Date(0).toISOString(),
       latestDirection: latest.direction,
       messageCount: sorted.length,
+      hasUnread: list.some((e) => emailEventIsUnread(e)),
       events: [...list].sort((a, b) => Date.parse(a.created_at || "") - Date.parse(b.created_at || "")),
     })
   }
@@ -124,6 +137,7 @@ export function groupEmailEventsIntoThreads(events: EmailInboxEventRow[]): Email
 
 export function filterThreadsByFolder(threads: EmailInboxThread[], folder: EmailInboxFolder): EmailInboxThread[] {
   if (folder === "all") return threads
+  if (folder === "unread") return threads.filter((t) => t.hasUnread)
   if (folder === "sent") {
     return threads.filter((t) => t.latestDirection === "outbound")
   }
@@ -176,4 +190,14 @@ export async function resolveConversationIdForCustomer(userId: string, customerI
     .limit(1)
     .maybeSingle()
   return data?.id ?? null
+}
+
+export async function setEmailEventsUnreadState(userId: string, eventIds: string[], unread: boolean): Promise<void> {
+  if (!supabase || !userId || eventIds.length === 0) return
+  const { error } = await supabase
+    .from("communication_events")
+    .update({ unread })
+    .eq("user_id", userId)
+    .in("id", eventIds)
+  if (error) throw error
 }

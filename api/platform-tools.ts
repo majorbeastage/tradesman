@@ -825,6 +825,51 @@ async function handleCustomerEvaluateFit(req: VercelRequest, res: VercelResponse
   res.status(200).json({ ok: true, ...result })
 }
 
+/** Re-scan conversation history and fill missing phone, email, address, and name on the customer profile. */
+async function handleCustomerGatherContact(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await getUserIdFromBearer(req, res)
+  if (!auth) return
+  const { userId: actorUserId } = auth
+  let service: SupabaseClient
+  try {
+    service = createServiceSupabase()
+  } catch (e) {
+    const fallback = createUserJwtSupabaseClient(req)
+    if (!fallback) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Server misconfiguration" })
+      return
+    }
+    service = fallback
+  }
+  const body = jsonBody(req)
+  const customerId = pickFirstString(body.customerId).trim()
+  if (!customerId) {
+    res.status(400).json({ error: "customerId required" })
+    return
+  }
+  const force = body.force === true
+  const { data: row, error } = await service.from("customers").select("id,user_id").eq("id", customerId).maybeSingle()
+  const c = row as { id: string; user_id: string } | null
+  if (error || !c) {
+    res.status(404).json({ error: "Customer not found" })
+    return
+  }
+  if (!(await authCanAccessCustomerOwner(service, actorUserId, c.user_id))) {
+    res.status(404).json({ error: "Customer not found" })
+    return
+  }
+  const { gatherAndApplyCustomerContactFromHistory } = await import("./_customerContactGathering.js")
+  const result = await gatherAndApplyCustomerContactFromHistory(service, c.user_id, customerId, {
+    force,
+    source: "manual_rescan",
+  })
+  res.status(200).json(result)
+}
+
 async function handlePublicLeadConfig(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -1818,6 +1863,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "estimate-wizard-bullets",
         "lead-evaluate-fit",
         "customer-evaluate-fit",
+        "customer-gather-contact",
         "helcim-js-return",
         "billing-portal-config",
         "ai-summarize-customer-event",
@@ -1928,6 +1974,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "customer-evaluate-fit") {
       await handleCustomerEvaluateFit(req, res)
+      return
+    }
+    if (route === "customer-gather-contact") {
+      await handleCustomerGatherContact(req, res)
       return
     }
     if (route === "billing-portal-config") {

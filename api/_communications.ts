@@ -950,6 +950,22 @@ export async function touchCustomerLastActivityAt(supabase: SupabaseClient, cust
   if (error) console.warn("[touchCustomerLastActivityAt]", error.message)
 }
 
+async function pinCustomerOperationalHub(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("metadata")
+    .eq("id", customerId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error || !data) return
+  const nextMeta = mergeCustomerHubMetadata(data.metadata, { hubKind: "customer" })
+  await supabase.from("customers").update({ metadata: nextMeta }).eq("id", customerId).eq("user_id", userId)
+}
+
 export async function logCommunicationEvent(
   supabase: SupabaseClient,
   payload: {
@@ -980,6 +996,11 @@ export async function logCommunicationEvent(
     return
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
+  if (payload.direction === "outbound" && payload.customer_id) {
+    void pinCustomerOperationalHub(supabase, payload.user_id, payload.customer_id).catch((e) =>
+      console.warn("[logCommunicationEvent] pin customer hub", e instanceof Error ? e.message : e),
+    )
+  }
   if (payload.direction === "inbound" && payload.customer_id) {
     const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline.js")
     await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")
@@ -1045,6 +1066,11 @@ export async function insertCommunicationEventReturningId(
     return null
   }
   await touchCustomerLastActivityAt(supabase, payload.customer_id)
+  if (payload.direction === "outbound" && payload.customer_id) {
+    void pinCustomerOperationalHub(supabase, payload.user_id, payload.customer_id).catch((e) =>
+      console.warn("[insertCommunicationEventReturningId] pin customer hub", e instanceof Error ? e.message : e),
+    )
+  }
   if (payload.direction === "inbound" && payload.customer_id) {
     const { refreshCustomerPipelineOnEngagement } = await import("./_customerPipeline.js")
     await refreshCustomerPipelineOnEngagement(supabase, payload.customer_id, "inbound_contact")

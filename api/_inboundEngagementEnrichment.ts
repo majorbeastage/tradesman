@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
+import { gatherAndApplyCustomerContactFromHistory } from "./_customerContactGathering.js"
 
 const SMS_CONSENT_META_KEY = "sms_consent"
 
@@ -96,12 +97,19 @@ export async function enrichInboundCustomerEngagement(
   const combined = [body, transcript].filter(Boolean).join("\n\n")
   if (!combined.trim()) return
 
-  const parsedAddr = extractAddressFromText(combined)
   const consentSource =
     opts.sourceTag ??
     (opts.channel === "call" || opts.channel === "voicemail" ? "auto_attendant_or_call" : `inbound_${opts.channel}`)
 
   await applySmsConsentIfDetected(supabase, opts.userId, opts.customerId, combined, consentSource)
+
+  const gatherResult = await gatherAndApplyCustomerContactFromHistory(supabase, opts.userId, opts.customerId, {
+    supplementalText: combined,
+    source: `inbound_${opts.channel}`,
+  }).catch((e) => {
+    console.warn("[inbound-enrich] contact gather", e instanceof Error ? e.message : e)
+    return null
+  })
 
   const { data: cust } = await supabase
     .from("customers")
@@ -110,12 +118,16 @@ export async function enrichInboundCustomerEngagement(
     .eq("user_id", opts.userId)
     .maybeSingle()
 
+  const hadAddressBeforeNotes = Boolean((cust?.service_address as string | null | undefined)?.trim())
+  const addressNewlyCaptured =
+    gatherResult?.updatedFields.includes("service address") ||
+    Boolean(!hadAddressBeforeNotes && extractAddressFromText(combined))
+
   if (cust) {
     const meta =
       cust.metadata && typeof cust.metadata === "object" && !Array.isArray(cust.metadata)
         ? { ...(cust.metadata as Record<string, unknown>) }
         : {}
-    const hadAddress = Boolean((cust.service_address as string | null | undefined)?.trim())
     const patch: Record<string, unknown> = {
       last_activity_at: new Date().toISOString(),
       metadata: {
@@ -124,12 +136,10 @@ export async function enrichInboundCustomerEngagement(
         last_inbound_at: new Date().toISOString(),
       },
     }
-    if (parsedAddr) patch.service_address = parsedAddr
     const noteLine = `[${opts.channel.toUpperCase()} ${new Date().toLocaleDateString()}] ${combined.slice(0, 600)}`
     patch.notes = mergeCustomerNotes(cust.notes as string | null, noteLine)
     await supabase.from("customers").update(patch).eq("id", opts.customerId).eq("user_id", opts.userId)
 
-    const addressNewlyCaptured = Boolean(parsedAddr && !hadAddress)
     if (!cust.fit_evaluated_at || addressNewlyCaptured) {
       await evaluateAndPersistCustomerFit(supabase, opts.customerId, {
         force: addressNewlyCaptured,
@@ -154,11 +164,11 @@ export async function enrichInboundCustomerEngagement(
       })
       .eq("id", opts.leadId)
 
-    const leadNeedsFit = !lead?.fit_evaluated_at || Boolean(parsedAddr)
+    const leadNeedsFit = !lead?.fit_evaluated_at || addressNewlyCaptured
     if (leadNeedsFit) {
       await evaluateAndPersistLeadFit(supabase, opts.leadId, {
         supplementalText: combined.slice(0, 4000),
-        force: Boolean(parsedAddr),
+        force: addressNewlyCaptured,
       }).catch((e) => console.warn("[inbound-enrich] lead fit", e instanceof Error ? e.message : e))
     }
   }

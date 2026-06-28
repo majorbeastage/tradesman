@@ -20,9 +20,21 @@ type AppLayoutProps = {
   currentPage?: string
   /** In-app page id for sidebar highlight */
   activePage?: string
+  /** Hide left nav (email client full-width layout). */
+  hideSidebar?: boolean
+  /** Hide portal view-as bar (standalone email pop-out). */
+  hidePortalChrome?: boolean
 }
 
-export default function AppLayout({ children, setPage, portalTabs, currentPage, activePage }: AppLayoutProps) {
+export default function AppLayout({
+  children,
+  setPage,
+  portalTabs,
+  currentPage,
+  activePage,
+  hideSidebar = false,
+  hidePortalChrome = false,
+}: AppLayoutProps) {
   const [showMobileNav, setShowMobileNav] = useState(false)
   const { signOut, profilePhotoUrl, user } = useAuth()
   const { setView } = useView()
@@ -60,7 +72,7 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage, 
 
   return (
     <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", background: theme.portalShellBackground }}>
-      {isMobile ? (
+      {!hideSidebar && isMobile ? (
         <Sidebar
           setPage={setPage}
           onLogout={handleLogout}
@@ -70,12 +82,12 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage, 
           onClose={() => setShowMobileNav(false)}
           activePage={activePage}
         />
-      ) : (
+      ) : !hideSidebar ? (
         <Sidebar setPage={setPage} onLogout={handleLogout} portalTabs={portalTabs} activePage={activePage} />
-      )}
+      ) : null}
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {isMobile && (
+        {isMobile && !hideSidebar && (
           <div
             style={{
               position: "sticky",
@@ -181,14 +193,18 @@ export default function AppLayout({ children, setPage, portalTabs, currentPage, 
           className="app-main-safe"
           style={{
             flex: 1,
-            padding: isMobile ? "10px calc(10px + env(safe-area-inset-right, 0)) calc(14px + env(safe-area-inset-bottom, 0)) calc(10px + env(safe-area-inset-left, 0))" : "20px",
+            padding: isMobile
+              ? "10px calc(10px + env(safe-area-inset-right, 0)) calc(14px + env(safe-area-inset-bottom, 0)) calc(10px + env(safe-area-inset-left, 0))"
+              : hideSidebar
+                ? "16px 20px"
+                : "20px",
             minWidth: 0,
             maxWidth: "100%",
             overflowX: isMobile ? "hidden" : undefined,
             background: "transparent",
           }}
         >
-          <PortalViewBar />
+          {!hidePortalChrome ? <PortalViewBar /> : null}
           {children}
         </main>
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
