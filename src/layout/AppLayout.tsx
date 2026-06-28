@@ -10,6 +10,7 @@ import { useLocale } from "../i18n/LocaleContext"
 import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 import PortalViewBar from "../components/PortalViewBar"
+import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -36,6 +37,7 @@ export default function AppLayout({
   hidePortalChrome = false,
 }: AppLayoutProps) {
   const [showMobileNav, setShowMobileNav] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readSidebarCollapsed())
   const { signOut, profilePhotoUrl, user } = useAuth()
   const { setView } = useView()
   const isMobile = useIsMobile()
@@ -70,8 +72,16 @@ export default function AppLayout({
     setShowMobileNav(false)
   }
 
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      writeSidebarCollapsed(next)
+      return next
+    })
+  }
+
   return (
-    <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", background: theme.portalShellBackground }}>
+    <div className="portal-charcoal" style={{ display: "flex", minHeight: "100vh", alignItems: "stretch", background: theme.portalShellBackground }}>
       {!hideSidebar && isMobile ? (
         <Sidebar
           setPage={setPage}
@@ -83,7 +93,14 @@ export default function AppLayout({
           activePage={activePage}
         />
       ) : !hideSidebar ? (
-        <Sidebar setPage={setPage} onLogout={handleLogout} portalTabs={portalTabs} activePage={activePage} />
+        <Sidebar
+          setPage={setPage}
+          onLogout={handleLogout}
+          portalTabs={portalTabs}
+          activePage={activePage}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebarCollapsed}
+        />
       ) : null}
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>

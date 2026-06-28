@@ -8,6 +8,7 @@ import { useLocale } from "../i18n/LocaleContext"
 import { formatPortalTabLabel } from "../i18n/navLabel"
 import { useAuth } from "../contexts/AuthContext"
 import { CUSTOMERS_EMAIL_PAGE } from "../lib/customersEmailClientNav"
+import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from "../lib/sidebarLayoutPrefs"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -19,6 +20,9 @@ type SidebarProps = {
   onClose?: () => void
   /** Active in-app page id (e.g. customers, customers-email). */
   activePage?: string
+  /** Desktop only — narrow rail mode. */
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
 }
 
 const DEFAULT_TABS = [...V2_SIDEBAR_DEFAULT_TAB_IDS]
@@ -33,7 +37,17 @@ const SIDEBAR_EXCLUDED_TAB_IDS = new Set([
   "settings",
 ])
 
-export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = false, isOpen = true, onClose, activePage }: SidebarProps) {
+export default function Sidebar({
+  setPage,
+  onLogout,
+  portalTabs,
+  isMobile = false,
+  isOpen = true,
+  onClose,
+  activePage,
+  collapsed = false,
+  onToggleCollapsed,
+}: SidebarProps) {
   const { t } = useLocale()
   const { profilePhotoUrl } = useAuth()
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: theme.primary }
@@ -216,15 +230,19 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
   const sidebarBody = (
     <div
       style={{
-        width: isMobile ? "min(88vw, 300px)" : "240px",
+        width: isMobile ? "min(88vw, 300px)" : collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
         background: theme.charcoalSmoke,
         backgroundImage: grainUrl,
         color: theme.primary,
-        padding: isMobile ? "16px 14px 20px" : "20px",
+        padding: isMobile ? "16px 14px 20px" : collapsed ? "12px 8px 16px" : "20px",
         display: "flex",
         flexDirection: "column",
-        height: "100%",
-        boxSizing: "border-box"
+        height: isMobile ? "100%" : "100%",
+        minHeight: isMobile ? undefined : "100%",
+        flex: isMobile ? undefined : 1,
+        boxSizing: "border-box",
+        transition: isMobile ? undefined : "width 0.2s ease, padding 0.2s ease",
+        overflow: "hidden",
       }}
     >
       <style>{`
@@ -256,6 +274,33 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           z-index: 1;
         }
       `}</style>
+      {!isMobile && onToggleCollapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? t("sidebar.expand") : t("sidebar.minimize")}
+          title={collapsed ? t("sidebar.expand") : t("sidebar.minimize")}
+          style={{
+            alignSelf: collapsed ? "center" : "flex-end",
+            marginBottom: collapsed ? 16 : 8,
+            width: collapsed ? 36 : 32,
+            height: 32,
+            padding: 0,
+            borderRadius: 8,
+            border: "1px solid rgba(249,115,22,0.35)",
+            background: "rgba(255,255,255,0.06)",
+            color: theme.primary,
+            fontWeight: 800,
+            fontSize: 16,
+            lineHeight: 1,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          {collapsed ? "»" : "«"}
+        </button>
+      ) : null}
+      {!collapsed ? (
       <div className="logo-glow-wrapper">
         <div className="logo-glow" aria-hidden />
         <img
@@ -269,6 +314,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           }}
         />
       </div>
+      ) : null}
 
       {isMobile && (showAccount || showPayments || onLogout) ? (
         <div
@@ -355,6 +401,7 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
         </div>
       ) : null}
 
+      {!collapsed || isMobile ? (
       <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
         {isMobile ? (
           <div style={{ display: "grid", gap: 8 }}>{tabs.map((tab) => renderNavTab(tab))}</div>
@@ -362,17 +409,57 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
           tabs.map((tab) => renderNavTab(tab))
         )}
       </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0 }} aria-hidden />
+      )}
 
       <div
         style={{
           marginTop: "auto",
-          paddingTop: 12,
-          borderTop: `1px solid rgba(249,115,22,0.25)`,
+          paddingTop: collapsed && !isMobile ? 0 : 12,
+          borderTop: collapsed && !isMobile ? "none" : `1px solid rgba(249,115,22,0.25)`,
           fontSize: 11,
           lineHeight: 1.45,
           color: "rgba(255,255,255,0.75)",
         }}
       >
+        {collapsed && !isMobile ? (
+          <>
+            {showAccount ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPage("account")
+                  onClose?.()
+                }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  width: "100%",
+                  padding: "8px 4px",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                }}
+                title={t("layout.account")}
+              >
+                <img src={accountIcon} alt="" style={{ width: 32, height: 22, display: "block", objectFit: "contain" }} />
+                {profilePhotoUrl ? (
+                  <img
+                    src={profilePhotoUrl}
+                    alt=""
+                    width={28}
+                    height={28}
+                    style={{ borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.35)", display: "block" }}
+                  />
+                ) : null}
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <>
         <button type="button" onClick={openHelpDesk} style={{ ...helpDeskLinkStyle, marginBottom: 8 }}>
           {t("sidebar.helpDesk")}
         </button>
@@ -452,11 +539,27 @@ export default function Sidebar({ setPage, onLogout, portalTabs, isMobile = fals
             {t("layout.logout")}
           </button>
         ) : null}
+          </>
+        )}
       </div>
     </div>
   )
 
-  if (!isMobile) return sidebarBody
+  if (!isMobile) {
+    return (
+      <aside
+        style={{
+          flexShrink: 0,
+          alignSelf: "stretch",
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {sidebarBody}
+      </aside>
+    )
+  }
   if (!isOpen) return null
 
   return (
