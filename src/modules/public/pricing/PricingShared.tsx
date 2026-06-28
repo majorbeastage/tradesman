@@ -103,7 +103,7 @@ export function PricingHeader({
   )
 }
 
-export function PricingHero({ showLayoutPreviewLink = true }: { showLayoutPreviewLink?: boolean }) {
+export function PricingHero() {
   return (
     <section style={heroStyle}>
       <p style={eyebrowStyle}>Pricing</p>
@@ -112,14 +112,6 @@ export function PricingHero({ showLayoutPreviewLink = true }: { showLayoutPrevie
         We will work with you on specific requirements — contact us if you need features beyond these packages. Each plan
         includes usage limits in the package details; overages are billed transparently (see below).
       </p>
-      {showLayoutPreviewLink ? (
-        <p style={{ margin: "14px 0 0", fontSize: 13, color: "#64748b" }}>
-          Use the <strong style={{ color: theme.charcoal }}>Compare</strong> checkbox on any plan to build a side-by-side chart.{" "}
-          <a href="/pricing-preview" style={{ color: theme.primary, fontWeight: 700, textDecoration: "none" }}>
-            Layout previews →
-          </a>
-        </p>
-      ) : null}
     </section>
   )
 }
