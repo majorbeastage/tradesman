@@ -9,6 +9,7 @@ import { formatPortalTabLabel } from "../i18n/navLabel"
 import { useAuth } from "../contexts/AuthContext"
 import { CUSTOMERS_EMAIL_PAGE } from "../lib/customersEmailClientNav"
 import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from "../lib/sidebarLayoutPrefs"
+import SchemeSidebarDecorations from "./SchemeSidebarDecorations"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -231,6 +232,8 @@ export default function Sidebar({
 
   const sidebarBody = (
     <div
+      className="scheme-sidebar-surface"
+      data-scheme-sidebar={schemeId}
       style={{
         width: isMobile ? "min(88vw, 300px)" : collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
         background: "var(--scheme-sidebar-bg, #2a2a2a)",
@@ -245,8 +248,10 @@ export default function Sidebar({
         boxSizing: "border-box",
         transition: isMobile ? undefined : "width 0.2s ease, padding 0.2s ease",
         overflow: "hidden",
+        position: "relative",
       }}
     >
+      <SchemeSidebarDecorations />
       <style>{`
         @keyframes logoGlowPulse {
           0%, 100% { opacity: 0.45; transform: translate(-50%, -50%) scale(1); }
@@ -404,25 +409,26 @@ export default function Sidebar({
       ) : null}
 
       {!collapsed || isMobile ? (
-      <div style={{ marginTop: isMobile ? 18 : 30, flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ marginTop: isMobile ? 18 : 30, flexShrink: 0 }}>
         {isMobile ? (
           <div style={{ display: "grid", gap: 8 }}>{tabs.map((tab) => renderNavTab(tab))}</div>
         ) : (
           tabs.map((tab) => renderNavTab(tab))
         )}
       </div>
-      ) : (
-        <div style={{ flex: 1, minHeight: 0 }} aria-hidden />
-      )}
+      ) : null}
 
+      {!collapsed || isMobile ? (
       <div
+        className="scheme-sidebar-footer"
         style={{
-          marginTop: "auto",
-          paddingTop: collapsed && !isMobile ? 0 : 12,
-          borderTop: collapsed && !isMobile ? "none" : `1px solid rgba(249,115,22,0.25)`,
+          marginTop: isMobile ? 14 : 16,
+          paddingTop: 12,
+          borderTop: `1px solid var(--scheme-primary-border, rgba(249,115,22,0.25))`,
           fontSize: 11,
           lineHeight: 1.45,
           color: "rgba(255,255,255,0.75)",
+          flexShrink: 0,
         }}
       >
         {collapsed && !isMobile ? (
@@ -462,12 +468,14 @@ export default function Sidebar({
           </>
         ) : (
           <>
-        <button type="button" onClick={openHelpDesk} style={{ ...helpDeskLinkStyle, marginBottom: 8 }}>
-          {t("sidebar.helpDesk")}
-        </button>
-        <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
-          {HELP_DESK_PHONE_DISPLAY}
-        </a>
+        <div className="scheme-help-desk-box">
+          <button type="button" onClick={openHelpDesk} style={{ ...helpDeskLinkStyle, marginBottom: 8 }}>
+            {t("sidebar.helpDesk")}
+          </button>
+          <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: "inherit", textDecoration: "none" }} onClick={onClose}>
+            {HELP_DESK_PHONE_DISPLAY}
+          </a>
+        </div>
         {!isMobile && showPayments ? (
           <p
             onClick={() => {
@@ -485,7 +493,7 @@ export default function Sidebar({
             style={{
               height: 1,
               margin: "10px 0 4px",
-              background: "linear-gradient(90deg, transparent, rgba(249,115,22,0.45), transparent)",
+              background: "linear-gradient(90deg, transparent, var(--scheme-primary-border, rgba(249,115,22,0.45)), transparent)",
             }}
           />
         ) : null}
@@ -495,7 +503,7 @@ export default function Sidebar({
             onClick={() => { setPage("account"); onClose?.() }}
             style={{
               marginTop: 2,
-              marginBottom: "16px",
+              marginBottom: "8px",
               padding: "4px",
               border: "none",
               background: "transparent",
@@ -525,8 +533,8 @@ export default function Sidebar({
             onClick={() => { onLogout?.(); onClose?.() }}
             style={{
               display: "block",
-              marginTop: 10,
-              marginBottom: 4,
+              marginTop: 6,
+              marginBottom: 0,
               padding: "8px 0",
               width: "100%",
               border: "none",
@@ -544,6 +552,9 @@ export default function Sidebar({
           </>
         )}
       </div>
+      ) : null}
+
+      <div className="scheme-sidebar-spacer" style={{ flex: 1, minHeight: 16 }} aria-hidden />
     </div>
   )
 

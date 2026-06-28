@@ -2996,13 +2996,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
+    <div className="scheme-page scheme-calendar-page" style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
       <h1 style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         {calendarSuite.id === "time_clock" ? "Time clock workspace" : calendarSuite.id === "team_management" ? "Team Management" : "Scheduling"}
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
 
       <div
+        className="scheme-calendar-actions scheme-themed-panel"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -3022,7 +3023,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 <button
                   type="button"
                   onClick={() => { setShowAddItem(true); resetAddForm(); setAddTargetUserId(userId) }}
-                  style={{ background: theme.primary, color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: 600 }}
+                  style={{ background: "var(--scheme-primary, #F97316)", color: "white", padding: "8px 14px", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: 600 }}
                 >
                   Add item to calendar
                 </button>
@@ -3254,7 +3255,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       {calendarSuite.id === "calendar" ? (
       <>
       {/* Scheduling area: view switcher + expand + job types */}
-      <div style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", background: "white", overflow: "hidden" }}>
+      <div className="scheme-calendar-shell scheme-themed-panel" style={{ border: `1px solid ${theme.border}`, borderRadius: "8px", background: "white", overflow: "hidden" }}>
         <div
           style={{
             display: "flex",

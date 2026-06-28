@@ -63,6 +63,7 @@
   --scheme-logo-glow: #fb923c;
   --scheme-nav-active-bg: rgba(251, 146, 60, 0.2);
   --scheme-card-shadow: 0 0 32px rgba(251, 146, 60, 0.12), 0 12px 40px rgba(0, 0, 0, 0.45);
+  --scheme-card-radius: 14px;
   --scheme-pattern-opacity: 0.04;
   --scheme-pattern-image: radial-gradient(circle at 20% 20%, rgba(251, 146, 60, 0.35), transparent 55%);
   --scheme-pattern-size: 100% 100%;
@@ -373,3 +374,339 @@
   color: #64748b;
   margin-top: 2px;
 }
+
+/* ── Sidebar layout: footer under tabs, bg fills to bottom ── */
+.scheme-sidebar-surface {
+  isolation: isolate;
+}
+
+.scheme-sidebar-spacer {
+  pointer-events: none;
+}
+
+.scheme-sidebar-footer {
+  position: relative;
+  z-index: 2;
+}
+
+/* Help desk glow box (dark pro reference) */
+.scheme-help-desk-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--scheme-primary-border, rgba(249, 115, 22, 0.35));
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 18px var(--scheme-primary-soft, rgba(249, 115, 22, 0.12));
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-help-desk-box {
+  border-color: rgba(251, 146, 60, 0.55);
+  box-shadow: 0 0 24px rgba(251, 146, 60, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ── Sidebar decorative overlays per scheme ── */
+.scheme-sidebar-surface::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: var(--scheme-sidebar-deco-opacity, 0);
+  background-image: var(--scheme-sidebar-deco-image, none);
+  background-size: var(--scheme-sidebar-deco-size, 48px 48px);
+  background-repeat: repeat;
+}
+
+.scheme-sidebar-surface > *:not(.scheme-matrix-rain):not(.scheme-sunshine-palms) {
+  position: relative;
+  z-index: 2;
+}
+
+.portal-charcoal[data-app-scheme="garage"] .scheme-sidebar-surface {
+  --scheme-sidebar-deco-opacity: 0.55;
+  --scheme-sidebar-deco-size: 48px 48px;
+  --scheme-sidebar-deco-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' fill='%2327272a'/%3E%3Cpath d='M0 24 L24 0 L48 24 L24 48 Z' fill='none' stroke='rgba(255,255,255,0.07)' stroke-width='1'/%3E%3Cpath d='M0 0 L24 24 L0 48 M48 0 L24 24 L48 48' fill='none' stroke='rgba(0,0,0,0.25)' stroke-width='0.5'/%3E%3Ccircle cx='24' cy='24' r='1.2' fill='rgba(255,255,255,0.12)'/%3E%3C/svg%3E");
+}
+
+.portal-charcoal[data-app-scheme="landscape"] .scheme-sidebar-surface {
+  --scheme-sidebar-deco-opacity: 0.45;
+  --scheme-sidebar-deco-size: 64px 64px;
+  --scheme-sidebar-deco-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23365114'/%3E%3Cpath d='M8 64 Q10 40 12 64 M24 64 Q26 42 28 64 M40 64 Q42 44 44 64 M56 64 Q58 40 60 64' stroke='%2384cc16' stroke-width='2' fill='none' opacity='0.35'/%3E%3C/svg%3E");
+}
+
+.portal-charcoal[data-app-scheme="general_contractor"] .scheme-sidebar-surface {
+  --scheme-sidebar-deco-opacity: 0.35;
+  --scheme-sidebar-deco-size: 120px 24px;
+  --scheme-sidebar-deco-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='24' viewBox='0 0 120 24'%3E%3Crect width='120' height='24' fill='%2392400e'/%3E%3Cpath d='M0 12 Q30 8 60 12 T120 12' fill='none' stroke='%2378330f' stroke-width='2' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+.portal-charcoal[data-app-scheme="sunshine"] .scheme-sidebar-surface {
+  background-image: linear-gradient(180deg, rgba(14, 116, 144, 0.95) 0%, rgba(21, 94, 117, 0.98) 100%),
+    radial-gradient(circle at 50% 120%, rgba(254, 240, 138, 0.25), transparent 55%) !important;
+}
+
+/* Matrix rain animation */
+.scheme-matrix-rain {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+.scheme-matrix-column {
+  position: absolute;
+  top: -20%;
+  display: flex;
+  flex-direction: column;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.15;
+  color: #22c55e;
+  text-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+  animation: schemeMatrixFall linear infinite;
+}
+
+.scheme-matrix-column span:first-child {
+  color: #bbf7d0;
+  text-shadow: 0 0 10px rgba(187, 247, 208, 0.9);
+}
+
+@keyframes schemeMatrixFall {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(120vh);
+  }
+}
+
+/* Sunshine palm silhouettes */
+.scheme-sunshine-palms {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.scheme-sunshine-palm {
+  position: absolute;
+  bottom: 0;
+  width: 72px;
+  height: 110px;
+  opacity: 0.28;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='120' viewBox='0 0 80 120'%3E%3Cpath d='M40 120 L40 55' stroke='%230c4a6e' stroke-width='4'/%3E%3Cpath d='M40 55 Q10 45 5 25 Q25 40 40 55 Q55 40 75 25 Q70 45 40 55' fill='%230e7490' opacity='0.6'/%3E%3C/svg%3E");
+}
+
+.scheme-sunshine-palm--left {
+  left: -8px;
+}
+
+.scheme-sunshine-palm--right {
+  right: -12px;
+  transform: scaleX(-1);
+}
+
+/* ── Themed borders on main panels (garage / landscape / GC) ── */
+.scheme-themed-panel {
+  position: relative;
+}
+
+.portal-charcoal[data-app-scheme="garage"] .scheme-themed-panel {
+  border: 2px solid rgba(161, 161, 170, 0.45) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+  background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.03) 0,
+      rgba(255, 255, 255, 0.03) 2px,
+      transparent 2px,
+      transparent 8px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(0, 0, 0, 0.06) 0,
+      rgba(0, 0, 0, 0.06) 2px,
+      transparent 2px,
+      transparent 8px
+    ) !important;
+}
+
+.portal-charcoal[data-app-scheme="landscape"] .scheme-themed-panel {
+  border: 3px solid transparent !important;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M2 16 Q8 10 16 16 T30 16' stroke='%2365a30d' stroke-width='4' fill='none'/%3E%3C/svg%3E") 30 stretch !important;
+  box-shadow: 0 8px 22px rgba(63, 98, 18, 0.12) !important;
+}
+
+.portal-charcoal[data-app-scheme="general_contractor"] .scheme-themed-panel {
+  border-top: 6px solid #92400e !important;
+  border-bottom: 6px solid #78350f !important;
+  border-left: 4px solid #b45309 !important;
+  border-right: 4px solid #b45309 !important;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(120, 53, 15, 0.06) 0,
+    rgba(120, 53, 15, 0.06) 8px,
+    rgba(180, 83, 9, 0.04) 8px,
+    rgba(180, 83, 9, 0.04) 16px
+  ) !important;
+}
+
+/* ── Dark Pro: glass calendar + toolbar (reference screenshot) ── */
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-actions {
+  background: rgba(15, 20, 25, 0.92) !important;
+  border: 1px solid rgba(251, 146, 60, 0.28) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 0 28px rgba(251, 146, 60, 0.1) !important;
+  backdrop-filter: blur(8px);
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell {
+  background: rgba(21, 28, 40, 0.88) !important;
+  border: 1px solid rgba(148, 163, 184, 0.2) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 0 40px rgba(251, 146, 60, 0.14), 0 16px 48px rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(10px);
+  position: relative;
+  overflow: hidden;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 0% 0%, rgba(251, 146, 60, 0.12), transparent 45%),
+    radial-gradient(circle at 100% 100%, rgba(251, 146, 60, 0.1), transparent 40%);
+  z-index: 0;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-page h1 {
+  color: #f1f5f9 !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-page button:not([style*="background: var(--scheme-primary"]):not([style*="background:var(--scheme-primary"]) {
+  background: rgba(30, 41, 59, 0.85) !important;
+  color: #e2e8f0 !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-page select {
+  background: rgba(15, 23, 42, 0.85) !important;
+  color: #e2e8f0 !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell table th,
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell table td {
+  border-color: rgba(148, 163, 184, 0.18) !important;
+  color: #e2e8f0 !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell table td[style*="background: white"],
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell table td[style*="background: #f9fafb"] {
+  background: rgba(30, 41, 59, 0.65) !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] .scheme-calendar-shell table td[style*="background: #f9fafb"] {
+  background: rgba(15, 23, 42, 0.5) !important;
+  color: #94a3b8 !important;
+}
+
+/* Matrix / garage calendar theming */
+.portal-charcoal[data-app-scheme="matrix"] .scheme-calendar-shell,
+.portal-charcoal[data-app-scheme="garage"] .scheme-calendar-shell {
+  background: var(--scheme-card-bg) !important;
+  border-color: var(--scheme-border) !important;
+  color: var(--scheme-main-text) !important;
+}
+
+.portal-charcoal[data-app-scheme="matrix"] .scheme-calendar-page h1,
+.portal-charcoal[data-app-scheme="garage"] .scheme-calendar-page h1 {
+  color: var(--scheme-main-text) !important;
+}
+
+/* ── Contrast fixes: readable text on all schemes ── */
+.portal-charcoal[data-app-scheme="sunshine"] {
+  --scheme-main-text: #0f172a;
+  --scheme-text-muted: #475569;
+  --scheme-sidebar-text: #fef08a;
+}
+
+.portal-charcoal[data-app-scheme="sunshine"] main.app-main-safe.scheme-main-content {
+  color: #0f172a;
+}
+
+.portal-charcoal[data-app-scheme="sunshine"] main.app-main-safe.scheme-main-content p,
+.portal-charcoal[data-app-scheme="sunshine"] main.app-main-safe.scheme-main-content span,
+.portal-charcoal[data-app-scheme="landscape"] main.app-main-safe.scheme-main-content p,
+.portal-charcoal[data-app-scheme="landscape"] main.app-main-safe.scheme-main-content span,
+.portal-charcoal[data-app-scheme="general_contractor"] main.app-main-safe.scheme-main-content p,
+.portal-charcoal[data-app-scheme="general_contractor"] main.app-main-safe.scheme-main-content span {
+  color: inherit;
+}
+
+.portal-charcoal[data-app-scheme="landscape"] {
+  --scheme-main-text: #1a2e05;
+  --scheme-text-muted: #3f6212;
+}
+
+.portal-charcoal[data-app-scheme="general_contractor"] {
+  --scheme-main-text: #451a03;
+  --scheme-text-muted: #78350f;
+}
+
+.portal-charcoal[data-app-scheme="light"] {
+  --scheme-main-text: #0f172a;
+  --scheme-sidebar-text: #c2410c;
+}
+
+.portal-charcoal[data-app-scheme="light"] .scheme-sidebar-surface {
+  color: #c2410c;
+}
+
+.portal-charcoal[data-app-scheme="light"] .scheme-help-desk-box {
+  background: rgba(234, 88, 12, 0.06);
+  color: #7c2d12;
+}
+
+.portal-charcoal[data-app-scheme="light"] .scheme-help-desk-box a,
+.portal-charcoal[data-app-scheme="light"] .scheme-help-desk-box button {
+  color: #c2410c !important;
+}
+
+/* Muted secondary text platform-wide */
+.portal-charcoal main.app-main-safe.scheme-main-content p[style*="#64748b"],
+.portal-charcoal main.app-main-safe.scheme-main-content p[style*="#6b7280"],
+.portal-charcoal main.app-main-safe.scheme-main-content p[style*="#9ca3af"],
+.portal-charcoal main.app-main-safe.scheme-main-content span[style*="#64748b"],
+.portal-charcoal main.app-main-safe.scheme-main-content span[style*="#6b7280"],
+.portal-charcoal main.app-main-safe.scheme-main-content span[style*="#9ca3af"] {
+  color: var(--scheme-text-muted) !important;
+}
+
+.portal-charcoal[data-app-scheme="dark"] main.app-main-safe.scheme-main-content p[style*="#64748b"],
+.portal-charcoal[data-app-scheme="matrix"] main.app-main-safe.scheme-main-content p[style*="#64748b"],
+.portal-charcoal[data-app-scheme="garage"] main.app-main-safe.scheme-main-content p[style*="#64748b"] {
+  color: var(--scheme-text-muted) !important;
+}
+
+/* Dark headings that were hardcoded dark on dark bg */
+.portal-charcoal[data-app-scheme="dark"] main.app-main-safe.scheme-main-content [style*="#0f172a"],
+.portal-charcoal[data-app-scheme="matrix"] main.app-main-safe.scheme-main-content [style*="#0f172a"],
+.portal-charcoal[data-app-scheme="garage"] main.app-main-safe.scheme-main-content [style*="#0f172a"] {
+  color: var(--scheme-main-text) !important;
+}
+
+/* Platform tool panels inherit themed borders */
+.portal-charcoal main.app-main-safe.scheme-main-content .scheme-themed-panel {
+  border-radius: var(--scheme-card-radius);
+}
+
