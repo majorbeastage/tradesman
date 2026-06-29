@@ -9,6 +9,7 @@ import { useLocale } from "../i18n/LocaleContext"
 import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 import PortalViewBar from "../components/PortalViewBar"
+import { SchemeMatrixShellBackdrop } from "../components/SchemeSidebarDecorations"
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
 import { useAppScheme } from "../contexts/AppSchemeContext"
 import { resolveSchemeTone } from "../lib/appSchemes"
@@ -96,6 +97,7 @@ export default function AppLayout({
         ...portalStyle,
       }}
     >
+      <SchemeMatrixShellBackdrop />
       {!hideSidebar && isMobile ? (
         <Sidebar
           setPage={setPage}

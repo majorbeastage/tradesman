@@ -1,49 +1,7 @@
-import { useMemo, type ReactNode } from "react"
+import type { ReactNode } from "react"
+import MatrixRainCanvas from "./MatrixRainCanvas"
 import { useAppScheme } from "../contexts/AppSchemeContext"
 import type { AppSchemeId } from "../lib/appSchemes"
-
-const MATRIX_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&"
-
-function MatrixRainColumn({ leftPct, delay, duration }: { leftPct: number; delay: number; duration: number }) {
-  const chars = useMemo(() => {
-    const len = 8 + Math.floor(Math.random() * 10)
-    return Array.from({ length: len }, () => MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)])
-  }, [])
-
-  return (
-    <div
-      className="scheme-matrix-column"
-      style={{ left: `${leftPct}%`, animationDelay: `${delay}s`, animationDuration: `${duration}s` }}
-      aria-hidden
-    >
-      {chars.map((c, i) => (
-        <span key={i} style={{ opacity: 1 - i * 0.08 }}>
-          {c}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-function MatrixRain() {
-  const columns = useMemo(
-    () =>
-      Array.from({ length: 14 }, (_, i) => ({
-        id: i,
-        leftPct: 4 + i * 6.5,
-        delay: (i * 0.35) % 3,
-        duration: 2.8 + (i % 5) * 0.4,
-      })),
-    [],
-  )
-  return (
-    <div className="scheme-matrix-rain" aria-hidden>
-      {columns.map((c) => (
-        <MatrixRainColumn key={c.id} leftPct={c.leftPct} delay={c.delay} duration={c.duration} />
-      ))}
-    </div>
-  )
-}
 
 function SunshinePalms() {
   return (
@@ -55,7 +13,7 @@ function SunshinePalms() {
 }
 
 const DECOR_BY_SCHEME: Partial<Record<AppSchemeId, () => ReactNode>> = {
-  matrix: MatrixRain,
+  matrix: () => <MatrixRainCanvas variant="sidebar" className="matrix-rain-sidebar" />,
   sunshine: SunshinePalms,
 }
 
@@ -64,4 +22,11 @@ export default function SchemeSidebarDecorations() {
   const Decor = DECOR_BY_SCHEME[schemeId]
   if (!Decor) return null
   return <Decor />
+}
+
+/** Full-viewport Matrix rain when Matrix scheme is active. */
+export function SchemeMatrixShellBackdrop() {
+  const { schemeId } = useAppScheme()
+  if (schemeId !== "matrix") return null
+  return <MatrixRainCanvas variant="shell" className="matrix-rain-shell" />
 }

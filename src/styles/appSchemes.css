@@ -111,10 +111,8 @@
   --scheme-nav-active-bg: rgba(34, 197, 94, 0.16);
   --scheme-card-shadow: 0 0 24px rgba(34, 197, 94, 0.15);
   --scheme-font-accent: "Consolas", "Courier New", monospace;
-  --scheme-pattern-opacity: 0.08;
-  --scheme-pattern-image: linear-gradient(rgba(34, 197, 94, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34, 197, 94, 0.08) 1px, transparent 1px);
-  --scheme-pattern-size: 28px 28px;
+  --scheme-pattern-opacity: 0;
+  --scheme-pattern-image: none;
 }
 
 .portal-charcoal[data-app-scheme="matrix"] main.app-main-safe {
@@ -424,7 +422,7 @@
   background-repeat: repeat;
 }
 
-.scheme-sidebar-surface > *:not(.scheme-matrix-rain):not(.scheme-sunshine-palms) {
+.portal-charcoal[data-app-scheme="matrix"] .scheme-sidebar-surface > *:not(.matrix-rain-canvas):not(.scheme-sunshine-palms) {
   position: relative;
   z-index: 2;
 }
@@ -452,41 +450,26 @@
     radial-gradient(circle at 50% 120%, rgba(254, 240, 138, 0.25), transparent 55%) !important;
 }
 
-/* Matrix rain animation */
-.scheme-matrix-rain {
+/* Matrix rain — canvas (see MatrixRainCanvas + matrixRainEngine.ts) */
+.matrix-rain-canvas {
+  pointer-events: none;
+  display: block;
+}
+
+.matrix-rain-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.matrix-rain-sidebar {
   position: absolute;
   inset: 0;
-  overflow: hidden;
   z-index: 1;
-  pointer-events: none;
-  opacity: 0.35;
-}
-
-.scheme-matrix-column {
-  position: absolute;
-  top: -20%;
-  display: flex;
-  flex-direction: column;
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 11px;
-  line-height: 1.15;
-  color: #22c55e;
-  text-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
-  animation: schemeMatrixFall linear infinite;
-}
-
-.scheme-matrix-column span:first-child {
-  color: #bbf7d0;
-  text-shadow: 0 0 10px rgba(187, 247, 208, 0.9);
-}
-
-@keyframes schemeMatrixFall {
-  0% {
-    transform: translateY(-100%);
-  }
-  100% {
-    transform: translateY(120vh);
-  }
+  width: 100%;
+  height: 100%;
 }
 
 /* Sunshine palm silhouettes */
