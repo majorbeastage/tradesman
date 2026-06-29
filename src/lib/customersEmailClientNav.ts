@@ -1,4 +1,5 @@
 import { buildAppHash, parseAppHash } from "./appNavigationHistory"
+import { clearAdminLoginIntentStorage } from "./loginRouting"
 import { useEffect, useMemo, useState } from "react"
 
 export const CUSTOMERS_EMAIL_PAGE = "customers-email"
@@ -10,6 +11,7 @@ export function navigateToCustomersEmail(setPage?: (page: string) => void): void
 
 /** Open the email client in a dedicated browser tab (no sidebar; same login session). */
 export function openCustomersEmailInNewTab(): void {
+  clearAdminLoginIntentStorage()
   const hash = buildAppHash(CUSTOMERS_EMAIL_PAGE, { standalone: true })
   const url = `${window.location.origin}${window.location.pathname}${hash}`
   const opened = window.open(url, "_blank", "noopener,noreferrer")

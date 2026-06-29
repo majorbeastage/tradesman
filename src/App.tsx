@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, type MutableRefObject } from "react"
 import { ViewProvider } from "./contexts/ViewContext"
 import AppLayout from "./layout/AppLayout"
 import CustomersPage from "./modules/customers/CustomersPage"
@@ -33,7 +33,7 @@ import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
-import { shouldUseOfficeManagerPortal, isOfficeManagerLikeRole } from "./lib/profileRoles"
+import { shouldUseOfficeManagerPortal, isAdminPortalRole, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
 import { useManagedByOfficeManager } from "./hooks/useManagedByOfficeManager"
@@ -82,8 +82,54 @@ import type { PortalShell } from "./lib/portalViewRules"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
 import { APP_NAV_PREFIX, parseAppHash } from "./lib/appNavigationHistory"
 import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
+import {
+  ADMIN_LOGIN_FROM_PREVIEW_KEY,
+  clearAdminLoginIntentForAppDeepLink,
+  clearAdminLoginIntentStorage,
+  hasAppNavDeepLink,
+  readAdminLoginIntentStorage,
+  stripAppNavHashFromLocation,
+  writeAdminLoginIntentStorage,
+} from "./lib/loginRouting"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
+
+function markAdminLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+  ref.current = "admin"
+  stripAppNavHashFromLocation()
+  writeAdminLoginIntentStorage()
+}
+
+function clearAdminLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+  ref.current = null
+  clearAdminLoginIntentStorage()
+}
+
+function markContractorLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+  ref.current = "contractor"
+  clearAdminLoginIntent(ref)
+}
+
+function resolveLoginIntent(
+  view: View,
+  ref: MutableRefObject<"admin" | "contractor" | null>,
+): "admin" | "contractor" | null {
+  if (ref.current === "admin" || view === "admin-login") return "admin"
+  if (ref.current === "contractor" || view === "login") return "contractor"
+  return ref.current
+}
+
+function readInitialAppView(): View {
+  if (typeof window === "undefined") return "home"
+  try {
+    if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") return "admin-login"
+    if (hasAppNavDeepLink()) return "home"
+    if (readAdminLoginIntentStorage()) return "admin-login"
+  } catch {
+    /* ignore */
+  }
+  return "home"
+}
 
 /** Contractor portal (user + office shells) with shared view-as context. */
 function AppSchemeBridge({ children }: { children: React.ReactNode }) {
@@ -581,16 +627,21 @@ function MainAppInner() {
 function App() {
   if (typeof window !== "undefined") normalizePasswordRecoveryUrlInBrowser()
   const { refetchProfile, user, role, loading: authLoading } = useAuth()
-  const [view, setView] = useState<View>("home")
+  const [view, setView] = useState<View>(readInitialAppView)
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
-  const loginIntentRef = useRef<"admin" | "contractor" | null>(null)
+  const loginIntentRef = useRef<"admin" | "contractor" | null>(
+    readInitialAppView() === "admin-login" ? "admin" : null,
+  )
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
-
-const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
 
   useEffect(() => {
     try {
+      clearAdminLoginIntentForAppDeepLink()
+      if (hasAppNavDeepLink()) {
+        loginIntentRef.current = null
+      }
+
       const advisor = sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
       if (advisor === "1") {
         setView("signup")
@@ -598,6 +649,11 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       }
       if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") {
         sessionStorage.removeItem(ADMIN_LOGIN_FROM_PREVIEW_KEY)
+        markAdminLoginIntent(loginIntentRef)
+        setView("admin-login")
+        return
+      }
+      if (!hasAppNavDeepLink() && readAdminLoginIntentStorage()) {
         loginIntentRef.current = "admin"
         setView("admin-login")
         return
@@ -622,12 +678,13 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
     const parsed = parseAppHash(window.location.hash)
     if (!parsed.page) return
     if (!user) {
-      loginIntentRef.current = "contractor"
+      if (loginIntentRef.current === "admin") return
+      markContractorLoginIntent(loginIntentRef)
       setView("login")
       return
     }
-    if (role === "admin") setView("admin")
-    else if (shouldUseOfficeManagerPortal(role ?? "user")) setView("office")
+    // #/app/* links always open the contractor portal (email pop-out, dashboard, etc.) — never the admin shell.
+    if (shouldUseOfficeManagerPortal(role ?? "user")) setView("office")
     else setView("app")
   }, [authLoading, user, role, view])
 
@@ -671,7 +728,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
         }}
         onAdminLogin={() => {
           try {
-            sessionStorage.setItem("tradesman_open_admin_login", "1")
+            sessionStorage.setItem(ADMIN_LOGIN_FROM_PREVIEW_KEY, "1")
           } catch {
             /* ignore */
           }
@@ -708,14 +765,13 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")
-    const intent =
-      loginIntentRef.current ?? (view === "admin-login" ? "admin" : view === "login" ? "contractor" : null)
+    const intent = resolveLoginIntent(view, loginIntentRef)
 
     if (intent === "admin") {
-      if (r !== "admin") {
+      if (!isAdminPortalRole(r)) {
         const { role: refetched, error: fetchErr } = await refetchProfile()
-        if (refetched === "admin") {
-          loginIntentRef.current = null
+        if (isAdminPortalRole(refetched)) {
+          clearAdminLoginIntent(loginIntentRef)
           setView("admin")
           return
         }
@@ -726,7 +782,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
         )
         return
       }
-      loginIntentRef.current = null
+      clearAdminLoginIntent(loginIntentRef)
       setView("admin")
       return
     }
@@ -738,7 +794,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       return
     }
 
-    if (r === "admin") setView("admin")
+    if (isAdminPortalRole(r)) setView("admin")
     else if (shouldUseOfficeManagerPortal(r)) setView("office")
     else setView("app")
   }, [view, refetchProfile])
@@ -746,8 +802,8 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
   if (view === "home") {
     return (
       <MarketingHomePage
-        onLogin={() => { loginIntentRef.current = "contractor"; setView("login"); setLoginError("") }}
-        onAdminLogin={() => { loginIntentRef.current = "admin"; setView("admin-login"); setLoginError("") }}
+        onLogin={() => { markContractorLoginIntent(loginIntentRef); setView("login"); setLoginError("") }}
+        onAdminLogin={() => { markAdminLoginIntent(loginIntentRef); setView("admin-login"); setLoginError("") }}
         onSignup={() => {
           setSignupPackagePreset(null)
           setView("signup")
@@ -767,7 +823,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       <TrainingPage
         onBack={() => setView("home")}
         onLogin={() => {
-          loginIntentRef.current = "contractor"
+          markContractorLoginIntent(loginIntentRef)
           setView("login")
           setLoginError("")
         }}
@@ -823,7 +879,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
         <LoginPage
           isAdminLogin={view === "admin-login"}
           onSuccess={handleLoginSuccess}
-          onBack={() => { loginIntentRef.current = null; setView("home"); setLoginError("") }}
+          onBack={() => { clearAdminLoginIntent(loginIntentRef); setView("home"); setLoginError("") }}
           onGoToSignup={() => {
             setSignupPackagePreset(null)
             setView("signup")
