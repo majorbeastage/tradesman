@@ -427,6 +427,20 @@
   z-index: 2;
 }
 
+.portal-charcoal[data-scheme-sidebar-photos] .scheme-sidebar-surface {
+  background-image:
+    linear-gradient(var(--scheme-sidebar-photo-overlay), var(--scheme-sidebar-photo-overlay)),
+    var(--scheme-sidebar-photo-bg),
+    var(--scheme-sidebar-bg);
+  background-size: auto, var(--scheme-sidebar-photo-size, 200px 200px), auto;
+  background-repeat: no-repeat, var(--scheme-sidebar-photo-repeat, repeat), no-repeat;
+  background-position: center;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos] .scheme-sidebar-surface::after {
+  opacity: 0;
+}
+
 .portal-charcoal[data-app-scheme="garage"] .scheme-sidebar-surface {
   --scheme-sidebar-deco-opacity: 0.55;
   --scheme-sidebar-deco-size: 48px 48px;
@@ -506,6 +520,34 @@
   position: relative;
 }
 
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel {
+  padding-left: calc(14px + var(--scheme-panel-deco-width, 34px));
+  padding-right: calc(14px + var(--scheme-panel-deco-width, 34px));
+  overflow: visible;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel::before,
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: var(--scheme-panel-deco-width, 34px);
+  background: var(--scheme-panel-border-deco) center top / contain no-repeat;
+  pointer-events: none;
+  opacity: 0.9;
+  z-index: 1;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel::before {
+  left: 4px;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel::after {
+  right: 4px;
+  transform: scaleX(-1);
+}
+
 .portal-charcoal[data-app-scheme="garage"] .scheme-themed-panel {
   border: 2px solid rgba(161, 161, 170, 0.45) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.35) !important;
@@ -529,6 +571,30 @@
   border: 3px solid transparent !important;
   border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M2 16 Q8 10 16 16 T30 16' stroke='%2365a30d' stroke-width='4' fill='none'/%3E%3C/svg%3E") 30 stretch !important;
   box-shadow: 0 8px 22px rgba(63, 98, 18, 0.12) !important;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="general_contractor"] .scheme-themed-panel {
+  padding-left: calc(16px + var(--scheme-panel-deco-width, 30px));
+  overflow: visible;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="general_contractor"] .scheme-themed-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--scheme-panel-deco-width, 30px);
+  background: var(--scheme-panel-border-deco) center top / contain repeat-y;
+  pointer-events: none;
+  opacity: 0.95;
+  z-index: 1;
+}
+
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-themed-panel > *,
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="general_contractor"] .scheme-themed-panel > * {
+  position: relative;
+  z-index: 2;
 }
 
 .portal-charcoal[data-app-scheme="general_contractor"] .scheme-themed-panel {

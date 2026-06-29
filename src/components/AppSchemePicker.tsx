@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent } from "react"
 import { theme } from "../styles/theme"
 import { useAppScheme } from "../contexts/AppSchemeContext"
 import { APP_SCHEME_DEFINITIONS, type AppSchemeId } from "../lib/appSchemes"
+import { schemePickerPreviewImage } from "../lib/themeSchemeAssets"
 
 type Props = {
   profileUserId: string
@@ -18,6 +19,7 @@ function SchemeThumbnail({
   onSelect: () => void
 }) {
   const def = APP_SCHEME_DEFINITIONS.find((d) => d.id === id)!
+  const photoBg = schemePickerPreviewImage(id)
   return (
     <button
       type="button"
@@ -27,8 +29,22 @@ function SchemeThumbnail({
       aria-pressed={selected}
     >
       <div className="scheme-picker-preview" data-app-scheme={id}>
-        <div className="scheme-picker-preview-sidebar" style={{ background: def.preview.sidebar }} />
-        <div className="scheme-picker-preview-main" style={{ background: def.preview.shell }}>
+        <div
+          className="scheme-picker-preview-sidebar"
+          style={
+            photoBg
+              ? {
+                  backgroundImage: `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${photoBg})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }
+              : { background: def.preview.sidebar }
+          }
+        />
+        <div
+          className="scheme-picker-preview-main"
+          style={{ background: def.preview.shell }}
+        >
           <div className="scheme-picker-preview-bar" style={{ background: def.preview.accent }} />
           <div className="scheme-picker-preview-chip" style={{ background: def.preview.card, border: "1px solid rgba(15,23,42,0.08)" }} />
         </div>

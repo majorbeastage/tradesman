@@ -254,21 +254,26 @@ export default function Sidebar({
       <SchemeSidebarDecorations />
       <style>{`
         @keyframes logoGlowPulse {
-          0%, 100% { opacity: 0.45; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.12); }
+          0%, 100% { opacity: 0.45; transform: scale(1); }
+          50% { opacity: 0.85; transform: scale(1.1); }
         }
         .logo-glow-wrapper {
           position: relative;
           display: block;
-          width: 100%;
+          width: fit-content;
+          max-width: 100%;
+          line-height: 0;
+          flex-shrink: 0;
+        }
+        .logo-glow-wrapper[data-logo-glow="tradesman"] .logo-glow {
+          inset: 10% 8% 46% 8%;
+        }
+        .logo-glow-wrapper[data-logo-glow="custom"] .logo-glow {
+          inset: 12%;
         }
         .logo-glow-wrapper .logo-glow {
           position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 85%;
-          height: 85%;
-          transform: translate(-50%, -50%);
+          transform-origin: center center;
           background: var(--scheme-logo-glow, #F97316);
           border-radius: 8px;
           filter: blur(22px);
@@ -279,6 +284,9 @@ export default function Sidebar({
         .logo-glow-wrapper img {
           position: relative;
           z-index: 1;
+          display: block;
+          width: auto;
+          height: auto;
         }
       `}</style>
       {!isMobile && onToggleCollapsed ? (
@@ -308,16 +316,14 @@ export default function Sidebar({
         </button>
       ) : null}
       {!collapsed ? (
-      <div className="logo-glow-wrapper">
+      <div className="logo-glow-wrapper" data-logo-glow={schemeId === "custom" ? "custom" : "tradesman"}>
         <div className="logo-glow" aria-hidden />
         <img
           src={sidebarLogo}
           alt={schemeId === "custom" ? "Company logo" : "Tradesman"}
           style={{
-            maxHeight: isMobile ? "72px" : "128px",
-            width: "100%",
-            maxWidth: "240px",
-            display: "block",
+            maxHeight: isMobile ? 72 : 128,
+            maxWidth: isMobile ? 200 : 240,
           }}
         />
       </div>

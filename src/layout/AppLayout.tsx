@@ -13,6 +13,7 @@ import { SchemeMatrixShellBackdrop } from "../components/SchemeSidebarDecoration
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
 import { useAppScheme } from "../contexts/AppSchemeContext"
 import { resolveSchemeTone } from "../lib/appSchemes"
+import { hasSchemeThemeAssets, schemeThemeCssVars } from "../lib/themeSchemeAssets"
 
 type AppLayoutProps = {
   children: React.ReactNode
@@ -84,17 +85,20 @@ export default function AppLayout({
 
   const { schemeId, scheme, portalStyle } = useAppScheme()
   const schemeTone = resolveSchemeTone(schemeId, scheme.custom)
+  const schemePhotoVars = schemeThemeCssVars(schemeId)
 
   return (
     <div
       className="portal-charcoal"
       data-app-scheme={schemeId}
       data-scheme-tone={schemeTone}
+      data-scheme-sidebar-photos={hasSchemeThemeAssets(schemeId) ? "true" : undefined}
       style={{
         display: "flex",
         minHeight: "100vh",
         alignItems: "stretch",
         ...portalStyle,
+        ...schemePhotoVars,
       }}
     >
       <SchemeMatrixShellBackdrop />
