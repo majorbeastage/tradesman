@@ -10,6 +10,7 @@ import { useAuth } from "../contexts/AuthContext"
 import { CUSTOMERS_EMAIL_PAGE } from "../lib/customersEmailClientNav"
 import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from "../lib/sidebarLayoutPrefs"
 import SchemeSidebarDecorations from "./SchemeSidebarDecorations"
+import { hasSchemeThemeAssets } from "../lib/themeSchemeAssets"
 
 type SidebarProps = {
   setPage: (page: string) => void
@@ -53,6 +54,7 @@ export default function Sidebar({
   const { profilePhotoUrl } = useAuth()
   const { logoUrl, schemeId } = useAppScheme()
   const sidebarLogo = logoUrl || logo
+  const sidebarThemeTexture = hasSchemeThemeAssets(schemeId)
   const itemStyle: CSSProperties = { cursor: "pointer", margin: "8px 0", color: "var(--scheme-sidebar-text, #F97316)" }
   const subItemStyle: CSSProperties = {
     cursor: "pointer",
@@ -237,7 +239,7 @@ export default function Sidebar({
       style={{
         width: isMobile ? "min(88vw, 300px)" : collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
         background: "var(--scheme-sidebar-bg, #2a2a2a)",
-        backgroundImage: grainUrl,
+        ...(sidebarThemeTexture ? {} : { backgroundImage: grainUrl }),
         color: "var(--scheme-sidebar-text, #F97316)",
         padding: isMobile ? "16px 14px 20px" : collapsed ? "12px 8px 16px" : "20px",
         display: "flex",

@@ -43,9 +43,13 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
   const didRedirect = useRef(false)
   useEffect(() => {
     if (sandboxLoginHint || !user || !role || didRedirect.current) return
+    if (isAdminLogin && role !== "admin") {
+      setError("Sign out of your contractor account first, or sign in with an admin account.")
+      return
+    }
     didRedirect.current = true
     onSuccess(role)
-  }, [user, role, onSuccess, sandboxLoginHint])
+  }, [user, role, onSuccess, sandboxLoginHint, isAdminLogin])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

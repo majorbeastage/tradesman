@@ -2,7 +2,7 @@ import { useRef, useState, type ChangeEvent } from "react"
 import { theme } from "../styles/theme"
 import { useAppScheme } from "../contexts/AppSchemeContext"
 import { APP_SCHEME_DEFINITIONS, type AppSchemeId } from "../lib/appSchemes"
-import { schemePickerPreviewImage } from "../lib/themeSchemeAssets"
+import { schemePickerPreviewImage, schemePickerPreviewTileSize } from "../lib/themeSchemeAssets"
 
 type Props = {
   profileUserId: string
@@ -20,6 +20,7 @@ function SchemeThumbnail({
 }) {
   const def = APP_SCHEME_DEFINITIONS.find((d) => d.id === id)!
   const photoBg = schemePickerPreviewImage(id)
+  const photoTile = schemePickerPreviewTileSize(id)
   return (
     <button
       type="button"
@@ -34,9 +35,10 @@ function SchemeThumbnail({
           style={
             photoBg
               ? {
-                  backgroundImage: `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${photoBg})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
+                  backgroundImage: `linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.35)), url(${photoBg})`,
+                  backgroundSize: `100% 100%, ${photoTile ?? "64px 64px"}`,
+                  backgroundRepeat: "no-repeat, repeat",
+                  backgroundPosition: "center top",
                 }
               : { background: def.preview.sidebar }
           }

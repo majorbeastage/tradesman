@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { ViewProvider } from "./contexts/ViewContext"
 import AppLayout from "./layout/AppLayout"
 import CustomersPage from "./modules/customers/CustomersPage"
@@ -584,6 +584,7 @@ function App() {
   const [view, setView] = useState<View>("home")
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
+  const loginIntentRef = useRef<"admin" | "contractor" | null>(null)
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
 const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
@@ -597,6 +598,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       }
       if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") {
         sessionStorage.removeItem(ADMIN_LOGIN_FROM_PREVIEW_KEY)
+        loginIntentRef.current = "admin"
         setView("admin-login")
         return
       }
@@ -615,17 +617,19 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
   /** Deep links like #/app/customers-email?standalone=1 must open the portal, not the marketing home page. */
   useEffect(() => {
     if (authLoading) return
+    if (view === "admin" || view === "admin-login") return
     if (typeof window === "undefined" || !window.location.hash.startsWith(APP_NAV_PREFIX)) return
     const parsed = parseAppHash(window.location.hash)
     if (!parsed.page) return
     if (!user) {
+      loginIntentRef.current = "contractor"
       setView("login")
       return
     }
-    if (role === "admin") setView("app")
+    if (role === "admin") setView("admin")
     else if (shouldUseOfficeManagerPortal(role ?? "user")) setView("office")
     else setView("app")
-  }, [authLoading, user, role])
+  }, [authLoading, user, role, view])
 
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
@@ -704,28 +708,36 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     setLoginError("")
-    if (view === "admin-login") {
+    const intent =
+      loginIntentRef.current ?? (view === "admin-login" ? "admin" : view === "login" ? "contractor" : null)
+
+    if (intent === "admin") {
       if (r !== "admin") {
-        // Retry once in case profile wasn't ready right after sign-in
         const { role: refetched, error: fetchErr } = await refetchProfile()
         if (refetched === "admin") {
+          loginIntentRef.current = null
           setView("admin")
           return
         }
         const roleLabel = refetched ?? "none"
         const errDetail = fetchErr ? ` Profile fetch error: ${fetchErr}` : ""
-        setLoginError(`This account is not an admin. (App sees role: ${roleLabel}.${errDetail} In Supabase Table Editor → profiles, ensure this account's row has role = admin.)`)
+        setLoginError(
+          `This account is not an admin. (App sees role: ${roleLabel}.${errDetail} In Supabase Table Editor → profiles, ensure this account's row has role = admin.)`,
+        )
         return
       }
+      loginIntentRef.current = null
       setView("admin")
       return
     }
-    // Regular login: send to the portal they chose on the home page
-    if (view === "login") {
+
+    if (intent === "contractor") {
       if (shouldUseOfficeManagerPortal(r)) setView("office")
       else setView("app")
+      loginIntentRef.current = null
       return
     }
+
     if (r === "admin") setView("admin")
     else if (shouldUseOfficeManagerPortal(r)) setView("office")
     else setView("app")
@@ -734,8 +746,8 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
   if (view === "home") {
     return (
       <MarketingHomePage
-        onLogin={() => { setView("login"); setLoginError("") }}
-        onAdminLogin={() => { setView("admin-login"); setLoginError("") }}
+        onLogin={() => { loginIntentRef.current = "contractor"; setView("login"); setLoginError("") }}
+        onAdminLogin={() => { loginIntentRef.current = "admin"; setView("admin-login"); setLoginError("") }}
         onSignup={() => {
           setSignupPackagePreset(null)
           setView("signup")
@@ -755,6 +767,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
       <TrainingPage
         onBack={() => setView("home")}
         onLogin={() => {
+          loginIntentRef.current = "contractor"
           setView("login")
           setLoginError("")
         }}
@@ -810,7 +823,7 @@ const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
         <LoginPage
           isAdminLogin={view === "admin-login"}
           onSuccess={handleLoginSuccess}
-          onBack={() => { setView("home"); setLoginError("") }}
+          onBack={() => { loginIntentRef.current = null; setView("home"); setLoginError("") }}
           onGoToSignup={() => {
             setSignupPackagePreset(null)
             setView("signup")

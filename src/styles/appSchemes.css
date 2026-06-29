@@ -432,9 +432,10 @@
     linear-gradient(var(--scheme-sidebar-photo-overlay), var(--scheme-sidebar-photo-overlay)),
     var(--scheme-sidebar-photo-bg),
     var(--scheme-sidebar-bg);
-  background-size: auto, var(--scheme-sidebar-photo-size, 200px 200px), auto;
+  background-size: 100% 100%, var(--scheme-sidebar-photo-size, 256px 256px), 100% 100%;
   background-repeat: no-repeat, var(--scheme-sidebar-photo-repeat, repeat), no-repeat;
-  background-position: center;
+  background-position: center top;
+  background-attachment: scroll, scroll, scroll;
 }
 
 .portal-charcoal[data-scheme-sidebar-photos] .scheme-sidebar-surface::after {

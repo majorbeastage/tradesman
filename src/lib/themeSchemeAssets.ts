@@ -15,34 +15,38 @@ export type SchemeThemeAssetConfig = {
   panelBorderDeco?: string
   panelBorderWidth?: string
   pickerPreviewBg: string
+  pickerPreviewTileSize: string
 }
 
 const GARAGE_ASSETS: SchemeThemeAssetConfig = {
   sidebarPhoto: garageBackground,
   sidebarPhotoRepeat: "repeat",
-  sidebarPhotoSize: "200px 200px",
-  sidebarOverlay: "rgba(24, 24, 27, 0.72)",
+  sidebarPhotoSize: "256px 256px",
+  sidebarOverlay: "rgba(24, 24, 27, 0.48)",
   panelBorderDeco: garageBorder,
   panelBorderWidth: "34px",
   pickerPreviewBg: garageBackground,
+  pickerPreviewTileSize: "64px 64px",
 }
 
 const LANDSCAPE_ASSETS: SchemeThemeAssetConfig = {
   sidebarPhoto: landscapeBackground,
   sidebarPhotoRepeat: "repeat",
-  sidebarPhotoSize: "300px 300px",
-  sidebarOverlay: "rgba(54, 83, 20, 0.68)",
+  sidebarPhotoSize: "320px 320px",
+  sidebarOverlay: "rgba(54, 83, 20, 0.42)",
   pickerPreviewBg: landscapeBackground,
+  pickerPreviewTileSize: "72px 72px",
 }
 
 const GENERAL_CONTRACTOR_ASSETS: SchemeThemeAssetConfig = {
   sidebarPhoto: constructionBackground,
   sidebarPhotoRepeat: "repeat",
-  sidebarPhotoSize: "340px 340px",
-  sidebarOverlay: "rgba(120, 53, 15, 0.74)",
+  sidebarPhotoSize: "360px 360px",
+  sidebarOverlay: "rgba(120, 53, 15, 0.5)",
   panelBorderDeco: constructionBorder,
   panelBorderWidth: "30px",
   pickerPreviewBg: constructionBackground,
+  pickerPreviewTileSize: "80px 80px",
 }
 
 export const SCHEME_THEME_ASSETS: Partial<Record<AppSchemeId, SchemeThemeAssetConfig>> = {
@@ -76,4 +80,8 @@ export function schemeThemeCssVars(schemeId: AppSchemeId): CSSProperties {
 
 export function schemePickerPreviewImage(schemeId: AppSchemeId): string | undefined {
   return SCHEME_THEME_ASSETS[schemeId]?.pickerPreviewBg
+}
+
+export function schemePickerPreviewTileSize(schemeId: AppSchemeId): string | undefined {
+  return SCHEME_THEME_ASSETS[schemeId]?.pickerPreviewTileSize
 }
