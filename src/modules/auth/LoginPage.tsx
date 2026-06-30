@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import type { UserRole } from "../../contexts/AuthContext"
+import { isAdminPortalRole } from "../../lib/profileRoles"
 import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
@@ -43,7 +44,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
   const didRedirect = useRef(false)
   useEffect(() => {
     if (sandboxLoginHint || !user || !role || didRedirect.current) return
-    if (isAdminLogin && role !== "admin") {
+    if (isAdminLogin && !isAdminPortalRole(role)) {
       setError("Sign out of your contractor account first, or sign in with an admin account.")
       return
     }

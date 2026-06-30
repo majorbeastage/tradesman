@@ -55,6 +55,11 @@ export function labelForProfileRole(role: string | null | undefined): string {
   return role
 }
 
+/** True only for the dedicated admin portal shell (not office manager / corporate). */
+export function isAdminPortalRole(role: string | null | undefined): boolean {
+  return (role ?? "").toLowerCase() === "admin"
+}
+
 /** Route signed-in users to the office-manager app shell when appropriate. */
 export function shouldUseOfficeManagerPortal(role: string | null | undefined): boolean {
   return role === "office_manager" || role === "corporate_management"
