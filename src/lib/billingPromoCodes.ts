@@ -49,11 +49,9 @@ export function validatePromoForSignup(
 export function shouldShowHomepagePromoBanner(store: BillingPromoCodesStore, today: Date = new Date()): BillingPromoCode | null {
   if (!isJuly250CampaignVisible(today)) return null
   const july = store.codes.find(
-    (p) => p.active && p.show_homepage_banner && normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE,
+    (p) => p.active && p.show_homepage_banner !== false && normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE,
   )
-  if (!july) return null
-  const check = validatePromoForSignup(july, today)
-  return check.ok ? july : null
+  return july ?? null
 }
 
 export type PromoDiscountResult = {

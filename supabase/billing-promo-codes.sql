@@ -41,3 +41,34 @@ VALUES (
   }'::jsonb
 )
 ON CONFLICT (key) DO NOTHING;
+
+-- If you already ran an older insert (ON CONFLICT DO NOTHING), patch JULY250 in place:
+UPDATE public.platform_settings
+SET value = jsonb_set(
+  jsonb_set(
+    jsonb_set(
+      jsonb_set(
+        jsonb_set(
+          value,
+          '{codes,0,show_homepage_banner}',
+          'true'::jsonb,
+          true
+        ),
+        '{codes,0,monthly_price_cap_usd}',
+        '250'::jsonb,
+        true
+      ),
+      '{codes,0,max_credit_usd}',
+      '250'::jsonb,
+      true
+    ),
+    '{codes,0,description}',
+    '"July 2026 only — use JULY250 at signup. Plans $250/mo or less: no billing in July. Plans over $250/mo: up to $250 July credit. Billing resumes August 1, 2026."'::jsonb,
+    true
+  ),
+  '{codes,0,billing_resume_date}',
+  '"2026-08-01"'::jsonb,
+  true
+)
+WHERE key = 'tradesman_billing_promo_codes'
+  AND value #>> '{codes,0,code}' = 'JULY250';

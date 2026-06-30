@@ -275,6 +275,10 @@ export function MarketingPreviewStory({
   }, [])
 
   useEffect(() => {
+    const fallbackStore = parseBillingPromoCodesStore(null)
+    if (shouldShowHomepagePromoBanner(fallbackStore)) {
+      setHomePromoBanner(true)
+    }
     if (!supabase) return
     void (async () => {
       try {
@@ -283,11 +287,10 @@ export function MarketingPreviewStory({
           .select("value")
           .eq("key", BILLING_PROMO_CODES_KEY)
           .maybeSingle()
-        if (error) return
-        const store = parseBillingPromoCodesStore(data?.value)
+        const store = parseBillingPromoCodesStore(error ? null : data?.value)
         setHomePromoBanner(Boolean(shouldShowHomepagePromoBanner(store)))
       } catch {
-        /* hide banner */
+        setHomePromoBanner(Boolean(shouldShowHomepagePromoBanner(fallbackStore)))
       }
     })()
   }, [])

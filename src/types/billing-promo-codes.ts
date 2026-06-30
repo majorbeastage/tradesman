@@ -110,7 +110,12 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
     redeemable_until: redeemable_until || undefined,
     monthly_price_cap_usd,
     max_credit_usd,
-    show_homepage_banner: o.show_homepage_banner === true,
+    show_homepage_banner:
+      o.show_homepage_banner === true
+        ? true
+        : o.show_homepage_banner === false
+          ? false
+          : code === "JULY250",
     created_at: typeof o.created_at === "string" ? o.created_at : undefined,
     updated_at: typeof o.updated_at === "string" ? o.updated_at : undefined,
   }
@@ -126,7 +131,24 @@ export function parseBillingPromoCodesStore(raw: unknown): BillingPromoCodesStor
     return { codes: [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
   }
   const codes = list.map(parseOnePromo).filter(Boolean) as BillingPromoCode[]
-  return { codes: codes.length ? codes : [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
+  if (!codes.length) return { codes: [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
+  return { codes: codes.map(mergePromoWithDefaults) }
+}
+
+/** Fill newer JULY250 fields when platform_settings predates banner/tier columns. */
+function mergePromoWithDefaults(promo: BillingPromoCode): BillingPromoCode {
+  if (normalizePromoCodeInput(promo.code) !== DEFAULT_JULY250_PROMO.code) return promo
+  const d = DEFAULT_JULY250_PROMO
+  return {
+    ...promo,
+    description: promo.description || d.description,
+    monthly_price_cap_usd: promo.monthly_price_cap_usd ?? d.monthly_price_cap_usd,
+    max_credit_usd: promo.max_credit_usd ?? d.max_credit_usd,
+    show_homepage_banner: promo.show_homepage_banner !== false,
+    billing_resume_date: promo.billing_resume_date ?? d.billing_resume_date,
+    redeemable_from: promo.redeemable_from ?? d.redeemable_from,
+    redeemable_until: promo.redeemable_until ?? d.redeemable_until,
+  }
 }
 
 export function newPromoCodeDraft(): BillingPromoCode {
