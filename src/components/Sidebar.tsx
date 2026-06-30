@@ -238,8 +238,12 @@ export default function Sidebar({
       data-scheme-sidebar={schemeId}
       style={{
         width: isMobile ? "min(88vw, 300px)" : collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED,
-        background: "var(--scheme-sidebar-bg, #2a2a2a)",
-        ...(sidebarThemeTexture ? {} : { backgroundImage: grainUrl }),
+        ...(sidebarThemeTexture
+          ? {}
+          : {
+              background: "var(--scheme-sidebar-bg, #2a2a2a)",
+              backgroundImage: grainUrl,
+            }),
         color: "var(--scheme-sidebar-text, #F97316)",
         padding: isMobile ? "16px 14px 20px" : collapsed ? "12px 8px 16px" : "20px",
         display: "flex",
@@ -268,7 +272,7 @@ export default function Sidebar({
           flex-shrink: 0;
         }
         .logo-glow-wrapper[data-logo-glow="tradesman"] .logo-glow {
-          inset: 10% 8% 46% 8%;
+          inset: 10% 8% 40% 8%;
         }
         .logo-glow-wrapper[data-logo-glow="custom"] .logo-glow {
           inset: 12%;

@@ -442,6 +442,10 @@
   opacity: 0;
 }
 
+.portal-charcoal[data-scheme-sidebar-photos][data-app-scheme="garage"] .scheme-sidebar-surface {
+  --scheme-sidebar-deco-opacity: 0;
+}
+
 .portal-charcoal[data-app-scheme="garage"] .scheme-sidebar-surface {
   --scheme-sidebar-deco-opacity: 0.55;
   --scheme-sidebar-deco-size: 48px 48px;

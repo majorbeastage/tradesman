@@ -21,8 +21,8 @@ export type SchemeThemeAssetConfig = {
 const GARAGE_ASSETS: SchemeThemeAssetConfig = {
   sidebarPhoto: garageBackground,
   sidebarPhotoRepeat: "repeat",
-  sidebarPhotoSize: "256px 256px",
-  sidebarOverlay: "rgba(24, 24, 27, 0.48)",
+  sidebarPhotoSize: "220px 220px",
+  sidebarOverlay: "rgba(24, 24, 27, 0.32)",
   panelBorderDeco: garageBorder,
   panelBorderWidth: "34px",
   pickerPreviewBg: garageBackground,
