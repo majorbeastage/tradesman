@@ -305,6 +305,14 @@ export default function AdminPromoCodesSection() {
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: theme.charcoal, cursor: "pointer" }}>
             <input
               type="checkbox"
+              checked={draft.show_on_signup !== false}
+              onChange={(e) => setDraft({ ...draft, show_on_signup: e.target.checked })}
+            />
+            Show on signup page
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: theme.charcoal, cursor: "pointer" }}>
+            <input
+              type="checkbox"
               checked={draft.show_homepage_banner === true}
               onChange={(e) => setDraft({ ...draft, show_homepage_banner: e.target.checked })}
             />

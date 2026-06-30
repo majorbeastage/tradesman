@@ -33,6 +33,8 @@ export type BillingPromoCode = {
   max_credit_usd?: number
   /** Show a homepage campaign badge while the offer is redeemable. */
   show_homepage_banner?: boolean
+  /** Show promo code field on the public signup form (default true). */
+  show_on_signup?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -57,6 +59,7 @@ export const DEFAULT_JULY250_PROMO: BillingPromoCode = {
   monthly_price_cap_usd: 250,
   max_credit_usd: 250,
   show_homepage_banner: true,
+  show_on_signup: true,
 }
 
 export const DEFAULT_BILLING_PROMO_CODES_STORE: BillingPromoCodesStore = {
@@ -116,6 +119,7 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
         : o.show_homepage_banner === false
           ? false
           : code === "JULY250",
+    show_on_signup: o.show_on_signup === false ? false : true,
     created_at: typeof o.created_at === "string" ? o.created_at : undefined,
     updated_at: typeof o.updated_at === "string" ? o.updated_at : undefined,
   }
@@ -145,6 +149,7 @@ function mergePromoWithDefaults(promo: BillingPromoCode): BillingPromoCode {
     monthly_price_cap_usd: promo.monthly_price_cap_usd ?? d.monthly_price_cap_usd,
     max_credit_usd: promo.max_credit_usd ?? d.max_credit_usd,
     show_homepage_banner: promo.show_homepage_banner !== false,
+    show_on_signup: promo.show_on_signup !== false,
     billing_resume_date: promo.billing_resume_date ?? d.billing_resume_date,
     redeemable_from: promo.redeemable_from ?? d.redeemable_from,
     redeemable_until: promo.redeemable_until ?? d.redeemable_until,
@@ -165,5 +170,6 @@ export function newPromoCodeDraft(): BillingPromoCode {
     new_signups_only: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    show_on_signup: true,
   }
 }

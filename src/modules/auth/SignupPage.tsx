@@ -19,11 +19,12 @@ import {
   applyPromoToSignupProration,
   describePromoForPackage,
   findPromoByCode,
-  isJuly250CampaignVisible,
   parseBillingPromoCodesStore,
+  shouldShowSignupPromoField,
+  signupPromoHint,
   validatePromoForSignup,
 } from "../../lib/billingPromoCodes"
-import { BILLING_PROMO_CODES_KEY } from "../../types/billing-promo-codes"
+import { BILLING_PROMO_CODES_KEY, type BillingPromoCodesStore } from "../../types/billing-promo-codes"
 import type { BillingPromoCode } from "../../types/billing-promo-codes"
 import { SIGNUP_PROMO_CODE_STORAGE_KEY } from "../../lib/july250Promo"
 import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
@@ -171,6 +172,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   const [appliedPromo, setAppliedPromo] = useState<BillingPromoCode | null>(null)
   const [promoMessage, setPromoMessage] = useState("")
   const [promoError, setPromoError] = useState("")
+  const [promoStore, setPromoStore] = useState<BillingPromoCodesStore>(() => parseBillingPromoCodesStore(null))
   const [ackBilling, setAckBilling] = useState(false)
   const [signupStep, setSignupStep] = useState<"account" | "payment">("account")
   const [paymentResult, setPaymentResult] = useState<HelcimJsReturnMessage | null>(null)
@@ -196,10 +198,22 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
 
   useEffect(() => {
     if (!supabase) return
+    void (async () => {
+      const { data, error: err } = await supabase
+        .from("platform_settings")
+        .select("value")
+        .eq("key", BILLING_PROMO_CODES_KEY)
+        .maybeSingle()
+      if (!err) setPromoStore(parseBillingPromoCodesStore(data?.value))
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) return
     let storedCode = ""
     try {
       const stored = sessionStorage.getItem(SIGNUP_PROMO_CODE_STORAGE_KEY)?.trim()
-      if (stored && isJuly250CampaignVisible()) {
+      if (stored) {
         storedCode = stored.toUpperCase()
         setPromoInput(storedCode)
         sessionStorage.removeItem(SIGNUP_PROMO_CODE_STORAGE_KEY)
@@ -209,13 +223,14 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     }
     if (!storedCode) return
     void (async () => {
-      const { data, error: err } = await supabase!
+      const { data, error: err } = await supabase
         .from("platform_settings")
         .select("value")
         .eq("key", BILLING_PROMO_CODES_KEY)
         .maybeSingle()
       if (err) return
       const store = parseBillingPromoCodesStore(data?.value)
+      setPromoStore(store)
       const match = findPromoByCode(store, storedCode)
       if (!match) return
       const validation = validatePromoForSignup(match)
@@ -261,7 +276,20 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     : null
   const requiresPaidSignup = Boolean(productPackageChoice)
   const skipPaymentForPromo = Boolean(proration?.skipPayment)
-  const showPromoCodeField = isJuly250CampaignVisible()
+  const showSignupPromoField = shouldShowSignupPromoField(promoStore)
+  const signupPromoHintText = signupPromoHint(promoStore)
+
+  useEffect(() => {
+    if (!appliedPromo) return
+    setPromoMessage(
+      productPackageChoice
+        ? describePromoForPackage(
+            appliedPromo,
+            computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth }).monthlyUsd,
+          )
+        : appliedPromo.description,
+    )
+  }, [appliedPromo, productPackageChoice, billDayOfMonth])
 
   function handleApplyPromoCode() {
     setPromoError("")
@@ -287,6 +315,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         return
       }
       const store = parseBillingPromoCodesStore(data?.value)
+      setPromoStore(store)
       const match = findPromoByCode(store, raw)
       if (!match) {
         setPromoError("Promo code not found or inactive.")
@@ -937,6 +966,86 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             </span>
           </label>
 
+          {showSignupPromoField ? (
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: theme.text,
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontWeight: 800, fontSize: 15, color: theme.text }}>Promo code</p>
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
+                {signupPromoHintText ??
+                  "Have a promo code? Enter it below and click Apply before you continue. Select a paid plan to see pricing with your discount."}
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+                <label style={{ display: "grid", gap: 4, flex: "1 1 180px", fontWeight: 600, fontSize: 13 }}>
+                  Promo code
+                  <input
+                    type="text"
+                    value={promoInput}
+                    onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        handleApplyPromoCode()
+                      }
+                    }}
+                    placeholder="e.g. JULY250"
+                    autoComplete="off"
+                    style={{ ...inputStyle, marginTop: 0, maxWidth: "none" }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleApplyPromoCode()}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Apply
+                </button>
+                {appliedPromo ? (
+                  <button
+                    type="button"
+                    onClick={handleClearPromoCode}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+              {promoError ? <p style={{ margin: "8px 0 0", color: "#b91c1c", fontSize: 13 }}>{promoError}</p> : null}
+              {promoMessage && !promoError ? (
+                <p style={{ margin: "8px 0 0", color: "#047857", fontSize: 13, fontWeight: 600 }}>{promoMessage}</p>
+              ) : null}
+              {appliedPromo && !productPackageChoice ? (
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#6b7280" }}>
+                  Code applied — select a product package above to see your signup pricing.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div
             style={{
               padding: 14,
@@ -1076,74 +1185,6 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
               ) : null}
             </div>
           )}
-
-          {productPackageChoice && showPromoCodeField ? (
-            <div
-              style={{
-                padding: 14,
-                borderRadius: 10,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                color: theme.text,
-                fontSize: 14,
-                lineHeight: 1.55,
-              }}
-            >
-              <p style={{ margin: "0 0 10px", fontWeight: 800, fontSize: 15, color: theme.text }}>Promo code</p>
-              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
-                July offer only — ends July 31, 2026. Plans $250/mo or less: no July billing. Plans over $250/mo: up to $250
-                July credit. Billing resumes August 1. Code <strong>JULY250</strong> required.
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
-                <label style={{ display: "grid", gap: 4, flex: "1 1 180px", fontWeight: 600, fontSize: 13 }}>
-                  Have a code?
-                  <input
-                    type="text"
-                    value={promoInput}
-                    onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
-                    placeholder="JULY250"
-                    style={{ ...inputStyle, marginTop: 0, maxWidth: "none" }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => handleApplyPromoCode()}
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 8,
-                    border: `1px solid ${theme.border}`,
-                    background: "#f8fafc",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  Apply
-                </button>
-                {appliedPromo ? (
-                  <button
-                    type="button"
-                    onClick={handleClearPromoCode}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-              {promoError ? <p style={{ margin: "8px 0 0", color: "#b91c1c", fontSize: 13 }}>{promoError}</p> : null}
-              {promoMessage && !promoError ? (
-                <p style={{ margin: "8px 0 0", color: "#047857", fontSize: 13, fontWeight: 600 }}>{promoMessage}</p>
-              ) : null}
-            </div>
-          ) : null}
 
           {productPackageChoice ? (
             <div

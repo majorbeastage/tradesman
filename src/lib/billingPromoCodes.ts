@@ -54,6 +54,28 @@ export function shouldShowHomepagePromoBanner(store: BillingPromoCodesStore, tod
   return july ?? null
 }
 
+/** True when at least one promo should appear on the signup form (not expired, active, show_on_signup). */
+export function shouldShowSignupPromoField(store: BillingPromoCodesStore, today: Date = new Date()): boolean {
+  const todayYmd = localDateYmd(today)
+  return store.codes.some((p) => {
+    if (!p.active || p.show_on_signup === false || p.new_signups_only === false) return false
+    if (p.redeemable_until && todayYmd > p.redeemable_until) return false
+    return true
+  })
+}
+
+export function signupPromoHint(store: BillingPromoCodesStore, today: Date = new Date()): string | null {
+  const visible = store.codes.filter((p) => {
+    if (!p.active || p.show_on_signup === false || p.new_signups_only === false) return false
+    const check = validatePromoForSignup(p, today)
+    return check.ok
+  })
+  if (!visible.length) return null
+  const july = visible.find((p) => normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE)
+  if (july) return july.description
+  return visible.map((p) => p.description).filter(Boolean).join(" ")
+}
+
 export type PromoDiscountResult = {
   dueTodayUsd: number
   discountUsd: number
