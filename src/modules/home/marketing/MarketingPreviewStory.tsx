@@ -412,10 +412,6 @@ export function MarketingPreviewStory({
         style={{ height: `${trackHeightVh}vh`, position: "relative", width: "100%" }}
       >
         <div ref={viewportRef} className="marketing-story-viewport">
-          {homePromoBanner && activeIndex === 0 && onTrial ? (
-            <July250PromoHomeBadge visible onSignup={onTrial} />
-          ) : null}
-
           {!isMobile ? (
             <div
               className="marketing-story-intro-right marketing-story-intro-right-desktop"
@@ -539,6 +535,10 @@ export function MarketingPreviewStory({
           )}
 
           <MarketingStoryDockFooter reveal={footerReveal} onAdminLogin={onAdminLogin} isMobile={isMobile} />
+
+          {homePromoBanner && onTrial ? (
+            <July250PromoHomeBadge visible topInsetPx={topInsetPx} onSignup={onTrial} />
+          ) : null}
         </div>
       </div>
 
