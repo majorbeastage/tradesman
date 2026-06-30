@@ -46,12 +46,15 @@ export function validatePromoForSignup(
   return { ok: true }
 }
 
-export function shouldShowHomepagePromoBanner(store: BillingPromoCodesStore, today: Date = new Date()): BillingPromoCode | null {
-  if (!isJuly250CampaignVisible(today)) return null
+export function shouldShowHomepagePromoBanner(store: BillingPromoCodesStore, today: Date = new Date()): boolean {
+  if (!isJuly250CampaignVisible(today)) return false
   const july = store.codes.find(
-    (p) => p.active && p.show_homepage_banner !== false && normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE,
+    (p) => normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE,
   )
-  return july ?? null
+  if (!july) return true
+  if (!july.active) return false
+  if (july.show_homepage_banner === false) return false
+  return true
 }
 
 /** True when at least one promo should appear on the signup form (not expired, active, show_on_signup). */

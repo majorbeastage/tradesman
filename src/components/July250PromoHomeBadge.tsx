@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   JULY250_PUBLIC_DETAILS,
   JULY250_PUBLIC_HEADLINE,
@@ -31,6 +32,11 @@ function StarStrip({ count = 5 }: { count?: number }) {
 
 export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Props) {
   const [open, setOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -41,7 +47,7 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
     return () => window.removeEventListener("keydown", onKey)
   }, [open])
 
-  if (!visible) return null
+  if (!visible || !mounted) return null
 
   function handleSignupClick() {
     try {
@@ -53,7 +59,7 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
     onSignup()
   }
 
-  return (
+  return createPortal(
     <>
       <July250PromoStyles />
       <div
@@ -117,7 +123,8 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
           </div>
         ) : null}
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
 
@@ -127,7 +134,7 @@ function July250PromoStyles() {
       .july250-promo-anchor {
         position: fixed;
         left: clamp(10px, 2.5vw, 18px);
-        z-index: 120;
+        z-index: 100000;
         max-width: min(340px, calc(100vw - 20px));
         pointer-events: none;
       }
