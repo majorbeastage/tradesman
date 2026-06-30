@@ -15,7 +15,8 @@ CREATE POLICY "Public read marketing platform settings"
       'tradesman_privacy_policy',
       'tradesman_terms',
       'tradesman_sms_consent',
-      'tradesman_signup_requirements'
+      'tradesman_signup_requirements',
+      'tradesman_billing_promo_codes'
     )
   );
 

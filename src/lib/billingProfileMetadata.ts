@@ -20,6 +20,14 @@ export type BillingProfileMetadata = {
   billing_product_type?: BillingProductTypeId | string
   /** Extra product lines (same catalog as primary). */
   billing_additional_products?: string[]
+  /** Promo code redeemed at signup (e.g. JULY250). */
+  billing_promo_code?: string
+  /** Percent off applied at signup when benefit window covered signup day. */
+  billing_promo_percent_off?: number
+  /** Last day of promo benefit period (YYYY-MM-DD). */
+  billing_promo_benefit_end?: string
+  /** ISO timestamp when promo was applied at signup. */
+  billing_promo_applied_at?: string
 }
 
 /**
@@ -96,6 +104,18 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
       .filter((x): x is BillingProductTypeId => isBillingProductTypeId(x))
     if (add.length) out.billing_additional_products = add
   }
+  if (typeof m.billing_promo_code === "string" && m.billing_promo_code.trim()) {
+    out.billing_promo_code = m.billing_promo_code.trim().toUpperCase()
+  }
+  if (typeof m.billing_promo_percent_off === "number" && Number.isFinite(m.billing_promo_percent_off)) {
+    out.billing_promo_percent_off = Math.min(100, Math.max(0, Math.round(m.billing_promo_percent_off)))
+  }
+  if (typeof m.billing_promo_benefit_end === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.billing_promo_benefit_end.trim())) {
+    out.billing_promo_benefit_end = m.billing_promo_benefit_end.trim()
+  }
+  if (typeof m.billing_promo_applied_at === "string" && m.billing_promo_applied_at.trim()) {
+    out.billing_promo_applied_at = m.billing_promo_applied_at.trim()
+  }
   return out
 }
 
@@ -137,6 +157,26 @@ export function mergeBillingIntoProfileMetadata(
     const arr = patch.billing_additional_products.filter((x) => typeof x === "string" && isBillingProductTypeId(x.trim()))
     if (arr.length) next.billing_additional_products = arr.map((x) => x.trim())
     else delete next.billing_additional_products
+  }
+  if (patch.billing_promo_code !== undefined) {
+    const t = patch.billing_promo_code.trim().toUpperCase()
+    if (t) next.billing_promo_code = t
+    else delete next.billing_promo_code
+  }
+  if (patch.billing_promo_percent_off !== undefined) {
+    if (typeof patch.billing_promo_percent_off === "number" && Number.isFinite(patch.billing_promo_percent_off)) {
+      next.billing_promo_percent_off = Math.min(100, Math.max(0, Math.round(patch.billing_promo_percent_off)))
+    } else delete next.billing_promo_percent_off
+  }
+  if (patch.billing_promo_benefit_end !== undefined) {
+    const t = patch.billing_promo_benefit_end.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) next.billing_promo_benefit_end = t
+    else delete next.billing_promo_benefit_end
+  }
+  if (patch.billing_promo_applied_at !== undefined) {
+    const t = patch.billing_promo_applied_at.trim()
+    if (t) next.billing_promo_applied_at = t
+    else delete next.billing_promo_applied_at
   }
   return next
 }

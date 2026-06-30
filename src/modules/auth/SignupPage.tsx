@@ -15,6 +15,17 @@ import {
 } from "../../types/signup-requirements"
 import { PRODUCT_PACKAGES, PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, type ProductPackageId } from "../../lib/productPackages"
 import { computeSignupProrationUsd } from "../../lib/subscriptionEntitlements"
+import {
+  applyPromoToSignupProration,
+  describePromoForPackage,
+  findPromoByCode,
+  isJuly250CampaignVisible,
+  parseBillingPromoCodesStore,
+  validatePromoForSignup,
+} from "../../lib/billingPromoCodes"
+import { BILLING_PROMO_CODES_KEY } from "../../types/billing-promo-codes"
+import type { BillingPromoCode } from "../../types/billing-promo-codes"
+import { SIGNUP_PROMO_CODE_STORAGE_KEY } from "../../lib/july250Promo"
 import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
 import SignupProductAdvisorPanel from "../../components/SignupProductAdvisorPanel"
 import SignupSupportCallout from "../../components/SignupSupportCallout"
@@ -83,6 +94,7 @@ type SyncProfileBody = {
   ack_billing?: boolean
   bill_day_of_month?: number
   signup_proration_usd?: number
+  promo_code?: string | null
   helcim_transaction_id?: string | null
   helcim_approval_code?: string | null
   payment_completed_at?: string | null
@@ -155,6 +167,10 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   const [productAdvisorJson, setProductAdvisorJson] = useState<string | null>(null)
   const [advisorOpen, setAdvisorOpen] = useState(false)
   const [billDayOfMonth, setBillDayOfMonth] = useState(1)
+  const [promoInput, setPromoInput] = useState("")
+  const [appliedPromo, setAppliedPromo] = useState<BillingPromoCode | null>(null)
+  const [promoMessage, setPromoMessage] = useState("")
+  const [promoError, setPromoError] = useState("")
   const [ackBilling, setAckBilling] = useState(false)
   const [signupStep, setSignupStep] = useState<"account" | "payment">("account")
   const [paymentResult, setPaymentResult] = useState<HelcimJsReturnMessage | null>(null)
@@ -175,6 +191,37 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         .eq("key", SIGNUP_REQUIREMENTS_KEY)
         .maybeSingle()
       if (!err && data?.value) setSignupCfg(parseSignupRequirements(data.value))
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    let storedCode = ""
+    try {
+      const stored = sessionStorage.getItem(SIGNUP_PROMO_CODE_STORAGE_KEY)?.trim()
+      if (stored && isJuly250CampaignVisible()) {
+        storedCode = stored.toUpperCase()
+        setPromoInput(storedCode)
+        sessionStorage.removeItem(SIGNUP_PROMO_CODE_STORAGE_KEY)
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!storedCode) return
+    void (async () => {
+      const { data, error: err } = await supabase!
+        .from("platform_settings")
+        .select("value")
+        .eq("key", BILLING_PROMO_CODES_KEY)
+        .maybeSingle()
+      if (err) return
+      const store = parseBillingPromoCodesStore(data?.value)
+      const match = findPromoByCode(store, storedCode)
+      if (!match) return
+      const validation = validatePromoForSignup(match)
+      if (!validation.ok) return
+      setAppliedPromo(match)
+      setPromoMessage(match.description)
     })()
   }, [])
 
@@ -206,9 +253,68 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   }, [])
 
   const proration = productPackageChoice
-    ? computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth })
+    ? applyPromoToSignupProration({
+        packageId: productPackageChoice,
+        billDayOfMonth,
+        promo: appliedPromo,
+      })
     : null
   const requiresPaidSignup = Boolean(productPackageChoice)
+  const skipPaymentForPromo = Boolean(proration?.skipPayment)
+  const showPromoCodeField = isJuly250CampaignVisible()
+
+  function handleApplyPromoCode() {
+    setPromoError("")
+    setPromoMessage("")
+    const raw = promoInput.trim()
+    if (!raw) {
+      setAppliedPromo(null)
+      return
+    }
+    if (!supabase) {
+      setPromoError("Promo codes are unavailable right now.")
+      return
+    }
+    void (async () => {
+      const { data, error: err } = await supabase
+        .from("platform_settings")
+        .select("value")
+        .eq("key", BILLING_PROMO_CODES_KEY)
+        .maybeSingle()
+      if (err) {
+        setPromoError("Could not validate promo code.")
+        setAppliedPromo(null)
+        return
+      }
+      const store = parseBillingPromoCodesStore(data?.value)
+      const match = findPromoByCode(store, raw)
+      if (!match) {
+        setPromoError("Promo code not found or inactive.")
+        setAppliedPromo(null)
+        return
+      }
+      const validation = validatePromoForSignup(match)
+      if (!validation.ok) {
+        setPromoError(validation.message)
+        setAppliedPromo(null)
+        return
+      }
+      setAppliedPromo(match)
+      setPromoMessage(
+        productPackageChoice
+          ? describePromoForPackage(match, computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth }).monthlyUsd)
+          : match.description,
+      )
+      setPromoInput(match.code)
+    })()
+  }
+
+  function handleClearPromoCode() {
+    setPromoInput("")
+    setAppliedPromo(null)
+    setPromoMessage("")
+    setPromoError("")
+  }
 
   async function createAccountAfterPayment(payment?: HelcimJsReturnMessage | null) {
     setError("")
@@ -355,6 +461,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         ack_billing: requiresPaidSignup ? ackBilling : undefined,
         bill_day_of_month: requiresPaidSignup ? billDayOfMonth : undefined,
         signup_proration_usd: proration?.dueTodayUsd,
+        promo_code: appliedPromo?.code ?? null,
         helcim_transaction_id: payment?.transactionId ?? null,
         helcim_approval_code: payment?.approvalCode ?? null,
         payment_completed_at: payment ? new Date().toISOString() : null,
@@ -455,6 +562,10 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
       }
       if (!ackBilling) {
         setError("Please authorize recurring billing for your selected plan.")
+        return
+      }
+      if (skipPaymentForPromo) {
+        await createAccountAfterPayment(null)
         return
       }
       setSignupStep("payment")
@@ -784,9 +895,37 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                   </select>
                 </label>
                 <p style={{ margin: 0, lineHeight: 1.55 }}>
-                  Due today at signup (prorated): <strong>${proration.dueTodayUsd.toFixed(2)}</strong> · then $
-                  {proration.monthlyUsd.toFixed(2)}/mo starting {proration.billDateLabel}.
+                  Due today at signup (prorated): <strong>${proration.dueTodayUsd.toFixed(2)}</strong>
+                  {proration.promoApplied && proration.dueTodayUsd < computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth }).dueTodayUsd ? (
+                    <>
+                      {" "}
+                      <span style={{ textDecoration: "line-through", opacity: 0.65 }}>
+                        ${computeSignupProrationUsd({ packageId: productPackageChoice, billDayOfMonth }).dueTodayUsd.toFixed(2)}
+                      </span>
+                    </>
+                  ) : null}
+                  {" "}
+                  · then ${proration.monthlyUsd.toFixed(2)}/mo starting {proration.billDateLabel}.
+                  {proration.billingResumeDate ? (
+                    <>
+                      {" "}
+                      Promo billing resumes <strong>{proration.billingResumeDate}</strong>.
+                    </>
+                  ) : null}
                 </p>
+                {proration.promoApplied && proration.promoDetailMessage ? (
+                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "#047857", fontWeight: 600 }}>{proration.promoDetailMessage}</p>
+                ) : null}
+                {proration.promoApplied && proration.promoDiscountUsd > 0 ? (
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "#047857" }}>
+                    Promo savings today: <strong>${proration.promoDiscountUsd.toFixed(2)}</strong>
+                  </p>
+                ) : null}
+                {skipPaymentForPromo ? (
+                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "#047857", fontWeight: 700 }}>
+                    No payment due today with your promo — you can create your account without entering a card.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 400, display: "block", marginTop: 4 }}>
@@ -938,6 +1077,74 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             </div>
           )}
 
+          {productPackageChoice && showPromoCodeField ? (
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: theme.text,
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontWeight: 800, fontSize: 15, color: theme.text }}>Promo code</p>
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
+                July offer only — ends July 31, 2026. Plans $250/mo or less: no July billing. Plans over $250/mo: up to $250
+                July credit. Billing resumes August 1. Code <strong>JULY250</strong> required.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+                <label style={{ display: "grid", gap: 4, flex: "1 1 180px", fontWeight: 600, fontSize: 13 }}>
+                  Have a code?
+                  <input
+                    type="text"
+                    value={promoInput}
+                    onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                    placeholder="JULY250"
+                    style={{ ...inputStyle, marginTop: 0, maxWidth: "none" }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleApplyPromoCode()}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Apply
+                </button>
+                {appliedPromo ? (
+                  <button
+                    type="button"
+                    onClick={handleClearPromoCode}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+              {promoError ? <p style={{ margin: "8px 0 0", color: "#b91c1c", fontSize: 13 }}>{promoError}</p> : null}
+              {promoMessage && !promoError ? (
+                <p style={{ margin: "8px 0 0", color: "#047857", fontSize: 13, fontWeight: 600 }}>{promoMessage}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {productPackageChoice ? (
             <div
               style={{
@@ -1000,7 +1207,9 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             {submitting
               ? "Creating account…"
               : productPackageChoice
-                ? "Continue to payment"
+                ? skipPaymentForPromo
+                  ? "Create account"
+                  : "Continue to payment"
                 : "Create account"}
           </button>
           ) : (

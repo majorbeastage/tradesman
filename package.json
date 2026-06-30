@@ -25,7 +25,8 @@
     "supabase:login": "npx --yes supabase@2.92.1 login",
     "supabase:deploy:resend-inbound": "npx --yes supabase@2.92.1 functions deploy resend-inbound --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:notify-late-punch": "npx --yes supabase@2.92.1 functions deploy notify-late-punch --project-ref othemzceycphhuwojxge --use-api",
-    "supabase:deploy:provision-sandbox": "npx --yes supabase@2.92.1 functions deploy provision-sandbox --project-ref othemzceycphhuwojxge --use-api"
+    "supabase:deploy:provision-sandbox": "npx --yes supabase@2.92.1 functions deploy provision-sandbox --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:complete-signup": "npx --yes supabase@2.92.1 functions deploy complete-signup --project-ref othemzceycphhuwojxge --use-api"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

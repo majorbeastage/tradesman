@@ -16,6 +16,7 @@ import {
   sumMonthlyBillingUsd,
   type BillingProductTypeId,
 } from "../../lib/billingProductTypes"
+import AdminPromoCodesSection from "./AdminPromoCodesSection"
 
 type BillingRow = {
   id: string
@@ -280,6 +281,8 @@ export default function AdminPaymentsSection() {
           Notes, then copy from there.
         </p>
       </AdminSettingBlock>
+
+      <AdminPromoCodesSection />
 
       <AdminSettingBlock id="admin:billing:helcim-sync">
         <h2 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 17, fontWeight: 800 }}>Helcim customer codes (bulk)</h2>

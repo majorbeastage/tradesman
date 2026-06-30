@@ -20,6 +20,9 @@ import { CopyrightVersionFooter } from "../../../components/CopyrightVersionFoot
 import { PublicLegalNav } from "../../public/PublicLegalNav"
 import { useIsMobile } from "../../../hooks/useIsMobile"
 import { theme } from "../../../styles/theme"
+import { July250PromoHomeBadge } from "../../../components/July250PromoHomeBadge"
+import { BILLING_PROMO_CODES_KEY } from "../../../types/billing-promo-codes"
+import { parseBillingPromoCodesStore, shouldShowHomepagePromoBanner } from "../../../lib/billingPromoCodes"
 
 /** Scroll units per hold / transition — ~7 wheel ticks to crossfade, ~10 to hold on each slide. */
 const STORY_HOLD_UNITS = 10
@@ -247,6 +250,7 @@ export function MarketingPreviewStory({
     ...DEFAULT_ABOUT_US_CONTENT,
     blocks: [...DEFAULT_ABOUT_US_CONTENT.blocks],
   })
+  const [homePromoBanner, setHomePromoBanner] = useState(false)
 
   const totalSlides = countStorySlides(isMobile)
   const aboutSlideIndex = isMobile ? mobileHeroFinaleIndex() : totalSlides - 1
@@ -266,6 +270,24 @@ export function MarketingPreviewStory({
         if (!error && data?.value) setAboutContent(parseAboutUsContent(data.value))
       } catch {
         /* keep defaults */
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", BILLING_PROMO_CODES_KEY)
+          .maybeSingle()
+        if (error) return
+        const store = parseBillingPromoCodesStore(data?.value)
+        setHomePromoBanner(Boolean(shouldShowHomepagePromoBanner(store)))
+      } catch {
+        /* hide banner */
       }
     })()
   }, [])
@@ -387,6 +409,10 @@ export function MarketingPreviewStory({
         style={{ height: `${trackHeightVh}vh`, position: "relative", width: "100%" }}
       >
         <div ref={viewportRef} className="marketing-story-viewport">
+          {homePromoBanner && activeIndex === 0 && onTrial ? (
+            <July250PromoHomeBadge visible onSignup={onTrial} />
+          ) : null}
+
           {!isMobile ? (
             <div
               className="marketing-story-intro-right marketing-story-intro-right-desktop"

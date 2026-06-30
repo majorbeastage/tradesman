@@ -15,6 +15,14 @@ import {
   shellSlotCount,
   type ProductPackageId,
 } from "../_shared/onboarding-packages.ts"
+import {
+  applyPromoToProrationUsd,
+  BILLING_PROMO_CODES_KEY,
+  computeSignupProrationUsdEdge,
+  findPromoByCode,
+  parseBillingPromoCodesStore,
+  validatePromoForSignup,
+} from "../_shared/billing-promo-codes.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,6 +56,7 @@ type Body = {
   ack_billing?: boolean
   bill_day_of_month?: number
   signup_proration_usd?: number
+  promo_code?: string | null
   helcim_transaction_id?: string | null
   helcim_approval_code?: string | null
   payment_completed_at?: string | null
@@ -135,6 +144,11 @@ function reqField(rules: SignupRules, key: string): boolean {
 async function loadSignupRules(adminClient: ReturnType<typeof createClient>): Promise<SignupRules> {
   const { data } = await adminClient.from("platform_settings").select("value").eq("key", SIGNUP_REQ_KEY).maybeSingle()
   return parseSignupRules(data?.value)
+}
+
+async function loadPromoCodes(adminClient: ReturnType<typeof createClient>) {
+  const { data } = await adminClient.from("platform_settings").select("value").eq("key", BILLING_PROMO_CODES_KEY).maybeSingle()
+  return parseBillingPromoCodesStore(data?.value)
 }
 
 /** Accept any hex UUID shape (v4, v7, etc.); older regex only allowed version nibble 1–5 and broke v7 IDs. */
@@ -368,10 +382,62 @@ Deno.serve(async (req) => {
 
   const billDayRaw = typeof body.bill_day_of_month === "number" ? body.bill_day_of_month : Number(body.bill_day_of_month)
   const billDay = Number.isFinite(billDayRaw) ? Math.min(28, Math.max(1, Math.floor(billDayRaw))) : null
-  const prorationUsd =
+
+  const promoCodeRaw = typeof body.promo_code === "string" ? body.promo_code.trim() : ""
+  let promoApplied: ReturnType<typeof findPromoByCode> = null
+  if (promoCodeRaw) {
+    const promoCodes = await loadPromoCodes(adminClient)
+    promoApplied = findPromoByCode(promoCodes, promoCodeRaw)
+    if (!promoApplied) {
+      return new Response(JSON.stringify({ error: "Promo code not found or inactive." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    const promoCheck = validatePromoForSignup(promoApplied)
+    if (!promoCheck.ok) {
+      return new Response(JSON.stringify({ error: promoCheck.message }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+  }
+
+  let prorationUsd =
     typeof body.signup_proration_usd === "number" && Number.isFinite(body.signup_proration_usd)
       ? Math.round(body.signup_proration_usd * 100) / 100
       : null
+
+  let billingPaymentDueDate: string | null = null
+  let promoDiscountUsd: number | null = null
+  let promoTier: string | null = null
+  if (paidPackage && billDay != null) {
+    const baseProration = computeSignupProrationUsdEdge({
+      packageId: paidPackage,
+      billDayOfMonth: billDay,
+    })
+    let serverDue = baseProration.dueTodayUsd
+    if (promoApplied) {
+      const adjusted = applyPromoToProrationUsd(serverDue, baseProration.monthlyUsd, promoApplied)
+      serverDue = adjusted.dueTodayUsd
+      billingPaymentDueDate = adjusted.billingResumeDate
+      promoDiscountUsd = adjusted.promoDiscountUsd
+      promoTier = adjusted.promoTier
+    }
+    prorationUsd = serverDue
+    if (serverDue > 0) {
+      const clientDue =
+        typeof body.signup_proration_usd === "number" && Number.isFinite(body.signup_proration_usd)
+          ? Math.round(body.signup_proration_usd * 100) / 100
+          : null
+      if (clientDue != null && Math.abs(clientDue - serverDue) > 0.02) {
+        return new Response(JSON.stringify({ error: "Signup amount does not match the current promo pricing. Refresh and try again." }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+    }
+  }
 
   const metadata: Record<string, unknown> = { ui_language: uiLang }
   if (productPackage) metadata.product_package = productPackage
@@ -390,6 +456,16 @@ Deno.serve(async (req) => {
   }
   if (typeof body.payment_completed_at === "string" && body.payment_completed_at.trim()) {
     metadata.signup_payment_completed_at = body.payment_completed_at.trim()
+  }
+  if (promoApplied) {
+    metadata.billing_promo_code = promoApplied.code
+    metadata.billing_promo_percent_off = promoApplied.percent_off
+    metadata.billing_promo_benefit_end = promoApplied.benefit_end
+    metadata.billing_promo_applied_at = now
+    if (promoDiscountUsd != null && promoDiscountUsd > 0) metadata.billing_promo_signup_discount_usd = promoDiscountUsd
+    if (promoTier) metadata.billing_promo_tier = promoTier
+    if (promoApplied.max_credit_usd != null) metadata.billing_promo_july_max_credit_usd = promoApplied.max_credit_usd
+    if (billingPaymentDueDate) metadata.billing_payment_due_date = billingPaymentDueDate
   }
 
   const { error: profileErr } = await adminClient.from("profiles").upsert(
