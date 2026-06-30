@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { startPatrioticFireworks } from "../lib/patrioticFireworks"
 import {
   JULY250_PUBLIC_DETAILS,
   JULY250_PUBLIC_HEADLINE,
@@ -33,9 +34,14 @@ function StarStrip({ count = 5 }: { count?: number }) {
 export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Props) {
   const [open, setOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const stopFireworksRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     setMounted(true)
+    return () => {
+      stopFireworksRef.current?.()
+      stopFireworksRef.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -48,6 +54,16 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
   }, [open])
 
   if (!visible || !mounted) return null
+
+  function triggerFireworks() {
+    stopFireworksRef.current?.()
+    stopFireworksRef.current = startPatrioticFireworks({ durationMs: 10_000 })
+  }
+
+  function handlePromoTriggerClick() {
+    triggerFireworks()
+    setOpen((v) => !v)
+  }
 
   function handleSignupClick() {
     try {
@@ -76,7 +92,7 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
             <button
               type="button"
               className="july250-promo-trigger"
-              onClick={() => setOpen((v) => !v)}
+              onClick={handlePromoTriggerClick}
               aria-expanded={open}
               aria-controls="july250-promo-panel"
             >
