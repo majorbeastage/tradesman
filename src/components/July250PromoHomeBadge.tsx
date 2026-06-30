@@ -53,16 +53,31 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
     return () => window.removeEventListener("keydown", onKey)
   }, [open])
 
+  useEffect(() => {
+    if (!open) {
+      stopFireworksRef.current?.()
+      stopFireworksRef.current = null
+    }
+  }, [open])
+
   if (!visible || !mounted) return null
 
-  function triggerFireworks() {
+  function stopFireworks() {
     stopFireworksRef.current?.()
-    stopFireworksRef.current = startPatrioticFireworks({ durationMs: 10_000 })
+    stopFireworksRef.current = null
+  }
+
+  function startFireworks() {
+    stopFireworks()
+    stopFireworksRef.current = startPatrioticFireworks({ durationMs: 60_000 })
   }
 
   function handlePromoTriggerClick() {
-    triggerFireworks()
-    setOpen((v) => !v)
+    setOpen((v) => {
+      const next = !v
+      if (next) startFireworks()
+      return next
+    })
   }
 
   function handleSignupClick() {

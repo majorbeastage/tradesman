@@ -1,4 +1,4 @@
-/** Canvas rocket + burst fireworks — ~10s show, red/white/blue/gold. */
+/** Canvas rocket + burst fireworks — up to ~60s, red/white/blue/gold. */
 
 const COLORS = ["#B22234", "#3C3B6E", "#FFFFFF", "#fbbf24", "#60a5fa"] as const
 
@@ -32,7 +32,7 @@ function prefersReducedMotion(): boolean {
 }
 
 export function startPatrioticFireworks(opts?: { durationMs?: number }): () => void {
-  const durationMs = opts?.durationMs ?? 10_000
+  const durationMs = opts?.durationMs ?? 60_000
   if (typeof document === "undefined") return () => {}
 
   const canvas = document.createElement("canvas")
