@@ -95,7 +95,7 @@ export function July250PromoHomeBadge({ visible, onSignup, topInsetPx = 0 }: Pro
       <July250PromoStyles />
       <div
         className="july250-promo-anchor"
-        style={{ top: `calc(${topInsetPx}px + clamp(10px, 2vh, 16px))` }}
+        style={{ ["--july250-top-inset" as string]: `${topInsetPx}px` }}
       >
         <div className="july250-promo-frame">
           <div className="july250-promo-inner">
@@ -165,6 +165,7 @@ function July250PromoStyles() {
       .july250-promo-anchor {
         position: fixed;
         left: clamp(10px, 2.5vw, 18px);
+        top: calc(var(--july250-top-inset, 0px) + clamp(10px, 2vh, 16px));
         z-index: 100000;
         max-width: min(340px, calc(100vw - 20px));
         pointer-events: none;
@@ -315,11 +316,91 @@ function July250PromoStyles() {
       }
       @media (max-width: 900px) {
         .july250-promo-anchor {
-          left: 10px;
-          max-width: min(300px, calc(100vw - 80px));
+          top: auto;
+          bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+          left: calc(10px + env(safe-area-inset-left, 0px));
+          right: auto;
+          max-width: min(280px, calc(100vw - 20px));
+          display: flex;
+          flex-direction: column-reverse;
+          align-items: flex-start;
+        }
+        .july250-promo-frame,
+        .july250-promo-panel-frame {
+          border-radius: 12px;
+          box-shadow: 0 8px 24px rgba(60, 59, 110, 0.22), 0 0 0 1px rgba(178, 34, 52, 0.12);
+        }
+        .july250-promo-canton {
+          padding: 5px 8px;
+          gap: 5px;
+          font-size: 9px;
+          letter-spacing: 0.06em;
+        }
+        .july250-promo-canton .july250-promo-stars:first-child {
+          display: none;
         }
         .july250-promo-canton-label {
-          font-size: 9px;
+          font-size: 8px;
+        }
+        .july250-promo-trigger-text {
+          padding: 8px 10px 8px 8px;
+          font-size: 10px;
+          gap: 6px;
+        }
+        .july250-promo-trigger-stripe {
+          width: 5px;
+        }
+        .july250-promo-star {
+          font-size: 8px;
+        }
+        .july250-promo-panel {
+          margin-top: 0;
+          margin-bottom: 8px;
+          width: min(280px, calc(100vw - 20px));
+          max-height: min(62vh, 420px);
+        }
+        .july250-promo-panel-inner {
+          max-height: min(62vh, 420px);
+          display: flex;
+          flex-direction: column;
+        }
+        .july250-promo-panel-canton {
+          font-size: 10px;
+          padding: 8px 10px;
+          flex-shrink: 0;
+        }
+        .july250-promo-panel-canton .july250-promo-stars {
+          display: none;
+        }
+        .july250-promo-panel-body {
+          padding: 10px 12px 12px;
+          font-size: 12px;
+          line-height: 1.5;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        .july250-promo-panel-lead {
+          font-size: 11px;
+          margin-bottom: 8px;
+        }
+        .july250-promo-panel-list {
+          margin-bottom: 10px;
+          padding-left: 16px;
+          font-size: 11px;
+        }
+        .july250-promo-panel-list li {
+          margin-bottom: 3px;
+        }
+        .july250-promo-panel-actions {
+          flex-direction: column;
+          gap: 6px;
+        }
+        .july250-promo-btn-primary,
+        .july250-promo-btn-secondary {
+          width: 100%;
+          text-align: center;
+          font-size: 11px;
+          padding: 10px 12px;
         }
       }
     `}</style>
