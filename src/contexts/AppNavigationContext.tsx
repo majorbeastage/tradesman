@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react"
 import { APP_NAV_PREFIX, buildAppHash, parseAppHash } from "../lib/appNavigationHistory"
+import { isLoginRouteHash } from "../lib/loginRouting"
 import { clearCustomerProfileReturn, shouldClearCustomerProfileReturnOnPage } from "../lib/customerProfileReturn"
 
 type OverlayCloser = () => void
@@ -141,6 +142,7 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
   }, [page, setPage])
 
   useEffect(() => {
+    if (isLoginRouteHash()) return
     if (!window.location.hash.startsWith(APP_NAV_PREFIX)) {
       history.replaceState({ appNav: true, page }, "", buildAppHash(page))
     }

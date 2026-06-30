@@ -84,51 +84,64 @@ import { APP_NAV_PREFIX, parseAppHash } from "./lib/appNavigationHistory"
 import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 import {
   ADMIN_LOGIN_FROM_PREVIEW_KEY,
-  clearAdminLoginIntentForAppDeepLink,
-  clearAdminLoginIntentStorage,
   hasAppNavDeepLink,
-  readAdminLoginIntentStorage,
+  isAdminLoginRouteHash,
+  isContractorLoginRouteHash,
+  prepareAppDeepLinkHash,
+  setAdminLoginRoute,
+  setAppHomeRoute,
+  setContractorLoginRoute,
+  stripLoginRouteHash,
   stripAppNavHashFromLocation,
-  writeAdminLoginIntentStorage,
 } from "./lib/loginRouting"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 
-function markAdminLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+function beginAdminLogin(ref: MutableRefObject<"admin" | "contractor" | null>) {
   ref.current = "admin"
   stripAppNavHashFromLocation()
-  writeAdminLoginIntentStorage()
+  setAdminLoginRoute()
 }
 
-function clearAdminLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+function endLoginFlow(ref: MutableRefObject<"admin" | "contractor" | null>) {
   ref.current = null
-  clearAdminLoginIntentStorage()
+  stripLoginRouteHash()
 }
 
-function markContractorLoginIntent(ref: MutableRefObject<"admin" | "contractor" | null>) {
+function beginContractorLogin(ref: MutableRefObject<"admin" | "contractor" | null>) {
   ref.current = "contractor"
-  clearAdminLoginIntent(ref)
+  if (!hasAppNavDeepLink()) {
+    setContractorLoginRoute()
+  }
 }
 
 function resolveLoginIntent(
   view: View,
   ref: MutableRefObject<"admin" | "contractor" | null>,
 ): "admin" | "contractor" | null {
-  if (ref.current === "admin" || view === "admin-login") return "admin"
-  if (ref.current === "contractor" || view === "login") return "contractor"
-  return ref.current
+  if (ref.current === "admin" || view === "admin-login" || isAdminLoginRouteHash()) return "admin"
+  if (ref.current === "contractor" || view === "login" || isContractorLoginRouteHash()) return "contractor"
+  return null
 }
 
 function readInitialAppView(): View {
   if (typeof window === "undefined") return "home"
+  const hash = window.location.hash
+  if (hasAppNavDeepLink(hash)) return "home"
+  if (isAdminLoginRouteHash(hash)) return "admin-login"
+  if (isContractorLoginRouteHash(hash)) return "login"
   try {
     if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") return "admin-login"
-    if (hasAppNavDeepLink()) return "home"
-    if (readAdminLoginIntentStorage()) return "admin-login"
   } catch {
     /* ignore */
   }
   return "home"
+}
+
+function loginIntentFromInitialView(initial: View): "admin" | "contractor" | null {
+  if (initial === "admin-login") return "admin"
+  if (initial === "login") return "contractor"
+  return null
 }
 
 /** Contractor portal (user + office shells) with shared view-as context. */
@@ -627,20 +640,16 @@ function MainAppInner() {
 function App() {
   if (typeof window !== "undefined") normalizePasswordRecoveryUrlInBrowser()
   const { refetchProfile, user, role, loading: authLoading } = useAuth()
-  const [view, setView] = useState<View>(readInitialAppView)
+  const initialView = readInitialAppView()
+  const [view, setView] = useState<View>(initialView)
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
-  const loginIntentRef = useRef<"admin" | "contractor" | null>(
-    readInitialAppView() === "admin-login" ? "admin" : null,
-  )
+  const loginIntentRef = useRef<"admin" | "contractor" | null>(loginIntentFromInitialView(initialView))
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
 
   useEffect(() => {
     try {
-      clearAdminLoginIntentForAppDeepLink()
-      if (hasAppNavDeepLink()) {
-        loginIntentRef.current = null
-      }
+      prepareAppDeepLinkHash()
 
       const advisor = sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
       if (advisor === "1") {
@@ -649,12 +658,7 @@ function App() {
       }
       if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") {
         sessionStorage.removeItem(ADMIN_LOGIN_FROM_PREVIEW_KEY)
-        markAdminLoginIntent(loginIntentRef)
-        setView("admin-login")
-        return
-      }
-      if (!hasAppNavDeepLink() && readAdminLoginIntentStorage()) {
-        loginIntentRef.current = "admin"
+        beginAdminLogin(loginIntentRef)
         setView("admin-login")
         return
       }
@@ -670,6 +674,29 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    const syncViewFromHash = () => {
+      const hash = window.location.hash
+      if (hasAppNavDeepLink(hash)) return
+      if (isAdminLoginRouteHash(hash)) {
+        loginIntentRef.current = "admin"
+        setView("admin-login")
+        return
+      }
+      if (isContractorLoginRouteHash(hash)) {
+        loginIntentRef.current = "contractor"
+        setView("login")
+        return
+      }
+      if (view === "login" || view === "admin-login") {
+        loginIntentRef.current = null
+        setView("home")
+      }
+    }
+    window.addEventListener("hashchange", syncViewFromHash)
+    return () => window.removeEventListener("hashchange", syncViewFromHash)
+  }, [view])
+
   /** Deep links like #/app/customers-email?standalone=1 must open the portal, not the marketing home page. */
   useEffect(() => {
     if (authLoading) return
@@ -678,8 +705,8 @@ function App() {
     const parsed = parseAppHash(window.location.hash)
     if (!parsed.page) return
     if (!user) {
-      if (loginIntentRef.current === "admin") return
-      markContractorLoginIntent(loginIntentRef)
+      if (loginIntentRef.current === "admin" || isAdminLoginRouteHash()) return
+      beginContractorLogin(loginIntentRef)
       setView("login")
       return
     }
@@ -771,7 +798,7 @@ function App() {
       if (!isAdminPortalRole(r)) {
         const { role: refetched, error: fetchErr } = await refetchProfile()
         if (isAdminPortalRole(refetched)) {
-          clearAdminLoginIntent(loginIntentRef)
+          endLoginFlow(loginIntentRef)
           setView("admin")
           return
         }
@@ -782,7 +809,7 @@ function App() {
         )
         return
       }
-      clearAdminLoginIntent(loginIntentRef)
+      endLoginFlow(loginIntentRef)
       setView("admin")
       return
     }
@@ -790,7 +817,7 @@ function App() {
     if (intent === "contractor") {
       if (shouldUseOfficeManagerPortal(r)) setView("office")
       else setView("app")
-      loginIntentRef.current = null
+      endLoginFlow(loginIntentRef)
       return
     }
 
@@ -802,8 +829,8 @@ function App() {
   if (view === "home") {
     return (
       <MarketingHomePage
-        onLogin={() => { markContractorLoginIntent(loginIntentRef); setView("login"); setLoginError("") }}
-        onAdminLogin={() => { markAdminLoginIntent(loginIntentRef); setView("admin-login"); setLoginError("") }}
+        onLogin={() => { beginContractorLogin(loginIntentRef); setView("login"); setLoginError("") }}
+        onAdminLogin={() => { beginAdminLogin(loginIntentRef); setView("admin-login"); setLoginError("") }}
         onSignup={() => {
           setSignupPackagePreset(null)
           setView("signup")
@@ -823,7 +850,7 @@ function App() {
       <TrainingPage
         onBack={() => setView("home")}
         onLogin={() => {
-          markContractorLoginIntent(loginIntentRef)
+          beginContractorLogin(loginIntentRef)
           setView("login")
           setLoginError("")
         }}
@@ -879,7 +906,12 @@ function App() {
         <LoginPage
           isAdminLogin={view === "admin-login"}
           onSuccess={handleLoginSuccess}
-          onBack={() => { clearAdminLoginIntent(loginIntentRef); setView("home"); setLoginError("") }}
+          onBack={() => {
+            endLoginFlow(loginIntentRef)
+            setAppHomeRoute()
+            setView("home")
+            setLoginError("")
+          }}
           onGoToSignup={() => {
             setSignupPackagePreset(null)
             setView("signup")

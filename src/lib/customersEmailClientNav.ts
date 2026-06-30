@@ -1,23 +1,30 @@
 import { buildAppHash, parseAppHash } from "./appNavigationHistory"
-import { clearAdminLoginIntentStorage } from "./loginRouting"
 import { useEffect, useMemo, useState } from "react"
 
 export const CUSTOMERS_EMAIL_PAGE = "customers-email"
+
+const EMAIL_POPOUT_WINDOW = "tradesman-email-client"
 
 /** Navigate to the in-app email client (same session). */
 export function navigateToCustomersEmail(setPage?: (page: string) => void): void {
   setPage?.(CUSTOMERS_EMAIL_PAGE)
 }
 
-/** Open the email client in a dedicated browser tab (no sidebar; same login session). */
+/**
+ * Open the email client in a dedicated browser tab (no sidebar; same login session).
+ * Uses a transient anchor click (not window.open) so popup blockers allow user-initiated opens.
+ */
 export function openCustomersEmailInNewTab(): void {
-  clearAdminLoginIntentStorage()
   const hash = buildAppHash(CUSTOMERS_EMAIL_PAGE, { standalone: true })
   const url = `${window.location.origin}${window.location.pathname}${hash}`
-  const opened = window.open(url, "_blank", "noopener,noreferrer")
-  if (!opened) {
-    window.alert("Your browser blocked the new tab. Allow pop-ups for this site, or copy the address bar after opening Email from the menu.")
-  }
+  const link = document.createElement("a")
+  link.href = url
+  link.target = EMAIL_POPOUT_WINDOW
+  link.rel = "noopener noreferrer"
+  link.style.display = "none"
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }
 
 /** @deprecated Use navigateToCustomersEmail — kept for call-site compatibility. */
