@@ -22,6 +22,12 @@ import AppSchemePicker from "../../components/AppSchemePicker"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
 import { BusinessWebProfilePanel } from "../../components/BusinessWebProfilePanel"
+import {
+  formatPersonName,
+  mergeProfileContactMetadata,
+  parseProfileContactFields,
+  PROFILE_CONTACT_META_KEYS,
+} from "../../lib/profileContactMeta"
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { usePortalTheme } from "../../lib/useSchemeStyles"
@@ -38,6 +44,8 @@ type BusinessHours = Record<DayKey, BusinessHour>
 
 type ProfileForm = {
   display_name: string
+  first_name: string
+  last_name: string
   website_url: string
   primary_phone: string
   best_contact_phone: string
@@ -276,6 +284,9 @@ export function AccountProfilePanel({
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null)
+  const [uploadingCompanyLogo, setUploadingCompanyLogo] = useState(false)
+  const [businessNameForSlug, setBusinessNameForSlug] = useState("")
   const [publicBusinessLine, setPublicBusinessLine] = useState<string | null>(null)
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -283,6 +294,8 @@ export function AccountProfilePanel({
   const recordedChunksRef = useRef<Blob[]>([])
   const [form, setForm] = useState<ProfileForm>({
     display_name: "",
+    first_name: "",
+    last_name: "",
     website_url: "",
     primary_phone: "",
     best_contact_phone: "",
@@ -341,8 +354,12 @@ export function AccountProfilePanel({
         const metaObj =
           metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
         const uiLang = metaObj.ui_language === "es" ? "es" : "en"
-        const purl = metaObj.profile_photo_url
+        const contactFields = parseProfileContactFields(metaObj)
+        const purl = contactFields.profilePhotoUrl ?? metaObj.profile_photo_url
         setProfilePhotoUrl(typeof purl === "string" && purl.trim().startsWith("http") ? purl.trim() : null)
+        setCompanyLogoUrl(contactFields.companyLogoUrl)
+        const savedName = (data?.display_name ?? "").trim()
+        setBusinessNameForSlug(savedName)
         const row = data as {
           service_radius_enabled?: boolean | null
           service_radius_miles?: number | string | null
@@ -354,6 +371,8 @@ export function AccountProfilePanel({
             : ""
         setForm({
           display_name: data?.display_name ?? "",
+          first_name: contactFields.firstName,
+          last_name: contactFields.lastName,
           website_url: data?.website_url ?? "",
           primary_phone: formatPhone(data?.primary_phone ?? ""),
           best_contact_phone: formatPhone((data as { best_contact_phone?: string | null })?.best_contact_phone ?? ""),
@@ -431,6 +450,7 @@ export function AccountProfilePanel({
           ? { ...(metaRow.metadata as Record<string, unknown>) }
           : {}
       prevMeta.profile_photo_url = url
+      prevMeta[PROFILE_CONTACT_META_KEYS.profilePhotoUrl] = url
       const { error: upMeta } = await supabase
         .from("profiles")
         .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
@@ -448,6 +468,57 @@ export function AccountProfilePanel({
       }
     } finally {
       setUploadingProfilePhoto(false)
+    }
+  }
+
+  async function handleCompanyLogoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file || !supabase || !profileUserId || profileUserId !== user?.id) return
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file (PNG, JPEG, or WebP).")
+      return
+    }
+    setUploadingCompanyLogo(true)
+    setError("")
+    setMessage("")
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase()
+      const safeExt = ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp" ? ext : "png"
+      const path = `${profileUserId}/company_logo_${Date.now()}.${safeExt}`
+      const { error: upErr } = await supabase.storage.from(PROFILE_PHOTOS_BUCKET).upload(path, file, {
+        upsert: true,
+        contentType: file.type || "image/png",
+      })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from(PROFILE_PHOTOS_BUCKET).getPublicUrl(path)
+      const url = pub?.publicUrl
+      if (!url) throw new Error("Could not get public URL for company logo.")
+
+      const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (metaErr) throw metaErr
+      const prevMeta =
+        metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+          ? { ...(metaRow.metadata as Record<string, unknown>) }
+          : {}
+      const nextMeta = mergeProfileContactMetadata(prevMeta, { firstName: form.first_name, lastName: form.last_name, companyLogoUrl: url })
+      const { error: upMeta } = await supabase
+        .from("profiles")
+        .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+        .eq("id", profileUserId)
+      if (upMeta) throw upMeta
+      setCompanyLogoUrl(url)
+      await refetchProfile()
+      setMessage("Company logo updated.")
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      if (/bucket not found/i.test(raw)) {
+        setError("Photo storage isn’t available yet. Please try again later or contact support if this continues.")
+      } else {
+        setError(raw)
+      }
+    } finally {
+      setUploadingCompanyLogo(false)
     }
   }
 
@@ -492,6 +563,11 @@ export function AccountProfilePanel({
           ? { ...(metaRow.metadata as Record<string, unknown>) }
           : {}
       prevMeta.ui_language = form.ui_language
+      const nextMeta = mergeProfileContactMetadata(prevMeta, {
+        firstName: form.first_name,
+        lastName: form.last_name,
+        companyLogoUrl: companyLogoUrl,
+      })
 
       const website_url = form.website_url.trim() ? normalizeUrl(form.website_url) : null
       const payload = {
@@ -528,7 +604,7 @@ export function AccountProfilePanel({
         forward_whisper_require_keypress: form.forward_whisper_require_keypress,
         voicemail_conversations_display: form.voicemail_conversations_display,
         ai_assistant_visible: form.ai_assistant_visible,
-        metadata: prevMeta,
+        metadata: nextMeta,
         updated_at: new Date().toISOString(),
       }
       let { error } = await supabase.from("profiles").update(payload).eq("id", profileUserId)
@@ -553,6 +629,7 @@ export function AccountProfilePanel({
         primary_phone: formatPhone(payload.primary_phone ?? ""),
         best_contact_phone: formatPhone(payload.best_contact_phone ?? ""),
       }))
+      setBusinessNameForSlug(form.display_name.trim())
       setMessage(adminContext ? t("account.msg.userUpdated") : t("account.msg.updated"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -718,29 +795,61 @@ export function AccountProfilePanel({
               {!adminContext && user?.id === profileUserId ? (
                 <div style={{ display: "grid", gap: 12, marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap", justifyContent: "space-between" }}>
-                    <div
-                      style={{
-                        width: 72,
-                        height: 72,
-                        borderRadius: "50%",
-                        border: `2px solid ${theme.border}`,
-                        overflow: "hidden",
-                        background: "#f1f5f9",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {profilePhotoUrl ? (
-                        <img src={profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                      ) : (
-                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 6 }}>
-                          No photo
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                        <div
+                          style={{
+                            width: 72,
+                            height: 72,
+                            borderRadius: "50%",
+                            border: `2px solid ${theme.border}`,
+                            overflow: "hidden",
+                            background: "#f1f5f9",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {profilePhotoUrl ? (
+                            <img src={profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 6 }}>
+                              No photo
+                            </div>
+                          )}
                         </div>
-                      )}
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b" }}>Profile photo</span>
+                      </div>
+                      <div style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                        <div
+                          style={{
+                            width: 88,
+                            height: 72,
+                            borderRadius: 10,
+                            border: `2px solid ${theme.border}`,
+                            overflow: "hidden",
+                            background: "#f1f5f9",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {companyLogoUrl ? (
+                            <img src={companyLogoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", padding: 4 }} />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#94a3b8", textAlign: "center", padding: 6 }}>
+                              Company logo
+                            </div>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b" }}>Company logo</span>
+                      </div>
                     </div>
                     <div style={{ flex: 1, minWidth: 180, textAlign: "right" }}>
                       <div style={{ fontSize: 17, fontWeight: 800, color: theme.text, lineHeight: 1.25 }}>
                         {form.display_name.trim() || "Your business name"}
                       </div>
+                      {formatPersonName(form.first_name, form.last_name) ? (
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "#475569", marginTop: 4, lineHeight: 1.35 }}>
+                          {formatPersonName(form.first_name, form.last_name)}
+                        </div>
+                      ) : null}
                       <div style={{ fontSize: 14, fontWeight: 700, color: publicBusinessLine ? "#0f766e" : "#64748b", marginTop: 6, lineHeight: 1.35 }}>
                         {publicBusinessLine ?? "Public business line not assigned yet"}
                       </div>
@@ -749,28 +858,53 @@ export function AccountProfilePanel({
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
-                    <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                      Shown next to My T in the app header. Square images work best.
-                    </span>
-                    <label style={{ display: "inline-flex" }}>
-                      <span
-                        style={{
-                          padding: "8px 14px",
-                          borderRadius: 8,
-                          border: `1px solid ${theme.border}`,
-                          background: uploadingProfilePhoto ? "#f1f5f9" : "#fff",
-                          color: theme.text,
-                          fontWeight: 600,
-                          fontSize: 13,
-                          cursor: uploadingProfilePhoto ? "wait" : "pointer",
-                        }}
-                      >
-                        {uploadingProfilePhoto ? "Uploading…" : "Upload photo"}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
+                      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                        Your photo — shown next to My T in the app header.
                       </span>
-                      <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleProfilePhotoChange(ev)} disabled={uploadingProfilePhoto} style={{ display: "none" }} />
-                    </label>
+                      <label style={{ display: "inline-flex" }}>
+                        <span
+                          style={{
+                            padding: "8px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: uploadingProfilePhoto ? "#f1f5f9" : "#fff",
+                            color: theme.text,
+                            fontWeight: 600,
+                            fontSize: 13,
+                            cursor: uploadingProfilePhoto ? "wait" : "pointer",
+                          }}
+                        >
+                          {uploadingProfilePhoto ? "Uploading…" : "Upload profile photo"}
+                        </span>
+                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleProfilePhotoChange(ev)} disabled={uploadingProfilePhoto} style={{ display: "none" }} />
+                      </label>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Company logo</span>
+                      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                        Used on your public business web profile (tradesman-us.com/your-business).
+                      </span>
+                      <label style={{ display: "inline-flex" }}>
+                        <span
+                          style={{
+                            padding: "8px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: uploadingCompanyLogo ? "#f1f5f9" : "#fff",
+                            color: theme.text,
+                            fontWeight: 600,
+                            fontSize: 13,
+                            cursor: uploadingCompanyLogo ? "wait" : "pointer",
+                          }}
+                        >
+                          {uploadingCompanyLogo ? "Uploading…" : "Upload company logo"}
+                        </span>
+                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleCompanyLogoChange(ev)} disabled={uploadingCompanyLogo} style={{ display: "none" }} />
+                      </label>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -782,6 +916,14 @@ export function AccountProfilePanel({
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.displayName")}</span>
                 <input value={form.display_name} onChange={(e) => setForm((prev) => ({ ...prev, display_name: e.target.value }))} style={theme.formInput} />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.firstName")}</span>
+                <input value={form.first_name} onChange={(e) => setForm((prev) => ({ ...prev, first_name: e.target.value }))} style={theme.formInput} autoComplete="given-name" />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.lastName")}</span>
+                <input value={form.last_name} onChange={(e) => setForm((prev) => ({ ...prev, last_name: e.target.value }))} style={theme.formInput} autoComplete="family-name" />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.website")}</span>
@@ -830,7 +972,11 @@ export function AccountProfilePanel({
               open={foldOpen.business_web_profile}
               onToggle={toggleFold("business_web_profile")}
             >
-              <BusinessWebProfilePanel profileUserId={profileUserId} displayName={form.display_name} />
+              <BusinessWebProfilePanel
+                profileUserId={profileUserId}
+                businessNameForSlug={businessNameForSlug}
+                companyLogoUrl={companyLogoUrl}
+              />
             </AccountFold>
             </Fragment>
               )

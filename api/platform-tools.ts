@@ -57,7 +57,6 @@ import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
 import { handleShareOrgContact } from "./_shareOrgContact.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
-import { handlePublicBusinessProfile } from "./_publicBusinessProfile.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
 function parseHelcimJsUrlEncodedBody(req: VercelRequest): Record<string, string> {
@@ -1841,6 +1840,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   if (req.method === "GET" && route === "public-business-profile") {
+    const { handlePublicBusinessProfile } = await import("./_publicBusinessProfile.js")
     await handlePublicBusinessProfile(req, res)
     return
   }

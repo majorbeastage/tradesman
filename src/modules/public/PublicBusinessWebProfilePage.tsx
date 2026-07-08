@@ -52,10 +52,30 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
     void (async () => {
       try {
         const res = await fetch(`/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}`)
-        const json = (await res.json()) as PublicBusinessProfilePayload
-        if (!cancelled) setData(json.ok ? json : { ok: false, error: json.error ?? "Profile not found." })
+        const text = await res.text()
+        let json: PublicBusinessProfilePayload
+        try {
+          json = JSON.parse(text) as PublicBusinessProfilePayload
+        } catch {
+          if (!cancelled) {
+            setData({
+              ok: false,
+              error: res.ok
+                ? "Unexpected response from server."
+                : text.trim().slice(0, 200) || `Server error (${res.status}).`,
+            })
+          }
+          return
+        }
+        if (!cancelled) {
+          setData(
+            json.ok
+              ? json
+              : { ok: false, error: json.error ?? (res.status === 404 ? "Profile not found." : `Could not load profile (${res.status}).`) },
+          )
+        }
       } catch {
-        if (!cancelled) setData({ ok: false, error: "Could not load this profile." })
+        if (!cancelled) setData({ ok: false, error: "Could not reach the server. Try again in a moment." })
       } finally {
         if (!cancelled) setLoading(false)
       }

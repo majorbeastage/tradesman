@@ -22,6 +22,8 @@ export type BusinessPublicProfileSettings = {
   /** Corporate profile image for the public page header. */
   profilePhotoUrl: string | null
   workPhotoUrls: string[]
+  /** Saved public URL slug when published. */
+  publishedSlug: string
 }
 
 export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSettings {
@@ -38,6 +40,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     showBusinessHours: true,
     profilePhotoUrl: null,
     workPhotoUrls: [],
+    publishedSlug: "",
   }
 }
 
@@ -74,13 +77,16 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     showBusinessHours: o.showBusinessHours !== false,
     profilePhotoUrl: typeof o.profilePhotoUrl === "string" && o.profilePhotoUrl.trim() ? o.profilePhotoUrl.trim() : null,
     workPhotoUrls,
+    publishedSlug: typeof o.publishedSlug === "string" ? normalizePlatformEmailSlug(o.publishedSlug) : "",
   }
 }
 
 export function mergeBusinessPublicProfileMetadata(
   prevMeta: Record<string, unknown>,
   settings: BusinessPublicProfileSettings,
+  publishedSlug?: string,
 ): Record<string, unknown> {
+  const slug = publishedSlug ? normalizePlatformEmailSlug(publishedSlug) : settings.publishedSlug
   return {
     ...prevMeta,
     [BUSINESS_PUBLIC_PROFILE_META_KEY]: {
@@ -88,6 +94,7 @@ export function mergeBusinessPublicProfileMetadata(
       v: 1,
       tagline: settings.tagline.trim().slice(0, BUSINESS_WEB_PROFILE_TAGLINE_MAX),
       workPhotoUrls: settings.workPhotoUrls.slice(0, BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX),
+      publishedSlug: slug,
     },
   }
 }

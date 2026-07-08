@@ -1,11 +1,13 @@
+/**
+ * Public business web profile API — self-contained (no ../src imports) for Vercel serverless.
+ */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createServiceSupabase, getPrimaryEmailChannelForUser } from "./_communications.js"
-import { parseBusinessPublicProfileSettings } from "../src/lib/businessPublicProfile.js"
-import {
-  PLATFORM_EMAIL_ROOT_DOMAIN,
-  platformEmailAddressFromSlug,
-} from "../src/lib/platformEmailSlug.js"
+
+const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
+const PLATFORM_EMAIL_ROOT_DOMAIN = "tradesman-us.com"
+const COMPANY_LOGO_META_KEY = "company_logo_url"
 
 const DAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const
 const DAY_LABELS: Record<(typeof DAY_ORDER)[number], string> = {
@@ -16,6 +18,131 @@ const DAY_LABELS: Record<(typeof DAY_ORDER)[number], string> = {
   fri: "Friday",
   sat: "Saturday",
   sun: "Sunday",
+}
+
+type BusinessPublicProfileSettings = {
+  enabled: boolean
+  tagline: string
+  aboutUs: string
+  showPhone: boolean
+  showEmail: boolean
+  emailSource: "tradesman" | "custom"
+  showAddress: boolean
+  showServiceArea: boolean
+  showBusinessHours: boolean
+  profilePhotoUrl: string | null
+  workPhotoUrls: string[]
+  publishedSlug: string
+}
+
+type ProfileRow = {
+  id: string
+  display_name?: string | null
+  metadata?: unknown
+  business_address?: string | null
+  address_line_1?: string | null
+  address_line_2?: string | null
+  address_city?: string | null
+  address_state?: string | null
+  address_zip?: string | null
+  service_radius_enabled?: boolean | null
+  service_radius_miles?: number | string | null
+  business_hours?: unknown
+  business_web_profile_slug?: string | null
+}
+
+const PROFILE_SELECT =
+  "id, display_name, metadata, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, business_hours, business_web_profile_slug"
+
+function normalizeSlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64)
+}
+
+function slugFromDisplayName(displayName: string): string {
+  return normalizeSlug(displayName)
+}
+
+function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
+  const base: BusinessPublicProfileSettings = {
+    enabled: false,
+    tagline: "",
+    aboutUs: "",
+    showPhone: true,
+    showEmail: true,
+    emailSource: "tradesman",
+    showAddress: true,
+    showServiceArea: false,
+    showBusinessHours: true,
+    profilePhotoUrl: null,
+    workPhotoUrls: [],
+    publishedSlug: "",
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
+  const raw = (metadata as Record<string, unknown>)[BUSINESS_PUBLIC_PROFILE_META_KEY]
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
+  const o = raw as Record<string, unknown>
+  if (o.v !== 1) return base
+  const workPhotoUrls = Array.isArray(o.workPhotoUrls)
+    ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 5)
+    : []
+  return {
+    enabled: o.enabled === true,
+    tagline: typeof o.tagline === "string" ? o.tagline.slice(0, 120) : "",
+    aboutUs: typeof o.aboutUs === "string" ? o.aboutUs.slice(0, 4000) : "",
+    showPhone: o.showPhone !== false,
+    showEmail: o.showEmail !== false,
+    emailSource: o.emailSource === "custom" ? "custom" : "tradesman",
+    showAddress: o.showAddress !== false,
+    showServiceArea: o.showServiceArea === true,
+    showBusinessHours: o.showBusinessHours !== false,
+    profilePhotoUrl: typeof o.profilePhotoUrl === "string" && o.profilePhotoUrl.trim() ? o.profilePhotoUrl.trim() : null,
+    workPhotoUrls,
+    publishedSlug: typeof o.publishedSlug === "string" ? normalizeSlug(o.publishedSlug) : "",
+  }
+}
+
+function resolvePublicImageUrl(settings: BusinessPublicProfileSettings, metadata: unknown): string | null {
+  if (settings.profilePhotoUrl) return settings.profilePhotoUrl
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const o = metadata as Record<string, unknown>
+  const company = typeof o[COMPANY_LOGO_META_KEY] === "string" ? o[COMPANY_LOGO_META_KEY].trim() : ""
+  return company || null
+}
+
+function isMissingSlugColumnError(message: string): boolean {
+  return /business_web_profile_slug|column.*does not exist/i.test(message)
+}
+
+async function findPublishedProfileBySlug(supabase: SupabaseClient, slug: string): Promise<ProfileRow | null> {
+  const { data, error } = await supabase.from("profiles").select(PROFILE_SELECT).eq("business_web_profile_slug", slug).maybeSingle()
+
+  if (!error && data?.id) return data as ProfileRow
+
+  if (error && !isMissingSlugColumnError(error.message ?? "")) {
+    console.warn("[public-business-profile] slug column lookup", error.message)
+  }
+
+  const { data: publishedRows, error: pubErr } = await supabase
+    .from("profiles")
+    .select(PROFILE_SELECT)
+    .filter("metadata->business_public_profile_v1->>enabled", "eq", "true")
+    .limit(200)
+
+  if (pubErr) {
+    console.warn("[public-business-profile] metadata enabled lookup", pubErr.message)
+    return null
+  }
+
+  for (const row of (publishedRows ?? []) as ProfileRow[]) {
+    const settings = parseSettings(row.metadata)
+    if (!settings.enabled) continue
+    const published = settings.publishedSlug || slugFromDisplayName(row.display_name ?? "")
+    const colSlug =
+      typeof row.business_web_profile_slug === "string" ? normalizeSlug(row.business_web_profile_slug) : ""
+    if (published === slug || colSlug === slug) return row
+  }
+
+  return null
 }
 
 function formatUsPhoneDisplay(raw: string): string {
@@ -55,14 +182,7 @@ function formatBusinessHoursForPublic(value: unknown): BusinessHoursRow[] {
   return out
 }
 
-function formatAddressFromProfile(row: {
-  business_address?: string | null
-  address_line_1?: string | null
-  address_line_2?: string | null
-  address_city?: string | null
-  address_state?: string | null
-  address_zip?: string | null
-}): string {
+function formatAddressFromProfile(row: ProfileRow): string {
   const stored = typeof row.business_address === "string" ? row.business_address.trim() : ""
   if (stored) return stored
   const lines = [
@@ -78,12 +198,7 @@ function formatAddressFromProfile(row: {
   return lines.join("\n")
 }
 
-function formatServiceArea(row: {
-  service_radius_enabled?: boolean | null
-  service_radius_miles?: number | string | null
-  address_city?: string | null
-  address_state?: string | null
-}): string {
+function formatServiceArea(row: ProfileRow): string {
   if (!row.service_radius_enabled) return ""
   const milesRaw = row.service_radius_miles
   const miles = typeof milesRaw === "number" ? milesRaw : typeof milesRaw === "string" ? Number(milesRaw) : NaN
@@ -125,7 +240,7 @@ async function resolveTradesmanBusinessEmail(supabase: SupabaseClient, userId: s
     const suffix = `@${PLATFORM_EMAIL_ROOT_DOMAIN}`
     if (pub.endsWith(suffix)) localPart = pub.slice(0, -suffix.length)
   }
-  return localPart ? platformEmailAddressFromSlug(localPart) : null
+  return localPart ? `${normalizeSlug(localPart)}@${PLATFORM_EMAIL_ROOT_DOMAIN}` : null
 }
 
 async function resolveCustomDomainBusinessEmail(supabase: SupabaseClient, userId: string): Promise<string | null> {
@@ -162,72 +277,71 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
   }
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET, OPTIONS")
-    res.status(405).json({ error: "GET only" })
+    res.status(405).json({ ok: false, error: "GET only" })
     return
   }
 
   const slugParam = req.query?.slug
   const slugRaw = typeof slugParam === "string" ? slugParam : Array.isArray(slugParam) ? String(slugParam[0] ?? "") : ""
-  const slug = slugRaw.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64)
+  const slug = normalizeSlug(slugRaw)
   if (!slug || slug.length < 3) {
     res.status(400).json({ ok: false, error: "Invalid slug" })
     return
   }
 
-  let supabase: ReturnType<typeof createServiceSupabase>
   try {
-    supabase = createServiceSupabase()
+    let supabase: ReturnType<typeof createServiceSupabase>
+    try {
+      supabase = createServiceSupabase()
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Server misconfiguration" })
+      return
+    }
+
+    const profile = await findPublishedProfileBySlug(supabase, slug)
+    if (!profile?.id) {
+      res.status(404).json({ ok: false, error: "Business profile not found. Publish it in MyT → Business profile / web address." })
+      return
+    }
+
+    const settings = parseSettings(profile.metadata)
+    if (!settings.enabled) {
+      res.status(404).json({ ok: false, error: "This business profile is not published yet." })
+      return
+    }
+
+    const businessName = (profile.display_name ?? "").trim() || "Business"
+    const profilePhotoUrl = resolvePublicImageUrl(settings, profile.metadata)
+    const phone = settings.showPhone ? await fetchPublicTwilioPhone(supabase, profile.id) : null
+    let email: string | null = null
+    if (settings.showEmail) {
+      email =
+        settings.emailSource === "custom"
+          ? await resolveCustomDomainBusinessEmail(supabase, profile.id)
+          : await resolveTradesmanBusinessEmail(supabase, profile.id)
+    }
+
+    const address = settings.showAddress ? formatAddressFromProfile(profile) : null
+    const serviceArea = settings.showServiceArea ? formatServiceArea(profile) : null
+    const businessHours = settings.showBusinessHours ? formatBusinessHoursForPublic(profile.business_hours) : []
+
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300")
+    res.status(200).json({
+      ok: true,
+      slug,
+      businessName,
+      tagline: settings.tagline.trim() || undefined,
+      aboutUs: settings.aboutUs.trim() || undefined,
+      profilePhotoUrl: profilePhotoUrl || null,
+      workPhotoUrls: settings.workPhotoUrls,
+      phone: phone || null,
+      email: email || null,
+      address: address || null,
+      serviceArea: serviceArea || null,
+      businessHours,
+    })
   } catch (e) {
-    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Server misconfiguration" })
-    return
+    console.error("[public-business-profile]", e)
+    res.status(500).json({ ok: false, error: "Could not load business profile." })
   }
-
-  const { data: profile, error: profErr } = await supabase
-    .from("profiles")
-    .select(
-      "id, display_name, metadata, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, business_hours",
-    )
-    .eq("business_web_profile_slug", slug)
-    .maybeSingle()
-
-  if (profErr || !profile?.id) {
-    res.status(404).json({ ok: false, error: "Business profile not found" })
-    return
-  }
-
-  const settings = parseBusinessPublicProfileSettings(profile.metadata)
-  if (!settings.enabled) {
-    res.status(404).json({ ok: false, error: "This business profile is not published" })
-    return
-  }
-
-  const businessName = (profile.display_name ?? "").trim() || "Business"
-  const phone = settings.showPhone ? await fetchPublicTwilioPhone(supabase, profile.id) : null
-  let email: string | null = null
-  if (settings.showEmail) {
-    email =
-      settings.emailSource === "custom"
-        ? await resolveCustomDomainBusinessEmail(supabase, profile.id)
-        : await resolveTradesmanBusinessEmail(supabase, profile.id)
-  }
-
-  const address = settings.showAddress ? formatAddressFromProfile(profile) : null
-  const serviceArea = settings.showServiceArea ? formatServiceArea(profile) : null
-  const businessHours = settings.showBusinessHours ? formatBusinessHoursForPublic(profile.business_hours) : []
-
-  res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300")
-  res.status(200).json({
-    ok: true,
-    slug,
-    businessName,
-    tagline: settings.tagline.trim() || undefined,
-    aboutUs: settings.aboutUs.trim() || undefined,
-    profilePhotoUrl: settings.profilePhotoUrl,
-    workPhotoUrls: settings.workPhotoUrls,
-    phone: phone || null,
-    email: email || null,
-    address: address || null,
-    serviceArea: serviceArea || null,
-    businessHours,
-  })
 }

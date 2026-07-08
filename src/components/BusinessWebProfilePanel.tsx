@@ -12,14 +12,14 @@ import {
   type BusinessPublicProfileSettings,
 } from "../lib/businessPublicProfile"
 
-const PHOTOS_BUCKET = "profile-photos"
-
 type Props = {
   profileUserId: string
-  displayName: string
+  /** Saved business name only — updates after Contact & profile save, not on every keystroke. */
+  businessNameForSlug: string
+  companyLogoUrl: string | null
 }
 
-export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
+export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, companyLogoUrl }: Props) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
@@ -44,11 +44,11 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
         .eq("id", profileUserId)
         .maybeSingle()
       if (qErr) throw qErr
-      const name = (data?.display_name ?? displayName ?? "").trim()
+      const savedName = (businessNameForSlug || data?.display_name || "").trim()
       setSlug(
         typeof data?.business_web_profile_slug === "string" && data.business_web_profile_slug.trim()
           ? data.business_web_profile_slug.trim().toLowerCase()
-          : businessWebProfileSlugFromName(name),
+          : businessWebProfileSlugFromName(savedName),
       )
       setSettings(parseBusinessPublicProfileSettings(data?.metadata))
     } catch (e) {
@@ -56,16 +56,17 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [profileUserId, displayName])
+  }, [profileUserId, businessNameForSlug])
 
   useEffect(() => {
     void load()
   }, [load])
 
   useEffect(() => {
-    const name = displayName.trim()
-    if (name) setSlug(businessWebProfileSlugFromName(name))
-  }, [displayName])
+    const savedName = businessNameForSlug.trim()
+    if (!savedName) return
+    setSlug(businessWebProfileSlugFromName(savedName))
+  }, [businessNameForSlug])
 
   async function persist(next: BusinessPublicProfileSettings) {
     if (!supabase || !profileUserId) return
@@ -73,10 +74,10 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
     setMessage("")
     setError("")
     try {
-      const name = displayName.trim()
+      const name = businessNameForSlug.trim()
       const nextSlug = businessWebProfileSlugFromName(name)
       if (!nextSlug || nextSlug.length < 3) {
-        throw new Error("Set a business name (at least 3 letters/numbers) in Business profile before publishing.")
+        throw new Error("Save a business name (at least 3 letters/numbers) in Contact & profile before publishing.")
       }
 
       const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
@@ -89,14 +90,23 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
       const { error: upErr } = await supabase
         .from("profiles")
         .update({
-          metadata: mergeBusinessPublicProfileMetadata(prevMeta, next),
+          metadata: mergeBusinessPublicProfileMetadata(prevMeta, next, nextSlug),
           business_web_profile_slug: next.enabled ? nextSlug : null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", profileUserId)
 
       if (upErr) {
-        if (/duplicate|unique/i.test(upErr.message)) {
+        if (/business_web_profile_slug|column.*does not exist/i.test(upErr.message)) {
+          const { error: metaOnlyErr } = await supabase
+            .from("profiles")
+            .update({
+              metadata: mergeBusinessPublicProfileMetadata(prevMeta, next, nextSlug),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", profileUserId)
+          if (metaOnlyErr) throw metaOnlyErr
+        } else if (/duplicate|unique/i.test(upErr.message)) {
           throw new Error(
             "Another business already uses this web address. Adjust your business name slightly (it must be unique on tradesman-us.com).",
           )
@@ -110,38 +120,6 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function handleProfilePhotoUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ""
-    if (!file || !supabase) return
-    if (!file.type.startsWith("image/")) {
-      setError("Choose an image file (PNG, JPEG, or WebP).")
-      return
-    }
-    setUploadingPhoto(true)
-    setError("")
-    try {
-      const ext = file.name.split(".").pop()?.toLowerCase()
-      const safeExt = ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp" ? ext : "jpg"
-      const path = `${profileUserId}/web-profile/avatar_${Date.now()}.${safeExt}`
-      const { error: upErr } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, file, {
-        upsert: true,
-        contentType: file.type || "image/jpeg",
-      })
-      if (upErr) throw upErr
-      const { data: pub } = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path)
-      const url = pub?.publicUrl
-      if (!url) throw new Error("Could not get public URL for photo.")
-      const next = { ...settings, profilePhotoUrl: url }
-      setSettings(next)
-      await persist(next)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setUploadingPhoto(false)
     }
   }
 
@@ -161,9 +139,9 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
     try {
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg"
       const path = `${profileUserId}/web-profile/work_${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, file, { upsert: true, contentType: file.type })
+      const { error: upErr } = await supabase.storage.from("profile-photos").upload(path, file, { upsert: true, contentType: file.type })
       if (upErr) throw upErr
-      const { data: pub } = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path)
+      const { data: pub } = supabase.storage.from("profile-photos").getPublicUrl(path)
       const url = pub?.publicUrl
       if (!url) throw new Error("Upload failed.")
       const next = { ...settings, workPhotoUrls: [...settings.workPhotoUrls, url] }
@@ -198,7 +176,7 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
     <div style={{ display: "grid", gap: 14 }}>
       <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
         Publish a simple public page you can list on Google Business Profile, social media, and your marketing. The address
-        is always <strong>tradesman-us.com/your-business-name</strong> (from your business name — not editable).
+        is always <strong>tradesman-us.com/your-business-name</strong> (from your saved business name — not editable here).
       </p>
 
       <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600 }}>
@@ -212,21 +190,34 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
 
       <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>Your public web address</div>
-        <div style={{ fontSize: 14, fontWeight: 800, color: "#0f766e", wordBreak: "break-all" }}>
-          {publicUrl || "Set business name above (min. 3 characters)"}
+        <div
+          style={{
+            minHeight: 44,
+            fontSize: 14,
+            fontWeight: 800,
+            color: "#0f766e",
+            wordBreak: "break-all",
+            lineHeight: 1.45,
+          }}
+        >
+          {publicUrl || "Save business name in Contact & profile (min. 3 characters)"}
         </div>
+        <p style={{ margin: "8px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+          Updates when you save Contact & profile — not while you are still typing.
+        </p>
         <button
           type="button"
           onClick={copyPublicUrl}
           disabled={!publicUrl}
           style={{
-            marginTop: 8,
-            padding: "6px 12px",
+            marginTop: 10,
+            padding: "8px 14px",
             borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#fff",
-            fontWeight: 600,
-            fontSize: 12,
+            border: "none",
+            background: publicUrl ? "#0f172a" : "#cbd5e1",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 13,
             cursor: publicUrl ? "pointer" : "not-allowed",
           }}
         >
@@ -237,8 +228,8 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
       <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div
           style={{
-            width: 88,
-            height: 88,
+            width: 96,
+            height: 72,
             borderRadius: 12,
             border: `2px solid ${theme.border}`,
             overflow: "hidden",
@@ -246,33 +237,19 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
             flexShrink: 0,
           }}
         >
-          {settings.profilePhotoUrl ? (
-            <img src={settings.profilePhotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          {companyLogoUrl ? (
+            <img src={companyLogoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }} />
           ) : (
             <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 11, color: "#94a3b8", padding: 6, textAlign: "center" }}>
-              Profile photo
+              Company logo
             </div>
           )}
         </div>
         <div>
-          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Corporate profile picture</div>
-          <label>
-            <span
-              style={{
-                display: "inline-block",
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: uploadingPhoto ? "wait" : "pointer",
-              }}
-            >
-              {uploadingPhoto ? "Uploading…" : "Upload photo"}
-            </span>
-            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => void handleProfilePhotoUpload(e)} disabled={uploadingPhoto} />
-          </label>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Public profile image</div>
+          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45, maxWidth: 420 }}>
+            Uses your <strong>company logo</strong> from Contact & profile. Upload it there — not your personal profile photo.
+          </p>
         </div>
       </div>
 
@@ -377,7 +354,7 @@ export function BusinessWebProfilePanel({ profileUserId, displayName }: Props) {
             <span style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
               Add work photo
             </span>
-            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => void handleWorkPhotoUpload(e)} />
+            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => void handleWorkPhotoUpload(e)} disabled={uploadingPhoto} />
           </label>
         ) : null}
       </div>
