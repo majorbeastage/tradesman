@@ -52,6 +52,7 @@ import {
   computeOccurrenceStarts,
   intervalsOverlap,
   portalHasRecurrenceControls,
+  validateRecurrenceEndLimitsFromPortal,
 } from "../../lib/calendarRecurrence"
 import {
   clampAppointmentDurationMinutes,
@@ -677,6 +678,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setSeriesRecurrenceValues({})
       return
     }
+    const scopeId = selectedEvent.recurrence_series_id
+    const existingCount =
+      scopeId != null
+        ? events.filter((e) => e.recurrence_series_id === scopeId && !e.removed_at && !e.completed_at).length
+        : selectedLegacyRecurringIds?.length ?? 1
     const next: Record<string, string> = {}
     for (const item of addItemPortalItems) {
       if (
@@ -684,6 +690,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         (item.id === "make_event_recurring" || /recurring/i.test(item.id) || /recurring/i.test(item.label))
       ) {
         next[item.id] = "checked"
+      } else if (item.id === "recurrence_end_mode" && item.options?.length) {
+        next[item.id] =
+          item.options.find((o) => /number of occurrences/i.test(o)) ?? item.options[0]
+      } else if (item.id === "recurrence_occurrence_count") {
+        next[item.id] = existingCount > 0 ? String(existingCount) : ""
       } else if (item.type === "dropdown" && item.options?.length) {
         next[item.id] = item.options[0]
       } else if (item.type === "checkbox") {
@@ -693,7 +704,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
     }
     setSeriesRecurrenceValues(next)
-  }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems])
+  }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems, events, selectedLegacyRecurringIds])
 
   const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(authRole)
   const canAssignToTeam = selectableUsers.length > 1 || isOfficeManagerOrAdmin
@@ -1858,6 +1869,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       alert("Turn on recurring and choose a frequency to update this series.")
       return
     }
+    const recurrenceErr = validateRecurrenceEndLimitsFromPortal(addItemPortalItems, seriesRecurrenceValues)
+    if (recurrenceErr) {
+      alert(recurrenceErr)
+      return
+    }
     series = applyRecurrenceEndLimitsFromPortal(addItemPortalItems, seriesRecurrenceValues, series)
     const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
     if (Number.isNaN(start.getTime())) {
@@ -2476,6 +2492,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const endFromAddModal = recurrenceFromAddItem != null
       const endItems = endFromAddModal ? addItemPortalItems : jobTypesPortalItems
       const endVals = endFromAddModal ? addItemPortalValues : jobTypesPortalValues
+      const recurrenceErr = validateRecurrenceEndLimitsFromPortal(endItems, endVals)
+      if (recurrenceErr) {
+        setAddError(recurrenceErr)
+        return
+      }
       series = applyRecurrenceEndLimitsFromPortal(endItems, endVals, series)
     }
     const starts = series ? computeOccurrenceStarts(start, series) : [start]

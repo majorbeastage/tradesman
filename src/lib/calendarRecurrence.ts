@@ -90,18 +90,7 @@ export function resolveRecurrenceFromPortal(
   }
 }
 
-/**
- * Apply optional portal fields for how long the series runs:
- * - Dropdown id `recurrence_end_mode` (or label heuristics): indefinite, occurrences, until date, or time span.
- * - `recurrence_occurrence_count` (custom_field): max instances.
- * - `recurrence_until_date` (custom_field): YYYY-MM-DD.
- * - `recurrence_period_amount` + `recurrence_period_unit` (dropdown: Weeks / Months / Years).
- */
-export function applyRecurrenceEndLimitsFromPortal(
-  items: PortalSettingItem[],
-  values: Record<string, string>,
-  series: RecurrenceSeries
-): RecurrenceSeries {
+function findRecurrenceEndPortalItems(items: PortalSettingItem[]) {
   const modeItem = items.find(
     (i) =>
       i.type === "dropdown" &&
@@ -110,9 +99,6 @@ export function applyRecurrenceEndLimitsFromPortal(
         /recurrence_end|how.*(long|ends)|duration.*mode|ends.*after/i.test(i.id) ||
         /recurrence.*end|how long|series.*end|duration/i.test(i.label))
   )
-  const modeRaw = modeItem ? String(values[modeItem.id] ?? modeItem.options?.[0] ?? "").toLowerCase() : ""
-
-  /** Avoid matching unrelated “how many …” fields (e.g. crew size) that happen to contain digits like 15. */
   const countItem = items.find(
     (i) =>
       (i.type === "custom_field" && i.customFieldSubtype !== "dropdown") &&
@@ -138,6 +124,52 @@ export function applyRecurrenceEndLimitsFromPortal(
       i.type === "dropdown" &&
       (i.id === "recurrence_period_unit" || /period unit|time unit|for (weeks|months|years)/i.test(i.label))
   )
+  return { modeItem, countItem, untilItem, spanAmtItem, spanUnitItem }
+}
+
+/** Validate recurrence end fields before materializing instances. */
+export function validateRecurrenceEndLimitsFromPortal(
+  items: PortalSettingItem[],
+  values: Record<string, string>
+): string | null {
+  const { modeItem, countItem, untilItem, spanAmtItem } = findRecurrenceEndPortalItems(items)
+  const modeRaw = modeItem ? String(values[modeItem.id] ?? modeItem.options?.[0] ?? "").toLowerCase() : ""
+
+  if (modeRaw && /occurrence|instance/.test(modeRaw) && !/until|date/.test(modeRaw)) {
+    const n = parsePositiveInt(countItem ? values[countItem.id] : undefined)
+    if (!Number.isFinite(n)) return "Enter the number of instances for this recurring event."
+    return null
+  }
+
+  if (modeRaw && (/until|by date|end date/).test(modeRaw)) {
+    const rawD = untilItem ? String(values[untilItem.id] ?? "").trim() : ""
+    if (!parseLocalYmd(rawD)) return "Enter a valid until date (YYYY-MM-DD) for this recurring event."
+    return null
+  }
+
+  if (modeRaw && (/week|month|year|period|span|length/).test(modeRaw)) {
+    const amt = parsePositiveInt(spanAmtItem ? values[spanAmtItem.id] : undefined)
+    if (!Number.isFinite(amt)) return "Enter how long the recurrence should run."
+    return null
+  }
+
+  return null
+}
+
+/**
+ * Apply optional portal fields for how long the series runs:
+ * - Dropdown id `recurrence_end_mode` (or label heuristics): indefinite, occurrences, until date, or time span.
+ * - `recurrence_occurrence_count` (custom_field): max instances.
+ * - `recurrence_until_date` (custom_field): YYYY-MM-DD.
+ * - `recurrence_period_amount` + `recurrence_period_unit` (dropdown: Weeks / Months / Years).
+ */
+export function applyRecurrenceEndLimitsFromPortal(
+  items: PortalSettingItem[],
+  values: Record<string, string>,
+  series: RecurrenceSeries
+): RecurrenceSeries {
+  const { modeItem, countItem, untilItem, spanAmtItem, spanUnitItem } = findRecurrenceEndPortalItems(items)
+  const modeRaw = modeItem ? String(values[modeItem.id] ?? modeItem.options?.[0] ?? "").toLowerCase() : ""
 
   let maxOcc = series.maxOccurrences
   let horizon = series.horizonMs
@@ -149,18 +181,16 @@ export function applyRecurrenceEndLimitsFromPortal(
     untilDate = null
   }
 
-  if (modeRaw && /indefinite|no end|ongoing|forever|unlimited/.test(modeRaw)) {
-    return {
-      ...series,
-      maxOccurrences: ABSOLUTE_MAX_INSTANCES,
-      horizonMs: 10 * 365 * 24 * 60 * 60 * 1000,
-      untilDate: null,
-    }
-  }
+  const countRaw = countItem ? String(values[countItem.id] ?? "").trim() : ""
+  const countN = parsePositiveInt(countItem ? values[countItem.id] : undefined)
 
   if (modeRaw && /occurrence|instance/.test(modeRaw) && !/until|date/.test(modeRaw)) {
-    const n = parsePositiveInt(countItem ? values[countItem.id] : undefined)
-    if (Number.isFinite(n)) withInstances(n)
+    if (Number.isFinite(countN)) withInstances(countN)
+    return { ...series, maxOccurrences: maxOcc, horizonMs: horizon, untilDate }
+  }
+
+  if (countItem && countRaw && Number.isFinite(countN)) {
+    withInstances(countN)
     return { ...series, maxOccurrences: maxOcc, horizonMs: horizon, untilDate }
   }
 
@@ -189,12 +219,15 @@ export function applyRecurrenceEndLimitsFromPortal(
     return { ...series, maxOccurrences: maxOcc, horizonMs: horizon, untilDate }
   }
 
-  // No explicit mode: still honor filled helper fields (depend on recurring checkbox in builder)
-  const n0 = parsePositiveInt(countItem ? values[countItem.id] : undefined)
-  if (countItem && String(values[countItem.id] ?? "").trim() && Number.isFinite(n0)) {
-    withInstances(n0)
-    return { ...series, maxOccurrences: maxOcc, horizonMs: horizon, untilDate }
+  if (modeRaw && /indefinite|no end|ongoing|forever|unlimited/.test(modeRaw)) {
+    return {
+      ...series,
+      maxOccurrences: ABSOLUTE_MAX_INSTANCES,
+      horizonMs: 10 * 365 * 24 * 60 * 60 * 1000,
+      untilDate: null,
+    }
   }
+
   if (untilItem && String(values[untilItem.id] ?? "").trim()) {
     const ud = parseLocalYmd(String(values[untilItem.id] ?? ""))
     if (ud) {

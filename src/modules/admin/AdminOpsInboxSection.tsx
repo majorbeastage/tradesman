@@ -10,6 +10,9 @@ type Props = {
   onOpenUsers?: () => void
 }
 
+const ADMIN_MUTED = "#475569"
+const ADMIN_SUBTLE = "#334155"
+
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "—"
   try {
@@ -85,7 +88,7 @@ export default function AdminOpsInboxSection({ onOpenTickets, onOpenUsers }: Pro
       {err ? (
         <p style={{ color: "#b91c1c", marginTop: 12 }}>{err}</p>
       ) : loading && !snap ? (
-        <p style={{ color: "#64748b", marginTop: 12 }}>Loading ops inbox…</p>
+        <p style={{ color: ADMIN_MUTED, marginTop: 12 }}>Loading ops inbox…</p>
       ) : snap ? (
         <>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 16 }}>
@@ -115,10 +118,10 @@ export default function AdminOpsInboxSection({ onOpenTickets, onOpenUsers }: Pro
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
                       <strong style={{ color: theme.text }}>{t.ticket_number}</strong>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "#6366f1" }}>{adminTicketTypeLabel(t.type)}</span>
-                      <span style={{ fontSize: 12, color: "#64748b" }}>{formatWhen(t.created_at)}</span>
+                      <span style={{ fontSize: 12, color: ADMIN_MUTED }}>{formatWhen(t.created_at)}</span>
                     </div>
                     <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, color: theme.text }}>{t.title?.trim() || "(No title)"}</div>
-                    <div style={{ marginTop: 2, fontSize: 12, color: "#64748b" }}>
+                    <div style={{ marginTop: 2, fontSize: 12, color: ADMIN_MUTED }}>
                       {[t.name, t.email].filter(Boolean).join(" · ") || "No contact on file"}
                     </div>
                   </div>
@@ -132,20 +135,20 @@ export default function AdminOpsInboxSection({ onOpenTickets, onOpenUsers }: Pro
             {snap.pendingNewUsers.length === 0 ? (
               <EmptyState text="No accounts with role new_user." />
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", borderRadius: 10, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", borderRadius: 10, overflow: "hidden", color: theme.text }}>
                 <thead>
-                  <tr style={{ background: "#f8fafc", textAlign: "left" }}>
-                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>Email</th>
-                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>Name</th>
-                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>Signed up</th>
+                  <tr style={{ background: "#f8fafc", textAlign: "left", color: theme.text }}>
+                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>Email</th>
+                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>Name</th>
+                    <th style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>Signed up</th>
                   </tr>
                 </thead>
                 <tbody>
                   {snap.pendingNewUsers.map((u) => (
                     <tr key={u.id}>
-                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>{u.email ?? u.id.slice(0, 8)}</td>
-                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>{u.display_name?.trim() || "—"}</td>
-                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}` }}>{formatWhen(u.created_at)}</td>
+                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>{u.email ?? u.id.slice(0, 8)}</td>
+                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>{u.display_name?.trim() || "—"}</td>
+                      <td style={{ padding: "10px 12px", borderBottom: `1px solid ${theme.border}`, color: theme.text }}>{formatWhen(u.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -156,18 +159,18 @@ export default function AdminOpsInboxSection({ onOpenTickets, onOpenUsers }: Pro
           <section style={{ marginTop: 28 }}>
             <SectionHeader title="Reporting — platform activity snapshot" />
             <div style={{ padding: 14, borderRadius: 12, border: `1px solid ${theme.border}`, background: "#fff" }}>
-              <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: ADMIN_MUTED, lineHeight: 1.5 }}>
                 Open tickets by channel and recent account creations (last 200 accounts loaded).
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                 {Object.entries(snap.openTicketsByType).map(([type, count]) => (
                   <div key={type} style={{ padding: "10px 12px", borderRadius: 8, background: "#f8fafc", border: `1px solid ${theme.border}`, minWidth: 120 }}>
-                    <div style={{ fontSize: 20, fontWeight: 800 }}>{count}</div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>{adminTicketTypeLabel(type)}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>{count}</div>
+                    <div style={{ fontSize: 11, color: ADMIN_SUBTLE, fontWeight: 600 }}>{adminTicketTypeLabel(type)}</div>
                   </div>
                 ))}
               </div>
-              <p style={{ margin: "14px 0 0", fontSize: 12, color: "#94a3b8" }}>
+              <p style={{ margin: "14px 0 0", fontSize: 12, color: ADMIN_MUTED }}>
                 Recent accounts tracked: {snap.recentSignups.length}. Promote <code>new_user</code> → <code>user</code> under Users when onboarding is complete.
               </p>
             </div>
@@ -182,7 +185,7 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   return (
     <div style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff", minWidth: 130 }}>
       <div style={{ fontSize: 24, fontWeight: 800, color: accent }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 11, color: ADMIN_SUBTLE, fontWeight: 600 }}>{label}</div>
     </div>
   )
 }
@@ -190,7 +193,7 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
 function SectionHeader({ title, actionLabel, onAction }: { title: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 10 }}>
-      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#475569" }}>{title}</h2>
+      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: theme.text }}>{title}</h2>
       {actionLabel && onAction ? (
         <button
           type="button"
@@ -213,5 +216,5 @@ function SectionHeader({ title, actionLabel, onAction }: { title: string; action
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>{text}</p>
+  return <p style={{ margin: 0, fontSize: 13, color: ADMIN_MUTED }}>{text}</p>
 }

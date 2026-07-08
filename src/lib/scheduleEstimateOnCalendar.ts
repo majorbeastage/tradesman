@@ -4,6 +4,7 @@ import {
   computeOccurrenceStarts,
   intervalsOverlap,
   resolveRecurrenceFromPortal,
+  validateRecurrenceEndLimitsFromPortal,
   type RecurrenceSeries,
 } from "./calendarRecurrence"
 import { mergeMaterialsListsForCalendar, materialDescriptionsFromQuoteItemRows } from "./quoteItemMath"
@@ -110,6 +111,8 @@ export async function scheduleEstimateOnCalendar(
   if (input.recurrenceExplicitlyEnabled(input.portalValues)) {
     const recurrenceFromQuote = resolveRecurrenceFromPortal(input.portalItems, input.portalValues)
     if (recurrenceFromQuote) {
+      const recurrenceErr = validateRecurrenceEndLimitsFromPortal(input.portalItems, input.portalValues)
+      if (recurrenceErr) return { ok: false, error: recurrenceErr }
       series = applyRecurrenceEndLimitsFromPortal(input.portalItems, input.portalValues, recurrenceFromQuote)
     }
   }

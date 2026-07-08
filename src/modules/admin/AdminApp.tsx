@@ -1447,7 +1447,7 @@ function AdminAppInner() {
         </AdminSettingBlock>
       </aside>
 
-      <main style={{ flex: 1, padding: isMobile ? "48px 16px 24px" : 24, background: theme.background, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
+      <main style={{ flex: 1, padding: isMobile ? "48px 16px 24px" : 24, background: theme.background, color: theme.text, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
         {adminPanel === "ops" ? (
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
         ) : adminPanel === "users" ? (

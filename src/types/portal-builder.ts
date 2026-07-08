@@ -1791,10 +1791,10 @@ export const DEFAULT_RECURRENCE_FREQUENCY_OPTIONS: string[] = [
 
 /** Default recurrence duration/mode options */
 export const DEFAULT_RECURRENCE_END_MODE_OPTIONS: string[] = [
-  "Indefinite (no end)",
   "By number of occurrences",
   "Until a specific date",
   "For a time span",
+  "Indefinite (no end)",
 ]
 
 /** Default items for Calendar + Quote "recurring event" controls */
@@ -1817,6 +1817,7 @@ export const DEFAULT_RECURRENCE_PORTAL_ITEMS: PortalSettingItem[] = [
     type: "dropdown",
     label: "Recurrence duration",
     options: [...DEFAULT_RECURRENCE_END_MODE_OPTIONS],
+    dependency: { dependsOnItemId: "make_event_recurring", showWhenValue: "checked" },
   },
   {
     id: "recurrence_occurrence_count",
