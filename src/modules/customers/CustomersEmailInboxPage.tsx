@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import logo from "../../assets/logo.png"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useAuth } from "../../contexts/AuthContext"
@@ -550,18 +551,12 @@ export default function CustomersEmailInboxPage({ setPage }: Props) {
         }}
       >
         <div style={{ flex: isMobile ? "1 1 100%" : undefined }}>
-          <h1 style={{ margin: 0, fontSize: isMobile ? "1.35rem" : "1.6rem", fontWeight: 800, color: emailTheme.text }}>
-            Email
-          </h1>
-          {!isMobile ? (
-            <span style={{ fontSize: 13, color: emailTheme.textMuted }}>
-              Synced with Customers — sends and replies appear in both places.
-            </span>
-          ) : (
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-              Synced with Customers events.
-            </p>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src={logo} alt="Tradesman" style={{ height: isMobile ? 28 : 32, width: "auto", objectFit: "contain" }} />
+            <h1 style={{ margin: 0, fontSize: isMobile ? "1.35rem" : "1.6rem", fontWeight: 800, color: emailTheme.text }}>
+              Email
+            </h1>
+          </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, width: isMobile ? "100%" : undefined }}>
           <button

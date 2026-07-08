@@ -1,6 +1,7 @@
 /**
  * Merged serverless routes (Hobby-friendly): public lead capture, AI thread summary, Helcim.js return, etc.
  * GET  /api/platform-tools?__route=public-lead-config&slug=…  — public CTA page branding (no auth)
+ * GET  /api/platform-tools?__route=public-business-profile&slug=…  — public business web profile (no auth)
  * POST /api/platform-tools?__route=public-lead
  * POST /api/platform-tools?__route=ai-summarize  (Authorization: Bearer <supabase jwt>)
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
@@ -56,6 +57,7 @@ import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
 import { handleShareOrgContact } from "./_shareOrgContact.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
+import { handlePublicBusinessProfile } from "./_publicBusinessProfile.js"
 
 /** Helcim.js posts application/x-www-form-urlencoded to this handler (merged to save a Vercel function slot). */
 function parseHelcimJsUrlEncodedBody(req: VercelRequest): Record<string, string> {
@@ -1838,6 +1840,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return
   }
 
+  if (req.method === "GET" && route === "public-business-profile") {
+    await handlePublicBusinessProfile(req, res)
+    return
+  }
+
   if (req.method === "GET" && route === "platform-email-domain-status") {
     await handlePlatformEmailDomainStatus(req, res)
     return
@@ -1848,7 +1855,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       ok: true,
       route: "platform-tools",
       getHtml: ["legal-html", "sms-consent", "privacy-policy", "terms-conditions"],
-      getJson: ["public-lead-config", "platform-email-domain-status"],
+      getJson: ["public-lead-config", "public-business-profile", "platform-email-domain-status"],
       post: [
         "public-lead",
         "ai-summarize",

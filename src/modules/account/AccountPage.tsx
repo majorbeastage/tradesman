@@ -21,6 +21,7 @@ import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
 import AppSchemePicker from "../../components/AppSchemePicker"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
+import { BusinessWebProfilePanel } from "../../components/BusinessWebProfilePanel"
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { usePortalTheme } from "../../lib/useSchemeStyles"
@@ -259,6 +260,7 @@ export function AccountProfilePanel({
   const [foldOpen, setFoldOpen] = useState({
     profile: false,
     tradesman_email: false,
+    business_web_profile: false,
     business_address: false,
     service_area: false,
     mobile_app: false,
@@ -817,6 +819,18 @@ export function AccountProfilePanel({
               onToggle={toggleFold("tradesman_email")}
             >
               <TradesmanEmailSettingsPanel profileUserId={profileUserId} />
+            </AccountFold>
+            </Fragment>
+              )
+              if (sectionId === "business_web_profile") return (
+            <Fragment key={sectionId}>
+            <AccountFold
+              title={t("account.section.businessWebProfileTitle")}
+              subtitle={t("account.section.businessWebProfileSub")}
+              open={foldOpen.business_web_profile}
+              onToggle={toggleFold("business_web_profile")}
+            >
+              <BusinessWebProfilePanel profileUserId={profileUserId} displayName={form.display_name} />
             </AccountFold>
             </Fragment>
               )

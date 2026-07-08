@@ -20,6 +20,7 @@ import {
   canSendEstimateToCustomer,
   computeEstimateWorkflowActions,
   filterWorkflowActionsForUser,
+  isOperationalHandoffNode,
   isWorkflowApprovalSendAction,
   loadAccountWorkflowBundleFromMetadata,
   mergeQuoteInternalWorkflowMetadata,
@@ -29,7 +30,8 @@ import {
   type WorkflowActionButton,
 } from "../../lib/estimateWorkflowRuntime"
 import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
-import { resolveEstimatePrimaryDeliveryAction } from "../../lib/workflowStepIntention"
+import type { WorkflowNode } from "../../lib/businessWorkflow"
+import { resolveEstimatePrimaryDeliveryAction, inferWorkflowStepIntention, operationalHandoffButtonLabel } from "../../lib/workflowStepIntention"
 import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
@@ -151,7 +153,17 @@ import {
   notifyCustomersHubRefresh,
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
   peekQuotesCustomerPrefill,
+  queueWorkOrdersHighlightQuote,
+  queueSchedulingCustomerPrefill,
 } from "../../lib/workflowNavigation"
+import { queueCustomerProfile } from "../../lib/customerNavigation"
+import {
+  canCreateWorkOrderForQuote,
+  createWorkOrderFromQuote,
+  findWorkOrderForQuoteId,
+  generateWorkOrderNumber,
+  type WorkOrderRecord,
+} from "../../lib/workOrders"
 import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
 import {
   CUSTOMER_SIGNED_ESTIMATE_LABEL,
@@ -661,6 +673,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [workflowRouteModal, setWorkflowRouteModal] = useState<WorkflowActionButton | null>(null)
   const [workflowRouteBatch, setWorkflowRouteBatch] = useState<WorkflowActionButton[] | null>(null)
   const [workflowNoteModal, setWorkflowNoteModal] = useState<WorkflowActionButton | null>(null)
+  const [existingWorkOrder, setExistingWorkOrder] = useState<WorkOrderRecord | null>(null)
   const [profileRole, setProfileRole] = useState<string | null>(null)
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
 
@@ -711,6 +724,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return parseQuoteInternalWorkflow(selectedQuote?.metadata)
   }, [selectedQuote?.metadata, selectedQuote?.id])
 
+  useEffect(() => {
+    if (!supabase || !userId || !selectedQuote?.id) {
+      setExistingWorkOrder(null)
+      return
+    }
+    let cancelled = false
+    void findWorkOrderForQuoteId(supabase, userId, selectedQuote.id).then((wo) => {
+      if (!cancelled) setExistingWorkOrder(wo)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedQuote?.id, userId, quoteInternalWorkflowState.completedNodeIds.length])
+
   const estimateWorkflowActions = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []
     const raw = computeEstimateWorkflowActions({
@@ -733,13 +760,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const estimateParallelHandoffs = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []
-    return estimateWorkflowActions.filter(
-      (a) =>
-        a.kind === "send_for_approval" &&
-        !a.disabled &&
-        !isWorkflowApprovalSendAction(a, accountWorkflowBundle.workflow),
-    )
-  }, [accountWorkflowBundle, estimateWorkflowActions])
+    return estimateWorkflowActions
+      .filter(
+        (a) =>
+          a.kind === "send_for_approval" &&
+          !a.disabled &&
+          !isWorkflowApprovalSendAction(a, accountWorkflowBundle.workflow),
+      )
+      .map((a) => {
+        const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === a.nodeId)
+        if (!node) return a
+        return {
+          ...a,
+          label: operationalHandoffButtonLabel(node, { workOrderExists: Boolean(existingWorkOrder) }),
+        }
+      })
+  }, [accountWorkflowBundle, estimateWorkflowActions, existingWorkOrder])
 
   const customerSendWorkflowGate = useMemo(() => {
     if (!accountWorkflowBundle) return { allowed: true as const }
@@ -4022,11 +4058,85 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
+  async function maybeCreateWorkOrderForSelectedQuote(): Promise<WorkOrderRecord | null> {
+    if (!supabase || !userId || !selectedQuote?.id || !accountWorkflowBundle) return null
+    if (existingWorkOrder) return existingWorkOrder
+    if (
+      !canCreateWorkOrderForQuote(
+        selectedQuote.status ?? null,
+        selectedQuote.metadata,
+        accountWorkflowBundle.workflow,
+        quoteInternalWorkflowState.completedNodeIds,
+      )
+    ) {
+      alert(
+        "This estimate must be approved by the customer before creating a work order. Send the estimate to your customer for approval, or complete the “Customer Signs Estimate” workflow step.",
+      )
+      return null
+    }
+    const meta =
+      selectedQuote.metadata && typeof selectedQuote.metadata === "object" && !Array.isArray(selectedQuote.metadata)
+        ? (selectedQuote.metadata as Record<string, unknown>)
+        : {}
+    const title =
+      typeof meta.job_title === "string"
+        ? meta.job_title
+        : typeof meta.title === "string"
+          ? meta.title
+          : "Estimate"
+    const total = totalFromQuoteItemRows(selectedQuoteItems)
+    const record = await createWorkOrderFromQuote(supabase, userId, {
+      id: selectedQuote.id,
+      customer_id: selectedQuote.customer_id ?? null,
+      customer_name: selectedQuote.customers?.display_name?.trim() || "Customer",
+      title,
+      total,
+      status: selectedQuote.status ?? null,
+    }, generateWorkOrderNumber())
+    setExistingWorkOrder(record)
+    return record
+  }
+
+  async function handleOperationalHandoff(_action: WorkflowActionButton, node: WorkflowNode): Promise<void> {
+    const intention = inferWorkflowStepIntention(node, "estimate")
+
+    if (intention === "create_work_order" && existingWorkOrder) {
+      queueWorkOrdersHighlightQuote(selectedQuote!.id)
+      setPage?.("operations-work_orders")
+      return
+    }
+
+    setWorkflowActionBusy(true)
+    try {
+      const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
+      await persistQuoteInternalWorkflowState(next)
+
+      if (intention === "create_work_order") {
+        const created = await maybeCreateWorkOrderForSelectedQuote()
+        if (created) {
+          queueWorkOrdersHighlightQuote(selectedQuote!.id)
+          if (window.confirm(`Work order ${created.work_order_number} created. Open Work Orders now?`)) {
+            setPage?.("operations-work_orders")
+          }
+        }
+      } else if (intention === "schedule_resources") {
+        if (selectedQuote?.customer_id) queueSchedulingCustomerPrefill(selectedQuote.customer_id)
+        setPage?.("calendar")
+      }
+    } finally {
+      setWorkflowActionBusy(false)
+    }
+  }
+
   async function handleEstimateWorkflowAction(action: WorkflowActionButton): Promise<void> {
     if (!accountWorkflowBundle || !selectedQuote?.id || action.disabled) return
     const node = accountWorkflowBundle.workflow.nodes.find((n) => n.id === action.nodeId)
     if (!node && action.kind !== "bypass_approval") return
     if (action.kind === "send_for_approval") {
+      if (node && isOperationalHandoffNode(node)) {
+        await handleOperationalHandoff(action, node)
+        return
+      }
       setWorkflowRouteBatch(null)
       setWorkflowRouteModal(action)
       return
@@ -4044,6 +4154,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (action.kind === "mark_approved" && node) {
         const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
         await persistQuoteInternalWorkflowState(next)
+        if (inferWorkflowStepIntention(node, "estimate") === "create_work_order") {
+          const created = await maybeCreateWorkOrderForSelectedQuote()
+          if (created) {
+            queueWorkOrdersHighlightQuote(selectedQuote.id)
+            if (window.confirm(`Work order ${created.work_order_number} created. Open Work Orders now?`)) {
+              setPage?.("operations-work_orders")
+            }
+          }
+        }
       } else if (action.kind === "bypass_approval") {
         const next = applyBypassAllApprovals(quoteInternalWorkflowState, accountWorkflowBundle.workflow, authUserId ?? userId)
         await persistQuoteInternalWorkflowState(next)
@@ -7457,6 +7576,47 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       {action.label}
                     </button>
                   ))}
+                  {existingWorkOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedQuote?.id) return
+                        queueWorkOrdersHighlightQuote(selectedQuote.id)
+                        setPage?.("operations-work_orders")
+                      }}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `2px solid #7c3aed`,
+                        background: "#faf5ff",
+                        color: theme.text,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Go to work order ({existingWorkOrder.work_order_number})
+                    </button>
+                  ) : null}
+                  {selectedQuote?.customer_id ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        queueCustomerProfile(selectedQuote.customer_id!)
+                        setPage?.("customer-profile")
+                      }}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        color: theme.text,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      View customer profile
+                    </button>
+                  ) : null}
                   {estimatePrimaryDelivery.mode !== "customer_email" && estimatePrimaryDelivery.detail ? (
                     <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, maxWidth: 280, lineHeight: 1.4 }}>
                       {estimatePrimaryDelivery.detail}

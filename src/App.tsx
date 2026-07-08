@@ -32,6 +32,8 @@ import PrivacyPage from "./modules/public/PrivacyPage"
 import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
+import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
+import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
 import { shouldUseOfficeManagerPortal, isAdminPortalRole, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
@@ -788,6 +790,14 @@ function App() {
         }}
       />
     )
+  }
+
+  const businessWebProfileMatch = /^\/([^/]+)\/?$/i.exec(pathname)
+  if (businessWebProfileMatch) {
+    const slug = decodeURIComponent(businessWebProfileMatch[1] || "").trim().toLowerCase()
+    if (!isReservedBusinessWebProfileSlug(slug)) {
+      return <PublicBusinessWebProfilePage slug={slug} />
+    }
   }
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {

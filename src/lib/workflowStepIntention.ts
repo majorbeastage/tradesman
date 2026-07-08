@@ -81,9 +81,9 @@ export function intentionPrimaryButtonLabel(
     case "send_to_customer":
       return "Email to customer"
     case "create_purchase_order":
-      return nodeLabel ? `Route to ${nodeLabel}` : "Send to purchasing"
+      return nodeLabel ? `Create ${nodeLabel}` : "Create purchase order"
     case "create_work_order":
-      return nodeLabel ? `Route to ${nodeLabel}` : "Create work order"
+      return nodeLabel ? `Create work order` : "Create work order"
     case "schedule_resources":
       return "Schedule on calendar"
     case "complete_job":
@@ -91,10 +91,21 @@ export function intentionPrimaryButtonLabel(
     case "bill_customer":
       return "Send to billing"
     case "internal_handoff":
-      return nodeLabel ? `Send to ${nodeLabel}` : "Send to next step"
+      return nodeLabel ? `Complete ${nodeLabel}` : "Complete step"
     default:
-      return nodeLabel ? `Send to ${nodeLabel}` : "Send to next step"
+      return nodeLabel ? `Complete ${nodeLabel}` : "Complete step"
   }
+}
+
+export function operationalHandoffButtonLabel(
+  node: WorkflowNode,
+  options?: { workOrderExists?: boolean },
+): string {
+  const intention = inferWorkflowStepIntention(node, "estimate")
+  if (intention === "create_work_order" && options?.workOrderExists) {
+    return "Go to work order"
+  }
+  return intentionPrimaryButtonLabel(intention, [], node.label)
 }
 
 export type EstimatePrimaryDeliveryAction = {

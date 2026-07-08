@@ -154,6 +154,36 @@ function mapSignedQuotes(rows: unknown[]): SignedQuotePick[] {
   return out
 }
 
+export async function findWorkOrderForQuoteId(
+  client: SupabaseClient,
+  userId: string,
+  quoteId: string,
+): Promise<WorkOrderRecord | null> {
+  const orders = await loadWorkOrdersFromProfile(client, userId)
+  return orders.find((o) => o.quote_id === quoteId) ?? null
+}
+
+export function customerSignStepCompleteInWorkflow(
+  workflow: { nodes: Array<{ id: string; label: string }> },
+  completedNodeIds: string[],
+): boolean {
+  return workflow.nodes.some(
+    (n) =>
+      completedNodeIds.includes(n.id) &&
+      /customer signs estimate|customer signed|signed by customer/i.test(n.label),
+  )
+}
+
+export function canCreateWorkOrderForQuote(
+  status: string | null | undefined,
+  metadata: unknown,
+  workflow: { nodes: Array<{ id: string; label: string }> },
+  completedNodeIds: string[],
+): boolean {
+  if (quoteEligibleForWorkOrder(status, metadata)) return true
+  return customerSignStepCompleteInWorkflow(workflow, completedNodeIds)
+}
+
 export async function createWorkOrderFromQuote(
   client: SupabaseClient,
   userId: string,

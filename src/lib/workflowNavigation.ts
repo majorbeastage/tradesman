@@ -6,6 +6,7 @@ const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_EVENT_VIEW = "tradesman_scheduling_view_event_id_v1"
 export const SCHEDULING_EVENT_VIEW_EVENT = "tradesman-scheduling-event-view"
 const QUOTES_OPEN_QUOTE = "tradesman_quotes_open_quote_id_v1"
+const WORK_ORDERS_HIGHLIGHT_QUOTE = "tradesman_work_orders_highlight_quote_id_v1"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
 const CUSTOM_RECEIPT_PREFILL = "tradesman_custom_receipt_prefill_customer_id"
 const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
@@ -296,6 +297,29 @@ export function queueQuotesOpenQuote(quoteId: string): void {
   } catch {
     /* ignore */
   }
+}
+
+export function queueWorkOrdersHighlightQuote(quoteId: string): void {
+  if (!quoteId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(WORK_ORDERS_HIGHLIGHT_QUOTE, quoteId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeWorkOrdersHighlightQuote(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(WORK_ORDERS_HIGHLIGHT_QUOTE) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(WORK_ORDERS_HIGHLIGHT_QUOTE)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 export function consumeQuotesOpenQuote(): string | null {

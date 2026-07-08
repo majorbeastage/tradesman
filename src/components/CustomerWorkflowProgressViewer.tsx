@@ -1,7 +1,7 @@
 import { type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import type { BusinessWorkflowDoc } from "../lib/businessWorkflow"
-import { sortedWorkflowNodes } from "../lib/businessWorkflow"
+import { workflowProgressDisplaySteps } from "../lib/businessWorkflow"
 import type { OrganizationChartDoc } from "../lib/organizationChart"
 import { resolveWorkflowNodeAssignee } from "../lib/estimateWorkflowRuntime"
 import type { ExternalContactsDoc } from "../lib/externalContacts"
@@ -36,7 +36,7 @@ export default function CustomerWorkflowProgressViewer({
 }: Props) {
   if (!open) return null
 
-  const nodes = sortedWorkflowNodes(workflow)
+  const steps = workflowProgressDisplaySteps(workflow)
   const completed = new Set(completedNodeIds)
   const pending = new Set(pendingNodeIds)
   const activeId = currentNodeId ?? pendingNodeIds[0] ?? null
@@ -77,7 +77,7 @@ export default function CustomerWorkflowProgressViewer({
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
-          {nodes.map((node, idx) => {
+          {steps.map(({ node, stepLabel }) => {
             const isDone = completed.has(node.id)
             const isPending = pending.has(node.id)
             const isActive = node.id === activeId || (isPending && !activeId)
@@ -117,7 +117,7 @@ export default function CustomerWorkflowProgressViewer({
                   }}
                   aria-hidden
                 >
-                  {isDone ? "✓" : idx + 1}
+                  {isDone ? "✓" : stepLabel}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div

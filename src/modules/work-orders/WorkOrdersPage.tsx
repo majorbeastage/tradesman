@@ -13,7 +13,7 @@ import {
   type SignedQuotePick,
   type WorkOrderRecord,
 } from "../../lib/workOrders"
-import { queueQuotesCustomerPrefill } from "../../lib/workflowNavigation"
+import { queueQuotesCustomerPrefill, consumeWorkOrdersHighlightQuote } from "../../lib/workflowNavigation"
 import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
 import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
 
@@ -33,6 +33,7 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const [woNumber, setWoNumber] = useState("")
   const [busy, setBusy] = useState(false)
   const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
+  const [highlightQuoteId, setHighlightQuoteId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -46,6 +47,17 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
       .maybeSingle()
       .then(({ data }) => setWorkflow(loadBusinessWorkflowFromMetadata(data?.metadata)))
   }, [userId])
+
+  useEffect(() => {
+    const id = consumeWorkOrdersHighlightQuote()
+    if (id) setHighlightQuoteId(id)
+  }, [])
+
+  useEffect(() => {
+    if (!highlightQuoteId) return
+    const t = window.setTimeout(() => setHighlightQuoteId(null), 12000)
+    return () => window.clearTimeout(t)
+  }, [highlightQuoteId])
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
@@ -149,10 +161,11 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
               <div
                 key={o.id}
                 style={{
-                  border: `1px solid ${theme.border}`,
+                  border: `2px solid ${highlightQuoteId === o.quote_id ? theme.primary : theme.border}`,
                   borderRadius: 10,
                   padding: "12px 14px",
-                  background: "#fff",
+                  background: highlightQuoteId === o.quote_id ? "#fff7ed" : "#fff",
+                  boxShadow: highlightQuoteId === o.quote_id ? `0 0 0 2px ${theme.primary}33` : undefined,
                 }}
               >
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "flex-start" }}>

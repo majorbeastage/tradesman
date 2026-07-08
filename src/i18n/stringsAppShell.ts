@@ -126,6 +126,9 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.section.contactSub": "Login email, display name, website, and phones.",
     "account.section.tradesmanEmailTitle": "Tradesman business email",
     "account.section.tradesmanEmailSub": "Your customer-facing address on @tradesman-us.com — mail is stored in Tradesman first.",
+    "account.section.businessWebProfileTitle": "Business profile / web address",
+    "account.section.businessWebProfileSub":
+      "Public page at tradesman-us.com/your-business-name for Google Business, social media, and marketing.",
     "account.tradesmanEmail.hubExplain":
       "Tradesman is your communication hub. Mail to your Tradesman address is received here first, appears in Conversations, and can optionally forward a copy to your personal inbox.",
     "account.tradesmanEmail.optionA": "Option A — Free Tradesman address",
@@ -473,6 +476,9 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.section.contactSub": "Correo de acceso, nombre comercial, sitio web y teléfonos.",
     "account.section.tradesmanEmailTitle": "Correo comercial Tradesman",
     "account.section.tradesmanEmailSub": "Su dirección al cliente en @tradesman-us.com — el correo se guarda primero en Tradesman.",
+    "account.section.businessWebProfileTitle": "Perfil comercial / dirección web",
+    "account.section.businessWebProfileSub":
+      "Página pública en tradesman-us.com/su-negocio para Google Business, redes sociales y marketing.",
     "account.tradesmanEmail.hubExplain":
       "Tradesman es su centro de comunicaciones. El correo a su dirección Tradesman llega aquí primero, aparece en Conversaciones y puede reenviarse opcionalmente a su bandeja personal.",
     "account.tradesmanEmail.optionA": "Opción A — Dirección Tradesman gratuita",

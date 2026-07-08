@@ -163,6 +163,7 @@
     },
     { "source": "/about", "destination": "/" },
     { "source": "/pricing", "destination": "/" },
-    { "source": "/embed/lead/:path*", "destination": "/index.html" }
+    { "source": "/embed/lead/:path*", "destination": "/index.html" },
+    { "source": "/:slug", "destination": "/index.html" }
   ]
 }

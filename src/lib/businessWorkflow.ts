@@ -338,6 +338,85 @@ export function sortedWorkflowNodes(doc: BusinessWorkflowDoc): WorkflowNode[] {
   return [...doc.nodes].sort((a, b) => a.order - b.order)
 }
 
+export type WorkflowProgressDisplayStep = {
+  node: WorkflowNode
+  /** Display label such as "1", "2.a", "2.b", "3". */
+  stepLabel: string
+  level: number
+}
+
+const PARALLEL_LETTERS = "abcdefghijklmnopqrstuvwxyz"
+
+function workflowIncomingEdges(doc: BusinessWorkflowDoc, nodeId: string): WorkflowEdge[] {
+  return doc.edges.filter((e) => e.toId === nodeId)
+}
+
+function workflowOutgoingEdges(doc: BusinessWorkflowDoc, nodeId: string): WorkflowEdge[] {
+  return doc.edges.filter((e) => e.fromId === nodeId)
+}
+
+/**
+ * Order workflow steps by following arrows (topological layers).
+ * Parallel steps at the same layer get sub-labels: 2.a, 2.b, etc.
+ */
+export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): WorkflowProgressDisplayStep[] {
+  const nodes = doc.nodes
+  if (!nodes.length) return []
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]))
+  const inDegree = new Map<string, number>()
+  for (const n of nodes) inDegree.set(n.id, workflowIncomingEdges(doc, n.id).length)
+
+  let frontier = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0)
+  if (!frontier.length) {
+    frontier = [...nodes].sort((a, b) => a.order - b.order)
+  } else {
+    frontier.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+  }
+
+  const out: WorkflowProgressDisplayStep[] = []
+  const visited = new Set<string>()
+  let level = 0
+
+  while (frontier.length) {
+    const layer = [...frontier].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+    frontier = []
+    level += 1
+
+    layer.forEach((node, idx) => {
+      if (visited.has(node.id)) return
+      visited.add(node.id)
+      const stepLabel =
+        layer.length === 1
+          ? String(level)
+          : `${level}.${PARALLEL_LETTERS[idx] ?? String(idx + 1)}`
+      out.push({ node, stepLabel, level })
+    })
+
+    for (const node of layer) {
+      for (const edge of workflowOutgoingEdges(doc, node.id)) {
+        const next = nodeById.get(edge.toId)
+        if (!next || visited.has(next.id)) continue
+        const nextIn = (inDegree.get(next.id) ?? 1) - 1
+        inDegree.set(next.id, nextIn)
+        if (nextIn <= 0) frontier.push(next)
+      }
+    }
+
+    frontier.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+  }
+
+  for (const n of [...nodes].sort((a, b) => a.order - b.order)) {
+    if (!visited.has(n.id)) {
+      level += 1
+      out.push({ node: n, stepLabel: String(level), level })
+      visited.add(n.id)
+    }
+  }
+
+  return out
+}
+
 export type WorkflowEdgeGeometry = {
   x1: number
   y1: number
