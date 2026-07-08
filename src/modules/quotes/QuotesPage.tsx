@@ -19,6 +19,8 @@ import {
   canBypassEstimateApprovals,
   canSendEstimateToCustomer,
   computeEstimateWorkflowActions,
+  filterWorkflowActionsForUser,
+  isWorkflowApprovalSendAction,
   loadAccountWorkflowBundleFromMetadata,
   mergeQuoteInternalWorkflowMetadata,
   parseQuoteInternalWorkflow,
@@ -711,7 +713,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const estimateWorkflowActions = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []
-    return computeEstimateWorkflowActions({
+    const raw = computeEstimateWorkflowActions({
       workflow: accountWorkflowBundle.workflow,
       orgChart: accountWorkflowBundle.orgChart,
       externalContacts: accountWorkflowBundle.externalContacts,
@@ -720,7 +722,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
       quoteHasLineItems: selectedQuoteItems.length > 0,
       canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
     })
-  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata])
+    return filterWorkflowActionsForUser(raw, {
+      workflow: accountWorkflowBundle.workflow,
+      state: quoteInternalWorkflowState,
+      userId: authUserId ?? userId,
+      profileRole,
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+    })
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, authUserId, userId])
+
+  const estimateParallelHandoffs = useMemo((): WorkflowActionButton[] => {
+    if (!accountWorkflowBundle) return []
+    return estimateWorkflowActions.filter(
+      (a) =>
+        a.kind === "send_for_approval" &&
+        !a.disabled &&
+        !isWorkflowApprovalSendAction(a, accountWorkflowBundle.workflow),
+    )
+  }, [accountWorkflowBundle, estimateWorkflowActions])
 
   const customerSendWorkflowGate = useMemo(() => {
     if (!accountWorkflowBundle) return { allowed: true as const }
@@ -735,6 +754,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         detail: "",
         workflowAction: null,
         batchSendActions: [],
+        parallelHandoffActions: [],
         pendingApprovers: [],
         customerSendAllowed: true,
       }
@@ -7417,6 +7437,26 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       ? "Hide email to customer"
                       : estimatePrimaryDelivery.buttonLabel}
                   </button>
+                  {estimateParallelHandoffs.map((action) => (
+                    <button
+                      key={`handoff-${action.nodeId}`}
+                      type="button"
+                      disabled={workflowActionBusy || action.disabled}
+                      title={action.detail}
+                      onClick={() => void handleEstimateWorkflowAction(action)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `2px solid ${theme.primary}`,
+                        background: "#fff7ed",
+                        color: theme.text,
+                        fontWeight: 700,
+                        cursor: workflowActionBusy ? "wait" : "pointer",
+                      }}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
                   {estimatePrimaryDelivery.mode !== "customer_email" && estimatePrimaryDelivery.detail ? (
                     <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, maxWidth: 280, lineHeight: 1.4 }}>
                       {estimatePrimaryDelivery.detail}

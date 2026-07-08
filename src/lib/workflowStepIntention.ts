@@ -5,7 +5,7 @@
 
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
 import type { QuoteInternalWorkflowState, WorkflowActionButton, WorkflowAssignee } from "./estimateWorkflowRuntime"
-import { canSendEstimateToCustomer, computeEstimateWorkflowActions } from "./estimateWorkflowRuntime"
+import { canSendEstimateToCustomer, computeEstimateWorkflowActions, isWorkflowApprovalSendAction } from "./estimateWorkflowRuntime"
 import type { ExternalContactsDoc } from "./externalContacts"
 import type { OrganizationChartDoc } from "./organizationChart"
 import type { LinkableOrgUser } from "./orgChartMembers"
@@ -41,7 +41,7 @@ export function inferWorkflowStepIntention(node: WorkflowNode, tool: WorkflowToo
     return tool === "estimate" ? "send_to_approver" : "create_purchase_order"
   }
   if (/work order|\bwo\b|field tech|technician dispatch/.test(label)) {
-    return tool === "estimate" ? "internal_handoff" : "create_work_order"
+    return "create_work_order"
   }
   if (/schedule|calendar|dispatch|assign.*crew|resource/.test(label)) {
     return "schedule_resources"
@@ -104,6 +104,8 @@ export type EstimatePrimaryDeliveryAction = {
   workflowAction: WorkflowActionButton | null
   /** All parallel send-for-approval actions when multiple approvers are required. */
   batchSendActions: WorkflowActionButton[]
+  /** Parallel operational handoffs (work order, PO, scheduling, etc.) ready now. */
+  parallelHandoffActions: WorkflowActionButton[]
   pendingApprovers: WorkflowAssignee[]
   customerSendAllowed: boolean
   customerBlockReason?: string
@@ -119,11 +121,18 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
   canBypassApprovals?: boolean
 }): EstimatePrimaryDeliveryAction {
   const actions = computeEstimateWorkflowActions(input)
+  const parallelHandoffActions = actions.filter(
+    (a) => a.kind === "send_for_approval" && !a.disabled && !isWorkflowApprovalSendAction(a, input.workflow),
+  )
   const customerGate = canSendEstimateToCustomer(input.workflow, input.state)
 
-  const sendApproval = actions.find((a) => a.kind === "send_for_approval" && !a.disabled)
+  const sendApproval = actions.find(
+    (a) => a.kind === "send_for_approval" && !a.disabled && isWorkflowApprovalSendAction(a, input.workflow),
+  )
   if (sendApproval) {
-    const pendingSends = actions.filter((a) => a.kind === "send_for_approval" && !a.disabled)
+    const pendingSends = actions.filter(
+      (a) => a.kind === "send_for_approval" && !a.disabled && isWorkflowApprovalSendAction(a, input.workflow),
+    )
     const assignees = pendingSends.map((a) => a.assignee).filter((a): a is WorkflowAssignee => a != null)
     const node = input.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
     const intention = node ? inferWorkflowStepIntention(node, "estimate") : "send_to_approver"
@@ -133,6 +142,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       detail: sendApproval.detail,
       workflowAction: sendApproval,
       batchSendActions: pendingSends,
+      parallelHandoffActions,
       pendingApprovers: assignees,
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -149,6 +159,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       detail: markApproval.detail,
       workflowAction: markApproval,
       batchSendActions: [],
+      parallelHandoffActions,
       pendingApprovers: assignees,
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -162,6 +173,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
       detail: customerGate.reason ?? "Internal workflow steps must finish before customer delivery.",
       workflowAction: null,
       batchSendActions: [],
+      parallelHandoffActions,
       pendingApprovers: [],
       customerSendAllowed: false,
       customerBlockReason: customerGate.reason,
@@ -174,6 +186,7 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
     detail: "Internal approvals complete — send the estimate to your customer.",
     workflowAction: null,
     batchSendActions: [],
+    parallelHandoffActions,
     pendingApprovers: [],
     customerSendAllowed: true,
   }

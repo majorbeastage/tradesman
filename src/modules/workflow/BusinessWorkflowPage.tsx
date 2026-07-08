@@ -682,6 +682,43 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         ) : null}
       </div>
 
+      <div
+        style={{
+          marginBottom: 14,
+          padding: "12px 14px",
+          borderRadius: 10,
+          border: `1px solid ${theme.border}`,
+          background: "#fff",
+          display: "grid",
+          gap: 8,
+          maxWidth: 520,
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 800, color: theme.text }}>Process overseer</div>
+        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Receptionist or office lead who can see and trigger workflow buttons on any step (estimates, operations handoffs, parallel routes).
+        </p>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+          Overseer org users
+          <select
+            multiple
+            value={doc.processOverseerUserIds ?? []}
+            onChange={(e) => {
+              const ids = Array.from(e.target.selectedOptions).map((o) => o.value).filter(Boolean)
+              updateDoc({ processOverseerUserIds: ids })
+            }}
+            style={{ ...theme.formInput, minHeight: 88 }}
+          >
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName}
+                {m.jobTitle ? ` — ${m.jobTitle}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
         {loading ? (
           <p style={{ color: "#64748b" }}>Loading workflow…</p>

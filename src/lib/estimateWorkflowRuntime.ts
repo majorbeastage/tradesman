@@ -8,6 +8,7 @@ import {
   loadBusinessWorkflowFromMetadata,
   BUSINESS_WORKFLOW_META_KEY,
 } from "./businessWorkflow"
+import { inferWorkflowStepIntention, intentionPrimaryButtonLabel } from "./workflowStepIntention"
 import type { ExternalContactsDoc } from "./externalContacts"
 import {
   externalContactById,
@@ -279,13 +280,108 @@ function isShopSignoffNode(node: WorkflowNode): boolean {
 function isApprovalStepNode(node: WorkflowNode): boolean {
   const l = norm(node.label)
   if (isCustomerSendNode(node)) return false
+  const intention = inferWorkflowStepIntention(node, "estimate")
+  if (
+    intention === "create_work_order" ||
+    intention === "create_purchase_order" ||
+    intention === "schedule_resources" ||
+    intention === "bill_customer" ||
+    intention === "complete_job"
+  ) {
+    return false
+  }
   return (
     l.includes("approval") ||
     l.includes("approve") ||
     isShopSignoffNode(node) ||
     l.includes("sign-off") ||
-    l.includes("signoff")
+    l.includes("signoff") ||
+    intention === "send_to_approver" ||
+    intention === "await_approval"
   )
+}
+
+export function isOperationalHandoffNode(node: WorkflowNode): boolean {
+  const intention = inferWorkflowStepIntention(node, "estimate")
+  return (
+    intention === "create_work_order" ||
+    intention === "create_purchase_order" ||
+    intention === "schedule_resources" ||
+    intention === "bill_customer" ||
+    intention === "complete_job" ||
+    intention === "internal_handoff"
+  )
+}
+
+export function isWorkflowProcessOverseer(
+  userId: string | null | undefined,
+  workflow: BusinessWorkflowDoc,
+  profileRole?: string | null,
+): boolean {
+  if (!userId) return false
+  const role = (profileRole ?? "").trim().toLowerCase()
+  if (role === "admin" || role === "office_manager" || role === "corporate_management") return true
+  return (workflow.processOverseerUserIds ?? []).includes(userId)
+}
+
+export function userMayInitiateWorkflowHandoff(
+  state: QuoteInternalWorkflowState,
+  node: WorkflowNode,
+  workflow: BusinessWorkflowDoc,
+  userId: string | null | undefined,
+  isOverseer: boolean,
+): boolean {
+  if (isOverseer) return true
+  if (!userId) return false
+  const inc = incomingEdges(workflow, node.id)
+  if (inc.length === 0) return true
+  for (const edge of inc) {
+    if (!state.completedNodeIds.includes(edge.fromId)) continue
+    const drove = state.history.some(
+      (h) =>
+        h.nodeId === edge.fromId &&
+        h.byUserId === userId &&
+        (h.action === "mark_approved" || h.action === "send_for_approval"),
+    )
+    if (drove) return true
+  }
+  return false
+}
+
+export function isWorkflowApprovalSendAction(action: WorkflowActionButton, workflow: BusinessWorkflowDoc): boolean {
+  if (action.kind !== "send_for_approval") return false
+  const node = workflow.nodes.find((n) => n.id === action.nodeId)
+  if (!node) return true
+  const intention = inferWorkflowStepIntention(node, "estimate")
+  return intention === "send_to_approver" || intention === "await_approval"
+}
+
+export function filterWorkflowActionsForUser(
+  actions: WorkflowActionButton[],
+  input: {
+    workflow: BusinessWorkflowDoc
+    state: QuoteInternalWorkflowState
+    userId: string | null | undefined
+    profileRole?: string | null
+    canBypassApprovals?: boolean
+  },
+): WorkflowActionButton[] {
+  const isOverseer = isWorkflowProcessOverseer(input.userId, input.workflow, input.profileRole)
+  if (isOverseer) return actions
+  return actions.filter((action) => {
+    if (action.kind === "send_to_customer") return true
+    if (action.kind === "bypass_approval") return input.canBypassApprovals === true
+    const node = input.workflow.nodes.find((n) => n.id === action.nodeId)
+    if (!node) return false
+    if (action.kind === "send_for_approval") {
+      return userMayInitiateWorkflowHandoff(input.state, node, input.workflow, input.userId, false)
+    }
+    if (action.kind === "mark_approved" || action.kind === "request_updates" || action.kind === "deny_approval") {
+      const assignee = node.assignedUserId
+      return !assignee || assignee === input.userId
+    }
+    return true
+  })
 }
 
 export function canSendEstimateToCustomer(
@@ -387,19 +483,24 @@ export function computeEstimateWorkflowActions(input: {
 
     const inc = incomingEdges(workflow, node.id)
     const needsApprovalPath = inc.some((e) => e.approval !== "approved")
-    if (!needsApprovalPath && !isShopSignoffNode(node)) continue
+    const operational = isOperationalHandoffNode(node)
+    if (!needsApprovalPath && !isShopSignoffNode(node) && !operational) continue
     if (!prerequisitesMet(workflow, node.id, state)) continue
 
     const assignee = resolveWorkflowNodeAssignee(node, orgChart, externalContacts, linkableUsers)
+    const intention = inferWorkflowStepIntention(node, "estimate")
     const approverLabel =
       assignee.kind === "unassigned"
         ? "approver(s)"
         : assignee.kind === "external_contact"
           ? assignee.displayName
           : assignee.displayName
-    const sendLabel = nodeLabelMatches(node, ["approval", "approve", "sign"])
-      ? `Send to ${approverLabel}`
-      : `Send to ${node.label}`
+    const sendLabel =
+      operational || intention !== "send_to_approver"
+        ? intentionPrimaryButtonLabel(intention, [assignee], node.label)
+        : nodeLabelMatches(node, ["approval", "approve", "sign"])
+          ? `Send to ${approverLabel}`
+          : `Send to ${node.label}`
     actions.push({
       kind: "send_for_approval",
       nodeId: node.id,

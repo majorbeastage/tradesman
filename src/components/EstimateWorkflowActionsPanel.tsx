@@ -36,7 +36,7 @@ export default function EstimateWorkflowActionsPanel({
   )
   const customerReady = actions.find((a) => a.kind === "send_to_customer")
   const progress = workflowProgressSummary(workflow, workflowState)
-  const grouped = groupWorkflowActionsForDisplay(sendActions)
+  const grouped = groupWorkflowActionsForDisplay(sendActions, workflow)
 
   return (
     <div

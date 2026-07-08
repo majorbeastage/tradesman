@@ -1,4 +1,6 @@
 import type { WorkflowActionButton } from "./estimateWorkflowRuntime"
+import { isWorkflowApprovalSendAction } from "./estimateWorkflowRuntime"
+import type { BusinessWorkflowDoc } from "./businessWorkflow"
 
 export type DisplayWorkflowAction =
   | { kind: "single"; action: WorkflowActionButton }
@@ -6,8 +8,23 @@ export type DisplayWorkflowAction =
   | { kind: "review_pending"; actions: WorkflowActionButton[]; label: string; detail: string }
 
 /** Collapse parallel approval buttons into cleaner groups for the estimate workflow panel. */
-export function groupWorkflowActionsForDisplay(actions: WorkflowActionButton[]): DisplayWorkflowAction[] {
-  const sendable = actions.filter((a) => a.kind === "send_for_approval" && !a.disabled)
+export function groupWorkflowActionsForDisplay(
+  actions: WorkflowActionButton[],
+  workflow?: BusinessWorkflowDoc,
+): DisplayWorkflowAction[] {
+  const sendable = actions.filter(
+    (a) =>
+      a.kind === "send_for_approval" &&
+      !a.disabled &&
+      (!workflow || isWorkflowApprovalSendAction(a, workflow)),
+  )
+  const operationalSends = actions.filter(
+    (a) =>
+      a.kind === "send_for_approval" &&
+      !a.disabled &&
+      workflow &&
+      !isWorkflowApprovalSendAction(a, workflow),
+  )
   const pendingReview = actions.filter(
     (a) => (a.kind === "mark_approved" || a.kind === "request_updates" || a.kind === "deny_approval") && !a.disabled,
   )
@@ -35,6 +52,10 @@ export function groupWorkflowActionsForDisplay(actions: WorkflowActionButton[]):
     })
   } else if (sendable.length === 1) {
     out.push({ kind: "single", action: sendable[0]! })
+  }
+
+  for (const a of operationalSends) {
+    out.push({ kind: "single", action: a })
   }
 
   const pendingNodes = new Set(pendingReview.filter((a) => a.kind === "mark_approved").map((a) => a.nodeId))

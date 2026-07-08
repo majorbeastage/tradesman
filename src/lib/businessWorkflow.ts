@@ -86,6 +86,8 @@ export type BusinessWorkflowDoc = {
   edges: WorkflowEdge[]
   updated_at: string
   shared_with_admin_at?: string | null
+  /** Org users who may act on any step (receptionist / process overseer). */
+  processOverseerUserIds?: string[]
 }
 
 export const BUSINESS_WORKFLOW_META_KEY = "business_workflow_v1"
@@ -308,6 +310,9 @@ export function parseBusinessWorkflow(raw: unknown): BusinessWorkflowDoc | null 
     edges,
     updated_at: typeof o.updated_at === "string" ? o.updated_at : new Date().toISOString(),
     shared_with_admin_at: typeof o.shared_with_admin_at === "string" ? o.shared_with_admin_at : null,
+    processOverseerUserIds: Array.isArray(o.processOverseerUserIds)
+      ? o.processOverseerUserIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
   }
 }
 
