@@ -154,6 +154,8 @@ import {
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
   peekQuotesCustomerPrefill,
   queueWorkOrdersHighlightQuote,
+  queuePurchaseOrdersHighlightQuote,
+  queuePaymentsCollectPrefill,
   queueSchedulingCustomerPrefill,
 } from "../../lib/workflowNavigation"
 import { queueCustomerProfile } from "../../lib/customerNavigation"
@@ -164,6 +166,12 @@ import {
   generateWorkOrderNumber,
   type WorkOrderRecord,
 } from "../../lib/workOrders"
+import {
+  createPurchaseOrderFromQuote,
+  findPurchaseOrderForQuoteId,
+  generatePurchaseOrderNumber,
+  type PurchaseOrderRecord,
+} from "../../lib/purchaseOrders"
 import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
 import {
   CUSTOMER_SIGNED_ESTIMATE_LABEL,
@@ -674,6 +682,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [workflowRouteBatch, setWorkflowRouteBatch] = useState<WorkflowActionButton[] | null>(null)
   const [workflowNoteModal, setWorkflowNoteModal] = useState<WorkflowActionButton | null>(null)
   const [existingWorkOrder, setExistingWorkOrder] = useState<WorkOrderRecord | null>(null)
+  const [existingPurchaseOrder, setExistingPurchaseOrder] = useState<PurchaseOrderRecord | null>(null)
   const [profileRole, setProfileRole] = useState<string | null>(null)
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
 
@@ -727,11 +736,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!supabase || !userId || !selectedQuote?.id) {
       setExistingWorkOrder(null)
+      setExistingPurchaseOrder(null)
       return
     }
     let cancelled = false
     void findWorkOrderForQuoteId(supabase, userId, selectedQuote.id).then((wo) => {
       if (!cancelled) setExistingWorkOrder(wo)
+    })
+    void findPurchaseOrderForQuoteId(supabase, userId, selectedQuote.id).then((po) => {
+      if (!cancelled) setExistingPurchaseOrder(po)
     })
     return () => {
       cancelled = true
@@ -772,10 +785,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
         if (!node) return a
         return {
           ...a,
-          label: operationalHandoffButtonLabel(node, { workOrderExists: Boolean(existingWorkOrder) }),
+          label: operationalHandoffButtonLabel(node, {
+            workOrderExists: Boolean(existingWorkOrder),
+            purchaseOrderExists: Boolean(existingPurchaseOrder),
+          }),
         }
       })
-  }, [accountWorkflowBundle, estimateWorkflowActions, existingWorkOrder])
+  }, [accountWorkflowBundle, estimateWorkflowActions, existingWorkOrder, existingPurchaseOrder])
 
   const customerSendWorkflowGate = useMemo(() => {
     if (!accountWorkflowBundle) return { allowed: true as const }
@@ -4097,12 +4113,77 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return record
   }
 
+  async function maybeCreatePurchaseOrderForSelectedQuote(): Promise<PurchaseOrderRecord | null> {
+    if (!supabase || !userId || !selectedQuote?.id) return null
+    if (existingPurchaseOrder) return existingPurchaseOrder
+    const meta =
+      selectedQuote.metadata && typeof selectedQuote.metadata === "object" && !Array.isArray(selectedQuote.metadata)
+        ? (selectedQuote.metadata as Record<string, unknown>)
+        : {}
+    const title =
+      typeof meta.job_title === "string"
+        ? meta.job_title
+        : typeof meta.title === "string"
+          ? meta.title
+          : "Estimate"
+    const total = totalFromQuoteItemRows(selectedQuoteItems)
+    const record = await createPurchaseOrderFromQuote(
+      supabase,
+      userId,
+      {
+        quote_id: selectedQuote.id,
+        customer_id: selectedQuote.customer_id ?? null,
+        estimate_title: title,
+        work_order_id: existingWorkOrder?.id ?? null,
+        total: total > 0 ? total : null,
+      },
+      generatePurchaseOrderNumber(),
+    )
+    setExistingPurchaseOrder(record)
+    return record
+  }
+
   async function handleOperationalHandoff(_action: WorkflowActionButton, node: WorkflowNode): Promise<void> {
     const intention = inferWorkflowStepIntention(node, "estimate")
 
     if (intention === "create_work_order" && existingWorkOrder) {
       queueWorkOrdersHighlightQuote(selectedQuote!.id)
       setPage?.("operations-work_orders")
+      return
+    }
+
+    if (intention === "create_purchase_order" && existingPurchaseOrder) {
+      queuePurchaseOrdersHighlightQuote(selectedQuote!.id)
+      setPage?.("operations-purchase_orders")
+      return
+    }
+
+    if (intention === "bill_customer" && selectedQuote?.customer_id) {
+      const meta =
+        selectedQuote.metadata && typeof selectedQuote.metadata === "object" && !Array.isArray(selectedQuote.metadata)
+          ? (selectedQuote.metadata as Record<string, unknown>)
+          : {}
+      const title =
+        typeof meta.job_title === "string"
+          ? meta.job_title
+          : typeof meta.title === "string"
+            ? meta.title
+            : "Estimate"
+      const total = totalFromQuoteItemRows(selectedQuoteItems)
+      queuePaymentsCollectPrefill({
+        customerId: selectedQuote.customer_id,
+        quoteId: selectedQuote.id,
+        amount: total > 0 ? total.toFixed(2) : undefined,
+        description: `Payment for ${title}`,
+      })
+      setWorkflowActionBusy(true)
+      try {
+        const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
+        await persistQuoteInternalWorkflowState(next)
+        setPage?.("payments")
+      } finally {
+        setWorkflowActionBusy(false)
+      }
       return
     }
 
@@ -4117,6 +4198,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
           queueWorkOrdersHighlightQuote(selectedQuote!.id)
           if (window.confirm(`Work order ${created.work_order_number} created. Open Work Orders now?`)) {
             setPage?.("operations-work_orders")
+          }
+        }
+      } else if (intention === "create_purchase_order") {
+        const created = await maybeCreatePurchaseOrderForSelectedQuote()
+        if (created) {
+          queuePurchaseOrdersHighlightQuote(selectedQuote!.id)
+          if (window.confirm(`Purchase order ${created.po_number} created. Open Purchase Orders now?`)) {
+            setPage?.("operations-purchase_orders")
           }
         }
       } else if (intention === "schedule_resources") {

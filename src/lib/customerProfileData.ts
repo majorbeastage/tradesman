@@ -392,11 +392,7 @@ export async function loadCustomerProfileBundle(
   reports.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
 
   const workOrders = workOrdersAll.filter((w) => w.customer_id === customerId)
-  const purchaseOrders = purchaseOrdersAll.filter((po) => {
-    const cid = (po as PurchaseOrderRecord & { customer_id?: string | null }).customer_id
-    if (cid === customerId) return true
-    return false
-  })
+  const purchaseOrders = purchaseOrdersAll.filter((po) => po.customer_id === customerId)
   const invoices = (invoicesRes as PaymentRequestRow[]).filter((r) => r.customer_id === customerId)
 
   const quoteScopeByQuoteId: Record<string, string> = {}

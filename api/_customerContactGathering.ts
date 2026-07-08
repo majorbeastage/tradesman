@@ -5,7 +5,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv, normalizePhone, samePhoneDigits } from "./_communications.js"
 import { isPromotionalEmailAddress, mergeCustomerHubMetadata } from "./_customerContactKind.js"
-import { geocodeAddressToLatLng } from "../src/lib/jobSiteLocation.js"
+
+/** Server-side Nominatim geocode (self-contained — no ../src imports for Vercel). */
+async function geocodeAddressToLatLng(address: string): Promise<{ lat: number; lng: number } | null> {
+  const q = address.trim()
+  if (!q) return null
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search")
+    url.searchParams.set("format", "json")
+    url.searchParams.set("limit", "1")
+    url.searchParams.set("q", q)
+    const res = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        "Accept-Language": "en-US,en",
+        "User-Agent": "TradesmanApp/1.0 (contact gather; contact: support@tradesman-us.com)",
+      },
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as Array<{ lat?: string; lon?: string }>
+    const row = data?.[0]
+    if (!row?.lat || !row?.lon) return null
+    const lat = Number.parseFloat(row.lat)
+    const lng = Number.parseFloat(row.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return { lat, lng }
+  } catch {
+    return null
+  }
+}
 
 const CONTACT_GATHER_META_KEY = "contact_gather_v1"
 const MAX_COMM_EVENTS = 500

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
@@ -18,6 +18,7 @@ import {
   type PaymentRequestRow,
   type PaymentSentVia,
 } from "../../lib/paymentRequests"
+import { consumePaymentsCollectPrefill } from "../../lib/workflowNavigation"
 
 const inputStyle: React.CSSProperties = {
   ...theme.formInput,
@@ -58,6 +59,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [manualUrl, setManualUrl] = useState("")
   const [fallbackPayUrl, setFallbackPayUrl] = useState("")
   const [autoReceipt, setAutoReceipt] = useState(true)
+  const pendingQuotePrefillRef = useRef<string | null>(null)
 
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase()
@@ -108,17 +110,33 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
       .catch(() => setCustomers([]))
     void reloadRequests()
     void reloadProviderStatus()
+    const prefill = consumePaymentsCollectPrefill()
+    if (prefill) {
+      setCustomerId(prefill.customerId)
+      if (prefill.amount) setAmount(prefill.amount)
+      if (prefill.description) setDescription(prefill.description)
+      if (prefill.quoteId) pendingQuotePrefillRef.current = prefill.quoteId
+    }
   }, [userId, reloadRequests, reloadProviderStatus])
 
   useEffect(() => {
     if (!userId || !customerId) {
       setQuotes([])
       setEvents([])
-      setQuoteId("")
-      setEventId("")
+      if (!customerId) {
+        setQuoteId("")
+        setEventId("")
+      }
       return
     }
-    void loadPaymentSourceQuotes(userId, customerId).then(setQuotes)
+    void loadPaymentSourceQuotes(userId, customerId).then((loaded) => {
+      setQuotes(loaded)
+      const pending = pendingQuotePrefillRef.current
+      if (pending) {
+        pendingQuotePrefillRef.current = null
+        setQuoteId(pending)
+      }
+    })
     void loadPaymentSourceEvents(userId, customerId).then(setEvents)
   }, [userId, customerId])
 

@@ -481,7 +481,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
         onOpen: () => leaveProfileTo("operations-work_orders"),
       })
     }
-    for (const p of bundle.purchaseOrders.slice(0, 3)) {
+    for (const p of bundle.purchaseOrders.filter((po) => !ev.quote_id || po.quote_id === ev.quote_id)) {
       docs.push({
         label: "Purchase order",
         value: p.po_number,

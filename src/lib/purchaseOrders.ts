@@ -9,6 +9,11 @@ export type PurchaseOrderRecord = {
   updated_at: string
   status: "draft" | "sent" | "received"
   total: number | null
+  /** Linked estimate when created from workflow handoff. */
+  quote_id?: string | null
+  customer_id?: string | null
+  estimate_title?: string | null
+  work_order_id?: string | null
 }
 
 export const PURCHASE_ORDERS_META_KEY = "purchase_orders_v1"
@@ -35,6 +40,10 @@ export function parsePurchaseOrders(raw: unknown): PurchaseOrderRecord[] {
       updated_at: typeof o.updated_at === "string" ? o.updated_at : new Date().toISOString(),
       status: o.status === "sent" || o.status === "received" ? o.status : "draft",
       total: typeof o.total === "number" && Number.isFinite(o.total) ? o.total : null,
+      quote_id: typeof o.quote_id === "string" ? o.quote_id : null,
+      customer_id: typeof o.customer_id === "string" ? o.customer_id : null,
+      estimate_title: typeof o.estimate_title === "string" ? o.estimate_title : null,
+      work_order_id: typeof o.work_order_id === "string" ? o.work_order_id : null,
     })
   }
   return out.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
@@ -68,10 +77,67 @@ export async function savePurchaseOrdersToProfile(
   if (upErr) throw upErr
 }
 
+export async function findPurchaseOrderForQuoteId(
+  client: SupabaseClient,
+  userId: string,
+  quoteId: string,
+): Promise<PurchaseOrderRecord | null> {
+  const orders = await loadPurchaseOrdersFromProfile(client, userId)
+  return orders.find((o) => o.quote_id === quoteId) ?? null
+}
+
+export type PurchaseOrderFromQuoteInput = {
+  quote_id: string
+  customer_id: string | null
+  estimate_title: string
+  work_order_id?: string | null
+  vendor_name?: string
+  description?: string
+  total?: number | null
+}
+
+export async function createPurchaseOrderFromQuote(
+  client: SupabaseClient,
+  userId: string,
+  input: PurchaseOrderFromQuoteInput,
+  poNumber?: string,
+): Promise<PurchaseOrderRecord> {
+  const orders = await loadPurchaseOrdersFromProfile(client, userId)
+  const existing = orders.find((o) => o.quote_id === input.quote_id)
+  if (existing) return existing
+  const now = new Date().toISOString()
+  const title = input.estimate_title.trim() || "Estimate"
+  const record: PurchaseOrderRecord = {
+    id: crypto.randomUUID(),
+    po_number: poNumber?.trim() || generatePurchaseOrderNumber(),
+    vendor_name: input.vendor_name?.trim() || "Vendor TBD",
+    description: input.description?.trim() || `Parts / materials for ${title}`,
+    created_at: now,
+    updated_at: now,
+    status: "draft",
+    total: input.total != null && Number.isFinite(input.total) ? input.total : null,
+    quote_id: input.quote_id,
+    customer_id: input.customer_id,
+    estimate_title: title,
+    work_order_id: input.work_order_id ?? null,
+  }
+  await savePurchaseOrdersToProfile(client, userId, [record, ...orders])
+  return record
+}
+
 export async function createPurchaseOrder(
   client: SupabaseClient,
   userId: string,
-  input: { po_number?: string; vendor_name: string; description: string; total?: number | null },
+  input: {
+    po_number?: string
+    vendor_name: string
+    description: string
+    total?: number | null
+    quote_id?: string | null
+    customer_id?: string | null
+    estimate_title?: string | null
+    work_order_id?: string | null
+  },
 ): Promise<PurchaseOrderRecord> {
   const orders = await loadPurchaseOrdersFromProfile(client, userId)
   const now = new Date().toISOString()
@@ -84,6 +150,10 @@ export async function createPurchaseOrder(
     updated_at: now,
     status: "draft",
     total: input.total != null && Number.isFinite(input.total) ? input.total : null,
+    quote_id: input.quote_id ?? null,
+    customer_id: input.customer_id ?? null,
+    estimate_title: input.estimate_title ?? null,
+    work_order_id: input.work_order_id ?? null,
   }
   await savePurchaseOrdersToProfile(client, userId, [record, ...orders])
   return record

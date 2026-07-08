@@ -7,6 +7,8 @@ const SCHEDULING_EVENT_VIEW = "tradesman_scheduling_view_event_id_v1"
 export const SCHEDULING_EVENT_VIEW_EVENT = "tradesman-scheduling-event-view"
 const QUOTES_OPEN_QUOTE = "tradesman_quotes_open_quote_id_v1"
 const WORK_ORDERS_HIGHLIGHT_QUOTE = "tradesman_work_orders_highlight_quote_id_v1"
+const PURCHASE_ORDERS_HIGHLIGHT_QUOTE = "tradesman_purchase_orders_highlight_quote_id_v1"
+const PAYMENTS_COLLECT_PREFILL = "tradesman_payments_collect_prefill_v1"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
 const CUSTOM_RECEIPT_PREFILL = "tradesman_custom_receipt_prefill_customer_id"
 const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
@@ -314,6 +316,75 @@ export function consumeWorkOrdersHighlightQuote(): string | null {
     const id = (sessionStorage.getItem(WORK_ORDERS_HIGHLIGHT_QUOTE) ?? "").trim()
     if (id) {
       sessionStorage.removeItem(WORK_ORDERS_HIGHLIGHT_QUOTE)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export type PaymentsCollectPrefill = {
+  customerId: string
+  quoteId?: string
+  amount?: string
+  description?: string
+}
+
+export function queuePaymentsCollectPrefill(prefill: PaymentsCollectPrefill): void {
+  if (typeof window === "undefined") return
+  const customerId = prefill.customerId?.trim()
+  if (!customerId) return
+  try {
+    sessionStorage.setItem(
+      PAYMENTS_COLLECT_PREFILL,
+      JSON.stringify({
+        customerId,
+        quoteId: prefill.quoteId?.trim() || undefined,
+        amount: prefill.amount?.trim() || undefined,
+        description: prefill.description?.trim() || undefined,
+      }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumePaymentsCollectPrefill(): PaymentsCollectPrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(PAYMENTS_COLLECT_PREFILL)
+    if (!raw?.trim()) return null
+    sessionStorage.removeItem(PAYMENTS_COLLECT_PREFILL)
+    const j = JSON.parse(raw) as PaymentsCollectPrefill
+    const customerId = String(j.customerId ?? "").trim()
+    if (!customerId) return null
+    return {
+      customerId,
+      quoteId: typeof j.quoteId === "string" ? j.quoteId.trim() : undefined,
+      amount: typeof j.amount === "string" ? j.amount.trim() : undefined,
+      description: typeof j.description === "string" ? j.description.trim() : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function queuePurchaseOrdersHighlightQuote(quoteId: string): void {
+  if (!quoteId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(PURCHASE_ORDERS_HIGHLIGHT_QUOTE, quoteId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumePurchaseOrdersHighlightQuote(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(PURCHASE_ORDERS_HIGHLIGHT_QUOTE) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(PURCHASE_ORDERS_HIGHLIGHT_QUOTE)
       return id
     }
   } catch {

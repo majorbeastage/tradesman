@@ -10,6 +10,7 @@ import {
   loadPurchaseOrdersFromProfile,
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
+import { consumePurchaseOrdersHighlightQuote } from "../../lib/workflowNavigation"
 import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
 import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
 
@@ -26,6 +27,12 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
   const [poNumber, setPoNumber] = useState("")
   const [busy, setBusy] = useState(false)
   const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
+  const [highlightQuoteId, setHighlightQuoteId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const id = consumePurchaseOrdersHighlightQuote()
+    if (id) setHighlightQuoteId(id)
+  }, [])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -83,8 +90,8 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
       {!embedded ? <h1 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Purchase Orders</h1> : null}
       {!embedded ? (
         <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
-          Create purchase orders for your parts department. Future releases will tie POs to estimates, work orders, and
-          org-chart approvals.
+          Create purchase orders for parts and materials. POs created from an estimate workflow are linked to that job
+          and appear on the customer profile.
         </p>
       ) : null}
       <WorkflowToolGuidanceBanner tool="purchase_order" workflow={workflow} />
@@ -119,18 +126,30 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
           <p style={{ margin: 0, color: "#64748b" }}>No purchase orders yet.</p>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            {orders.map((o) => (
-              <div key={o.id} style={rowCard}>
+            {orders.map((o) => {
+              const highlighted = highlightQuoteId && o.quote_id === highlightQuoteId
+              return (
+              <div
+                key={o.id}
+                style={{
+                  ...rowCard,
+                  borderColor: highlighted ? theme.primary : theme.border,
+                  boxShadow: highlighted ? `0 0 0 2px ${theme.primary}33` : undefined,
+                }}
+              >
                 <div style={{ fontWeight: 800 }}>{o.po_number}</div>
                 <div style={{ fontSize: 13, color: "#64748b" }}>
                   {o.vendor_name}
                   {o.description ? ` · ${o.description}` : ""}
                 </div>
+                {o.estimate_title ? (
+                  <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>Estimate: {o.estimate_title}</div>
+                ) : null}
                 <div style={{ fontSize: 12, color: "#94a3b8" }}>
                   {o.status} · {new Date(o.created_at).toLocaleString()}
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </section>

@@ -125,8 +125,8 @@ function formatFetchApiError(response: Response, raw: string): string {
   const trimmed = raw.trim()
   if (trimmed.includes("Function_invocation_failed") || trimmed.includes("FUNCTION_INVOCATION_FAILED")) {
     return (
-      "The server function crashed or timed out. Open Vercel → your deployment → Logs, filter by /api/outbound-messages (or /api/send-sms), and check the stack trace. " +
-      "Common causes: missing SUPABASE_SERVICE_ROLE_KEY, TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN, or no SMS number in Admin → Communications."
+      "A server function crashed or timed out. Open Vercel → your deployment → Logs and check the stack trace for the route that failed (often /api/platform-tools or /api/outbound-messages). " +
+      "Common causes: missing SUPABASE_SERVICE_ROLE_KEY or Twilio env vars, or an API file importing from ../src on Vercel."
     )
   }
   if (trimmed.startsWith("{")) {
@@ -1817,7 +1817,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       }
       const raw = await res.text()
       if (!res.ok) {
-        alert(formatFetchApiError(res, raw))
+        if (!opts?.silent) alert(formatFetchApiError(res, raw))
         return
       }
       let message = "Contact scan finished."

@@ -99,11 +99,17 @@ export function intentionPrimaryButtonLabel(
 
 export function operationalHandoffButtonLabel(
   node: WorkflowNode,
-  options?: { workOrderExists?: boolean },
+  options?: { workOrderExists?: boolean; purchaseOrderExists?: boolean },
 ): string {
   const intention = inferWorkflowStepIntention(node, "estimate")
   if (intention === "create_work_order" && options?.workOrderExists) {
     return "Go to work order"
+  }
+  if (intention === "create_purchase_order" && options?.purchaseOrderExists) {
+    return "Go to purchase order"
+  }
+  if (intention === "bill_customer") {
+    return options?.purchaseOrderExists || options?.workOrderExists ? "Collect payment" : "Send to billing"
   }
   return intentionPrimaryButtonLabel(intention, [], node.label)
 }
