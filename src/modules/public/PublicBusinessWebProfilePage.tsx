@@ -131,6 +131,15 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
           ) : null}
         </header>
 
+        {data.aboutUs ? (
+          <section style={{ padding: "20px 24px", borderBottom: `1px solid ${theme.border}` }}>
+            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
+              About us
+            </h2>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: "#334155", whiteSpace: "pre-wrap" }}>{data.aboutUs}</p>
+          </section>
+        ) : null}
+
         {(data.phone || data.email || data.address || data.serviceArea) && (
           <section style={{ padding: "20px 24px", borderBottom: `1px solid ${theme.border}` }}>
             <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
@@ -184,7 +193,7 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
         ) : null}
 
         {data.workPhotoUrls && data.workPhotoUrls.length > 0 ? (
-          <section style={{ padding: "20px 24px", borderBottom: data.aboutUs ? `1px solid ${theme.border}` : undefined }}>
+          <section style={{ padding: "20px 24px" }}>
             <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
               Our work
             </h2>
@@ -198,15 +207,6 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
                 />
               ))}
             </div>
-          </section>
-        ) : null}
-
-        {data.aboutUs ? (
-          <section style={{ padding: "24px" }}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
-              About us
-            </h2>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: "#334155", whiteSpace: "pre-wrap" }}>{data.aboutUs}</p>
           </section>
         ) : null}
 

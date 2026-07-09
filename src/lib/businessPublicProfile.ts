@@ -54,21 +54,29 @@ export function businessWebProfilePublicUrl(slug: string, origin = "https://www.
   return `${origin.replace(/\/+$/, "")}/${safe}`
 }
 
+function readNestedProfileString(o: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const v = o[key]
+    if (typeof v === "string" && v.trim()) return v.trim()
+  }
+  return ""
+}
+
 export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessPublicProfileSettings {
   const base = emptyBusinessPublicProfileSettings()
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
   const raw = (metadata as Record<string, unknown>)[BUSINESS_PUBLIC_PROFILE_META_KEY]
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
   const o = raw as Record<string, unknown>
-  if (o.v !== 1) return base
+  if (o.v !== 1 && o.v != null) return base
   const workPhotoUrls = Array.isArray(o.workPhotoUrls)
     ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX)
     : []
   return {
     v: 1,
     enabled: o.enabled === true,
-    tagline: typeof o.tagline === "string" ? o.tagline.slice(0, BUSINESS_WEB_PROFILE_TAGLINE_MAX) : "",
-    aboutUs: typeof o.aboutUs === "string" ? o.aboutUs.slice(0, 4000) : "",
+    tagline: readNestedProfileString(o, "tagline", "short_description", "shortDescription").slice(0, BUSINESS_WEB_PROFILE_TAGLINE_MAX),
+    aboutUs: readNestedProfileString(o, "aboutUs", "about_us").slice(0, 4000),
     showPhone: o.showPhone !== false,
     showEmail: o.showEmail !== false,
     emailSource: o.emailSource === "custom" ? "custom" : "tradesman",
@@ -87,12 +95,15 @@ export function mergeBusinessPublicProfileMetadata(
   publishedSlug?: string,
 ): Record<string, unknown> {
   const slug = publishedSlug ? normalizePlatformEmailSlug(publishedSlug) : settings.publishedSlug
+  const prevSettings = parseBusinessPublicProfileSettings(prevMeta)
   return {
     ...prevMeta,
     [BUSINESS_PUBLIC_PROFILE_META_KEY]: {
+      ...prevSettings,
       ...settings,
       v: 1,
       tagline: settings.tagline.trim().slice(0, BUSINESS_WEB_PROFILE_TAGLINE_MAX),
+      aboutUs: settings.aboutUs.trim().slice(0, 4000),
       workPhotoUrls: settings.workPhotoUrls.slice(0, BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX),
       publishedSlug: slug,
     },

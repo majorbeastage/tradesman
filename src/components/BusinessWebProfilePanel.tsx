@@ -260,6 +260,11 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           maxLength={BUSINESS_WEB_PROFILE_TAGLINE_MAX}
           rows={2}
           onChange={(e) => setSettings((s) => ({ ...s, tagline: e.target.value }))}
+          onBlur={(e) => {
+            const next = { ...settings, tagline: e.target.value }
+            setSettings(next)
+            void persist(next)
+          }}
           placeholder="Brief tagline for Google Business and social profiles"
           style={{ ...theme.formInput, resize: "vertical" }}
         />
@@ -278,26 +283,9 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
             Show business email
           </label>
           {settings.showEmail ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginLeft: 24, fontSize: 13 }}>
-              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input
-                  type="radio"
-                  name="web-profile-email"
-                  checked={settings.emailSource === "tradesman"}
-                  onChange={() => setSettings((s) => ({ ...s, emailSource: "tradesman" }))}
-                />
-                Option A — Tradesman email (@tradesman-us.com)
-              </label>
-              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input
-                  type="radio"
-                  name="web-profile-email"
-                  checked={settings.emailSource === "custom"}
-                  onChange={() => setSettings((s) => ({ ...s, emailSource: "custom" }))}
-                />
-                Option B — Custom domain email
-              </label>
-            </div>
+            <p style={{ margin: "0 0 0 24px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              Uses your Tradesman email address from <strong>Tradesman email</strong> above (including custom domain if you set that as preferred).
+            </p>
           ) : null}
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
             <input type="checkbox" checked={settings.showAddress} onChange={(e) => setSettings((s) => ({ ...s, showAddress: e.target.checked }))} />
@@ -365,7 +353,12 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           value={settings.aboutUs}
           rows={5}
           onChange={(e) => setSettings((s) => ({ ...s, aboutUs: e.target.value }))}
-          placeholder="Longer story shown at the bottom of your public profile"
+          onBlur={(e) => {
+            const next = { ...settings, aboutUs: e.target.value }
+            setSettings(next)
+            void persist(next)
+          }}
+          placeholder="Longer story shown on your public profile"
           style={{ ...theme.formInput, resize: "vertical" }}
         />
       </label>

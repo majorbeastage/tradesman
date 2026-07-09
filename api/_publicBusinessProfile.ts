@@ -3,7 +3,11 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { createServiceSupabase, getPrimaryEmailChannelForUser } from "./_communications.js"
+import {
+  createServiceSupabase,
+  getPrimaryEmailChannelForUser,
+  resolveOutboundEmailFromAddress,
+} from "./_communications.js"
 
 const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
 const PLATFORM_EMAIL_ROOT_DOMAIN = "tradesman-us.com"
@@ -62,6 +66,14 @@ function slugFromDisplayName(displayName: string): string {
   return normalizeSlug(displayName)
 }
 
+function readNestedProfileString(o: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const v = o[key]
+    if (typeof v === "string" && v.trim()) return v.trim()
+  }
+  return ""
+}
+
 function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   const base: BusinessPublicProfileSettings = {
     enabled: false,
@@ -81,14 +93,14 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   const raw = (metadata as Record<string, unknown>)[BUSINESS_PUBLIC_PROFILE_META_KEY]
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
   const o = raw as Record<string, unknown>
-  if (o.v !== 1) return base
+  if (o.v !== 1 && o.v != null) return base
   const workPhotoUrls = Array.isArray(o.workPhotoUrls)
     ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 5)
     : []
   return {
     enabled: o.enabled === true,
-    tagline: typeof o.tagline === "string" ? o.tagline.slice(0, 120) : "",
-    aboutUs: typeof o.aboutUs === "string" ? o.aboutUs.slice(0, 4000) : "",
+    tagline: readNestedProfileString(o, "tagline", "short_description", "shortDescription").slice(0, 120),
+    aboutUs: readNestedProfileString(o, "aboutUs", "about_us").slice(0, 4000),
     showPhone: o.showPhone !== false,
     showEmail: o.showEmail !== false,
     emailSource: o.emailSource === "custom" ? "custom" : "tradesman",
@@ -243,29 +255,6 @@ async function resolveTradesmanBusinessEmail(supabase: SupabaseClient, userId: s
   return localPart ? `${normalizeSlug(localPart)}@${PLATFORM_EMAIL_ROOT_DOMAIN}` : null
 }
 
-async function resolveCustomDomainBusinessEmail(supabase: SupabaseClient, userId: string): Promise<string | null> {
-  const { data: route } = await supabase
-    .from("platform_email_routes")
-    .select("local_part, domain, verified_at, route_kind")
-    .eq("account_id", userId)
-    .eq("route_kind", "customer_custom")
-    .not("verified_at", "is", null)
-    .order("verified_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (
-    route?.verified_at &&
-    typeof route.local_part === "string" &&
-    typeof route.domain === "string" &&
-    route.local_part.trim() &&
-    route.domain.trim()
-  ) {
-    return `${route.local_part.trim().toLowerCase()}@${route.domain.trim().toLowerCase()}`
-  }
-  return null
-}
-
 export async function handlePublicBusinessProfile(req: VercelRequest, res: VercelResponse): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -315,10 +304,9 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
     const phone = settings.showPhone ? await fetchPublicTwilioPhone(supabase, profile.id) : null
     let email: string | null = null
     if (settings.showEmail) {
-      email =
-        settings.emailSource === "custom"
-          ? await resolveCustomDomainBusinessEmail(supabase, profile.id)
-          : await resolveTradesmanBusinessEmail(supabase, profile.id)
+      const channel = await getPrimaryEmailChannelForUser(supabase, profile.id)
+      const resolved = await resolveOutboundEmailFromAddress(supabase, profile.id, channel)
+      email = resolved.trim() || (await resolveTradesmanBusinessEmail(supabase, profile.id))
     }
 
     const address = settings.showAddress ? formatAddressFromProfile(profile) : null
