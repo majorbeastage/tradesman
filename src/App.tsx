@@ -146,6 +146,30 @@ function loginIntentFromInitialView(initial: View): "admin" | "contractor" | nul
   return null
 }
 
+function consumeSignupPackagePreset(): string | null {
+  try {
+    const raw = sessionStorage.getItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
+    if (!raw) return null
+    sessionStorage.removeItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY)
+    if (PRODUCT_PACKAGE_IDS.includes(raw as ProductPackageId)) return raw
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+function SignupRoutePage() {
+  const [packagePreset] = useState(() => consumeSignupPackagePreset())
+  return (
+    <SignupPage
+      onBack={() => {
+        window.location.href = "/"
+      }}
+      initialProductPackage={packagePreset}
+    />
+  )
+}
+
 /** Contractor portal (user + office shells) with shared view-as context. */
 function AppSchemeBridge({ children }: { children: React.ReactNode }) {
   const effectiveUserId = useEffectiveUserId()
@@ -750,7 +774,7 @@ function App() {
           window.location.href = "/"
         }}
         onTrial={() => {
-          window.location.href = "/"
+          window.location.href = "/trial"
         }}
         onPricing={() => {
           window.location.href = "/pricing"
@@ -778,7 +802,7 @@ function App() {
           } catch {
             /* ignore */
           }
-          window.location.href = "/"
+          window.location.href = "/signup"
         }}
         onHelpDecidingProduct={() => {
           try {
@@ -786,10 +810,25 @@ function App() {
           } catch {
             /* ignore */
           }
-          window.location.href = "/"
+          window.location.href = "/signup"
         }}
       />
     )
+  }
+  if (pathname === "/trial") {
+    return (
+      <TrainingPage
+        onBack={() => {
+          window.location.href = "/"
+        }}
+        onLogin={() => {
+          window.location.href = "/#/login"
+        }}
+      />
+    )
+  }
+  if (pathname === "/signup") {
+    return <SignupRoutePage />
   }
 
   const businessWebProfileMatch = /^\/([^/]+)\/?$/i.exec(pathname)
@@ -842,8 +881,10 @@ function App() {
         onLogin={() => { beginContractorLogin(loginIntentRef); setView("login"); setLoginError("") }}
         onAdminLogin={() => { beginAdminLogin(loginIntentRef); setView("admin-login"); setLoginError("") }}
         onSignup={() => {
-          setSignupPackagePreset(null)
-          setView("signup")
+          window.location.href = "/signup"
+        }}
+        onTrial={() => {
+          window.location.href = "/trial"
         }}
         onAboutUs={() => setView("about")}
         onPricing={() => setView("pricing")}

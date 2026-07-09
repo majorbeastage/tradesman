@@ -10,12 +10,13 @@ type Props = {
   onLogin: () => void
   onAdminLogin: () => void
   onSignup: () => void
+  onTrial: () => void
   onAboutUs: () => void
   onPricing: () => void
 }
 
 /** Production homepage — story scroll (no preview banner). */
-export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onPricing }: Props) {
+export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onTrial, onAboutUs, onPricing }: Props) {
   const [showJulyPromo, setShowJulyPromo] = useState(() =>
     shouldShowHomepagePromoBanner(parseBillingPromoCodesStore(null)),
   )
@@ -43,7 +44,7 @@ export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onA
         <MarketingPreviewStory
           topInsetPx={0}
           onLogin={onLogin}
-          onTrial={onSignup}
+          onTrial={onTrial}
           onPricing={onPricing}
           onAdminLogin={onAdminLogin}
           onAboutUs={onAboutUs}

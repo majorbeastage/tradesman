@@ -121,6 +121,8 @@ export const RESERVED_BUSINESS_WEB_PROFILE_SLUGS = new Set([
   "account-deletion",
   "about",
   "pricing",
+  "trial",
+  "signup",
   "reset-password",
   "home-preview",
   "cta",
