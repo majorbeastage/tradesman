@@ -796,6 +796,9 @@ function App() {
         onBack={() => {
           window.location.href = "/"
         }}
+        onSignup={() => {
+          window.location.href = "/signup"
+        }}
         onSignupWithPackage={(packageId) => {
           try {
             sessionStorage.setItem(SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, packageId)
@@ -925,6 +928,9 @@ function App() {
     return (
       <PricingPage
         onBack={() => setView("home")}
+        onSignup={() => {
+          window.location.href = "/signup"
+        }}
         onSignupWithPackage={(packageId) => {
           setSignupPackagePreset(packageId)
           setView("signup")

@@ -65,6 +65,7 @@ export function MarketingPreviewBanner({ variant, onVariantChange }: NavProps) {
 type CtaProps = {
   primaryLabel?: string
   onPrimary?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
   compact?: boolean
@@ -73,6 +74,7 @@ type CtaProps = {
 export function MarketingPreviewCtas({
   primaryLabel = "Login",
   onPrimary,
+  onSignup,
   onTrial,
   onPricing,
   compact,
@@ -85,6 +87,11 @@ export function MarketingPreviewCtas({
       <button type="button" onClick={onPrimary} style={{ ...btn, background: theme.primary, color: "#fff" }}>
         {primaryLabel}
       </button>
+      {onSignup ? (
+        <button type="button" onClick={onSignup} style={{ ...btn, background: theme.charcoal, color: "#fff" }}>
+          Sign up
+        </button>
+      ) : null}
       {onTrial ? (
         <button
           type="button"

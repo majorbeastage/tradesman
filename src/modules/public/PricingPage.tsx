@@ -14,18 +14,19 @@ import {
 
 type Props = {
   onBack: () => void
+  onSignup: () => void
   onSignupWithPackage: (packageId: ProductPackageId) => void
   onHelpDecidingProduct?: () => void
 }
 
-export default function PricingPage({ onBack, onSignupWithPackage, onHelpDecidingProduct }: Props) {
+export default function PricingPage({ onBack, onSignup, onSignupWithPackage, onHelpDecidingProduct }: Props) {
   const isMobile = usePricingResponsive()
   const [expandedId, setExpandedId] = usePricingExpanded("office_manager_pro")
 
   return (
     <PricingPageShell>
-      <PricingHeader onBack={onBack} onHelpDecidingProduct={onHelpDecidingProduct} isMobile={isMobile} />
-      <PricingHero />
+      <PricingHeader onBack={onBack} onSignup={onSignup} onHelpDecidingProduct={onHelpDecidingProduct} isMobile={isMobile} />
+      <PricingHero onSignup={onSignup} />
       <PricingLayoutCards
         tiers={PRICING_TIERS}
         expandedId={expandedId}

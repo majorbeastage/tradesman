@@ -219,6 +219,7 @@ function logoLayoutStyle(logoT: number, isMobile: boolean): CSSProperties {
 type Props = {
   topInsetPx?: number
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
   onAdminLogin?: () => void
@@ -228,6 +229,7 @@ type Props = {
 export function MarketingPreviewStory({
   topInsetPx = DEFAULT_TOP_INSET_PX,
   onLogin,
+  onSignup,
   onTrial,
   onPricing,
   onAdminLogin,
@@ -366,7 +368,7 @@ export function MarketingPreviewStory({
     setLightbox({ src, alt })
   }, [])
 
-  const ctaProps = { onLogin, onTrial, onPricing }
+  const ctaProps = { onLogin, onSignup, onTrial, onPricing }
 
   const logoStyle = logoLayoutStyle(logoT, isMobile)
   const mobileDotColors = isMobile
@@ -400,7 +402,7 @@ export function MarketingPreviewStory({
 
           {isMobile ? (
             <div className="marketing-story-mobile-cta-bar">
-              <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+              <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} compact />
             </div>
           ) : null}
 
@@ -523,7 +525,7 @@ export function MarketingPreviewStory({
             Trial mode uses sample customers so you can click through estimates, SMS, and scheduling before you commit.
           </p>
           <div style={{ display: "flex", justifyContent: "center" }}>
-            <MarketingPreviewCtas primaryLabel="Start trial" onPrimary={onTrial} onTrial={onTrial} onPricing={onPricing} />
+            <MarketingPreviewCtas primaryLabel="Start trial" onPrimary={onTrial} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
           </div>
         </div>
       </section>
@@ -696,6 +698,7 @@ function HeroFadeSlide({
   heroShotReveal,
   onImageClick,
   onLogin,
+  onSignup,
   onTrial,
   onPricing,
 }: {
@@ -705,6 +708,7 @@ function HeroFadeSlide({
   heroShotReveal: number
   onImageClick: (src: string, alt: string) => void
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
 }) {
@@ -725,7 +729,7 @@ function HeroFadeSlide({
       <div className="marketing-story-hero-grid">
         <div className="marketing-story-slide-copy marketing-story-hero-copy">
           <MarketingPreviewHeroCopy hideEyebrow>
-            <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
+            <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
           </MarketingPreviewHeroCopy>
         </div>
         <div
@@ -756,6 +760,7 @@ function HorizontalFadeSlide({
   totalSlides,
   onImageClick,
   onLogin,
+  onSignup,
   onTrial,
   onPricing,
 }: {
@@ -766,6 +771,7 @@ function HorizontalFadeSlide({
   totalSlides: number
   onImageClick: (src: string, alt: string) => void
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
 }) {
@@ -788,7 +794,7 @@ function HorizontalFadeSlide({
         <div className="marketing-story-slide-copy">
           <PillarStoryBlock pillar={pillar} />
           <div style={{ marginTop: 20 }}>
-            <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+            <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} compact />
           </div>
         </div>
         <div className="marketing-story-slide-shot">
@@ -813,6 +819,7 @@ function AboutUsStorySlide({
   images,
   onAboutUs,
   onLogin,
+  onSignup,
   onTrial,
   onPricing,
 }: {
@@ -823,6 +830,7 @@ function AboutUsStorySlide({
   images: AboutUsImageBlock[]
   onAboutUs?: () => void
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
 }) {
@@ -888,7 +896,7 @@ function AboutUsStorySlide({
           >
             Read our full story →
           </button>
-          <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+          <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} compact />
         </div>
         <div className="marketing-story-slide-shot marketing-story-about-photos">
           {images.length > 0 ? (

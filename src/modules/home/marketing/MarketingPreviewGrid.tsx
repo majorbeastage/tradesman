@@ -9,18 +9,19 @@ import { theme } from "../../../styles/theme"
 
 type Props = {
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
 }
 
-export function MarketingPreviewGrid({ onLogin, onTrial, onPricing }: Props) {
+export function MarketingPreviewGrid({ onLogin, onSignup, onTrial, onPricing }: Props) {
   return (
     <>
       <MarketingPreviewTopNav onLogin={onLogin} />
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 20px 32px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 32, alignItems: "center" }}>
           <MarketingPreviewHeroCopy>
-            <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} compact />
+            <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} compact />
           </MarketingPreviewHeroCopy>
           <ProductShot src={MARKETING_HERO_SCREENSHOT} alt="Dashboard preview" />
         </div>
@@ -52,7 +53,7 @@ export function MarketingPreviewGrid({ onLogin, onTrial, onPricing }: Props) {
           textAlign: "center",
         }}
       >
-        <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
+        <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
       </section>
     </>
   )

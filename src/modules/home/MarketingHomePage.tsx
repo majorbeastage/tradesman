@@ -44,6 +44,7 @@ export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onT
         <MarketingPreviewStory
           topInsetPx={0}
           onLogin={onLogin}
+          onSignup={onSignup}
           onTrial={onTrial}
           onPricing={onPricing}
           onAdminLogin={onAdminLogin}

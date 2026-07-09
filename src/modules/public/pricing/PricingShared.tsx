@@ -77,10 +77,12 @@ export function PricingPageShell({ children }: { children: ReactNode }) {
 
 export function PricingHeader({
   onBack,
+  onSignup,
   onHelpDecidingProduct,
   isMobile,
 }: {
   onBack: () => void
+  onSignup?: () => void
   onHelpDecidingProduct?: () => void
   isMobile: boolean
 }) {
@@ -93,6 +95,11 @@ export function PricingHeader({
         <button type="button" onClick={onBack} style={ghostBtnStyle}>
           ← Home
         </button>
+        {onSignup ? (
+          <button type="button" onClick={onSignup} style={primaryBtnStyle}>
+            Sign up
+          </button>
+        ) : null}
         {onHelpDecidingProduct ? (
           <button type="button" onClick={onHelpDecidingProduct} style={outlineBtnStyle}>
             Help me choose
@@ -103,7 +110,7 @@ export function PricingHeader({
   )
 }
 
-export function PricingHero() {
+export function PricingHero({ onSignup }: { onSignup?: () => void }) {
   return (
     <section style={heroStyle}>
       <p style={eyebrowStyle}>Pricing</p>
@@ -112,6 +119,13 @@ export function PricingHero() {
         We will work with you on specific requirements — contact us if you need features beyond these packages. Each plan
         includes usage limits in the package details; overages are billed transparently (see below).
       </p>
+      {onSignup ? (
+        <div style={{ marginTop: 20 }}>
+          <button type="button" onClick={onSignup} style={{ ...primaryBtnStyle, padding: "14px 24px", fontSize: 15 }}>
+            Sign up
+          </button>
+        </div>
+      ) : null}
     </section>
   )
 }

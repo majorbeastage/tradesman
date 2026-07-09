@@ -9,11 +9,12 @@ import { theme } from "../../../styles/theme"
 
 type Props = {
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
 }
 
-export function MarketingPreviewBento({ onLogin, onTrial, onPricing }: Props) {
+export function MarketingPreviewBento({ onLogin, onSignup, onTrial, onPricing }: Props) {
   const [hero, ...rest] = MARKETING_PILLARS
   const wide = rest.slice(0, 2)
   const mid = rest.slice(2, 5)
@@ -33,7 +34,7 @@ export function MarketingPreviewBento({ onLogin, onTrial, onPricing }: Props) {
         >
           <div>
             <MarketingPreviewHeroCopy>
-              <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
+              <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
             </MarketingPreviewHeroCopy>
           </div>
           <ProductShot src={MARKETING_HERO_SCREENSHOT} alt="Tradesman dashboard" tall />
@@ -75,7 +76,7 @@ export function MarketingPreviewBento({ onLogin, onTrial, onPricing }: Props) {
           Start in trial mode with demo customers—or sign up when you&apos;re ready for your own data.
         </p>
         <div style={{ display: "flex", justifyContent: "center" }}>
-          <MarketingPreviewCtas onPrimary={onLogin} onTrial={onTrial} onPricing={onPricing} />
+          <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
         </div>
       </section>
     </>

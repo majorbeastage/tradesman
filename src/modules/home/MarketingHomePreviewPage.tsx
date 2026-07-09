@@ -19,6 +19,7 @@ type Props = {
   search?: string
   onNavigate?: (path: string) => void
   onLogin?: () => void
+  onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
   onAdminLogin?: () => void
@@ -29,6 +30,7 @@ export function MarketingHomePreviewPage({
   search = typeof window !== "undefined" ? window.location.search : "",
   onNavigate,
   onLogin,
+  onSignup,
   onTrial,
   onPricing,
   onAdminLogin,
@@ -53,21 +55,23 @@ export function MarketingHomePreviewPage({
 
   const goPricing = onPricing ?? (() => (onNavigate ? onNavigate("/pricing") : (window.location.href = "/pricing")))
   const goLogin = onLogin
+  const goSignup = onSignup ?? (() => (onNavigate ? onNavigate("/signup") : (window.location.href = "/signup")))
   const goTrial = onTrial
 
   const body =
     variant === "story" ? (
       <MarketingPreviewStory
         onLogin={goLogin}
+        onSignup={goSignup}
         onTrial={goTrial}
         onPricing={goPricing}
         onAdminLogin={onAdminLogin}
         onAboutUs={() => (onNavigate ? onNavigate("/about") : (window.location.href = "/about"))}
       />
     ) : variant === "grid" ? (
-      <MarketingPreviewGrid onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} />
+      <MarketingPreviewGrid onLogin={goLogin} onSignup={goSignup} onTrial={goTrial} onPricing={goPricing} />
     ) : (
-      <MarketingPreviewBento onLogin={goLogin} onTrial={goTrial} onPricing={goPricing} />
+      <MarketingPreviewBento onLogin={goLogin} onSignup={goSignup} onTrial={goTrial} onPricing={goPricing} />
     )
 
   return (
