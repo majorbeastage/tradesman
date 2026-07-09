@@ -27,6 +27,7 @@ import {
 } from "../../lib/sandboxDemoLocations"
 import TimeClockPortal from "../../components/TimeClockPortal"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
+import { useIsMobile } from "../../hooks/useIsMobile"
 
 type ProfileLite = {
   id: string
@@ -65,8 +66,6 @@ type Props = {
   timeClockWorkspacePage?: boolean
   /** `time_clock_only` shows punch clock + hours without team permission cards. */
   variant?: "default" | "time_clock_only"
-  /** Wider full-width layout when embedded under Operations on desktop. */
-  layout?: "default" | "operations_desktop"
 }
 
 function normalizeJobTypeName(raw: UpcomingEventRow["job_types"]): string | null {
@@ -100,7 +99,6 @@ function TeamUserCard({
   rosterOptions,
   cardTab,
   setCardTab,
-  wideLayout,
 }: {
   member: ManagedClientRow
   ribbonOm: string
@@ -122,11 +120,8 @@ function TeamUserCard({
   rosterOptions: { id: string; label: string }[]
   cardTab: CardTab
   setCardTab: (userId: string, tab: CardTab) => void
-  wideLayout?: boolean
 }) {
   const tab = cardTab
-  const scheduleCols = wideLayout ? "repeat(4, minmax(0, 1fr))" : "1fr 1fr"
-  const permissionsGridCols = wideLayout ? "repeat(3, minmax(0, 1fr))" : "1fr"
   const listBox: React.CSSProperties = {
     borderRadius: 8,
     border: `1px solid ${theme.border}`,
@@ -295,7 +290,7 @@ function TeamUserCard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: scheduleCols,
+              gridTemplateColumns: "1fr 1fr",
               gap: 8,
               alignItems: "stretch",
             }}
@@ -351,7 +346,7 @@ function TeamUserCard({
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: scheduleCols, gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <div style={listBox}>
               <div style={listTitle}>Upcoming time off</div>
               <span style={{ color: "#94a3b8", fontStyle: "italic" }}>No time off on the calendar yet.</span>
@@ -383,15 +378,7 @@ function TeamUserCard({
           </label>
 
           {!member.isSelf ? (
-            <div
-              style={{
-                borderTop: `1px solid ${theme.border}`,
-                paddingTop: 10,
-                display: "grid",
-                gap: 8,
-                gridTemplateColumns: permissionsGridCols,
-              }}
-            >
+            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 8 }}>
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
@@ -606,16 +593,7 @@ function TeamUserCard({
                 </select>
               </label>
 
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 8,
-                  alignItems: "center",
-                  marginTop: 4,
-                  gridColumn: wideLayout ? "1 / -1" : undefined,
-                }}
-              >
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4 }}>
                 <button
                   type="button"
                   disabled={savingUserId === member.userId || !permissionsDirty}
@@ -657,9 +635,8 @@ export default function CalendarTeamManagementPanel({
   onOpenTimeClockWorkspace,
   timeClockWorkspacePage,
   variant = "default",
-  layout = "default",
 }: Props) {
-  const wideLayout = layout === "operations_desktop"
+  const isMobile = useIsMobile()
   const [omMeta, setOmMeta] = useState<Record<string, unknown>>({})
   const [profilesById, setProfilesById] = useState<Record<string, ProfileLite>>({})
   const [prefsByUser, setPrefsByUser] = useState<Record<string, PrefLite>>({})
@@ -669,9 +646,7 @@ export default function CalendarTeamManagementPanel({
   const [jobTypesByUser, setJobTypesByUser] = useState<Record<string, string[]>>({})
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
-  const [teamMapView, setTeamMapView] = useState<"minimized" | "thumbnail" | "expanded">(
-    layout === "operations_desktop" ? "expanded" : "thumbnail",
-  )
+  const [teamMapView, setTeamMapView] = useState<"minimized" | "thumbnail" | "expanded">("thumbnail")
   const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
   const [permissionDraftByUserId, setPermissionDraftByUserId] = useState<Record<string, OmCalendarPolicyV1>>({})
 
@@ -1003,7 +978,7 @@ export default function CalendarTeamManagementPanel({
   )
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, width: wideLayout ? "100%" : undefined }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <TimeClockPortal
         viewerUserId={viewerUserId}
         accountUserId={officeManagerUserId ?? viewerUserId}
@@ -1075,8 +1050,10 @@ export default function CalendarTeamManagementPanel({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: wideLayout ? "1fr" : "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
-          gap: wideLayout ? 18 : 14,
+          gridTemplateColumns: isMobile
+            ? "1fr"
+            : "repeat(2, minmax(0, 1fr))",
+          gap: 14,
         }}
       >
         {roster.map((member, idx) => {
@@ -1121,7 +1098,6 @@ export default function CalendarTeamManagementPanel({
               rosterOptions={rosterOptions}
               cardTab={tab}
               setCardTab={setCardTab}
-              wideLayout={wideLayout}
             />
           )
         })}

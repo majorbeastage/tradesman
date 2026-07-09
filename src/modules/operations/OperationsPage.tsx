@@ -14,7 +14,6 @@ import { omCalendarPolicyNavContext, operationsSubModuleAllowedByPolicy } from "
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
-import { useIsMobile } from "../../hooks/useIsMobile"
 
 export type OperationsPageProps = {
   setPage?: (page: string) => void
@@ -35,7 +34,6 @@ const subNavBtn = (active: boolean): CSSProperties => ({
 
 export default function OperationsPage({ setPage, initialTab = "work_orders" }: OperationsPageProps) {
   const { t } = useLocale()
-  const isMobile = useIsMobile()
   const { portalConfig, user, role } = useAuth()
   const scopeCtx = useOfficeManagerScopeOptional()
   const managedByOfficeManager = useManagedByOfficeManager()
@@ -111,29 +109,13 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
         {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
         {activeTab === "invoicing" ? <OperationsInvoicingPanel setPage={setPage} /> : null}
         {activeTab === "team_management" && authUserId ? (
-          <div
-            style={
-              !isMobile
-                ? {
-                    width: "calc(100% + 40px)",
-                    maxWidth: "none",
-                    marginLeft: -20,
-                    marginRight: -20,
-                    paddingLeft: 20,
-                    paddingRight: 20,
-                  }
-                : undefined
-            }
-          >
-            <CalendarTeamManagementPanel
-              officeManagerUserId={authUserId}
-              viewerUserId={authUserId}
-              roster={roster}
-              managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
-              onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}
-              layout={!isMobile ? "operations_desktop" : "default"}
-            />
-          </div>
+          <CalendarTeamManagementPanel
+            officeManagerUserId={authUserId}
+            viewerUserId={authUserId}
+            roster={roster}
+            managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+            onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}
+          />
         ) : null}
       </div>
     </div>
