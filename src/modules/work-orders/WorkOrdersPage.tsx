@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
@@ -16,6 +16,12 @@ import {
 import { queueQuotesCustomerPrefill, consumeWorkOrdersHighlightQuote } from "../../lib/workflowNavigation"
 import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
 import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
+import DocumentTemplateModal from "../../components/DocumentTemplateModal"
+import DocumentPdfViewerModal from "../../components/DocumentPdfViewerModal"
+import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/workOrderDocumentTemplate"
+import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromMetadata } from "../../lib/jobDocumentTemplate"
+import { openWorkOrderDocumentPdf } from "../../lib/workOrderPdfExport"
+import { downloadPdfBlob } from "../../lib/documentPdf"
 
 type Props = {
   setPage?: (page: string) => void
@@ -34,19 +40,32 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const [busy, setBusy] = useState(false)
   const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
   const [highlightQuoteId, setHighlightQuoteId] = useState<string | null>(null)
+  const [templateFormValues, setTemplateFormValues] = useState<Record<string, string>>({})
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
+  const [templateSaving, setTemplateSaving] = useState(false)
+  const [docBusyId, setDocBusyId] = useState<string | null>(null)
+  const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string; workOrderId: string } | null>(null)
+
+  const isWoTemplateItemVisible = useCallback(
+    (item: (typeof WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS)[number]) =>
+      isTemplateItemVisible(item, WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS, templateFormValues),
+    [templateFormValues],
+  )
+
+  const loadTemplateFromProfile = useCallback(async () => {
+    if (!supabase || !userId) return
+    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    const meta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? (data.metadata as Record<string, unknown>)
+        : {}
+    setTemplateFormValues(templateFormFromMetadata(WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS, meta))
+    setWorkflow(loadBusinessWorkflowFromMetadata(meta))
+  }, [userId])
 
   useEffect(() => {
-    if (!supabase || !userId) {
-      setWorkflow(null)
-      return
-    }
-    void supabase
-      .from("profiles")
-      .select("metadata")
-      .eq("id", userId)
-      .maybeSingle()
-      .then(({ data }) => setWorkflow(loadBusinessWorkflowFromMetadata(data?.metadata)))
-  }, [userId])
+    void loadTemplateFromProfile()
+  }, [loadTemplateFromProfile])
 
   useEffect(() => {
     const id = consumeWorkOrdersHighlightQuote()
@@ -96,6 +115,65 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
     }
   }
 
+  async function saveDocumentTemplate() {
+    if (!supabase || !userId) return
+    setTemplateSaving(true)
+    try {
+      const { data: row, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (loadErr) throw loadErr
+      const prevMeta =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? { ...(row.metadata as Record<string, unknown>) }
+          : {}
+      const { error } = await supabase
+        .from("profiles")
+        .update({ metadata: mergeTemplateFormIntoMetadata(prevMeta, templateFormValues) })
+        .eq("id", userId)
+      if (error) throw error
+      setTemplateModalOpen(false)
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setTemplateSaving(false)
+    }
+  }
+
+  async function viewWorkOrderDocument(order: WorkOrderRecord) {
+    if (!supabase || !userId) return
+    setDocBusyId(order.id)
+    try {
+      if (pdfViewer?.url) URL.revokeObjectURL(pdfViewer.url)
+      const url = await openWorkOrderDocumentPdf(supabase, userId, order, templateFormValues)
+      setPdfViewer({ url, title: `Work order ${order.work_order_number}`, workOrderId: order.id })
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setDocBusyId(null)
+    }
+  }
+
+  async function downloadCurrentPdf() {
+    if (!supabase || !userId || !pdfViewer) return
+    const order = orders.find((o) => o.id === pdfViewer.workOrderId)
+    if (!order) return
+    setDocBusyId(order.id)
+    try {
+      const { buildWorkOrderDocumentPdf } = await import("../../lib/workOrderPdfExport")
+      const bytes = await buildWorkOrderDocumentPdf(supabase, userId, order, templateFormValues)
+      downloadPdfBlob(bytes, `${order.work_order_number.replace(/[^\w.-]+/g, "_")}.pdf`)
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setDocBusyId(null)
+    }
+  }
+
+  const preparedLabel = useMemo(() => {
+    if (!pdfViewer) return null
+    const o = orders.find((x) => x.id === pdfViewer.workOrderId)
+    return o ? new Date(o.created_at).toLocaleString() : null
+  }, [pdfViewer, orders])
+
   return (
     <div style={{ maxWidth: 960, margin: embedded ? 0 : "0 auto", padding: embedded ? 0 : "16px 20px 40px" }}>
       {!embedded ? (
@@ -103,8 +181,8 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
       ) : null}
       {!embedded ? (
         <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 720 }}>
-          Create a work order from a fully signed estimate or proposal. Use your own work order number or let Tradesman
-          generate one.
+          Create work orders from signed estimates and open a printable document with customer details, schedule,
+          materials, and estimate lines. Use <strong>Document fields</strong> to choose what appears on the PDF.
         </p>
       ) : null}
 
@@ -150,7 +228,12 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
       </section>
 
       <section style={card}>
-        <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Work orders on file</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Work orders on file</h2>
+          <button type="button" style={secondaryBtn} onClick={() => setTemplateModalOpen(true)}>
+            Document fields…
+          </button>
+        </div>
         {loading ? (
           <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading…</p>
         ) : orders.length === 0 ? (
@@ -180,6 +263,14 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
                     </div>
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <button
+                      type="button"
+                      style={accentBtn}
+                      disabled={docBusyId === o.id}
+                      onClick={() => void viewWorkOrderDocument(o)}
+                    >
+                      {docBusyId === o.id ? "Opening…" : "View document"}
+                    </button>
                     {o.customer_id ? (
                       <button
                         type="button"
@@ -202,6 +293,42 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
           </div>
         )}
       </section>
+
+      <DocumentTemplateModal
+        open={templateModalOpen}
+        title="Work order document fields"
+        subtitle="Choose which sections appear on every work order PDF. Your choices are saved to your account."
+        items={WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS}
+        formValues={templateFormValues}
+        setFormValue={(id, value) => setTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
+        isItemVisible={isWoTemplateItemVisible}
+        saving={templateSaving}
+        onClose={() => setTemplateModalOpen(false)}
+        onSave={() => void saveDocumentTemplate()}
+      />
+
+      {pdfViewer ? (
+        <DocumentPdfViewerModal
+          title={pdfViewer.title}
+          pdfUrl={pdfViewer.url}
+          preparedAtLabel={preparedLabel}
+          onClose={() => {
+            URL.revokeObjectURL(pdfViewer.url)
+            setPdfViewer(null)
+          }}
+        />
+      ) : null}
+
+      {pdfViewer ? (
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 13001, display: "flex", gap: 8 }}>
+          <button type="button" style={primaryBtn} onClick={() => void downloadCurrentPdf()}>
+            Download PDF
+          </button>
+          <button type="button" style={secondaryBtn} onClick={() => setTemplateModalOpen(true)}>
+            Customize fields
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -234,4 +361,11 @@ const secondaryBtn: CSSProperties = {
   fontWeight: 700,
   cursor: "pointer",
   color: theme.text,
+}
+
+const accentBtn: CSSProperties = {
+  ...secondaryBtn,
+  borderColor: theme.primary,
+  color: theme.primary,
+  background: "#fff7ed",
 }

@@ -454,6 +454,123 @@ export async function buildReceiptPdfBytes(params: {
   return doc.save()
 }
 
+export type JobDocumentPdfSection = {
+  heading: string
+  lines: string[]
+}
+
+/** Multi-section job document (work orders, purchase orders) with optional logo and pagination. */
+export async function buildJobDocumentPdfBytes(params: {
+  documentTitle: string
+  businessLabel: string
+  subtitle?: string | null
+  preparedAtLabel?: string | null
+  intro?: string | null
+  footer?: string | null
+  logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
+  sections: JobDocumentPdfSection[]
+}): Promise<Uint8Array> {
+  const doc = await PDFDocument.create()
+  const pageWidth = 612
+  const pageHeight = 792
+  let page = doc.addPage([pageWidth, pageHeight])
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const left = 50
+  const rightMargin = 50
+  const maxW = pageWidth - left - rightMargin
+  const lineH = 14
+  let y = pageHeight - 50
+
+  const newPageIfNeeded = (minY: number) => {
+    if (y >= minY) return
+    page = doc.addPage([pageWidth, pageHeight])
+    y = pageHeight - 50
+  }
+
+  const drawLine = (text: string, size = 10, bold = false, gray = 0.2) => {
+    newPageIfNeeded(60)
+    page.drawText(text.slice(0, 500), {
+      x: left,
+      y,
+      size,
+      font: bold ? fontBold : font,
+      color: rgb(gray, gray, gray),
+    })
+    y -= lineH + (size > 12 ? 4 : 0)
+  }
+
+  const drawWrapped = (text: string, size = 10, gray = 0.28) => {
+    for (const para of text.split(/\n+/)) {
+      const trimmed = para.trim()
+      if (!trimmed) {
+        y -= 6
+        continue
+      }
+      for (const line of wrapParagraphToLines(trimmed, font, maxW, size)) {
+        newPageIfNeeded(60)
+        page.drawText(line.slice(0, 500), { x: left, y, size, font, color: rgb(gray, gray, gray) })
+        y -= lineH
+      }
+    }
+  }
+
+  if (params.logo?.bytes?.length) {
+    try {
+      const embedded =
+        params.logo.kind === "png" ? await doc.embedPng(params.logo.bytes) : await doc.embedJpg(params.logo.bytes)
+      const maxLogoW = 200
+      const maxLogoH = 64
+      const scale = Math.min(maxLogoW / embedded.width, maxLogoH / embedded.height, 1)
+      const w = embedded.width * scale
+      const h = embedded.height * scale
+      const lowerLeftY = pageHeight - 40 - h
+      page.drawImage(embedded, { x: left, y: lowerLeftY, width: w, height: h })
+      y = lowerLeftY - 12
+    } catch {
+      /* ignore */
+    }
+  }
+
+  drawLine(params.documentTitle.slice(0, 120), 18, true, 0.1)
+  drawLine(params.businessLabel.slice(0, 120), 11, false, 0.35)
+  if (params.subtitle?.trim()) drawLine(params.subtitle.trim().slice(0, 200), 11, true, 0.22)
+  if (params.preparedAtLabel?.trim()) drawLine(`Prepared: ${params.preparedAtLabel.trim()}`, 10, false, 0.4)
+  y -= 6
+
+  if (params.intro?.trim()) {
+    drawWrapped(params.intro.trim(), 10, 0.32)
+    y -= 8
+  }
+
+  for (const section of params.sections) {
+    const lines = section.lines.filter((l) => l.trim())
+    if (!section.heading.trim() && lines.length === 0) continue
+    newPageIfNeeded(80)
+    y -= 4
+    if (section.heading.trim()) {
+      drawLine(section.heading.trim().slice(0, 120), 12, true, 0.15)
+      y -= 2
+    }
+    for (const raw of lines.slice(0, 80)) {
+      const t = raw.trim()
+      if (!t) continue
+      if (t.length > 90 || t.includes("\n")) drawWrapped(t, 10, 0.28)
+      else drawLine(t, 10, false, 0.28)
+    }
+    y -= 6
+  }
+
+  if (params.footer?.trim()) {
+    newPageIfNeeded(80)
+    y -= 8
+    drawLine("—", 10, false, 0.5)
+    drawWrapped(params.footer.trim(), 9, 0.45)
+  }
+
+  return doc.save()
+}
+
 /** Base64-encode PDF bytes for Resend email attachments (browser-safe). */
 export function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = ""

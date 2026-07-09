@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { loadPartsInventoryFromProfile, upsertPartsInventoryItem, type PartsInventoryItem } from "../../lib/partsInventory"
+import { portalDashboardBackBtn } from "../../lib/portalNavButtons"
 
 type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
@@ -128,9 +129,11 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
         )}
       </section>
 
-      <button type="button" onClick={() => setPage?.("dashboard")} style={{ ...secondaryBtn, marginTop: 16 }}>
-        ← Dashboard
-      </button>
+      {!embedded && setPage ? (
+        <button type="button" onClick={() => setPage("dashboard")} style={{ ...portalDashboardBackBtn, marginTop: 16 }}>
+          ← Dashboard
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -139,4 +142,3 @@ const card: CSSProperties = { borderRadius: 12, border: `1px solid ${theme.borde
 const rowCard: CSSProperties = { border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 14px", background: "#fff" }
 const labelStyle: CSSProperties = { display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }
 const primaryBtn: CSSProperties = { padding: "10px 16px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer", justifySelf: "start" }
-const secondaryBtn: CSSProperties = { padding: "8px 14px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }
