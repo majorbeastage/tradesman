@@ -177,7 +177,6 @@ export async function createCustomerRecord(
   }
 
   const displayName = name || (phone ? `Unknown (${phone})` : email ? `Unknown (${email})` : "New customer")
-  const nowIso = new Date().toISOString()
   const emailNorm = email ? normalizeCustomerEmail(email) : ""
   const emailClassification = emailNorm ? classifyInboundEmailContact(emailNorm) : null
   const customerMetadata = emailClassification
@@ -210,7 +209,6 @@ export async function createCustomerRecord(
       service_address: serviceAddress || null,
       service_lat: lat,
       service_lng: lng,
-      last_activity_at: nowIso,
       ...(customerMetadata ? { metadata: customerMetadata } : {}),
     })
     .select("id")

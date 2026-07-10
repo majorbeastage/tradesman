@@ -129,7 +129,6 @@ export async function enrichInboundCustomerEngagement(
         ? { ...(cust.metadata as Record<string, unknown>) }
         : {}
     const patch: Record<string, unknown> = {
-      last_activity_at: new Date().toISOString(),
       metadata: {
         ...meta,
         last_inbound_channel: opts.channel,

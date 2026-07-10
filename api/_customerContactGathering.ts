@@ -492,7 +492,7 @@ async function applyGatheredContactToCustomer(
     updated_fields: updated,
   }
   meta = mergeCustomerHubMetadata(meta, { hubKind: "customer" })
-  await supabase.from("customers").update({ metadata: meta, last_activity_at: new Date().toISOString() }).eq("id", customerId).eq("user_id", userId)
+  await supabase.from("customers").update({ metadata: meta }).eq("id", customerId).eq("user_id", userId)
 
   return updated
 }

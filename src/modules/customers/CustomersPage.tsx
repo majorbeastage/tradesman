@@ -107,6 +107,10 @@ import {
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
+import { CustomerQuickViewTabRail } from "../../components/customer-quick-view/CustomerQuickViewTabRail"
+import { CustomerQuickViewMoveToMenu } from "../../components/customer-quick-view/CustomerQuickViewMoveToMenu"
+import { CustomerQuickViewSidePane } from "../../components/customer-quick-view/CustomerQuickViewSidePane"
+import type { CustomerQuickViewTabId } from "../../components/customer-quick-view/customerQuickViewTabs"
 import { customerHubJobStatusLabel } from "../../lib/customerWorkflowProgress"
 
 const JOB_PIPELINE_OPTIONS = [
@@ -371,6 +375,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [archivedCustomers, setArchivedCustomers] = useState<CustomerRow[]>([])
   const [promotionalCustomers, setPromotionalCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
+  const [quickViewTab, setQuickViewTab] = useState<CustomerQuickViewTabId>("communications")
   const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
   const [shareCustomerTarget, setShareCustomerTarget] = useState<{ id: string; name: string } | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -395,6 +400,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [detailSmsConsentSaving, setDetailSmsConsentSaving] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [customerInsightOpen, setCustomerInsightOpen] = useState(false)
+  const [customerCommunicationsOpen, setCustomerCommunicationsOpen] = useState(true)
   const [contactJobDetailsOpen, setContactJobDetailsOpen] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
   const [serviceGeocodeBusy, setServiceGeocodeBusy] = useState(false)
@@ -536,18 +542,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     return dir === "inbound" || dir === "in"
   }, [customerActivityItems])
 
-  const bumpCustomerLastActivity = useCallback(
-    async (customerId: string) => {
-      if (!supabase) return
-      const nowIso = new Date().toISOString()
-      const { error } = await supabase.from("customers").update({ last_activity_at: nowIso }).eq("id", customerId)
-      if (error && !String(error.message || "").toLowerCase().includes("last_activity")) {
-        console.warn("[customers] last_activity_at bump", error.message)
-      }
-    },
-    [supabase],
-  )
-
   useEffect(() => {
     setCommHistoryChannel(null)
     setCustomerInsightOpen(false)
@@ -555,6 +549,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setDetailRecordSmsConsent(false)
     setDetailConsentSource(EMPTY_MANUAL_SMS_CONSENT_SOURCE)
     setDetailConsentSourceTouched(false)
+    setQuickViewTab("communications")
     if (!selectedCustomer) {
       setCommCardOpen({ phone: false, sms: false, email: false, notes: false })
       setCustomerPaymentQuoteOptions([])
@@ -623,6 +618,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   const smsBlockedPendingManualOptIn =
     showManualSmsOptInSection && !selectedCustomerSmsConsent
+
+  useEffect(() => {
+    setCustomerCommunicationsOpen(!selectedCustomerSmsConsent)
+  }, [selectedCustomer?.id, selectedCustomerSmsConsent])
 
   useEffect(() => {
     if (!supabase || !selectedCustomer || selectedCustomerSmsConsent || customerActivityLoading) return
@@ -1447,7 +1446,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const lngRaw = detailForm.serviceLng.trim()
       const latN = latRaw ? Number.parseFloat(latRaw) : Number.NaN
       const lngN = lngRaw ? Number.parseFloat(lngRaw) : Number.NaN
-      const nowIso = new Date().toISOString()
       const custPatch: Record<string, unknown> = {
         display_name: nameT || null,
         service_address: detailForm.serviceAddress.trim() || null,
@@ -1456,7 +1454,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         best_contact_method: detailForm.bestContact.trim() || null,
         job_pipeline_status: detailForm.jobStatus.trim() || null,
         communication_urgency: detailForm.urgency,
-        last_activity_at: nowIso,
       }
       let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", cid)
       if (custErr && String(custErr.message || "").toLowerCase().match(/communication_urgency/)) {
@@ -1578,7 +1575,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const raw = await response.text()
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       setCustomerReplySms("")
-      await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
     } catch (err) {
@@ -1628,7 +1624,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!response.ok) throw new Error(formatFetchApiError(response, raw))
       setCustomerEmailBodyHtml("")
       setCustomerEmailComposeKey((k) => k + 1)
-      await bumpCustomerLastActivity(selectedCustomer.id)
       await loadCustomerActivity(selectedCustomer.id)
       await loadCustomers()
       notifyCustomersEmailSync()
@@ -1643,19 +1638,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (!supabase || !selectedCustomer) return
     setRemoveBusy(true)
     try {
-      const nowIso = new Date().toISOString()
       const nextMeta = mergeCustomerHubMetadata(selectedCustomer.metadata, { manualArchived: true })
       const patch: Record<string, unknown> = {
         metadata: nextMeta,
         job_pipeline_status: "Archived",
-        last_activity_at: nowIso,
       }
-      let { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
-      if (error && String(error.message || "").toLowerCase().includes("last_activity")) {
-        const { last_activity_at: _la, ...rest } = patch
-        const r = await supabase.from("customers").update(rest).eq("id", selectedCustomer.id)
-        error = r.error
-      }
+      const { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
       if (error) throw error
       setSelectedCustomer(null)
       await loadCustomers()
@@ -1671,11 +1659,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (!supabase || !selectedCustomer) return
     setCompleteBusy(true)
     try {
-      const nowIso = new Date().toISOString()
-      const patch: Record<string, unknown> = { job_pipeline_status: "Completed", last_activity_at: nowIso }
+      const patch: Record<string, unknown> = { job_pipeline_status: "Completed" }
       let { error } = await supabase.from("customers").update(patch).eq("id", selectedCustomer.id)
       if (error && String(error.message || "").toLowerCase().includes("job_pipeline")) {
-        const { job_pipeline_status: _j, last_activity_at: _la, ...rest } = patch
+        const { job_pipeline_status: _j, ...rest } = patch
         const r = await supabase.from("customers").update(rest).eq("id", selectedCustomer.id)
         error = r.error
       }
@@ -2434,18 +2421,18 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             onClick={(e) => e.stopPropagation()}
                             style={{
                               padding: "16px 18px 20px",
-                              maxWidth: "min(960px, 100%)",
+                              maxWidth: CUSTOMER_LIST_COMPACT_DETAIL ? "100%" : "min(960px, 100%)",
                               boxSizing: "border-box",
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>{c.display_name || "Customer"}</h3>
-                                <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
-                                  {CUSTOMER_LIST_COMPACT_DETAIL
-                                    ? "Quick communications — text, call, and email. Open Full profile for history, estimates, receipts, and notes."
-                                    : "Edit contact, pipeline, and site details. Use Notes and call actions like Conversations. Click the same row again to close."}
-                                </p>
+                                {!CUSTOMER_LIST_COMPACT_DETAIL ? (
+                                  <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+                                    Edit contact, pipeline, and site details. Use Notes and call actions like Conversations. Click the same row again to close.
+                                  </p>
+                                ) : null}
                               </div>
                               <button
                                 type="button"
@@ -2469,7 +2456,34 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             </div>
 
                             <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                              {setPage ? (
+                              {setPage && CUSTOMER_LIST_COMPACT_DETAIL ? (
+                                <CustomerQuickViewMoveToMenu
+                                  showPromotions={
+                                    (section === "promotions" ||
+                                      section === "active" ||
+                                      section === "in_process" ||
+                                      (section === "archived" && customerBelongsInPromotionsHub(c))) &&
+                                    !customerBelongsInPromotionsHub(c)
+                                  }
+                                  showCustomersMove={
+                                    (section === "promotions" ||
+                                      section === "active" ||
+                                      section === "in_process" ||
+                                      (section === "archived" && customerBelongsInPromotionsHub(c))) &&
+                                    customerBelongsInPromotionsHub(c)
+                                  }
+                                  showComplete={section !== "archived" && section !== "promotions"}
+                                  showArchive={section !== "archived" && section !== "promotions"}
+                                  promotionsLabel="Promotions & marketing"
+                                  hubKindBusy={hubKindBusy}
+                                  completeBusy={completeBusy}
+                                  archiveBusy={removeBusy}
+                                  onPromotions={() => void moveSelectedCustomerToPromotions()}
+                                  onCustomers={() => void moveSelectedCustomerToCustomers()}
+                                  onComplete={() => void markCustomerComplete()}
+                                  onArchive={() => void markCustomerArchived()}
+                                />
+                              ) : setPage ? (
                                 <button
                                   type="button"
                                   onClick={() => openFullCustomerProfile(c.id)}
@@ -2517,7 +2531,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   {(section === "promotions" ||
                                     section === "active" ||
                                     section === "in_process" ||
-                                    (section === "archived" && customerBelongsInPromotionsHub(c))) && (
+                                    (section === "archived" && customerBelongsInPromotionsHub(c))) &&
+                                  !CUSTOMER_LIST_COMPACT_DETAIL ? (
                                     <button
                                       type="button"
                                       disabled={hubKindBusy || !selectedCustomer}
@@ -2539,8 +2554,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                           ? "Move to Customers"
                                           : "Promotions & marketing"}
                                     </button>
-                                  )}
-                                  {section !== "archived" && section !== "promotions" ? (
+                                  ) : null}
+                                  {section !== "archived" && section !== "promotions" && !CUSTOMER_LIST_COMPACT_DETAIL ? (
                                     <>
                                       <button
                                         type="button"
@@ -2579,108 +2594,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     Share contact
                                   </button>
                                 </div>
-                                <p style={{ margin: "6px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.45 }}>
-                                  Complete marks the job done. Archive moves the record out of Active — nothing is deleted.
-                                </p>
                               </div>
                             </div>
-
-                            {showSmsOptInSection ? (
-                              <div onClick={(e) => e.stopPropagation()}>
-                                <CustomerSmsOptInSection
-                                  businessName={contractorSmsDisplayName.trim() || "Your business"}
-                                  consent={selectedCustomerSmsConsent}
-                                  phoneOnFile={selectedCustomerPhoneOnFile}
-                                  draftPhone={detailForm.phone}
-                                  recordChecked={detailRecordSmsConsent || customerInboundGrantsSmsConsent}
-                                  onRecordCheckedChange={setDetailRecordSmsConsent}
-                                  consentSource={detailConsentSource}
-                                  onConsentSourceChange={setDetailConsentSource}
-                                  showSourceValidation={detailConsentSourceTouched}
-                                  onSave={() => void recordDetailSmsConsent()}
-                                  saving={detailSmsConsentSaving}
-                                />
-                              </div>
-                            ) : null}
-
-                            {selectedCustomer?.id === c.id ? (
-                              <div
-                                onClick={(e) => e.stopPropagation()}
-                                style={{
-                                  marginBottom: 12,
-                                  borderRadius: 10,
-                                  border: `1px solid ${theme.border}`,
-                                  background: "#fff",
-                                  padding: "12px 14px",
-                                }}
-                              >
-                                <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead score</div>
-                                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                                  {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
-                                  {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
-                                    <span style={{ fontSize: 12, color: "#6b7280" }}>
-                                      Confidence: {Math.round(c.fit_confidence * 100)}%
-                                    </span>
-                                  ) : null}
-                                  {c.fit_source ? (
-                                    <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
-                                  ) : null}
-                                </div>
-                                {c.fit_reason ? (
-                                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
-                                ) : (
-                                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
-                                    No score yet — run auto scoring or set manually below.
-                                  </p>
-                                )}
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                  <select
-                                    value={manualFitChoice}
-                                    onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
-                                    style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
-                                  >
-                                    <option value="">Set manually…</option>
-                                    <option value="hot">Hot</option>
-                                    <option value="maybe">Maybe</option>
-                                    <option value="bad">Bad</option>
-                                  </select>
-                                  <button
-                                    type="button"
-                                    disabled={!manualFitChoice || fitOverrideBusy}
-                                    onClick={() => void applyManualCustomerFit()}
-                                    style={{
-                                      padding: "6px 12px",
-                                      fontSize: 12,
-                                      fontWeight: 600,
-                                      borderRadius: 6,
-                                      border: "none",
-                                      background: theme.primary,
-                                      color: "#fff",
-                                      cursor: fitOverrideBusy ? "wait" : "pointer",
-                                    }}
-                                  >
-                                    {fitOverrideBusy ? "Saving…" : "Apply"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
-                                    onClick={() => void reRunCustomerFit()}
-                                    style={{
-                                      padding: "6px 12px",
-                                      fontSize: 12,
-                                      fontWeight: 600,
-                                      borderRadius: 6,
-                                      border: `1px solid ${theme.border}`,
-                                      background: "#fff",
-                                      color: theme.text,
-                                      cursor: fitReRunBusy ? "wait" : "pointer",
-                                    }}
-                                  >
-                                    {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
 
                             {!CUSTOMER_LIST_COMPACT_DETAIL ? (
                             <>
@@ -3104,6 +3019,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             </>
                             ) : null}
 
+                            {CUSTOMER_LIST_COMPACT_DETAIL ? (
+                              <>
+                            {isMobile ? (
+                              <CustomerQuickViewTabRail active={quickViewTab} onChange={setQuickViewTab} isMobile={isMobile} />
+                            ) : null}
+                            <div
+                              style={
+                                CUSTOMER_LIST_COMPACT_DETAIL
+                                  ? {
+                                      display: "flex",
+                                      flexDirection: isMobile ? "column" : "row",
+                                      gap: 12,
+                                      alignItems: "stretch",
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <div style={CUSTOMER_LIST_COMPACT_DETAIL ? { flex: 1, minWidth: 0 } : undefined}>
                                 <div
                                   style={{
                                     borderTop: CUSTOMER_LIST_COMPACT_DETAIL ? "none" : `1px solid ${theme.border}`,
@@ -3219,6 +3152,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </>
                                   ) : null}
 
+                                  {quickViewTab === "communications" ? (
+                                  <>
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>
                                     <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
                                     <button
@@ -3392,7 +3327,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                         }}
                                                       >
                                                         SMS compose is disabled — complete <strong>SMS opt-in consent</strong>{" "}
-                                                        at the top of this customer panel first.
+                                                        in <strong>Opt In status</strong> on the right first.
                                                       </p>
                                                     ) : (
                                                       <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
@@ -3841,7 +3776,161 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       </div>
                                     </div>
                                   ) : null}
+                                  </>
+                                  ) : (
+                                    <CustomerQuickViewSidePane
+                                      tab={quickViewTab}
+                                      customer={c}
+                                      supabase={supabase}
+                                      userId={userId}
+                                      profileMetadata={accountProfileMetadata}
+                                      setPage={setPage}
+                                      onOpenFullProfile={() => openFullCustomerProfile(c.id)}
+                                      contactForm={detailForm}
+                                      setContactForm={setDetailForm}
+                                      onSaveContact={() => void saveCustomerDetail()}
+                                      contactSaving={detailSaving}
+                                    />
+                                  )}
                                 </div>
+                              </div>
+                              <div
+                                style={{
+                                  flexShrink: 0,
+                                  width: isMobile ? "100%" : 188,
+                                  minWidth: 0,
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 12,
+                                }}
+                              >
+                                {!selectedCustomerSmsConsent && selectedCustomer?.id === c.id ? (
+                                  <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                      borderRadius: 10,
+                                      border: `1px solid ${theme.border}`,
+                                      background: "#fff",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => setCustomerCommunicationsOpen((v) => !v)}
+                                      style={{
+                                        width: "100%",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 10,
+                                        padding: "10px 14px",
+                                        border: "none",
+                                        background: customerCommunicationsOpen ? "#f8fafc" : "#fff",
+                                        cursor: "pointer",
+                                        textAlign: "left",
+                                      }}
+                                    >
+                                      <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Opt In status</span>
+                                      <span style={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+                                        {customerCommunicationsOpen ? "Hide" : "SMS / lead score · Show"}
+                                      </span>
+                                    </button>
+                                    {customerCommunicationsOpen ? (
+                                      <div style={{ padding: "12px 14px 14px", borderTop: `1px solid ${theme.border}`, display: "grid", gap: 12 }}>
+                                        {showSmsOptInSection ? (
+                                          <CustomerSmsOptInSection
+                                            businessName={contractorSmsDisplayName.trim() || "Your business"}
+                                            consent={selectedCustomerSmsConsent}
+                                            phoneOnFile={selectedCustomerPhoneOnFile}
+                                            draftPhone={detailForm.phone}
+                                            recordChecked={detailRecordSmsConsent || customerInboundGrantsSmsConsent}
+                                            onRecordCheckedChange={setDetailRecordSmsConsent}
+                                            consentSource={detailConsentSource}
+                                            onConsentSourceChange={setDetailConsentSource}
+                                            showSourceValidation={detailConsentSourceTouched}
+                                            onSave={() => void recordDetailSmsConsent()}
+                                            saving={detailSmsConsentSaving}
+                                            compact
+                                          />
+                                        ) : null}
+                                        <div>
+                                          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead score</div>
+                                          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                            {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
+                                            {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
+                                              <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                                Confidence: {Math.round(c.fit_confidence * 100)}%
+                                              </span>
+                                            ) : null}
+                                            {c.fit_source ? (
+                                              <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
+                                            ) : null}
+                                          </div>
+                                          {c.fit_reason ? (
+                                            <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
+                                          ) : (
+                                            <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                                              No score yet — run auto scoring or set manually below.
+                                            </p>
+                                          )}
+                                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                            <select
+                                              value={manualFitChoice}
+                                              onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                                              style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
+                                            >
+                                              <option value="">Set manually…</option>
+                                              <option value="hot">Hot</option>
+                                              <option value="maybe">Maybe</option>
+                                              <option value="bad">Bad</option>
+                                            </select>
+                                            <button
+                                              type="button"
+                                              disabled={!manualFitChoice || fitOverrideBusy}
+                                              onClick={() => void applyManualCustomerFit()}
+                                              style={{
+                                                padding: "6px 12px",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                borderRadius: 6,
+                                                border: "none",
+                                                background: theme.primary,
+                                                color: "#fff",
+                                                cursor: fitOverrideBusy ? "wait" : "pointer",
+                                              }}
+                                            >
+                                              {fitOverrideBusy ? "Saving…" : "Apply"}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
+                                              onClick={() => void reRunCustomerFit()}
+                                              style={{
+                                                padding: "6px 12px",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                borderRadius: 6,
+                                                border: `1px solid ${theme.border}`,
+                                                background: "#fff",
+                                                color: theme.text,
+                                                cursor: fitReRunBusy ? "wait" : "pointer",
+                                              }}
+                                            >
+                                              {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {!isMobile ? (
+                                  <CustomerQuickViewTabRail active={quickViewTab} onChange={setQuickViewTab} isMobile={isMobile} />
+                                ) : null}
+                              </div>
+                            </div>
+                              </>
+                            ) : null}
                           </div>
                         </td>
                       </tr>

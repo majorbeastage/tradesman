@@ -318,7 +318,6 @@ export async function mergeCustomerIntoTarget(
       metadata: mergedMeta,
       notes: mergedNotes ?? null,
       notes_past: notesPast.length ? notesPast : target.notes_past ?? null,
-      last_activity_at: new Date().toISOString(),
     })
     .eq("id", targetCustomerId)
     .eq("user_id", userId)

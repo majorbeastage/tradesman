@@ -689,15 +689,12 @@ export default function CustomerProfilePage({ setPage }: Props) {
       const lngRaw = contactForm.serviceLng.trim()
       const latN = latRaw ? Number.parseFloat(latRaw) : Number.NaN
       const lngN = lngRaw ? Number.parseFloat(lngRaw) : Number.NaN
-      const nowIso = new Date().toISOString()
-
       const custPatch: Record<string, unknown> = {
         display_name: nameT || null,
         service_address: contactForm.serviceAddress.trim() || null,
         service_lat: Number.isFinite(latN) ? latN : null,
         service_lng: Number.isFinite(lngN) ? lngN : null,
         best_contact_method: contactForm.bestContact.trim() || null,
-        last_activity_at: nowIso,
       }
 
       let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", customerId).eq("user_id", userId)
@@ -1025,7 +1022,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .update({
           metadata: nextCustomerMeta,
           job_pipeline_status: progress.currentNodeLabel ?? "Completed",
-          last_activity_at: nowIso,
           updated_at: nowIso,
         })
         .eq("id", c.id)

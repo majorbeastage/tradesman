@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { supabase } from "../lib/supabase"
+import { bumpCustomerLastActivityAt } from "../lib/customerSchedulingActivity"
 import { theme } from "../styles/theme"
 
 type Props = {
@@ -99,7 +100,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
       })
   }, [customerId])
 
-  async function persistNotesPast(next: PastNote[]): Promise<string | null> {
+  async function persistNotesPast(next: PastNote[], touchLastActivity = false): Promise<string | null> {
     if (!customerId || !supabase) return "Not signed in."
     const { error: updErr } = await supabase.from("customers").update({ notes_past: next }).eq("id", customerId)
     if (updErr) {
@@ -107,6 +108,9 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
         return "Add column notes_past (run supabase-customers-notes-past.sql in Supabase)."
       }
       return updErr.message
+    }
+    if (touchLastActivity) {
+      await bumpCustomerLastActivityAt(supabase, customerId)
     }
     setNotesList(sortPastDesc(next))
     return null
@@ -120,7 +124,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
     setLastError(null)
     const entry: PastNote = { id: newPastNoteId(), text: trimmed, saved_at: new Date().toISOString() }
     const next = [entry, ...notesList]
-    const err = await persistNotesPast(next)
+    const err = await persistNotesPast(next, true)
     if (err) setLastError(err)
     else setComposer("")
     setSaving(false)
@@ -132,7 +136,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
     setLastError(null)
     const entry: PastNote = { id: newPastNoteId(), text: legacyNotesField.trim(), saved_at: new Date().toISOString() }
     const next = [entry, ...notesList]
-    const err = await persistNotesPast(next)
+    const err = await persistNotesPast(next, true)
     if (!err) {
       await supabase.from("customers").update({ notes: null }).eq("id", customerId)
       setLegacyNotesField(null)

@@ -40,7 +40,6 @@ export async function refreshCustomerPipelineOnEngagement(
   const cid = String(customerId ?? "").trim()
   if (!cid) return
   const targetStatus = STATUS_BY_KIND[kind]
-  const nowIso = new Date().toISOString()
 
   const { data: row, error: loadErr } = await supabase
     .from("customers")
@@ -54,7 +53,6 @@ export async function refreshCustomerPipelineOnEngagement(
 
   const current = String((row as { job_pipeline_status?: string | null } | null)?.job_pipeline_status ?? "")
   const patch: Record<string, unknown> = {
-    last_activity_at: nowIso,
     job_pipeline_status: nextPipelineStatus(current, targetStatus),
     archived_at: null,
   }
