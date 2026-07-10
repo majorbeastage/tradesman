@@ -20,6 +20,7 @@ import { PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/purchaseOrderD
 import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromMetadata } from "../../lib/jobDocumentTemplate"
 import { openPurchaseOrderDocumentPdf } from "../../lib/purchaseOrderPdfExport"
 import { downloadPdfBlob } from "../../lib/documentPdf"
+import { PurchaseOrderEditorModal } from "../../components/document-editors/PurchaseOrderEditorModal"
 
 type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
@@ -40,6 +41,7 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
   const [templateSaving, setTemplateSaving] = useState(false)
   const [docBusyId, setDocBusyId] = useState<string | null>(null)
   const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string; poId: string } | null>(null)
+  const [editingOrder, setEditingOrder] = useState<PurchaseOrderRecord | null>(null)
 
   const isPoTemplateItemVisible = useCallback(
     (item: (typeof PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS)[number]) =>
@@ -241,14 +243,23 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
                         {o.status} · {new Date(o.created_at).toLocaleString()}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      style={accentBtn}
-                      disabled={docBusyId === o.id}
-                      onClick={() => void viewPurchaseOrderDocument(o)}
-                    >
-                      {docBusyId === o.id ? "Opening…" : "View document"}
-                    </button>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button
+                        type="button"
+                        style={secondaryBtn}
+                        onClick={() => setEditingOrder(o)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        style={accentBtn}
+                        disabled={docBusyId === o.id}
+                        onClick={() => void viewPurchaseOrderDocument(o)}
+                      >
+                        {docBusyId === o.id ? "Opening…" : "View document"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -298,6 +309,20 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
           </button>
         </div>
       ) : null}
+
+      <PurchaseOrderEditorModal
+        open={!!editingOrder}
+        onClose={() => setEditingOrder(null)}
+        supabase={supabase}
+        userId={userId ?? ""}
+        purchaseOrder={editingOrder}
+        poTemplate={templateFormValues}
+        setPage={setPage}
+        onSaved={(saved) => {
+          setOrders((prev) => prev.map((row) => (row.id === saved.id ? saved : row)))
+          setEditingOrder(null)
+        }}
+      />
     </div>
   )
 }

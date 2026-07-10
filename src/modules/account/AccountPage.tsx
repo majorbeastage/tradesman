@@ -31,6 +31,13 @@ import {
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { usePortalTheme } from "../../lib/useSchemeStyles"
+import {
+  accountSettingsCategoryForSection,
+  accountSettingsCategoryStyle,
+  accountSettingsFoldButtonStyle,
+  mytSettingsSectionOrder,
+  type AccountSettingsCategory,
+} from "./accountSettingsLayout"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -109,12 +116,12 @@ const ACCOUNT_FOLD_BTN: CSSProperties = {
   gap: 10,
   width: "100%",
   textAlign: "left",
-  padding: "10px 14px",
+  padding: "12px 14px",
   border: "none",
   borderRadius: 10,
   background: "#f1f5f9",
   cursor: "pointer",
-  fontWeight: 600,
+  fontWeight: 700,
   fontSize: 13,
   color: theme.text,
 }
@@ -126,6 +133,7 @@ function AccountFold({
   onToggle,
   children,
   shellStyle,
+  category,
 }: {
   title: string
   subtitle?: string
@@ -133,10 +141,22 @@ function AccountFold({
   onToggle: () => void
   children: ReactNode
   shellStyle?: CSSProperties
+  category?: AccountSettingsCategory
 }) {
+  const foldBtnStyle = category ? accountSettingsFoldButtonStyle(category) : ACCOUNT_FOLD_BTN
+  const cardShell = category ? accountSettingsCategoryStyle(category) : undefined
   return (
-    <div style={{ ...ACCOUNT_SECTION_CARD, padding: 0, gap: 0, overflow: "hidden", ...shellStyle }}>
-      <button type="button" onClick={onToggle} style={ACCOUNT_FOLD_BTN}>
+    <div
+      style={{
+        ...ACCOUNT_SECTION_CARD,
+        padding: 0,
+        gap: 0,
+        overflow: "hidden",
+        ...cardShell,
+        ...shellStyle,
+      }}
+    >
+      <button type="button" onClick={onToggle} style={foldBtnStyle}>
         <span style={{ minWidth: 0 }}>
           {title}
           {subtitle && !open ? (
@@ -241,8 +261,10 @@ export function AccountProfilePanel({
   const { setLocale, t, refetchLocale } = useLocale()
   const isMobile = useIsMobile()
   const portalConfig = usePortalConfigForPage()
-  const showAccountSection = (sectionId: string) =>
-    adminContext || getAccountSectionVisible(portalConfig, sectionId)
+  const showAccountSection = (sectionId: string) => {
+    if (sectionId === "team_members") return !adminContext
+    return adminContext || getAccountSectionVisible(portalConfig, sectionId)
+  }
   const orderedAccountSectionIds = useMemo(
     () => getOrderedAccountPortalSections(portalConfig).map((s) => s.id),
     [portalConfig],
@@ -257,6 +279,14 @@ export function AccountProfilePanel({
     }
     return ids
   }, [orderedAccountSectionIds, portalConfig, adminContext])
+
+  const mytSectionIds = useMemo(
+    () => (adminContext ? accountSectionIdsForRender : mytSettingsSectionOrder(showAccountSection)),
+    [adminContext, accountSectionIdsForRender, portalConfig],
+  )
+
+  const sectionCategory = (sectionId: string) =>
+    adminContext ? undefined : accountSettingsCategoryForSection(sectionId)
   const [profileEmailFromDb, setProfileEmailFromDb] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -278,6 +308,7 @@ export function AccountProfilePanel({
     call_screening: false,
     voicemail_bundle: false,
     ai_automations: false,
+    password_reset: false,
   })
   const toggleFold = (key: keyof typeof foldOpen) => () => setFoldOpen((prev) => ({ ...prev, [key]: !prev[key] }))
   const [message, setMessage] = useState("")
@@ -782,8 +813,22 @@ export function AccountProfilePanel({
               </label>
               {languageSaving ? <span style={{ fontSize: 12, color: "#6b7280" }}>{t("common.saving")}</span> : null}
             </div>
-            {accountSectionIdsForRender.map((sectionId) => {
+            {mytSectionIds.map((sectionId, sectionIdx) => {
               if (!showAccountSection(sectionId)) return null
+              const cat = sectionCategory(sectionId)
+              const prevCat = sectionIdx > 0 ? sectionCategory(mytSectionIds[sectionIdx - 1]) : undefined
+              const categoryHeader =
+                !adminContext && cat && cat.id !== prevCat?.id ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: sectionIdx === 0 ? 0 : 4 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: cat.color.accent, flexShrink: 0 }} aria-hidden />
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: cat.color.text }}>{cat.label}</h3>
+                  </div>
+                ) : null
+              const sectionBody = (() => {
+              if (sectionId === "team_members") {
+                if (adminContext || !user?.id) return null
+                return <TeamMemberInvitesPanel ownerUserId={user.id} category={cat} defaultCollapsed />
+              }
               if (sectionId === "profile") return (
             <Fragment key={sectionId}>
             <AccountFold
@@ -791,6 +836,7 @@ export function AccountProfilePanel({
               subtitle={t("account.section.contactSub")}
               open={foldOpen.profile}
               onToggle={toggleFold("profile")}
+              category={cat}
             >
               {!adminContext && user?.id === profileUserId ? (
                 <div style={{ display: "grid", gap: 12, marginBottom: 4 }}>
@@ -945,11 +991,6 @@ export function AccountProfilePanel({
               </label>
               </div>
             </AccountFold>
-            {user?.id && !adminContext ? (
-              <div style={{ marginTop: 16 }}>
-                <TeamMemberInvitesPanel ownerUserId={user.id} />
-              </div>
-            ) : null}
             </Fragment>
               )
               if (sectionId === "tradesman_email") return (
@@ -959,6 +1000,7 @@ export function AccountProfilePanel({
               subtitle={t("account.section.tradesmanEmailSub")}
               open={foldOpen.tradesman_email}
               onToggle={toggleFold("tradesman_email")}
+              category={cat}
             >
               <TradesmanEmailSettingsPanel profileUserId={profileUserId} />
             </AccountFold>
@@ -971,6 +1013,7 @@ export function AccountProfilePanel({
               subtitle={t("account.section.businessWebProfileSub")}
               open={foldOpen.business_web_profile}
               onToggle={toggleFold("business_web_profile")}
+              category={cat}
             >
               <BusinessWebProfilePanel
                 profileUserId={profileUserId}
@@ -986,6 +1029,7 @@ export function AccountProfilePanel({
               title={t("account.section.addressTitle")}
               open={foldOpen.business_address}
               onToggle={toggleFold("business_address")}
+              category={cat}
             >
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
                 <label style={{ display: "grid", gap: 6 }}>
@@ -1023,6 +1067,7 @@ export function AccountProfilePanel({
               subtitle={t("account.section.serviceSub")}
               open={foldOpen.service_area}
               onToggle={toggleFold("service_area")}
+              category={cat}
             >
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                 <input
@@ -1062,6 +1107,7 @@ export function AccountProfilePanel({
                     subtitle={t("account.section.mobileSub")}
                     open={foldOpen.mobile_app}
                     onToggle={toggleFold("mobile_app")}
+                    category={cat}
                   >
                     <MobileAppPreferencesCard profileUserId={profileUserId} hideTitle />
                   </AccountFold>
@@ -1074,6 +1120,7 @@ export function AccountProfilePanel({
                     subtitle={t("account.section.schemeSub")}
                     open={foldOpen.app_scheme}
                     onToggle={toggleFold("app_scheme")}
+                    category={cat}
                   >
                     <AppSchemePicker profileUserId={profileUserId} canEdit={profileUserId === user?.id} />
                   </AccountFold>
@@ -1086,6 +1133,7 @@ export function AccountProfilePanel({
               subtitle={t("account.fold.hoursSub")}
               open={foldOpen.business_hours}
               onToggle={toggleFold("business_hours")}
+              category={cat}
             >
               <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.timezone")}</span>
@@ -1166,6 +1214,7 @@ export function AccountProfilePanel({
               subtitle={t("account.fold.forwardSub")}
               open={foldOpen.call_forwarding}
               onToggle={toggleFold("call_forwarding")}
+              category={cat}
             >
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
@@ -1283,6 +1332,7 @@ export function AccountProfilePanel({
               subtitle={t("account.fold.callScreeningSub")}
               open={foldOpen.call_screening}
               onToggle={toggleFold("call_screening")}
+              category={cat}
             >
               <CallScreeningSettingsPanel profileUserId={profileUserId} />
             </AccountFold>
@@ -1299,6 +1349,7 @@ export function AccountProfilePanel({
               }
               open={foldOpen.voicemail_bundle}
               onToggle={toggleFold("voicemail_bundle")}
+              category={cat}
               shellStyle={{ background: "#f8fafc" }}
             >
                 <div style={{ display: "grid", gap: 14 }}>
@@ -1481,6 +1532,7 @@ export function AccountProfilePanel({
                       subtitle={t("account.ai.shortHint")}
                       open={foldOpen.ai_automations}
                       onToggle={toggleFold("ai_automations")}
+                      category={cat}
                     >
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
                         {t("account.ai.body")}
@@ -1499,15 +1551,51 @@ export function AccountProfilePanel({
               }
               if (sectionId === "password_reset") {
                 if (!showPasswordReset) return null
+                const systemCat = cat ?? accountSettingsCategoryForSection("password_reset")
                 return (
                   <Fragment key={sectionId}>
-                    <button type="button" onClick={() => void handlePasswordReset()} disabled={resetting || !emailForDisplay} style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: resetting ? "wait" : "pointer", justifySelf: "start" }}>
-                      {resetting ? t("account.password.sending") : t("account.password.reset")}
-                    </button>
+                    <AccountFold
+                      title={t("account.password.reset")}
+                      subtitle={t("account.password.shortHint")}
+                      open={foldOpen.password_reset}
+                      onToggle={toggleFold("password_reset")}
+                      category={systemCat}
+                    >
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                          {emailForDisplay || t("account.password.noEmail")}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handlePasswordReset()}
+                          disabled={resetting || !emailForDisplay}
+                          style={{
+                            padding: "6px 12px",
+                            background: "transparent",
+                            color: systemCat?.color.accent ?? theme.primary,
+                            border: `1px solid ${systemCat?.color.border ?? theme.border}`,
+                            borderRadius: 8,
+                            fontWeight: 600,
+                            fontSize: 12,
+                            cursor: resetting ? "wait" : "pointer",
+                          }}
+                        >
+                          {resetting ? t("account.password.sending") : t("account.password.sendLink")}
+                        </button>
+                      </div>
+                    </AccountFold>
                   </Fragment>
                 )
               }
               return null
+              })()
+              if (!sectionBody) return null
+              return (
+                <Fragment key={sectionId}>
+                  {categoryHeader}
+                  {sectionBody}
+                </Fragment>
+              )
             })}
 
             {message && <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p>}

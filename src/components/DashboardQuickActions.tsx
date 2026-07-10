@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react"
 import type { UserRole } from "../contexts/AuthContext"
 import { theme } from "../styles/theme"
 import {
@@ -15,14 +15,17 @@ import {
 } from "../types/portal-builder"
 import {
   ALL_DASHBOARD_LINK_IDS,
-  addTileToFirstEmptyGridSlot,
-  DASHBOARD_GRID_SLOT_COUNT,
+  customizeGridRowsFromLength,
+  dashboardCustomizeMinRows,
+  dashboardColsFromWidth,
+  defaultDashboardTileOrder,
   migrateStoredTileOrder,
   mergeDashboardQuickLinksMetadata,
+  normalizeCustomizeGrid,
   normalizeDashboardTileOrder,
-  normalizeDashboardTileGrid,
   orderToTileGrid,
-  removeTileIdFromGrid,
+  removeTileFromCustomizeGrid,
+  resizeCustomizeGrid,
   tileGridToOrder,
   type DashboardOptionalQuickLinkId,
   type DashboardCoreQuickLinkId,
@@ -35,6 +38,7 @@ import {
   thumbnailGlyph,
 } from "../lib/dashboardQuickLinksPrefs"
 import DashboardQuickLinkGrid from "./DashboardQuickLinkGrid"
+import DashboardQuickLinkCustomizeZones from "./DashboardQuickLinkCustomizeZones"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
@@ -44,6 +48,8 @@ import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional } from "../contexts/JobTypesModalContext"
 
 const LS_TILE_GRID = "tradesman_dashboard_tile_grid_v1"
+const LS_TILE_GRID_COLS = "tradesman_dashboard_tile_grid_cols_v1"
+const LS_TILE_GRID_ROWS = "tradesman_dashboard_tile_grid_rows_v1"
 
 export type OptionalQuickLinkId = DashboardQuickLinkId
 
@@ -92,6 +98,9 @@ type Props = {
     emailClient: string
     customizeHint: string
     customizeDone: string
+    customizeRestart: string
+    customizeVisibleTitle: string
+    customizeHiddenTitle: string
     customizePaletteTitle: string
     customizeAddHint: string
     customizeRemove: string
@@ -383,6 +392,7 @@ function Tile({
     >
       {customize && onRemove ? (
         <span
+          data-dash-remove-chip
           role="button"
           tabIndex={0}
           onClick={(e) => {
@@ -552,6 +562,32 @@ export default function DashboardQuickActions(props: Props) {
   const fourth = resolveFourthCalendarState(props, labels)
   const fourthLinkId = fourth.linkId
   const tileScheme: DashboardTileScheme = "paper"
+  const gridRef = useRef<HTMLDivElement>(null)
+  const savedColsRef = useRef<number | undefined>(undefined)
+  const prevColsRef = useRef<number | null>(null)
+
+  const [gridCols, setGridCols] = useState(() => dashboardColsFromWidth(isMobile ? 360 : 1400, isMobile))
+
+  const fallbackOrder = useMemo(() => defaultDashboardTileOrder(fourthLinkId), [fourthLinkId])
+
+  const buildCustomizeGrid = useCallback(
+    (raw: DashboardTileGridSlot[] | undefined, savedCols: number | undefined, savedRows: number | undefined, cols: number) =>
+      normalizeCustomizeGrid(raw, savedCols, savedRows, cols, isMobile, fallbackOrder, fourthLinkId),
+    [isMobile, fallbackOrder, fourthLinkId],
+  )
+
+  useLayoutEffect(() => {
+    const el = gridRef.current
+    if (!el) return
+    const measure = () => {
+      const w = el.clientWidth
+      if (w > 0) setGridCols(dashboardColsFromWidth(w, isMobile))
+    }
+    measure()
+    const ro = new ResizeObserver(() => measure())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isMobile])
 
   const go = (page: string, calendarSuite?: QueuedCalendarSuite) => {
     if (calendarSuite) queueCalendarSuiteNavigation(calendarSuite)
@@ -559,32 +595,38 @@ export default function DashboardQuickActions(props: Props) {
   }
 
   const [tileGrid, setTileGrid] = useState<DashboardTileGridSlot[]>(() => {
-    const fallback = orderToTileGrid(normalizeDashboardTileOrder(undefined, fourthLinkId))
-    if (typeof window === "undefined") return fallback
+    const cols = dashboardColsFromWidth(isMobile ? 360 : 1400, isMobile)
+    if (typeof window === "undefined") return buildCustomizeGrid(undefined, undefined, undefined, cols)
     try {
+      const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
+      const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
+      const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
+      const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
       const raw = localStorage.getItem(LS_TILE_GRID)
       if (raw) {
         const parsed = JSON.parse(raw) as unknown
-        if (Array.isArray(parsed) && parsed.length === DASHBOARD_GRID_SLOT_COUNT) {
-          return normalizeDashboardTileGrid(parsed as DashboardTileGridSlot[], tileGridToOrder(fallback), fourthLinkId)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, cols)
         }
       }
     } catch {
       /* ignore */
     }
     const v5 = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_order_v5"), fourthLinkId)
-    if (v5?.length) return orderToTileGrid(v5)
+    if (v5?.length) return buildCustomizeGrid(orderToTileGrid(v5), 5, undefined, cols)
     const localRows = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_rows_v4"), fourthLinkId)
-    if (localRows?.length) return orderToTileGrid(localRows)
+    if (localRows?.length) return buildCustomizeGrid(orderToTileGrid(localRows), 5, undefined, cols)
     const legacyOrder = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_order_v3"), fourthLinkId)
-    if (legacyOrder?.length) return orderToTileGrid(legacyOrder)
-    return fallback
+    if (legacyOrder?.length) return buildCustomizeGrid(orderToTileGrid(legacyOrder), 5, undefined, cols)
+    return buildCustomizeGrid(undefined, undefined, undefined, cols)
   })
+  const gridRows = useMemo(
+    () => customizeGridRowsFromLength(tileGrid, gridCols, dashboardCustomizeMinRows(isMobile)),
+    [tileGrid, gridCols, isMobile],
+  )
   const [tileStyles, setTileStyles] = useState<Partial<Record<string, DashboardTileStyle>>>({})
   const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
-  const [dragId, setDragId] = useState<DashboardQuickLinkId | null>(null)
-  const [dragFromSlot, setDragFromSlot] = useState<number | null>(null)
   const [styleMenu, setStyleMenu] = useState<{ id: DashboardQuickLinkId; x: number; y: number } | null>(null)
   const [todayOpen, setTodayOpen] = useState(false)
 
@@ -599,10 +641,29 @@ export default function DashboardQuickActions(props: Props) {
   useEffect(() => {
     try {
       localStorage.setItem(LS_TILE_GRID, JSON.stringify(tileGrid))
+      localStorage.setItem(LS_TILE_GRID_COLS, String(gridCols))
+      localStorage.setItem(LS_TILE_GRID_ROWS, String(gridRows))
     } catch {
       /* ignore */
     }
-  }, [tileGrid])
+  }, [tileGrid, gridCols, gridRows])
+
+  useEffect(() => {
+    if (!prefsHydrated) return
+    if (prevColsRef.current === null) {
+      prevColsRef.current = gridCols
+      if (savedColsRef.current == null) savedColsRef.current = gridCols
+      return
+    }
+    if (prevColsRef.current === gridCols) return
+    const oldCols = savedColsRef.current ?? prevColsRef.current
+    setTileGrid((prev) => {
+      const rows = customizeGridRowsFromLength(prev, oldCols, dashboardCustomizeMinRows(isMobile))
+      return buildCustomizeGrid(resizeCustomizeGrid(prev, oldCols, gridCols, isMobile, rows), oldCols, rows, gridCols)
+    })
+    prevColsRef.current = gridCols
+    savedColsRef.current = gridCols
+  }, [gridCols, prefsHydrated, isMobile, buildCustomizeGrid])
 
   useEffect(() => {
     if (!profileUserId) {
@@ -632,17 +693,22 @@ export default function DashboardQuickActions(props: Props) {
             : null
         const migrated = migrateStoredTileOrder(raw, fourthLinkId)
         if (migrated.grid.length) {
-          setTileGrid(migrated.grid)
+          savedColsRef.current = migrated.gridCols
+          setTileGrid(buildCustomizeGrid(migrated.grid, migrated.gridCols, migrated.gridRows, gridCols))
           setTileStyles(migrated.styles)
           setPersistNote("cloud")
         } else {
           const loc = (() => {
             try {
+              const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
+              const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
+              const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
+              const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
               const raw = localStorage.getItem(LS_TILE_GRID)
               if (!raw) return null
               const parsed = JSON.parse(raw) as unknown
-              if (Array.isArray(parsed) && parsed.length === DASHBOARD_GRID_SLOT_COUNT) {
-                return normalizeDashboardTileGrid(parsed as DashboardTileGridSlot[], migrated.order, fourthLinkId)
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, gridCols)
               }
             } catch {
               /* ignore */
@@ -652,11 +718,12 @@ export default function DashboardQuickActions(props: Props) {
           if (loc?.length) setTileGrid(loc)
         }
         setPrefsHydrated(true)
+        prevColsRef.current = gridCols
       })
     return () => {
       cancelled = true
     }
-  }, [profileUserId, fourthLinkId])
+  }, [profileUserId, fourthLinkId, buildCustomizeGrid])
 
   useEffect(() => {
     if (!prefsHydrated) return
@@ -676,7 +743,7 @@ export default function DashboardQuickActions(props: Props) {
             : {}
         const nextMeta = mergeDashboardQuickLinksMetadata(
           prevMeta,
-          { tile_grid: tileGrid, tile_styles: tileStyles, tile_scheme: "paper" },
+          { tile_grid: tileGrid, tile_grid_cols: gridCols, tile_grid_rows: gridRows, tile_styles: tileStyles, tile_scheme: "paper" },
           fourthLinkId,
         )
         const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
@@ -690,7 +757,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [tileGrid, tileStyles, profileUserId, prefsHydrated, fourthLinkId])
+  }, [tileGrid, tileStyles, gridCols, gridRows, profileUserId, prefsHydrated, fourthLinkId])
 
   const linkAvailable = useCallback(
     (id: DashboardQuickLinkId): boolean => {
@@ -720,38 +787,39 @@ export default function DashboardQuickActions(props: Props) {
     ],
   )
 
-  const paletteAvailable = useMemo(() => {
-    const onGrid = new Set(tileGrid.filter((x): x is DashboardQuickLinkId => x != null))
+  const visibleOrder = useMemo(
+    () => tileGridToOrder(tileGrid).filter((id) => linkAvailable(id)),
+    [tileGrid, linkAvailable],
+  )
+
+  const hiddenIds = useMemo(() => {
+    const onBar = new Set(visibleOrder)
     return (Array.from(ALL_DASHBOARD_LINK_IDS) as DashboardQuickLinkId[]).filter((id) => {
-      if (onGrid.has(id)) return false
+      if (onBar.has(id)) return false
       return linkAvailable(id)
     })
-  }, [tileGrid, linkAvailable])
+  }, [visibleOrder, linkAvailable])
 
-  const onTileDragStart = useCallback((id: DashboardQuickLinkId, fromSlot: number | null) => {
-    setDragId(id)
-    setDragFromSlot(fromSlot)
-  }, [])
+  const onGridChange = useCallback(
+    (grid: DashboardTileGridSlot[]) => {
+      userModifiedRef.current = true
+      setTileGrid(grid)
+      savedColsRef.current = gridCols
+    },
+    [gridCols],
+  )
 
-  const onTileDragEnd = useCallback(() => {
-    setDragId(null)
-    setDragFromSlot(null)
-  }, [])
-
-  const onGridChange = useCallback((grid: DashboardTileGridSlot[]) => {
+  const restartTileOrder = useCallback(() => {
     userModifiedRef.current = true
-    setTileGrid(grid)
-  }, [])
+    setTileGrid(buildCustomizeGrid(undefined, undefined, undefined, gridCols))
+  }, [buildCustomizeGrid, gridCols])
 
-  const removeFromBar = useCallback((id: DashboardQuickLinkId) => {
-    userModifiedRef.current = true
-    setTileGrid((prev) => removeTileIdFromGrid(prev, id))
-  }, [])
-
-  const addPaletteId = useCallback((id: DashboardQuickLinkId) => {
-    userModifiedRef.current = true
-    setTileGrid((prev) => addTileToFirstEmptyGridSlot(prev, id))
-  }, [])
+  const removeFromBar = useCallback(
+    (id: DashboardQuickLinkId) => {
+      onGridChange(removeTileFromCustomizeGrid(tileGrid, id))
+    },
+    [onGridChange, tileGrid],
+  )
 
   const patchTileStyle = useCallback((id: DashboardQuickLinkId, patch: Partial<DashboardTileStyle>) => {
     userModifiedRef.current = true
@@ -1175,7 +1243,7 @@ export default function DashboardQuickActions(props: Props) {
     <section
       style={
         {
-          maxWidth: 1100,
+          maxWidth: isMobile ? 1100 : "100%",
           marginLeft: "auto",
           marginRight: "auto",
           marginBottom: 6,
@@ -1207,7 +1275,7 @@ export default function DashboardQuickActions(props: Props) {
         viewerUserId={user?.id ?? null}
       />
 
-      <div>
+      <div ref={gridRef}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
           <h2
             style={{
@@ -1238,6 +1306,24 @@ export default function DashboardQuickActions(props: Props) {
                 }}
               >
                 {labels.setupGuide}
+              </button>
+            ) : null}
+            {customize ? (
+              <button
+                type="button"
+                onClick={restartTileOrder}
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${hoverBorder}`,
+                  background: "rgba(255,255,255,0.25)",
+                  color: "#0f172a",
+                  cursor: "pointer",
+                }}
+              >
+                {labels.customizeRestart}
               </button>
             ) : null}
             <button
@@ -1274,12 +1360,8 @@ export default function DashboardQuickActions(props: Props) {
           </div>
         ) : null}
         {customize ? (
-          <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 720, lineHeight: 1.45 }}>
+          <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 960, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>
-            <span style={{ display: "block", marginTop: 4, opacity: 0.85 }}>
-              Drag tiles to reorder. Drop shortcuts from the chips below onto empty slots. Right-click a tile for colors
-              and style.
-            </span>
             {persistNote === "cloud" ? (
               <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
             ) : persistNote === "local" ? (
@@ -1288,58 +1370,26 @@ export default function DashboardQuickActions(props: Props) {
           </div>
         ) : null}
 
-        <DashboardQuickLinkGrid
-          grid={tileGrid}
-          customize={customize}
-          isMobile={isMobile}
-          dragId={dragId}
-          dragFromSlot={dragFromSlot}
-          onDragStart={onTileDragStart}
-          onDragEnd={onTileDragEnd}
-          onGridChange={onGridChange}
-          renderTile={renderTile}
-          filterVisible={linkAvailable}
-        />
-
-        {customize && paletteAvailable.length > 0 ? (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>{labels.customizePaletteTitle}</div>
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 8,
-                padding: "2px 0 4px",
-              }}
-            >
-              {paletteAvailable.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  draggable
-                  onDragStart={() => onTileDragStart(id, null)}
-                  onDragEnd={onTileDragEnd}
-                  onClick={() => addPaletteId(id)}
-                  style={{
-                    flex: "0 0 auto",
-                    padding: "8px 14px",
-                    borderRadius: 999,
-                    border: "1px dashed rgba(51,65,85,0.35)",
-                    background: "rgba(255,255,255,0.55)",
-                    cursor: "grab",
-                    textAlign: "left",
-                    fontWeight: 700,
-                    fontSize: 12,
-                    color: "#0f172a",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  + {quickLinkLabel(id, labels)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        {customize ? (
+          <DashboardQuickLinkCustomizeZones
+            grid={tileGrid}
+            gridCols={gridCols}
+            hiddenIds={hiddenIds}
+            isMobile={isMobile}
+            onGridChange={onGridChange}
+            renderTile={renderTile}
+            visibleTitle={labels.customizeVisibleTitle}
+            hiddenTitle={labels.customizeHiddenTitle}
+          />
+        ) : (
+          <DashboardQuickLinkGrid
+            grid={tileGrid}
+            gridCols={gridCols}
+            isMobile={isMobile}
+            renderTile={renderTile}
+            filterVisible={linkAvailable}
+          />
+        )}
       </div>
       {styleMenu ? (
         <DashboardTileStyleMenu

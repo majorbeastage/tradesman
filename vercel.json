@@ -32,7 +32,8 @@
     "api/robots.ts": { "maxDuration": 10 },
     "api/sitemap.ts": { "maxDuration": 10 },
     "api/sms-opt-in-consent-form-pdf.ts": { "maxDuration": 15 },
-    "api/sms-opt-in-consent-submit.ts": { "maxDuration": 30 }
+    "api/sms-opt-in-consent-submit.ts": { "maxDuration": 30 },
+    "api/site-traffic.ts": { "maxDuration": 15 }
   },
   "rewrites": [
     {

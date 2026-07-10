@@ -184,6 +184,31 @@ export function canCreateWorkOrderForQuote(
   return customerSignStepCompleteInWorkflow(workflow, completedNodeIds)
 }
 
+export type WorkOrderPatch = Partial<Pick<WorkOrderRecord, "work_order_number" | "status">>
+
+export async function updateWorkOrderInProfile(
+  client: SupabaseClient,
+  userId: string,
+  workOrderId: string,
+  patch: WorkOrderPatch,
+): Promise<WorkOrderRecord> {
+  const orders = await loadWorkOrdersFromProfile(client, userId)
+  const idx = orders.findIndex((o) => o.id === workOrderId)
+  if (idx < 0) throw new Error("Work order not found.")
+  const prev = orders[idx]
+  const next: WorkOrderRecord = {
+    ...prev,
+    work_order_number:
+      patch.work_order_number !== undefined ? patch.work_order_number.trim() || prev.work_order_number : prev.work_order_number,
+    status: patch.status ?? prev.status,
+    updated_at: new Date().toISOString(),
+  }
+  const updated = [...orders]
+  updated[idx] = next
+  await saveWorkOrdersToProfile(client, userId, updated)
+  return next
+}
+
 export async function createWorkOrderFromQuote(
   client: SupabaseClient,
   userId: string,

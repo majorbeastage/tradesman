@@ -74,6 +74,9 @@ import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineS
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
+import { applyEmailTemplatePlaceholders, findEmailTemplate } from "../../lib/emailTemplates"
+import { htmlToPlainText } from "../../lib/emailSignature"
+import { buildAutomatedNotifySmsBody } from "../../lib/smsComplianceLimits"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerProfile } from "../../lib/customerNavigation"
 import { useJobTypesModalOptional } from "../../contexts/JobTypesModalContext"
@@ -150,6 +153,24 @@ function formatAddCustomerPickerLabel(c: CustomerReceiptPickerRow): string {
   const name = (c.display_name ?? "").trim() || c.id
   const contact = c.phone?.trim() || c.email?.trim() || c.service_address?.trim()
   return contact ? `${name} · ${contact}` : name
+}
+
+function isAddRecurrencePortalItem(item: PortalSettingItem): boolean {
+  if (item.id === "make_event_recurring" || item.id.startsWith("recurrence_")) return true
+  const t = `${item.id} ${item.label}`.toLowerCase()
+  return /recurr/.test(t)
+}
+
+function formatAddAppointmentDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+}
+
+function formatAddAppointmentTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
 }
 
 function sortJobTypesByName(rows: JobType[]): JobType[] {
@@ -438,6 +459,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addCustomerId, setAddCustomerId] = useState<string | null>(null)
   const [addCustomerOptions, setAddCustomerOptions] = useState<CustomerReceiptPickerRow[]>([])
   const [addCustomerSearch, setAddCustomerSearch] = useState("")
+  const [addNotifyEmail, setAddNotifyEmail] = useState(false)
+  const [addNotifySms, setAddNotifySms] = useState(false)
   const [addSaving, setAddSaving] = useState(false)
 
   // Job type form (managed in shared JobTypesManagerModal)
@@ -534,6 +557,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const all = getControlItemsForUser(portalConfig, "calendar", "add_item_to_calendar", { aiAutomationsEnabled })
     return all.filter((i) => !isRemoveRecurrencePortalItem(i))
   }, [portalConfig, aiAutomationsEnabled])
+  const addRecurrencePortalItems = useMemo(
+    () => addItemPortalItems.filter(isAddRecurrencePortalItem),
+    [addItemPortalItems],
+  )
+  const addOtherPortalItems = useMemo(
+    () => addItemPortalItems.filter((item) => !isAddRecurrencePortalItem(item)),
+    [addItemPortalItems],
+  )
   const calendarAutoResponseItems = useMemo(
     () => getControlItemsForUser(portalConfig, "calendar", "auto_response_options", { aiAutomationsEnabled }),
     [portalConfig, aiAutomationsEnabled],
@@ -2592,6 +2623,84 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (addCustomerId) {
       await refreshCustomerPipelineOnEngagement(supabase, addCustomerId, "scheduled")
     }
+
+    const sendErrs: string[] = []
+    if ((addNotifyEmail || addNotifySms) && addCustomerId) {
+      const cust = addCustomerOptions.find((c) => c.id === addCustomerId)
+      if (cust) {
+        const startIso = newRanges[0].s.toISOString()
+        const senderName =
+          typeof authUser?.user_metadata?.display_name === "string" && authUser.user_metadata.display_name.trim()
+            ? authUser.user_metadata.display_name.trim()
+            : "Our team"
+        const customerName = cust.display_name?.trim() || "there"
+        const templateVars = {
+          customer_name: customerName,
+          sender_name: senderName,
+          company: "Our team",
+          appointment_date: formatAddAppointmentDate(startIso),
+          appointment_time: formatAddAppointmentTime(startIso),
+          appointment_title: addTitle.trim() || "Your appointment",
+        }
+        const t = findEmailTemplate("appointment_confirm")
+        const applied = t
+          ? applyEmailTemplatePlaceholders(t, templateVars)
+          : {
+              subject: `Appointment confirmed — ${templateVars.appointment_date}`,
+              bodyHtml: `<p>Hi ${customerName},</p><p>Your appointment is scheduled for <strong>${templateVars.appointment_date}</strong> at <strong>${templateVars.appointment_time}</strong>.</p>`,
+            }
+        const bodyPlain = htmlToPlainText(applied.bodyHtml)
+        const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
+          const { data: sessionData } = await supabase!.auth.getSession()
+          const token = sessionData.session?.access_token
+          return fetch(`/api/outbound-messages?__channel=${channel}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: outboundMessagesJsonBody(payload),
+          })
+        }
+        if (addNotifyEmail) {
+          if (!cust.email?.trim()) {
+            sendErrs.push("No customer email on file.")
+          } else {
+            const res = await postOutbound("email", {
+              userId: eventOwnerUserId,
+              customerId: addCustomerId,
+              to: cust.email.trim(),
+              subject: applied.subject,
+              body: bodyPlain,
+              bodyHtml: applied.bodyHtml,
+              ...(insertedEventIds[0] ? { calendarEventId: insertedEventIds[0] } : {}),
+            })
+            const raw = await res.text()
+            if (!res.ok) sendErrs.push(formatOutboundError(raw))
+          }
+        }
+        if (addNotifySms) {
+          if (!cust.phone?.trim()) {
+            sendErrs.push("No customer phone on file.")
+          } else {
+            const smsInner = `Hi ${customerName}, your appointment is confirmed for ${templateVars.appointment_date} at ${templateVars.appointment_time}.${addTitle.trim() ? ` Service: ${addTitle.trim()}.` : ""}`
+            const res = await postOutbound("sms", {
+              userId: eventOwnerUserId,
+              customerId: addCustomerId,
+              to: cust.phone.trim(),
+              body: buildAutomatedNotifySmsBody(smsInner, "appointment"),
+              ...(insertedEventIds[0] ? { calendarEventId: insertedEventIds[0] } : {}),
+            })
+            const raw = await res.text()
+            if (!res.ok) sendErrs.push(formatOutboundError(raw))
+          }
+        }
+      }
+    }
+    if (sendErrs.length > 0) {
+      alert(`Saved to calendar, but could not notify the customer:\n${sendErrs.join("\n")}`)
+    }
+
     setShowAddItem(false)
     resetAddForm()
     loadEvents()
@@ -2610,6 +2719,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddCustomerId(null)
     setAddCustomerSearch("")
     setAddMileage("")
+    setAddNotifyEmail(false)
+    setAddNotifySms(false)
   }
 
   const applySchedulingAddWizardPrefill = useCallback(
@@ -2951,14 +3062,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       .slice(0, 40)
   }, [addCustomerOptions, addCustomerSearch])
 
-  const jobTypeSelectStyle: React.CSSProperties = {
-    ...theme.formInput,
-    width: "100%",
-    boxSizing: "border-box",
-    fontSize: 13,
-    color: theme.text,
-    background: "#fff",
-  }
+  const selectedAddCustomer = useMemo(() => {
+    if (!addCustomerId) return null
+    return addCustomerOptions.find((c) => c.id === addCustomerId) ?? null
+  }, [addCustomerId, addCustomerOptions])
+
+  const addCustomerCanEmail = Boolean(selectedAddCustomer?.email?.trim())
+  const addCustomerCanSms = Boolean(selectedAddCustomer?.phone?.trim())
+
 
   function renderJobTypeSelect(
     value: string,
@@ -3783,27 +3894,28 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       {showAddItem && (
         <>
           <div onClick={() => { setShowAddItem(false); setAddError("") }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "90%", maxWidth: "420px", background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", zIndex: 9999 }}>
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "90%",
+              maxWidth: isMobile ? 420 : 920,
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "white",
+              borderRadius: "8px",
+              padding: isMobile ? "24px" : "20px 24px",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              zIndex: 9999,
+            }}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16 }}>
               <h3 style={{ margin: 0, color: theme.text }}>Add to calendar</h3>
               <SetupWizardLaunchButton wizardId="scheduling_add_to_calendar" compact />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div>
-                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>
-                <select value={addTargetUserId} onChange={(e) => setAddTargetUserId(e.target.value)} style={addInputStyle}>
-                  {selectableUsers.map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      {u.label}{u.email ? ` (${u.email})` : ""}
-                    </option>
-                  ))}
-                </select>
-                {selectableUsers.length <= 1 ? (
-                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-                    Link field users under Team management (Operations → Team management) or use sandbox demo team members to assign work to someone other than yourself.
-                  </p>
-                ) : null}
-              </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start" }}>
               <div>
                 <label style={{ fontSize: "12px", color: theme.text }}>Customer (optional)</label>
                 <input
@@ -3828,7 +3940,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   aria-label="Matching customers"
                   style={{
                     marginTop: 6,
-                    maxHeight: 180,
+                    maxHeight: isMobile ? 180 : 140,
                     overflowY: "auto",
                     border: `1px solid ${theme.border}`,
                     borderRadius: 8,
@@ -3842,6 +3954,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     onClick={() => {
                       setAddCustomerId(null)
                       setAddCustomerSearch("")
+                      setAddNotifyEmail(false)
+                      setAddNotifySms(false)
                     }}
                     style={{
                       display: "block",
@@ -3896,96 +4010,93 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   )}
                 </div>
               </div>
-              <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={addInputStyle} />
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input type="date" value={addStartDate} onChange={(e) => setAddStartDate(e.target.value)} style={{ ...addInputStyle, flex: 1 }} />
-                <select
-                  value={addStartTime}
-                  onChange={(e) => setAddStartTime(e.target.value)}
-                  style={addInputStyle}
-                >
-                  {timeOptions.map((t) => (
-                    <option key={t} value={t}>
-                      {(() => {
-                        const [h, m] = t.split(":").map(Number)
-                        if (h === 0) return `12:${String(m).padStart(2, "0")} AM`
-                        if (h < 12) return `${h}:${String(m).padStart(2, "0")} AM`
-                        if (h === 12) return `12:${String(m).padStart(2, "0")} PM`
-                        return `${h - 12}:${String(m).padStart(2, "0")} PM`
-                      })()}
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>
+                <select value={addTargetUserId} onChange={(e) => setAddTargetUserId(e.target.value)} style={addInputStyle}>
+                  {selectableUsers.map((u) => (
+                    <option key={u.userId} value={u.userId}>
+                      {u.label}{u.email ? ` (${u.email})` : ""}
                     </option>
                   ))}
                 </select>
+                {selectableUsers.length <= 1 ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                    Link field users under Team management (Operations → Team management) or use sandbox demo team members to assign work to someone other than yourself.
+                  </p>
+                ) : null}
               </div>
-              <div>
-                {renderJobTypeSelect(addJobTypeId, "add", addInputStyle, (id) => {
-                  setAddJobTypeId(id)
-                  if (id) applyJobTypeToAddForm(id)
-                  else setAddMileage("")
-                })}
+
+              <div style={isMobile ? undefined : { gridColumn: "1 / -1" }}>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Title</label>
+                <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={{ ...addInputStyle, marginTop: 4 }} />
               </div>
-              {addJobTypeId && jobTypes.find((j) => j.id === addJobTypeId)?.track_mileage ? (
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input type="date" value={addStartDate} onChange={(e) => setAddStartDate(e.target.value)} style={{ ...addInputStyle, flex: 1 }} />
+                  <select value={addStartTime} onChange={(e) => setAddStartTime(e.target.value)} style={addInputStyle}>
+                    {timeOptions.map((t) => (
+                      <option key={t} value={t}>
+                        {(() => {
+                          const [h, m] = t.split(":").map(Number)
+                          if (h === 0) return `12:${String(m).padStart(2, "0")} AM`
+                          if (h < 12) return `${h}:${String(m).padStart(2, "0")} AM`
+                          if (h === 12) return `12:${String(m).padStart(2, "0")} PM`
+                          return `${h - 12}:${String(m).padStart(2, "0")} PM`
+                        })()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
-                  <label style={{ fontSize: "12px", color: theme.text }}>Mileage (miles)</label>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Time increments</label>
+                  <select
+                    value={timeIncrement}
+                    onChange={(e) => {
+                      const v = e.target.value === "60" ? 60 : 15
+                      const parsed = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+                      const base = parsed ?? 60
+                      const rounded = snapMinutesToIncrement(base, v)
+                      setAddDurationStr(formatDurationFieldFromMinutes(rounded, v))
+                      setTimeIncrement(v)
+                      try { localStorage.setItem("calendar_timeIncrement", String(v)) } catch { /* ignore */ }
+                    }}
+                    style={addInputStyle}
+                  >
+                    <option value={15}>15 minute increments</option>
+                    <option value={60}>Hourly increments</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>
+                    {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+                  </label>
                   <input
                     type="number"
-                    min={0}
-                    step={0.1}
-                    value={addMileage}
-                    onChange={(e) => setAddMileage(e.target.value)}
-                    placeholder="e.g. 42"
+                    min={timeIncrement === 60 ? 1 : timeIncrement}
+                    step={timeIncrement === 60 ? 1 : timeIncrement}
+                    value={addDurationStr}
+                    onChange={(e) => setAddDurationStr(e.target.value)}
+                    onBlur={() => {
+                      const m = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
+                      if (m != null) setAddDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
+                    }}
                     style={addInputStyle}
                   />
                 </div>
-              ) : null}
-              {addJobTypeId && portalHasRecurrenceControls(addItemPortalItems) ? (
-                <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                  Recurrence options below apply even when a job type is selected. You can also set defaults under{" "}
-                  <strong>Job Types</strong> when the add form has no recurrence controls.
-                </p>
-              ) : null}
-              <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Time increments</label>
-                <select
-                  value={timeIncrement}
-                  onChange={(e) => {
-                    const v = e.target.value === "60" ? 60 : 15
-                    const parsed = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
-                    const base = parsed ?? 60
-                    const rounded = snapMinutesToIncrement(base, v)
-                    setAddDurationStr(formatDurationFieldFromMinutes(rounded, v))
-                    setTimeIncrement(v)
-                    try { localStorage.setItem("calendar_timeIncrement", String(v)) } catch { /* ignore */ }
-                  }}
-                  style={addInputStyle}
-                >
-                  <option value={15}>15 minute increments</option>
-                  <option value={60}>Hourly increments</option>
-                </select>
               </div>
-              <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>
-                  {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
-                </label>
-                <input
-                  type="number"
-                  min={timeIncrement === 60 ? 1 : timeIncrement}
-                  step={timeIncrement === 60 ? 1 : timeIncrement}
-                  value={addDurationStr}
-                  onChange={(e) => setAddDurationStr(e.target.value)}
-                  onBlur={() => {
-                    const m = parseDurationFieldToMinutes(addDurationStr, timeIncrement)
-                    if (m != null) setAddDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
-                  }}
-                  style={addInputStyle}
-                />
-              </div>
-              <textarea placeholder="Notes" value={addNotes} onChange={(e) => setAddNotes(e.target.value)} rows={2} style={{ ...addInputStyle, resize: "vertical" }} />
-              {addItemPortalItems.length > 0 && (
-                <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+
+              {addRecurrencePortalItems.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: 0 }}>Recurrence</p>
+                  {addJobTypeId && portalHasRecurrenceControls(addItemPortalItems) ? (
+                    <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                      Recurrence options apply even when a job type is selected. Defaults can also be set under{" "}
+                      <strong>Job Types</strong>.
+                    </p>
+                  ) : null}
                   <PortalSettingItemsForm
-                    items={addItemPortalItems}
+                    items={addRecurrencePortalItems}
                     formValues={addItemPortalValues}
                     setFormValue={(id, v) => {
                       setAddItemPortalValues((prev) => ({ ...prev, [id]: v }))
@@ -3998,16 +4109,106 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     isItemVisible={(item) => isPortalItemVisible(addItemPortalItems, addItemPortalValues, item)}
                   />
                 </div>
-              )}
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
-                <input type="checkbox" checked={addAssignToSelectedUser} onChange={(e) => setAddAssignToSelectedUser(e.target.checked)} />
-                Assign to selected user calendar automatically
-              </label>
-              {addError && <p style={{ color: "#b91c1c", fontSize: "14px", margin: 0 }}>{addError}</p>}
-              <button onClick={saveEvent} disabled={addSaving} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
-                {addSaving ? "Saving..." : "Add to calendar"}
-              </button>
-              <button onClick={() => { setShowAddItem(false); setAddError("") }} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
+              ) : null}
+
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Notes / description</label>
+                <textarea
+                  placeholder="Notes"
+                  value={addNotes}
+                  onChange={(e) => setAddNotes(e.target.value)}
+                  rows={isMobile ? 2 : 4}
+                  style={{ ...addInputStyle, marginTop: 4, resize: "vertical", minHeight: 72 }}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Job type</label>
+                  <div style={{ marginTop: 4 }}>
+                    {renderJobTypeSelect(addJobTypeId, "add", addInputStyle, (id) => {
+                      setAddJobTypeId(id)
+                      if (id) applyJobTypeToAddForm(id)
+                      else setAddMileage("")
+                    })}
+                  </div>
+                </div>
+                {addJobTypeId && jobTypes.find((j) => j.id === addJobTypeId)?.track_mileage ? (
+                  <div>
+                    <label style={{ fontSize: "12px", color: theme.text }}>Mileage (miles)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={addMileage}
+                      onChange={(e) => setAddMileage(e.target.value)}
+                      placeholder="e.g. 42"
+                      style={addInputStyle}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              {addOtherPortalItems.length > 0 ? (
+                <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, ...(isMobile ? {} : { gridColumn: "1 / -1" }) }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Options (from portal config)</p>
+                  <PortalSettingItemsForm
+                    items={addOtherPortalItems}
+                    formValues={addItemPortalValues}
+                    setFormValue={(id, v) => {
+                      setAddItemPortalValues((prev) => ({ ...prev, [id]: v }))
+                      try {
+                        localStorage.setItem(`cal_add_${id}`, v)
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    isItemVisible={(item) => isPortalItemVisible(addItemPortalItems, addItemPortalValues, item)}
+                  />
+                </div>
+              ) : null}
+
+              <div style={isMobile ? undefined : { gridColumn: "1 / -1" }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Notify customer</p>
+                {!addCustomerId ? (
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Select a customer to email or text appointment details.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: addCustomerCanEmail ? theme.text : "#94a3b8" }}>
+                      <input
+                        type="checkbox"
+                        checked={addNotifyEmail}
+                        disabled={!addCustomerCanEmail}
+                        onChange={(e) => setAddNotifyEmail(e.target.checked)}
+                      />
+                      Email customer{selectedAddCustomer?.email?.trim() ? ` (${selectedAddCustomer.email.trim()})` : ""}
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: addCustomerCanSms ? theme.text : "#94a3b8" }}>
+                      <input
+                        type="checkbox"
+                        checked={addNotifySms}
+                        disabled={!addCustomerCanSms}
+                        onChange={(e) => setAddNotifySms(e.target.checked)}
+                      />
+                      Text customer{selectedAddCustomer?.phone?.trim() ? ` (${selectedAddCustomer.phone.trim()})` : ""}
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, ...(isMobile ? {} : { gridColumn: "1 / -1" }) }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
+                  <input type="checkbox" checked={addAssignToSelectedUser} onChange={(e) => setAddAssignToSelectedUser(e.target.checked)} />
+                  Assign to selected user calendar automatically
+                </label>
+                {addError && <p style={{ color: "#b91c1c", fontSize: "14px", margin: 0 }}>{addError}</p>}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <button onClick={saveEvent} disabled={addSaving} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>
+                    {addSaving ? "Saving..." : "Add to calendar"}
+                  </button>
+                  <button onClick={() => { setShowAddItem(false); setAddError("") }} style={{ padding: "8px 16px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: "white", cursor: "pointer", color: theme.text }}>Cancel</button>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -4306,34 +4507,167 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               left: "50%",
               transform: "translate(-50%, -50%)",
               width: "90%",
-              maxWidth: "440px",
+              maxWidth: isMobile ? 420 : 920,
               maxHeight: "90vh",
               overflow: "auto",
               background: "white",
               borderRadius: "8px",
-              padding: "20px",
+              padding: isMobile ? "24px" : "20px 24px",
               boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
               zIndex: 9999,
             }}
           >
-            <h3 style={{ margin: "0 0 12px", color: theme.text }}>{selectedEvent.title}</h3>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Date</label>
+            <h3 style={{ margin: "0 0 16px", color: theme.text }}>{selectedEvent.title}</h3>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start", marginBottom: 14 }}>
+              <div>
+                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Customer</p>
+                {selectedEvent.customers?.display_name ? (
+                  <p style={{ margin: "0 0 6px", fontSize: 14, color: theme.text, fontWeight: 600 }}>{selectedEvent.customers.display_name}</p>
+                ) : (
+                  <p style={{ margin: "0 0 6px", fontSize: 13, color: "#64748b" }}>No customer linked</p>
+                )}
+                {(selectedEvent.customers?.service_address?.trim() ||
+                  selectedEvent.customers?.service_lat != null ||
+                  selectedEvent.customers?.service_lng != null) && (
+                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
+                    <strong>Service address:</strong>{" "}
+                    {selectedEvent.customers?.service_address?.trim() || "—"}
+                    {selectedEvent.customers?.service_lat != null && selectedEvent.customers?.service_lng != null
+                      ? ` · ${Number(selectedEvent.customers.service_lat).toFixed(5)}, ${Number(selectedEvent.customers.service_lng).toFixed(5)}`
+                      : ""}
+                  </p>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {(selectedEvent.customer_id || selectedEvent.quote_id) && setPage ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        let customerId = selectedEvent.customer_id ?? null
+                        if (!customerId && selectedEvent.quote_id && supabase) {
+                          const { data } = await supabase
+                            .from("quotes")
+                            .select("customer_id")
+                            .eq("id", selectedEvent.quote_id)
+                            .maybeSingle()
+                          customerId = (data?.customer_id as string | null) ?? null
+                        }
+                        if (!customerId) {
+                          alert("No customer is linked to this calendar event yet.")
+                          return
+                        }
+                        queueCustomerProfile(customerId)
+                        setSelectedEvent(null)
+                        setPage("customer-profile")
+                      }}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#fff",
+                        color: theme.text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open customer profile
+                    </button>
+                  ) : null}
+                  {selectedEvent.customer_id && showCalendarCustomerPayment ? (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerPaymentRequestOpen(true)}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 6,
+                        border: `2px solid ${theme.primary}`,
+                        background: "#fff7ed",
+                        color: theme.text,
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Customer payment
+                    </button>
+                  ) : null}
+                </div>
+                {selectedEvent.quote_id ? (
+                  <div style={{ marginTop: 10 }}>
+                    <p style={{ margin: 0, fontSize: 13, color: theme.text }}>
+                      <strong>Quote:</strong> linked
+                    </p>
+                    {linkedQuoteLiveTotal != null ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 13, color: "#0f766e", fontWeight: 600 }}>
+                        Quote total (from line items now): ${linkedQuoteLiveTotal.toFixed(2)}
+                      </p>
+                    ) : quoteItemsForReceipt.length === 0 ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>Loading quote lines…</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>
+                {canAssignToTeam ? (
+                  <>
+                    <select
+                      value={eventAssigneePick}
+                      onChange={(e) => setEventAssigneePick(e.target.value)}
+                      style={{ ...addInputStyle, marginTop: 4 }}
+                    >
+                      {selectableUsers.map((u) => (
+                        <option key={u.userId} value={u.userId}>
+                          {u.label}{u.email ? ` (${u.email})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
+                      <button
+                        type="button"
+                        disabled={eventAssigneeSaving || !eventAssigneePick.trim()}
+                        onClick={() => void saveEventAssignee()}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 6,
+                          border: "none",
+                          background: theme.primary,
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: 12,
+                          cursor: eventAssigneeSaving ? "wait" : "pointer",
+                        }}
+                      >
+                        {eventAssigneeSaving ? "Saving…" : "Save assignee"}
+                      </button>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>
+                        Currently: {calendarAssigneeLabel(selectedEvent, selectableUsers)}
+                      </span>
+                      {assigneeSaveNote ? (
+                        <span style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>{assigneeSaveNote}</span>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <p style={{ margin: "4px 0 0", fontSize: 13, color: theme.text }}>
+                    {selectedEvent.user_id ? calendarAssigneeLabel(selectedEvent, selectableUsers) : "—"}
+                  </p>
+                )}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 8 }}>
                   <input
                     type="date"
                     value={eventEditStartDate}
                     onChange={(e) => setEventEditStartDate(e.target.value)}
-                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                    style={{ ...addInputStyle, flex: 1 }}
                   />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Time</label>
                   <select
                     value={eventEditStartTime}
                     onChange={(e) => setEventEditStartTime(e.target.value)}
-                    style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13 }}
+                    style={addInputStyle}
                   >
                     {timeOptions.map((t) => (
                       <option key={t} value={t}>
@@ -4348,56 +4682,79 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     ))}
                   </select>
                 </div>
-              </div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: theme.text, marginBottom: 4 }}>
-                {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
-              </label>
-              <input
-                type="number"
-                min={timeIncrement === 60 ? 1 : timeIncrement}
-                step={timeIncrement === 60 ? 1 : timeIncrement}
-                value={eventEditDurationStr}
-                onChange={(e) => setEventEditDurationStr(e.target.value)}
-                onBlur={() => {
-                  const m = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
-                  if (m != null) setEventEditDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
-                }}
-                style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", fontSize: 13, marginBottom: 8 }}
-              />
-              <button
-                type="button"
-                disabled={eventScheduleSaving || !supabase}
-                onClick={() => void saveEventSchedule()}
-                style={{
-                  padding: "8px 14px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: theme.primary,
-                  color: "#fff",
-                  fontWeight: 600,
-                  cursor: eventScheduleSaving ? "wait" : "pointer",
-                  fontSize: 13,
-                }}
-              >
-                {eventScheduleSaving ? "Saving…" : "Save date & time"}
-              </button>
-              {eventScheduleError ? (
-                <p style={{ margin: "8px 0 0", fontSize: 13, color: "#b91c1c", lineHeight: 1.45 }}>{eventScheduleError}</p>
-              ) : null}
-              {showRecurringRemoveChoices && addItemPortalItems.length > 0 ? (
-                <details
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>Time increments</label>
+                  <select
+                    value={timeIncrement}
+                    onChange={(e) => {
+                      const v = e.target.value === "60" ? 60 : 15
+                      const parsed = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+                      const base = parsed ?? 60
+                      const rounded = snapMinutesToIncrement(base, v)
+                      setEventEditDurationStr(formatDurationFieldFromMinutes(rounded, v))
+                      setTimeIncrement(v)
+                      try { localStorage.setItem("calendar_timeIncrement", String(v)) } catch { /* ignore */ }
+                    }}
+                    style={addInputStyle}
+                  >
+                    <option value={15}>15 minute increments</option>
+                    <option value={60}>Hourly increments</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text }}>
+                    {timeIncrement === 60 ? "Duration (hours)" : "Duration (minutes)"}
+                  </label>
+                  <input
+                    type="number"
+                    min={timeIncrement === 60 ? 1 : timeIncrement}
+                    step={timeIncrement === 60 ? 1 : timeIncrement}
+                    value={eventEditDurationStr}
+                    onChange={(e) => setEventEditDurationStr(e.target.value)}
+                    onBlur={() => {
+                      const m = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+                      if (m != null) setEventEditDurationStr(formatDurationFieldFromMinutes(m, timeIncrement))
+                    }}
+                    style={addInputStyle}
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={eventScheduleSaving || !supabase}
+                  onClick={() => void saveEventSchedule()}
                   style={{
-                    marginTop: 14,
-                    padding: 12,
-                    borderRadius: 8,
-                    border: `1px solid ${theme.border}`,
-                    background: "#f8fafc",
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: eventScheduleSaving ? "wait" : "pointer",
+                    fontSize: 13,
+                    alignSelf: "flex-start",
                   }}
                 >
-                  <summary style={{ fontWeight: 700, fontSize: 13, color: theme.text, cursor: "pointer", listStyle: "none" }}>
-                    Edit recurrence
-                  </summary>
-                  <p style={{ margin: "10px 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  {eventScheduleSaving ? "Saving…" : "Save date & time"}
+                </button>
+                {eventScheduleError ? (
+                  <p style={{ margin: 0, fontSize: 13, color: "#b91c1c", lineHeight: 1.45 }}>{eventScheduleError}</p>
+                ) : null}
+                {(selectedEvent.recurrence_series_id || (selectedLegacyRecurringIds && selectedLegacyRecurringIds.length >= 2)) && (
+                  <p style={{ margin: 0, fontSize: 12, color: "#2563eb", lineHeight: 1.45 }}>
+                    <strong>Recurrence:</strong>{" "}
+                    {selectedEvent.recurrence_series_id
+                      ? selectedSeriesSiblingCount > 1
+                        ? `${selectedSeriesSiblingCount} scheduled dates in this series`
+                        : "Recurring series"
+                      : `${selectedLegacyRecurringIds!.length} matching dates in view (legacy series)`}
+                  </p>
+                )}
+              </div>
+
+              {showRecurringRemoveChoices && addItemPortalItems.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: 0 }}>Recurrence</p>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                     Change frequency or end rules, then update the series. Non-completed occurrences are replaced using the date &amp; time above as the anchor.
                   </p>
                   <PortalSettingItemsForm
@@ -4411,7 +4768,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     disabled={seriesRecurrenceSaving || !supabase}
                     onClick={() => void updateSeriesRecurrence()}
                     style={{
-                      marginTop: 10,
                       padding: "8px 14px",
                       borderRadius: 6,
                       border: "none",
@@ -4420,171 +4776,82 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       fontWeight: 600,
                       cursor: seriesRecurrenceSaving ? "wait" : "pointer",
                       fontSize: 13,
+                      alignSelf: "flex-start",
                     }}
                   >
                     {seriesRecurrenceSaving ? "Updating…" : "Update recurrence series"}
                   </button>
-                </details>
-              ) : null}
-              <div style={{ marginTop: 12 }}>
-                {renderJobTypeSelect(eventEditJobTypeId, "event", jobTypeSelectStyle, (id) => {
-                  setEventEditJobTypeId(id)
-                  void saveEventJobType(id || null)
-                })}
-              </div>
-            </div>
-            <div style={{ fontSize: "13px", color: "#4b5563", display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-              {selectedEvent.customers?.display_name && (
-                <p style={{ margin: 0 }}>
-                  <strong>Customer:</strong> {selectedEvent.customers.display_name}
-                </p>
+                </div>
+              ) : (
+                <div aria-hidden style={{ minHeight: 0 }} />
               )}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", alignSelf: "flex-start" }}>
-                {(selectedEvent.customer_id || selectedEvent.quote_id) && setPage ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      let customerId = selectedEvent.customer_id ?? null
-                      if (!customerId && selectedEvent.quote_id && supabase) {
-                        const { data } = await supabase
-                          .from("quotes")
-                          .select("customer_id")
-                          .eq("id", selectedEvent.quote_id)
-                          .maybeSingle()
-                        customerId = (data?.customer_id as string | null) ?? null
-                      }
-                      if (!customerId) {
-                        alert("No customer is linked to this calendar event yet.")
-                        return
-                      }
-                      queueCustomerProfile(customerId)
-                      setSelectedEvent(null)
-                      setPage("customer-profile")
-                    }}
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 6,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      color: theme.text,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Open customer profile
-                  </button>
-                ) : null}
-                {selectedEvent.customer_id && showCalendarCustomerPayment ? (
-                  <button
-                    type="button"
-                    onClick={() => setCustomerPaymentRequestOpen(true)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 6,
-                      border: `2px solid ${theme.primary}`,
-                      background: "#fff7ed",
-                      color: theme.text,
-                      fontSize: 12,
-                      fontWeight: 800,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Customer payment
-                  </button>
-                ) : null}
-              </div>
-              {(selectedEvent.customers?.service_address?.trim() ||
-                selectedEvent.customers?.service_lat != null ||
-                selectedEvent.customers?.service_lng != null) && (
-                <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-                  <strong>Customer service address:</strong>{" "}
-                  {selectedEvent.customers?.service_address?.trim() || "—"}
-                  {selectedEvent.customers?.service_lat != null && selectedEvent.customers?.service_lng != null
-                    ? ` · ${Number(selectedEvent.customers.service_lat).toFixed(5)}, ${Number(selectedEvent.customers.service_lng).toFixed(5)}`
-                    : ""}
-                </p>
-              )}
-              {selectedEvent.quote_id && (
-                <div style={{ margin: 0 }}>
-                  <p style={{ margin: 0 }}>
-                    <strong>Quote:</strong> linked
+
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Notes / description</label>
+                <textarea
+                  readOnly
+                  value={selectedEvent.notes?.trim() || ""}
+                  placeholder="No notes on this event"
+                  rows={isMobile ? 2 : 4}
+                  style={{ ...addInputStyle, marginTop: 4, resize: "vertical", minHeight: 72, color: selectedEvent.notes?.trim() ? theme.text : "#94a3b8" }}
+                />
+                {selectedEvent.quote_total != null && selectedEvent.quote_total > 0 ? (
+                  <p style={{ margin: "8px 0 0", fontSize: "14px", fontWeight: 600, color: theme.text }}>
+                    Total: ${Number(selectedEvent.quote_total).toFixed(2)}
                   </p>
-                  {linkedQuoteLiveTotal != null ? (
-                    <p style={{ margin: "4px 0 0", fontSize: 13, color: "#0f766e", fontWeight: 600 }}>
-                      Quote total (from line items now): ${linkedQuoteLiveTotal.toFixed(2)}
-                    </p>
-                  ) : quoteItemsForReceipt.length === 0 ? (
-                    <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>Loading quote lines…</p>
-                  ) : null}
+                ) : null}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Job type</label>
+                  <div style={{ marginTop: 4 }}>
+                    {renderJobTypeSelect(eventEditJobTypeId, "event", addInputStyle, (id) => {
+                      setEventEditJobTypeId(id)
+                      void saveEventJobType(id || null)
+                    })}
+                  </div>
                 </div>
-              )}
-              {canAssignToTeam ? (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4 }}>
-                  <label style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
-                    Assigned to
-                    <select
-                      value={eventAssigneePick}
-                      onChange={(e) => setEventAssigneePick(e.target.value)}
-                      style={{ ...theme.formInput, marginLeft: 8, minWidth: 200, fontWeight: 500 }}
-                    >
-                      {selectableUsers.map((u) => (
-                        <option key={u.userId} value={u.userId}>
-                          {u.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    disabled={eventAssigneeSaving || !eventAssigneePick.trim()}
-                    onClick={() => void saveEventAssignee()}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 6,
-                      border: "none",
-                      background: theme.primary,
-                      color: "#fff",
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: eventAssigneeSaving ? "wait" : "pointer",
-                    }}
-                  >
-                    {eventAssigneeSaving ? "Saving…" : "Save assignee"}
-                  </button>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>
-                    Currently: {calendarAssigneeLabel(selectedEvent, selectableUsers)}
-                  </span>
-                  {assigneeSaveNote ? (
-                    <span style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>{assigneeSaveNote}</span>
-                  ) : null}
-                </div>
-              ) : selectedEvent.user_id ? (
-                <p style={{ margin: 0 }}>
-                  <strong>Assigned to:</strong> {calendarAssigneeLabel(selectedEvent, selectableUsers)}
-                </p>
-              ) : null}
-              {(selectedEvent.recurrence_series_id || (selectedLegacyRecurringIds && selectedLegacyRecurringIds.length >= 2)) && (
-                <p style={{ margin: 0, color: "#2563eb" }}>
-                  <strong>Recurrence:</strong>{" "}
-                  {selectedEvent.recurrence_series_id
-                    ? selectedSeriesSiblingCount > 1
-                      ? `${selectedSeriesSiblingCount} scheduled dates in this series`
-                      : "Recurring series"
-                    : `${selectedLegacyRecurringIds!.length} matching dates in view (legacy series)`}
-                </p>
-              )}
+                {(() => {
+                  const jt =
+                    selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null
+                  const jtResolved = jt ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
+                  if (!jtResolved?.track_mileage) return null
+                  return (
+                    <div>
+                      <label style={{ fontSize: "12px", color: theme.text }}>Mileage (miles)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={eventMileageDraft}
+                        onChange={(e) => setEventMileageDraft(e.target.value)}
+                        placeholder="e.g. 42"
+                        style={addInputStyle}
+                      />
+                      <button
+                        type="button"
+                        disabled={eventMileageSaving || !supabase}
+                        onClick={() => void saveEventMileage()}
+                        style={{
+                          marginTop: 8,
+                          padding: "8px 14px",
+                          borderRadius: 6,
+                          border: "none",
+                          background: theme.primary,
+                          color: "#fff",
+                          fontWeight: 600,
+                          cursor: eventMileageSaving ? "wait" : "pointer",
+                          fontSize: 13,
+                        }}
+                      >
+                        {eventMileageSaving ? "Saving…" : "Save mileage"}
+                      </button>
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
-            {selectedEvent.quote_total != null && selectedEvent.quote_total > 0 && (
-              <p style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 600, color: theme.text }}>
-                Total: ${Number(selectedEvent.quote_total).toFixed(2)}
-              </p>
-            )}
-            {selectedEvent.notes && (
-              <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#6b7280", whiteSpace: "pre-wrap" }}>
-                <strong style={{ color: theme.text }}>Notes:</strong> {selectedEvent.notes}
-              </p>
-            )}
             <details
               style={{
                 borderRadius: 6,
@@ -5047,48 +5314,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </button>
               </div>
             </details>
-            {(() => {
-              const jt =
-                selectedEvent.job_types && !Array.isArray(selectedEvent.job_types) ? selectedEvent.job_types : null
-              const jtResolved = jt ?? jobTypes.find((j) => j.id === selectedEvent.job_type_id)
-              if (!jtResolved?.track_mileage) return null
-              return (
-                <div style={{ marginBottom: 14 }}>
-                  <p style={{ margin: "0 0 6px", fontWeight: 700, color: theme.text, fontSize: 13 }}>Mileage</p>
-                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                    This job type tracks mileage. Enter miles for this visit (optional until you have them).
-                  </p>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={eventMileageDraft}
-                    onChange={(e) => setEventMileageDraft(e.target.value)}
-                    placeholder="Miles"
-                    style={{ ...theme.formInput, width: "100%", maxWidth: 200, boxSizing: "border-box", fontSize: 13 }}
-                  />
-                  <button
-                    type="button"
-                    disabled={eventMileageSaving || !supabase}
-                    onClick={() => void saveEventMileage()}
-                    style={{
-                      marginTop: 8,
-                      display: "block",
-                      padding: "8px 14px",
-                      borderRadius: 6,
-                      border: "none",
-                      background: theme.primary,
-                      color: "#fff",
-                      fontWeight: 600,
-                      cursor: eventMileageSaving ? "wait" : "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    {eventMileageSaving ? "Saving…" : "Save mileage"}
-                  </button>
-                </div>
-              )
-            })()}
             <details style={calendarEventEmailDetailsStyle}>
               <summary
                 style={{

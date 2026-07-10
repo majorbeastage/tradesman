@@ -98,7 +98,7 @@ export function MarketingPreviewCtas({
           onClick={onTrial}
           style={{ ...btn, background: "#fff", color: theme.charcoal, border: `2px solid ${theme.border}` }}
         >
-          Free trial
+          Free Demo Mode
         </button>
       ) : null}
       {onPricing ? (

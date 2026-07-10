@@ -13,6 +13,7 @@ export type PlatformAssistantPlatform = "user" | "office_manager" | "admin"
 
 export type AdminPanelId =
   | "ops"
+  | "traffic"
   | "signup"
   | "communications"
   | "users"
@@ -50,6 +51,7 @@ export type PlatformAdminIntent = {
 
 export const ADMIN_PANEL_LABELS: Record<AdminPanelId, string> = {
   ops: "Ops inbox & reporting",
+  traffic: "Site traffic",
   signup: "Sign up requirements",
   communications: "Routing & Access",
   users: "Users & office managers",
@@ -318,6 +320,20 @@ function wizardPatternsForId(id: SetupMiniWizardId): RegExp[] {
 }
 
 export const PLATFORM_ADMIN_INTENTS: PlatformAdminIntent[] = [
+  {
+    kind: "admin",
+    panel: "ops",
+    label: ADMIN_PANEL_LABELS.ops,
+    description: "Ops inbox, reporting, and action items",
+    patterns: [/\bops\s+inbox\b/i, /\bops\s+reporting\b/i, /\badmin\s+reporting\b/i],
+  },
+  {
+    kind: "admin",
+    panel: "traffic",
+    label: ADMIN_PANEL_LABELS.traffic,
+    description: "Marketing site traffic and referrers",
+    patterns: [/\bsite\s+traffic\b/i, /\bweb\s+traffic\b/i, /\bpage\s+views?\b/i, /\bvisitor\s+stats?\b/i, /\banalytics\b/i],
+  },
   {
     kind: "admin",
     panel: "portal",

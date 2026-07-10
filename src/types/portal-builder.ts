@@ -627,19 +627,19 @@ export function endUserHasSeparateBillingPortal(portalConfig: PortalConfig | nul
 /** Ordered list for portal builder + Account page visibility */
 export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "profile", label: "Business profile (email, name, website, primary phone)" },
-  { id: "tradesman_email", label: "Tradesman business email (@tradesman-us.com)" },
-  { id: "business_web_profile", label: "Business profile / web address (public page)" },
   { id: "business_address", label: "Business address" },
   { id: "service_area", label: "Service radius (miles from business address)" },
-  { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },
-  { id: "app_scheme", label: "Appearance — color scheme & custom logo" },
   { id: "business_hours", label: "Timezone & business hours" },
+  { id: "tradesman_email", label: "Tradesman business email (@tradesman-us.com)" },
+  { id: "business_web_profile", label: "Business profile / web address (public page)" },
+  { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
   { id: "call_forwarding", label: "Call forwarding & whisper (screening)" },
   { id: "call_screening", label: "Optional call screening / auto-attendant (AI or recorded menu)" },
-  { id: "voicemail", label: "Voicemail greeting (collapsed by default; AI or recorded)" },
-  { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
+  { id: "mobile_app", label: "Mobile app — push, GPS, MyT" },
+  { id: "app_scheme", label: "Appearance — color scheme & custom logo" },
   { id: "ai_automations", label: "AI automations (master toggle for AI options on other tabs)" },
   { id: "password_reset", label: "Password reset button" },
+  { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },
 ]
 
 /** Merge saved order with canonical id list (unique, stable tail for new ids). */

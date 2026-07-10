@@ -6,6 +6,7 @@ const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_EVENT_VIEW = "tradesman_scheduling_view_event_id_v1"
 export const SCHEDULING_EVENT_VIEW_EVENT = "tradesman-scheduling-event-view"
 const QUOTES_OPEN_QUOTE = "tradesman_quotes_open_quote_id_v1"
+const QUOTES_OPEN_LIBRARY = "tradesman_quotes_open_library_v1"
 const WORK_ORDERS_HIGHLIGHT_QUOTE = "tradesman_work_orders_highlight_quote_id_v1"
 const PURCHASE_ORDERS_HIGHLIGHT_QUOTE = "tradesman_purchase_orders_highlight_quote_id_v1"
 const PAYMENTS_COLLECT_PREFILL = "tradesman_payments_collect_prefill_v1"
@@ -299,6 +300,30 @@ export function queueQuotesOpenQuote(quoteId: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Open Estimates page with the Estimates Library suite active (e.g. from Operations). */
+export function queueEstimatesLibraryOpen(): void {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(QUOTES_OPEN_LIBRARY, "1")
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeEstimatesLibraryOpen(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    const v = sessionStorage.getItem(QUOTES_OPEN_LIBRARY)
+    if (v) {
+      sessionStorage.removeItem(QUOTES_OPEN_LIBRARY)
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
 }
 
 export function queueWorkOrdersHighlightQuote(quoteId: string): void {

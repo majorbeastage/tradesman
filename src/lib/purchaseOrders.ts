@@ -96,6 +96,35 @@ export type PurchaseOrderFromQuoteInput = {
   total?: number | null
 }
 
+export type PurchaseOrderPatch = Partial<
+  Pick<PurchaseOrderRecord, "po_number" | "vendor_name" | "description" | "status" | "total">
+>
+
+export async function updatePurchaseOrderInProfile(
+  client: SupabaseClient,
+  userId: string,
+  purchaseOrderId: string,
+  patch: PurchaseOrderPatch,
+): Promise<PurchaseOrderRecord> {
+  const orders = await loadPurchaseOrdersFromProfile(client, userId)
+  const idx = orders.findIndex((o) => o.id === purchaseOrderId)
+  if (idx < 0) throw new Error("Purchase order not found.")
+  const prev = orders[idx]
+  const next: PurchaseOrderRecord = {
+    ...prev,
+    po_number: patch.po_number !== undefined ? patch.po_number.trim() || prev.po_number : prev.po_number,
+    vendor_name: patch.vendor_name !== undefined ? patch.vendor_name.trim() || prev.vendor_name : prev.vendor_name,
+    description: patch.description !== undefined ? patch.description : prev.description,
+    status: patch.status ?? prev.status,
+    total: patch.total !== undefined ? patch.total : prev.total,
+    updated_at: new Date().toISOString(),
+  }
+  const updated = [...orders]
+  updated[idx] = next
+  await savePurchaseOrdersToProfile(client, userId, updated)
+  return next
+}
+
 export async function createPurchaseOrderFromQuote(
   client: SupabaseClient,
   userId: string,

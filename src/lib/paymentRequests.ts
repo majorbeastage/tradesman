@@ -122,6 +122,28 @@ export async function savePaymentProviderCredentials(input: {
   await paymentApiFetch("save-credentials", input, input.accessToken)
 }
 
+export async function updatePaymentRequest(
+  userId: string,
+  paymentRequestId: string,
+  patch: { description?: string; amount?: number },
+): Promise<void> {
+  if (!supabase) throw new Error("Not connected")
+  const updates: Record<string, unknown> = {}
+  if (patch.description !== undefined) updates.description = patch.description.trim()
+  if (patch.amount !== undefined) {
+    if (!Number.isFinite(patch.amount) || patch.amount <= 0) throw new Error("Amount must be greater than zero.")
+    updates.amount = patch.amount
+  }
+  if (!Object.keys(updates).length) return
+  const { error } = await supabase
+    .from("payment_requests")
+    .update(updates)
+    .eq("id", paymentRequestId)
+    .eq("user_id", userId)
+    .in("status", ["draft", "sent"])
+  if (error) throw error
+}
+
 export async function loadPaymentRequests(userId: string, limit = 40): Promise<PaymentRequestRow[]> {
   if (!supabase) return []
   const { data, error } = await supabase

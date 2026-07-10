@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
+import { adminSecondaryButtonCompactStyle, adminSecondaryButtonStyle } from "../../components/admin/adminButtonStyles"
 import { adminTicketTypeLabel, loadAdminOpsSnapshot, type AdminOpsSnapshot } from "../../lib/adminOpsInbox"
 
 type Props = {
@@ -71,14 +72,7 @@ export default function AdminOpsInboxSection({ onOpenTickets, onOpenUsers }: Pro
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: `1px solid ${theme.border}`,
-              background: "#fff",
-              fontWeight: 600,
-              cursor: loading ? "wait" : "pointer",
-            }}
+            style={{ ...adminSecondaryButtonStyle, cursor: loading ? "wait" : "pointer" }}
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
@@ -198,15 +192,7 @@ function SectionHeader({ title, actionLabel, onAction }: { title: string; action
         <button
           type="button"
           onClick={onAction}
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#fff",
-            cursor: "pointer",
-          }}
+          style={adminSecondaryButtonCompactStyle}
         >
           {actionLabel}
         </button>

@@ -23,6 +23,7 @@ import AdminSignupRequirementsSection from "./AdminSignupRequirementsSection"
 import AdminOnboardingMaterialsSection from "./AdminOnboardingMaterialsSection"
 import AdminTroubleTicketsSection from "./AdminTroubleTicketsSection"
 import AdminOpsInboxSection from "./AdminOpsInboxSection"
+import AdminTrafficSection from "./AdminTrafficSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -558,7 +559,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "ops" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
+    "ops" | "traffic" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
 
   useEffect(() => {
@@ -570,6 +571,7 @@ function AdminAppInner() {
       const pending = sessionStorage.getItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY) as AdminPanelId | null
       if (
         pending === "ops" ||
+        pending === "traffic" ||
         pending === "signup" ||
         pending === "communications" ||
         pending === "users" ||
@@ -1151,6 +1153,23 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("traffic")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "traffic" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "traffic" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Site traffic
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("signup")}
             style={{
               padding: "8px 12px",
@@ -1450,6 +1469,8 @@ function AdminAppInner() {
       <main style={{ flex: 1, padding: isMobile ? "48px 16px 24px" : 24, background: theme.background, color: theme.text, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
         {adminPanel === "ops" ? (
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
+        ) : adminPanel === "traffic" ? (
+          <AdminTrafficSection />
         ) : adminPanel === "users" ? (
           <div>
             <AdminSettingBlock id="admin:users:page_intro">

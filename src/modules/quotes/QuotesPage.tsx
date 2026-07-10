@@ -148,6 +148,7 @@ import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget 
 import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContext"
 import {
   consumeOpenSpecialtyReportWizard,
+  consumeEstimatesLibraryOpen,
   consumeQuotesCustomerPrefill,
   consumeQuotesOpenQuote,
   notifyCustomersHubRefresh,
@@ -2129,6 +2130,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     const openQuoteId = consumeQuotesOpenQuote()
     if (openQuoteId) setSelectedQuoteId(openQuoteId)
+  }, [userId])
+
+  useEffect(() => {
+    if (!consumeEstimatesLibraryOpen()) return
+    setPastLibSearch("")
+    setPastLibStatus("")
+    setLibrarySection("quick_access")
+    setEstimateSuite("library")
   }, [userId])
 
   useEffect(() => {

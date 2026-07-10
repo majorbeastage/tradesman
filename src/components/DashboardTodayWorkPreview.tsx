@@ -100,7 +100,7 @@ export default function DashboardTodayWorkPreview({
   return (
     <section
       style={{
-        maxWidth: 1100,
+        maxWidth: isMobile ? 1100 : "100%",
         margin: compact ? "0" : "10px auto 6px",
         padding: isMobile ? "10px 10px 12px" : "12px 12px 14px",
         borderRadius: 10,

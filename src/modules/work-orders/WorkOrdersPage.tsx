@@ -22,6 +22,7 @@ import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/workOrderDocumentT
 import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromMetadata } from "../../lib/jobDocumentTemplate"
 import { openWorkOrderDocumentPdf } from "../../lib/workOrderPdfExport"
 import { downloadPdfBlob } from "../../lib/documentPdf"
+import { WorkOrderEditorModal } from "../../components/document-editors/WorkOrderEditorModal"
 
 type Props = {
   setPage?: (page: string) => void
@@ -45,6 +46,7 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const [templateSaving, setTemplateSaving] = useState(false)
   const [docBusyId, setDocBusyId] = useState<string | null>(null)
   const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string; workOrderId: string } | null>(null)
+  const [editingOrder, setEditingOrder] = useState<WorkOrderRecord | null>(null)
 
   const isWoTemplateItemVisible = useCallback(
     (item: (typeof WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS)[number]) =>
@@ -265,6 +267,13 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     <button
                       type="button"
+                      style={secondaryBtn}
+                      onClick={() => setEditingOrder(o)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
                       style={accentBtn}
                       disabled={docBusyId === o.id}
                       onClick={() => void viewWorkOrderDocument(o)}
@@ -329,6 +338,20 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
           </button>
         </div>
       ) : null}
+
+      <WorkOrderEditorModal
+        open={!!editingOrder}
+        onClose={() => setEditingOrder(null)}
+        supabase={supabase}
+        userId={userId ?? ""}
+        workOrder={editingOrder}
+        woTemplate={templateFormValues}
+        setPage={setPage}
+        onSaved={(saved) => {
+          setOrders((prev) => prev.map((row) => (row.id === saved.id ? saved : row)))
+          setEditingOrder(null)
+        }}
+      />
     </div>
   )
 }

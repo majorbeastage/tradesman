@@ -50,7 +50,7 @@ export default function DashboardReportsPreview({ dataUserId, isMobile, onOpenRe
   return (
     <section
       style={{
-        maxWidth: 1100,
+        maxWidth: isMobile ? 1100 : "100%",
         margin: "0 auto 8px",
         padding: isMobile ? "10px 10px 12px" : "12px 12px 14px",
         borderRadius: 10,

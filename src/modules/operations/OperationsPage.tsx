@@ -14,6 +14,7 @@ import { omCalendarPolicyNavContext, operationsSubModuleAllowedByPolicy } from "
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
+import { queueEstimatesLibraryOpen } from "../../lib/workflowNavigation"
 
 export type OperationsPageProps = {
   setPage?: (page: string) => void
@@ -101,6 +102,18 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
             {labels[id]}
           </button>
         ))}
+        {setPage ? (
+          <button
+            type="button"
+            style={subNavBtn(false)}
+            onClick={() => {
+              queueEstimatesLibraryOpen()
+              setPage("quotes")
+            }}
+          >
+            {t("nav.estimates")}
+          </button>
+        ) : null}
       </div>
 
       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>

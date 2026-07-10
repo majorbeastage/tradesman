@@ -17,7 +17,7 @@ const WIZARD_IDS = new Set([
   "myt_voicemail_greeting",
 ])
 
-const ADMIN_PANELS = new Set(["signup", "communications", "users", "billing", "portal", "tickets", "about"])
+const ADMIN_PANELS = new Set(["ops", "traffic", "signup", "communications", "users", "billing", "portal", "tickets", "about"])
 
 const ALL_PAGES = new Set([
   "dashboard",

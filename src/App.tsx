@@ -34,6 +34,7 @@ import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
+import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
 import { shouldUseOfficeManagerPortal, isAdminPortalRole, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
@@ -98,6 +99,31 @@ import {
 } from "./lib/loginRouting"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
+
+function isBuiltinAppPage(page: string): boolean {
+  const exact = new Set([
+    "dashboard",
+    "leads",
+    "conversations",
+    "quotes",
+    "calendar",
+    "customers",
+    "customers-email",
+    "customer-profile",
+    "payments",
+    "account",
+    "web-support",
+    "tech-support",
+    "settings",
+    "insurance-options",
+    "reporting",
+    "growth",
+    "business-workflow",
+    "organization-chart",
+  ])
+  if (exact.has(page)) return true
+  return page === "operations" || page.startsWith("operations-")
+}
 
 function beginAdminLogin(ref: MutableRefObject<"admin" | "contractor" | null>) {
   ref.current = "admin"
@@ -562,6 +588,9 @@ function MainAppInner() {
               emailClient: t("dashboard.quickEmailClient"),
               customizeHint: t("dashboard.customizeQuickLinks"),
               customizeDone: t("dashboard.customizeQuickLinksDone"),
+              customizeRestart: t("dashboard.customizeRestart"),
+              customizeVisibleTitle: t("dashboard.customizeVisibleTitle"),
+              customizeHiddenTitle: t("dashboard.customizeHiddenTitle"),
               customizePaletteTitle: t("dashboard.customizePaletteTitle"),
               customizeAddHint: t("dashboard.customizeAddHint"),
               customizeRemove: t("dashboard.customizeRemove"),
@@ -647,7 +676,7 @@ function MainAppInner() {
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}
-      {!["dashboard", "leads", "conversations", "quotes", "calendar", "customers", "customers-email", "customer-profile", "payments", "account", "web-support", "tech-support", "settings", "insurance-options", "reporting"].includes(page) && (
+      {!isBuiltinAppPage(page) && (
         <div style={{ padding: 24 }}>
           <h1 style={{ color: "var(--text, #1f2937)" }}>{page}</h1>
           <p style={{ color: "var(--text, #6b7280)", margin: "0 0 8px" }}>{t("app.customTab.title")}</p>
@@ -672,6 +701,46 @@ function App() {
   const [loginError, setLoginError] = useState("")
   const loginIntentRef = useRef<"admin" | "contractor" | null>(loginIntentFromInitialView(initialView))
   const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const p = window.location.pathname.toLowerCase()
+    if (p === "/pricing") {
+      recordMarketingPageView("pricing", p)
+      return
+    }
+    if (p === "/about") {
+      recordMarketingPageView("about", p)
+      return
+    }
+    if (p === "/signup") {
+      recordMarketingPageView("signup", p)
+      return
+    }
+    if (p === "/trial") {
+      recordMarketingPageView("trial", p)
+      return
+    }
+    const bizMatch = /^\/([^/]+)\/?$/i.exec(p)
+    if (bizMatch) {
+      const slug = decodeURIComponent(bizMatch[1] || "").trim().toLowerCase()
+      if (slug && !isReservedBusinessWebProfileSlug(slug)) {
+        recordMarketingPageView(`profile:${slug}`, p)
+        return
+      }
+    }
+
+    const viewKeys: Partial<Record<View, string>> = {
+      home: "home",
+      about: "about",
+      pricing: "pricing",
+      signup: "signup",
+      demo: "demo",
+      training: "training",
+    }
+    const key = viewKeys[view]
+    if (key) recordMarketingPageView(key)
+  }, [view])
 
   useEffect(() => {
     try {

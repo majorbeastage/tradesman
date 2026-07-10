@@ -19,6 +19,7 @@ import {
   type PaymentSentVia,
 } from "../../lib/paymentRequests"
 import { consumePaymentsCollectPrefill } from "../../lib/workflowNavigation"
+import { PaymentRequestEditorModal } from "../../components/document-editors/PaymentRequestEditorModal"
 
 const inputStyle: React.CSSProperties = {
   ...theme.formInput,
@@ -60,6 +61,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [fallbackPayUrl, setFallbackPayUrl] = useState("")
   const [autoReceipt, setAutoReceipt] = useState(true)
   const pendingQuotePrefillRef = useRef<string | null>(null)
+  const [editingRequest, setEditingRequest] = useState<PaymentRequestRow | null>(null)
 
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase()
@@ -475,11 +477,29 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                     Open link
                   </a>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => setEditingRequest(r)}
+                  style={{ display: "inline-block", marginTop: 8, padding: "6px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Edit
+                </button>
               </div>
             ))}
           </div>
         )}
       </section>
+
+      <PaymentRequestEditorModal
+        open={!!editingRequest}
+        onClose={() => setEditingRequest(null)}
+        userId={userId ?? ""}
+        paymentRequest={editingRequest}
+        onSaved={() => {
+          void reloadRequests()
+          setEditingRequest(null)
+        }}
+      />
     </div>
   )
 }
