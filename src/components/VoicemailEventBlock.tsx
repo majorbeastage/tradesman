@@ -1,5 +1,11 @@
+import { useEffect, useState } from "react"
 import { theme } from "../styles/theme"
 import { resolveVoicemailUiMode, voicemailTranscriptForDisplay } from "../lib/voicemailDisplay"
+import {
+  extractTwilioAccountSidFromUrl,
+  extractTwilioRecordingSid,
+} from "../lib/commEventRecording"
+import { supabase } from "../lib/supabase"
 
 export type VoicemailCommEventShape = {
   body?: string | null
@@ -75,21 +81,111 @@ type VoicemailRecordingBlockProps = {
 }
 
 export function VoicemailRecordingBlock({ recordingUrl, compactNote }: VoicemailRecordingBlockProps) {
-  if (!recordingUrl) return null
-  if (isBrowserPlayableRecordingUrl(recordingUrl)) {
+  const resolved = (recordingUrl ?? "").trim()
+  const [playSrc, setPlaySrc] = useState<string | null>(null)
+  const [loadErr, setLoadErr] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!resolved) {
+      setPlaySrc(null)
+      setLoadErr("")
+      setLoading(false)
+      return
+    }
+
+    if (isBrowserPlayableRecordingUrl(resolved)) {
+      setPlaySrc(resolved)
+      setLoadErr("")
+      setLoading(false)
+      return
+    }
+
+    const recordingSid = extractTwilioRecordingSid(resolved)
+    if (!recordingSid) {
+      setPlaySrc(null)
+      setLoadErr("")
+      setLoading(false)
+      return
+    }
+
+    let cancelled = false
+    let objectUrl: string | null = null
+    setLoading(true)
+    setLoadErr("")
+    setPlaySrc(null)
+
+    void (async () => {
+      try {
+        if (!supabase) {
+          if (!cancelled) setLoadErr("Sign in to play this recording.")
+          return
+        }
+        const { data } = await supabase.auth.getSession()
+        const token = data.session?.access_token
+        if (!token) {
+          if (!cancelled) setLoadErr("Sign in to play this recording.")
+          return
+        }
+        const params = new URLSearchParams({ recordingSid })
+        const accountSid = extractTwilioAccountSidFromUrl(resolved)
+        if (accountSid) params.set("accountSid", accountSid)
+        const res = await fetch(`/api/twilio-recording?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          if (!cancelled) setLoadErr("Could not load voicemail recording.")
+          return
+        }
+        const blob = await res.blob()
+        objectUrl = URL.createObjectURL(blob)
+        if (!cancelled) setPlaySrc(objectUrl)
+      } catch {
+        if (!cancelled) setLoadErr("Could not load voicemail recording.")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [resolved])
+
+  if (!resolved) return null
+
+  if (playSrc) {
     return (
       <audio
         controls
-        src={recordingUrl}
+        src={playSrc}
         style={{ width: "100%", maxWidth: 440, marginBottom: compactNote ? 8 : 10 }}
       />
     )
   }
+
+  if (loading) {
+    return (
+      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+        Loading voicemail…
+      </p>
+    )
+  }
+
+  if (loadErr) {
+    return (
+      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
+        {loadErr}
+      </p>
+    )
+  }
+
   return (
     <p style={{ margin: "0 0 8px", fontSize: 12, color: "#92400e", lineHeight: 1.45 }}>
       {compactNote
-        ? "This entry has a Twilio-only recording link (not playable here). New voicemails are copied to storage and will play in the browser."
-        : "Legacy Twilio recording URL only — not playable in the portal. New messages are saved to Supabase storage automatically."}
+        ? "Recording is on file but could not be loaded for playback."
+        : "Recording is on file but could not be loaded for playback. Try refreshing or open Full history."}
     </p>
   )
 }

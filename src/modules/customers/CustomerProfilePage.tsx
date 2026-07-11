@@ -27,6 +27,9 @@ import { formatAppError } from "../../lib/formatAppError"
 import { formatDisplayText } from "../../lib/formatDisplayText"
 import { formatCommEventEmailAddressSummary } from "../../lib/communicationEmailAddresses"
 import CustomerContactSplitMergeModal from "../../components/CustomerContactSplitMergeModal"
+import CustomerRemoveFileModal from "../../components/CustomerRemoveFileModal"
+import { deleteCustomerFile } from "../../lib/customerContactOperations"
+import { isCustomerArchivedForHub } from "../../lib/customerContactKind"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { estimateDisplayStatus, formatUsdAmount, receiptDisplayStatus } from "../../lib/customerDocumentStatus"
@@ -62,6 +65,7 @@ import {
 import { inferCustomerWorkflowStep, shouldOpenEstimatePdfFromWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { applyManualWorkflowNodeComplete } from "../../lib/customerWorkflowProgress"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
+import { notifyCustomersHubRefresh } from "../../lib/workflowNavigation"
 
 type Props = {
   setPage: (page: string) => void
@@ -359,6 +363,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null)
   const [contactSplitMergeOpen, setContactSplitMergeOpen] = useState(false)
   const [contactSplitMergeMode, setContactSplitMergeMode] = useState<"separate" | "merge">("separate")
+  const [removeFileModalOpen, setRemoveFileModalOpen] = useState(false)
+  const [removeFileBusy, setRemoveFileBusy] = useState(false)
   const [manualFitChoice, setManualFitChoice] = useState<"hot" | "maybe" | "bad" | "">("")
   const [fitOverrideBusy, setFitOverrideBusy] = useState(false)
   const [fitReRunBusy, setFitReRunBusy] = useState(false)
@@ -654,6 +660,21 @@ export default function CustomerProfilePage({ setPage }: Props) {
     setPage("customers")
   }
 
+  async function confirmRemoveCustomerFile() {
+    if (!supabase || !userId || !customerId) return
+    setRemoveFileBusy(true)
+    try {
+      await deleteCustomerFile(supabase, userId, customerId)
+      setRemoveFileModalOpen(false)
+      notifyCustomersHubRefresh()
+      setPage("customers")
+    } catch (e: unknown) {
+      alert(formatAppError(e))
+    } finally {
+      setRemoveFileBusy(false)
+    }
+  }
+
   async function geocodeServiceAddress() {
     const q = contactForm.serviceAddress.trim()
     if (!q) {
@@ -838,6 +859,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   }
 
   const c = bundle?.customer
+  const customerArchived = c ? isCustomerArchivedForHub(c) : false
   const notesPast = c ? parseProfileNotesPast(c.notes_past) : []
   const hasMultipleContacts = bundle ? bundle.phones.length > 1 || bundle.emails.length > 1 : false
   const workflowBundle = bundle && profileMetadata ? loadAccountWorkflowBundleFromMetadata(profileMetadata) : null
@@ -1122,6 +1144,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
         {c?.id ? (
           <button type="button" onClick={() => setShareContactTarget({})} style={primaryBtnStyle}>
             Share contact
+          </button>
+        ) : null}
+        {customerArchived && c?.id ? (
+          <button type="button" onClick={() => setRemoveFileModalOpen(true)} style={dangerOutlineBtnStyle}>
+            Remove customer file
           </button>
         ) : null}
       </div>
@@ -1924,6 +1951,18 @@ export default function CustomerProfilePage({ setPage }: Props) {
         />
       ) : null}
 
+      {removeFileModalOpen && c?.id ? (
+        <CustomerRemoveFileModal
+          open
+          busy={removeFileBusy}
+          customerName={formatDisplayText(c.display_name, "Customer")}
+          onClose={() => {
+            if (!removeFileBusy) setRemoveFileModalOpen(false)
+          }}
+          onConfirm={() => void confirmRemoveCustomerFile()}
+        />
+      ) : null}
+
       {estimatePdfView ? (
         <DocumentPdfViewerModal
           title={estimatePdfView.title}
@@ -2065,6 +2104,17 @@ const secondaryBtnStyle: CSSProperties = {
   fontWeight: 600,
   cursor: "pointer",
   fontSize: 13,
+}
+
+const dangerOutlineBtnStyle: CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 8,
+  border: "1px solid #fecaca",
+  background: "#fef2f2",
+  fontWeight: 700,
+  cursor: "pointer",
+  fontSize: 13,
+  color: "#b91c1c",
 }
 
 const miniBtnStyle: CSSProperties = {

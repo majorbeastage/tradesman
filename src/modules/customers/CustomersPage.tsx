@@ -34,6 +34,7 @@ import {
   validateManualSmsConsentSourceInput,
 } from "../../lib/customerSmsConsent"
 import { VoicemailRecordingBlock, VoicemailTranscriptBlock } from "../../components/VoicemailEventBlock"
+import { resolveActivityItemRecordingUrl } from "../../lib/commEventRecording"
 import { EmailEventAddressLine } from "../../components/EmailEventAddressLine"
 import type { AttachmentStripItem } from "../../components/AttachmentStrip"
 import SaveInboundAttachmentToEstimate from "../../components/SaveInboundAttachmentToEstimate"
@@ -550,6 +551,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     return { phone, sms, email }
   }, [customerActivityItems])
+
+  const commEventPayloads = useMemo(
+    () => customerCommEvents as { event_type?: string; created_at?: string | null; recording_url?: string | null; metadata?: unknown }[],
+    [customerCommEvents],
+  )
 
   const activityMaxSortMs = useMemo(() => {
     let m = 0
@@ -3432,7 +3438,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                   <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Nothing in this channel yet.</p>
                                                 ) : (
                                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                                    {[...list].slice(-3).reverse().map((item) => (
+                                                    {[...list].slice(-3).reverse().map((item) => {
+                                                      const ev = item.kind === "ev" ? item.payload : null
+                                                      const recordingUrl =
+                                                        item.kind === "ev" ? resolveActivityItemRecordingUrl(ev, commEventPayloads) : null
+                                                      const isVm = item.kind === "ev" && ev?.event_type === "voicemail"
+                                                      return (
                                                       <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 8, background: "#f8fafc" }}>
                                                         <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>{activityRowLabel(item)}</div>
                                                         <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
@@ -3440,9 +3451,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                             ? new Date(item.payload.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
                                                             : ""}
                                                         </div>
+                                                        {recordingUrl ? (
+                                                          <div style={{ marginTop: 8 }}>
+                                                            <VoicemailRecordingBlock recordingUrl={recordingUrl} compactNote />
+                                                          </div>
+                                                        ) : null}
                                                         <div style={{ fontSize: 12, color: "#334155", marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45, maxHeight: 240, overflowY: "auto" }}>
                                                           {activityPreviewSnippet(item) || "—"}
                                                         </div>
+                                                        {isVm && ev ? (
+                                                          <VoicemailTranscriptBlock
+                                                            ev={ev}
+                                                            profileVoicemailDisplay={voicemailProfileDisplay}
+                                                            conversationPortalValues={conversationPortalDefaults}
+                                                          />
+                                                        ) : null}
                                                         {item.kind === "ev" && item.payload?.id ? (
                                                           <SaveInboundAttachmentToEstimate
                                                             items={commAttachmentsByEvent[item.payload.id] ?? []}
@@ -3452,7 +3475,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                           />
                                                         ) : null}
                                                       </div>
-                                                    ))}
+                                                    )})}
                                                   </div>
                                                 )}
                                                 {chan === "sms" ? (
@@ -3690,6 +3713,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                             const open = !!timelineExpanded[item.key]
                                             const ev = item.kind === "ev" ? item.payload : null
                                             const isVm = item.kind === "ev" && ev?.event_type === "voicemail"
+                                            const recordingUrl =
+                                              item.kind === "ev" ? resolveActivityItemRecordingUrl(ev, commEventPayloads) : null
                                             const label = activityRowLabel(item)
                                             return (
                                               <div key={item.key} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, background: "#fff" }}>
@@ -3722,7 +3747,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                       </p>
                                                     ) : isVm && ev ? (
                                                       <>
-                                                        <VoicemailRecordingBlock recordingUrl={ev?.recording_url} />
+                                                        <VoicemailRecordingBlock recordingUrl={recordingUrl ?? ev?.recording_url} />
+                                                        <VoicemailTranscriptBlock
+                                                          ev={ev}
+                                                          profileVoicemailDisplay={voicemailProfileDisplay}
+                                                          conversationPortalValues={conversationPortalDefaults}
+                                                        />
+                                                        {ev?.body ? (
+                                                          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{ev.body}</p>
+                                                        ) : null}
+                                                      </>
+                                                    ) : recordingUrl && ev ? (
+                                                      <>
+                                                        <VoicemailRecordingBlock recordingUrl={recordingUrl} />
                                                         <VoicemailTranscriptBlock
                                                           ev={ev}
                                                           profileVoicemailDisplay={voicemailProfileDisplay}

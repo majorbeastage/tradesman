@@ -339,6 +339,23 @@ export async function mergeCustomerIntoTarget(
   })
 }
 
+/** Permanently delete a customer profile and its identifiers from the account. */
+export async function deleteCustomerFile(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+): Promise<void> {
+  const { error: identErr } = await supabase
+    .from("customer_identifiers")
+    .delete()
+    .eq("user_id", userId)
+    .eq("customer_id", customerId)
+  if (identErr) throw identErr
+
+  const { error: delErr } = await supabase.from("customers").delete().eq("id", customerId).eq("user_id", userId)
+  if (delErr) throw delErr
+}
+
 /** @deprecated Use separateCustomerContacts — kept for per-email split buttons. */
 export async function splitEmailToSeparateCustomer(
   supabase: SupabaseClient,

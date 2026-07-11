@@ -240,6 +240,16 @@ export function isCustomerManuallyArchived(metadata: unknown): boolean {
   return (metadata as Record<string, unknown>)[CUSTOMER_MANUAL_ARCHIVED_META_KEY] === true
 }
 
+/** True when the customer appears in the Customers hub Archived section. */
+export function isCustomerArchivedForHub(customer: {
+  metadata?: unknown
+  job_pipeline_status?: string | null
+}): boolean {
+  const status = String(customer.job_pipeline_status ?? "").trim().toLowerCase()
+  if (status === "archived" || status === "completed") return true
+  return isCustomerManuallyArchived(customer.metadata)
+}
+
 /** Customers hub Promotions tab — stored kind or inferred from noreply / system email addresses. */
 export function customerBelongsInPromotionsHub(customer: {
   metadata?: unknown

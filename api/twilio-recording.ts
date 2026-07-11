@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { firstEnv, verifyAdminJwtAnonOrServiceSupabase } from "./_communications.js"
+import { createServiceSupabase, firstEnv, verifyAdminJwtAnonOrServiceSupabase } from "./_communications.js"
 
 function isTwilioRecordingSid(value: string): boolean {
   return /^RE[0-9a-f]{32}$/i.test(value.trim())
@@ -9,9 +9,66 @@ function isTwilioAccountSid(value: string): boolean {
   return /^AC[0-9a-f]{32}$/i.test(value.trim())
 }
 
+async function userOwnsRecording(userId: string, recordingSid: string): Promise<boolean> {
+  const supabase = createServiceSupabase()
+  const pattern = `%${recordingSid}%`
+  const { data, error } = await supabase
+    .from("communication_events")
+    .select("id")
+    .eq("user_id", userId)
+    .or(`external_id.eq.${recordingSid},recording_url.ilike.${pattern}`)
+    .limit(1)
+  if (!error && (data?.length ?? 0) > 0) return true
+
+  const { data: omLink } = await supabase
+    .from("office_manager_clients")
+    .select("user_id")
+    .eq("office_manager_id", userId)
+  const managedIds = (omLink ?? []).map((r) => String((r as { user_id?: string }).user_id ?? "")).filter(Boolean)
+  if (managedIds.length === 0) {
+    if (error) console.warn("[twilio-recording] ownership check", error.message)
+    return false
+  }
+  const { data: managedData, error: managedErr } = await supabase
+    .from("communication_events")
+    .select("id")
+    .in("user_id", managedIds)
+    .or(`external_id.eq.${recordingSid},recording_url.ilike.${pattern}`)
+    .limit(1)
+  if (managedErr) {
+    console.warn("[twilio-recording] OM ownership check", managedErr.message)
+    return false
+  }
+  return (managedData?.length ?? 0) > 0
+}
+
+async function verifyRecordingPlaybackAccess(
+  token: string,
+  recordingSid: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, string> }> {
+  const admin = await verifyAdminJwtAnonOrServiceSupabase(token)
+  if (admin.ok) return admin
+
+  try {
+    const supabase = createServiceSupabase()
+    const { data: userData, error: authErr } = await supabase.auth.getUser(token)
+    if (authErr || !userData?.user?.id) {
+      return { ok: false, status: 401, body: { error: "Invalid or expired session" } }
+    }
+    const owns = await userOwnsRecording(userData.user.id, recordingSid)
+    if (!owns) {
+      return { ok: false, status: 403, body: { error: "Recording not found for this account" } }
+    }
+    return { ok: true }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return { ok: false, status: 500, body: { error: "Could not verify access", message: msg } }
+  }
+}
+
 /**
  * Stream a Twilio recording with server-side Basic auth so browsers never see api.twilio.com credentials.
- * Requires an admin Supabase JWT (same session as Admin portal).
+ * Requires a signed-in Tradesman user who owns the voicemail/call event, or an admin session.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -36,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Query recordingSid must be a Twilio Recording SID (RE + 32 hex chars)." })
     }
 
-    const authz = await verifyAdminJwtAnonOrServiceSupabase(token)
+    const authz = await verifyRecordingPlaybackAccess(token, recordingSid)
     if (!authz.ok) {
       return res.status(authz.status).json(authz.body)
     }

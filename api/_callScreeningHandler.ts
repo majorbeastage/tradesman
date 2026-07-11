@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { classifyCallScreeningAnswers } from "./_callScreeningClassify.js"
+import { classifyCallScreeningAnswers, loadCallScreeningBusinessContext } from "./_callScreeningClassify.js"
 import type { CommunicationChannel } from "./_communications.js"
 import {
   buildVoicemailTwiml,
@@ -323,7 +323,8 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
     }
 
     // Final step — classify and route
-    const classification = await classifyCallScreeningAnswers(nextAnswers, settings.spamScreenEnabled)
+    const businessContext = await loadCallScreeningBusinessContext(supabase, channel.user_id)
+    const classification = await classifyCallScreeningAnswers(nextAnswers, settings.spamScreenEnabled, businessContext)
     const transcript = nextAnswers.map((a) => `${a.question}\n→ ${a.answer || "(no response)"}`).join("\n\n")
     let customerId: string | null = null
     if (from) {

@@ -5,6 +5,7 @@ import {
   customerHasOpenConversation,
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
+  insertCommunicationEventReturningId,
   logCommunicationEvent,
   lookupChannelById,
   isInboundCallerOurBusinessNumber,
@@ -21,6 +22,48 @@ function sendTwiml(res: VercelResponse, body: string): VercelResponse {
 
 function isLikelyUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim())
+}
+
+function samePhoneDigits(a: string, b: string): boolean {
+  const da = a.replace(/\D/g, "")
+  const db = b.replace(/\D/g, "")
+  return da.length > 0 && da === db
+}
+
+async function attachRecordingToScreeningCall(params: {
+  supabase: ReturnType<typeof createServiceSupabase>
+  userId: string
+  customerId: string
+  callSid: string
+  playUrl: string | null
+  voicemailEventId: string | null
+}): Promise<void> {
+  if (!params.callSid || !params.playUrl) return
+  const { data: row, error } = await params.supabase
+    .from("communication_events")
+    .select("id, metadata")
+    .eq("user_id", params.userId)
+    .eq("customer_id", params.customerId)
+    .eq("external_id", params.callSid)
+    .eq("event_type", "call")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !row?.id) return
+  const prevMeta =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {}
+  const nextMeta: Record<string, unknown> = {
+    ...prevMeta,
+    voicemail_recording_url: params.playUrl,
+    linked_voicemail_event_id: params.voicemailEventId,
+    screening_voicemail_received_at: new Date().toISOString(),
+  }
+  await params.supabase
+    .from("communication_events")
+    .update({ recording_url: params.playUrl, metadata: nextMeta })
+    .eq("id", row.id)
 }
 
 async function handleTranscribePhase(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -83,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const channelId = typeof req.query?.channelId === "string" ? req.query.channelId : ""
+  const callSid = pickFirstString(req.query?.callSid)
   const to = normalizePhone(pickFirstString(req.body?.To, req.query?.to, req.query?.To))
   const from = normalizePhone(pickFirstString(req.body?.From, req.query?.from, req.query?.From))
   const recordingUrl = pickFirstString(req.body?.RecordingUrl, req.query?.RecordingUrl)
@@ -186,7 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (mirrored) playUrl = mirrored
       }
 
-      await logCommunicationEvent(supabase, {
+      const voicemailEventId = await insertCommunicationEventReturningId(supabase, {
         user_id: channel.user_id,
         customer_id: customer.customerId,
         conversation_id: conversationId,
@@ -210,8 +254,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           caller_number: from,
           recording_url: playUrl,
           twilio_recording_url: recordingUrl || null,
+          linked_call_sid: callSid || null,
         },
       })
+
+      if (callSid && customer.customerId) {
+        await attachRecordingToScreeningCall({
+          supabase,
+          userId: channel.user_id,
+          customerId: customer.customerId,
+          callSid,
+          playUrl,
+          voicemailEventId,
+        })
+      }
     }
   } catch {
     // Always return valid TwiML back to Twilio.
