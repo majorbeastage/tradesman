@@ -175,10 +175,12 @@ function dashShellStyle(isMobile: boolean, scheme: DashboardTileScheme): CSSProp
 
 function tileButtonStyle(
   scheme: DashboardTileScheme,
-  opts: { primaryRow: boolean; compact: boolean; disabled?: boolean; dimmed?: boolean },
+  opts: { primaryRow: boolean; compact: boolean; disabled?: boolean; dimmed?: boolean; mobileGrid?: boolean },
 ): CSSProperties {
-  const { primaryRow, compact, disabled, dimmed } = opts
-  const minHeight = compact ? 88 : 96
+  const { primaryRow, compact, disabled, dimmed, mobileGrid } = opts
+  const minHeight = mobileGrid ? 0 : compact ? 88 : 96
+  const padding = mobileGrid ? "6px 7px 5px" : "14px 14px 13px"
+  const borderRadius = mobileGrid ? 10 : 12
   switch (scheme) {
     case "ocean":
       return {
@@ -188,8 +190,8 @@ function tileButtonStyle(
         justifyContent: "flex-end",
         alignItems: "flex-start",
         minHeight,
-        padding: "14px 14px 13px",
-        borderRadius: 12,
+        padding,
+        borderRadius,
         border: primaryRow ? "1px solid rgba(14, 165, 233, 0.42)" : "1px solid rgba(100, 116, 139, 0.42)",
         background: primaryRow
           ? "linear-gradient(165deg, rgba(15, 118, 110, 0.88) 0%, rgba(15, 118, 110, 0.92) 45%, rgba(17, 94, 89, 0.96) 100%)"
@@ -210,8 +212,8 @@ function tileButtonStyle(
         justifyContent: "flex-end",
         alignItems: "flex-start",
         minHeight,
-        padding: "14px 14px 13px",
-        borderRadius: 12,
+        padding,
+        borderRadius,
         border: primaryRow ? "1px solid rgba(51, 65, 85, 0.45)" : "1px solid rgba(100, 116, 139, 0.4)",
         background: primaryRow
           ? "linear-gradient(165deg, rgba(51, 65, 85, 0.92) 0%, rgba(30, 41, 59, 0.95) 52%, rgba(15, 23, 42, 0.98) 100%)"
@@ -232,8 +234,8 @@ function tileButtonStyle(
         justifyContent: "flex-end",
         alignItems: "flex-start",
         minHeight,
-        padding: "14px 14px 13px",
-        borderRadius: 12,
+        padding,
+        borderRadius,
         border: primaryRow ? `1px solid ${theme.border}` : "1px solid #e2e8f0",
         background: primaryRow ? "#ffffff" : "#f1f5f9",
         cursor: disabled ? "not-allowed" : "pointer",
@@ -250,8 +252,8 @@ function tileButtonStyle(
         justifyContent: "flex-end",
         alignItems: "flex-start",
         minHeight,
-        padding: "14px 14px 13px",
-        borderRadius: 12,
+        padding,
+        borderRadius,
         border: primaryRow ? `1px solid rgba(249, 115, 22, 0.35)` : `1px solid rgba(100, 116, 139, 0.42)`,
         background: primaryRow
           ? "linear-gradient(165deg, rgba(51, 65, 85, 0.84) 0%, rgba(30, 41, 59, 0.88) 58%, rgba(30, 41, 59, 0.95) 100%)"
@@ -325,6 +327,7 @@ function Tile({
   draggable,
   primaryRow,
   uniformGrid,
+  mobileGrid,
   onDragStart,
   onDragOver,
   onDrop,
@@ -347,6 +350,7 @@ function Tile({
   draggable?: boolean
   primaryRow?: boolean
   uniformGrid?: boolean
+  mobileGrid?: boolean
   customize?: boolean
   onRemove?: () => void
   removeChipLabel?: string
@@ -369,6 +373,7 @@ function Tile({
       compact: gridCompact,
       disabled,
       dimmed,
+      mobileGrid,
     }),
     ...(tileStyle?.blockBg ? { background: tileStyle.blockBg } : null),
     ...(tileStyle?.blockBorder ? { border: `1px solid ${tileStyle.blockBorder}` } : null),
@@ -409,12 +414,12 @@ function Tile({
           }}
           style={{
             position: "absolute",
-            top: 6,
-            right: 6,
+            top: mobileGrid ? 4 : 6,
+            right: mobileGrid ? 4 : 6,
             zIndex: 2,
-            fontSize: 11,
+            fontSize: mobileGrid ? 9 : 11,
             fontWeight: 700,
-            padding: "3px 7px",
+            padding: mobileGrid ? "2px 5px" : "3px 7px",
             borderRadius: 8,
             background:
               scheme === "ocean"
@@ -444,25 +449,26 @@ function Tile({
         aria-hidden
         style={{
           position: "absolute",
-          top: gridPrimary ? 10 : 11,
-          right: gridPrimary ? 10 : 11,
-          width: gridPrimary ? 34 : 28,
-          height: gridPrimary ? 34 : 28,
+          top: gridPrimary ? 10 : mobileGrid ? 6 : 11,
+          right: gridPrimary ? 10 : mobileGrid ? 6 : 11,
+          width: gridPrimary ? 34 : mobileGrid ? 20 : 28,
+          height: gridPrimary ? 34 : mobileGrid ? 20 : 28,
           borderRadius: thumb ? 8 : "50%",
           background: thumb
             ? "rgba(255,255,255,0.92)"
             : `linear-gradient(145deg, ${effectiveAccent}35, ${effectiveAccent}14)`,
           border: thumb ? `1px solid ${effectiveAccent}44` : `1px solid ${effectiveAccent}55`,
           boxShadow: gridPrimary ? `0 0 18px ${effectiveAccent}38` : `0 0 12px ${effectiveAccent}22`,
-          display: "flex",
+          display: mobileGrid && !thumb ? "none" : "flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: thumb ? (gridPrimary ? 18 : 15) : undefined,
+          fontSize: thumb ? (gridPrimary ? 18 : mobileGrid ? 12 : 15) : undefined,
           lineHeight: 1,
         }}
       >
         {thumb || null}
       </span>
+      {!mobileGrid ? (
       <span
         aria-hidden
         style={{
@@ -479,14 +485,15 @@ function Tile({
       >
         →
       </span>
+      ) : null}
       <span
         style={{
-          marginTop: 2,
-          paddingRight: 22,
-          fontSize: gridCompact ? 14 : 15,
+          marginTop: mobileGrid ? 0 : 2,
+          paddingRight: mobileGrid ? 4 : 22,
+          fontSize: mobileGrid ? 10 : gridCompact ? 14 : 15,
           fontWeight: 800,
           color: labelColor,
-          lineHeight: 1.25,
+          lineHeight: mobileGrid ? 1.15 : 1.25,
           letterSpacing: gridPrimary ? -0.02 : undefined,
         }}
       >
@@ -841,6 +848,7 @@ export default function DashboardQuickActions(props: Props) {
     const accentDefault =
       id === "customers" || id === "estimates" || id === "calendar" || isCore ? theme.primary : "#6366f1"
     const uniformGrid = true
+    const mobileGrid = isMobile
 
     if (id === "customers") {
       return (
@@ -849,6 +857,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -868,6 +877,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -887,6 +897,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -906,6 +917,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -925,6 +937,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={label}
           accent={accentDefault}
           primaryRow={!tileStyle?.blockBg}
@@ -945,6 +958,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.setupGuide}
           accent="#6366f1"
           customize={customize}
@@ -963,6 +977,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.settings}
           accent="#475569"
           customize={customize}
@@ -981,6 +996,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.payments}
           accent={theme.primary}
           customize={customize}
@@ -999,6 +1015,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.insurance}
           accent={theme.primary}
           customize={customize}
@@ -1017,6 +1034,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.customerPaymentsSoon}
           accent="#0ea5e9"
           customize={customize}
@@ -1048,6 +1066,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.reporting}
           accent={theme.primary}
           customize={customize}
@@ -1066,6 +1085,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.growth}
           sublabel={labels.growthSub}
           accent="#16a34a"
@@ -1085,6 +1105,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.emailClient}
           accent="#0ea5e9"
           customize={customize}
@@ -1103,6 +1124,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.jobTypes}
           accent="#0ea5e9"
           customize={customize}
@@ -1121,6 +1143,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.todayTodo}
           accent="#8b5cf6"
           customize={customize}
@@ -1139,6 +1162,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.timeClock}
           accent="#334155"
           customize={customize}
@@ -1157,6 +1181,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.customReceipt}
           accent="#059669"
           customize={customize}
@@ -1179,6 +1204,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.businessWorkflow}
           sublabel={labels.businessWorkflowSub}
           accent="#7c3aed"
@@ -1198,6 +1224,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={labels.organizationChart}
           accent="#0d9488"
           customize={customize}
@@ -1223,6 +1250,7 @@ export default function DashboardQuickActions(props: Props) {
           scheme={tileScheme}
           compact={isMobile}
           uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
           label={opLabels[id] ?? labels.operations}
           accent="#0369a1"
           customize={customize}

@@ -54,6 +54,8 @@ import {
   queueSchedulingCustomerPrefill,
   queueCustomReceiptCustomerPrefill,
   queueSchedulingQuotePrefill,
+  queueQuotesOpenQuote,
+  queueOpenCustomReceiptModal,
   CUSTOMERS_HUB_REFRESH_EVENT,
   CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT,
   notifyCustomersEmailSync,
@@ -106,11 +108,24 @@ import {
 } from "../../lib/specialtyReports/reportRecords"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
-import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
+import { CustomerEventCoiButton } from "../../components/CustomerCoiQuickActions"
 import { CustomerQuickViewTabRail } from "../../components/customer-quick-view/CustomerQuickViewTabRail"
 import { CustomerQuickViewMoveToMenu } from "../../components/customer-quick-view/CustomerQuickViewMoveToMenu"
 import { CustomerQuickViewSidePane } from "../../components/customer-quick-view/CustomerQuickViewSidePane"
-import type { CustomerQuickViewTabId } from "../../components/customer-quick-view/customerQuickViewTabs"
+import { CustomerQuickViewNextSteps } from "../../components/customer-quick-view/CustomerQuickViewNextSteps"
+import { CustomerQuickViewSettingsModal } from "../../components/customer-quick-view/CustomerQuickViewSettingsModal"
+import {
+  CUSTOMER_QUICK_VIEW_TABS,
+  type CustomerQuickViewTabId,
+} from "../../components/customer-quick-view/customerQuickViewTabs"
+import {
+  buildCustomerQuickViewPrefsPayload,
+  CUSTOMER_QUICK_VIEW_PREFS_META_KEY,
+  defaultCustomerQuickViewPrefs,
+  isQuickViewTabVisible,
+  parseCustomerQuickViewPrefs,
+  type CustomerQuickViewPrefs,
+} from "../../lib/customerQuickViewPrefs"
 import { customerHubJobStatusLabel } from "../../lib/customerWorkflowProgress"
 
 const JOB_PIPELINE_OPTIONS = [
@@ -376,6 +391,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [promotionalCustomers, setPromotionalCustomers] = useState<CustomerRow[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null)
   const [quickViewTab, setQuickViewTab] = useState<CustomerQuickViewTabId>("communications")
+  const [quickViewPrefs, setQuickViewPrefs] = useState<CustomerQuickViewPrefs>(defaultCustomerQuickViewPrefs())
+  const [showQuickViewSettings, setShowQuickViewSettings] = useState(false)
+  const [quickViewSettingsSaveBusy, setQuickViewSettingsSaveBusy] = useState(false)
+  const visibleQuickViewTabIds = useMemo(() => {
+    const customerMeta = selectedCustomer?.metadata
+    return CUSTOMER_QUICK_VIEW_TABS.filter((t) => isQuickViewTabVisible(t.id, quickViewPrefs, customerMeta)).map((t) => t.id)
+  }, [quickViewPrefs, selectedCustomer?.metadata])
   const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
   const [shareCustomerTarget, setShareCustomerTarget] = useState<{ id: string; name: string } | null>(null)
   const [notesCustomerId, setNotesCustomerId] = useState<string | null>(null)
@@ -1170,12 +1192,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
         const meta = data.metadata as Record<string, unknown>
         setAccountProfileMetadata(meta)
+        setQuickViewPrefs(parseCustomerQuickViewPrefs(meta))
         hydrateLeadFilterPrefsFromMetadata(meta)
       })
     return () => {
       cancelled = true
     }
   }, [userId, hydrateLeadFilterPrefsFromMetadata])
+
+  useEffect(() => {
+    if (!visibleQuickViewTabIds.includes(quickViewTab)) {
+      setQuickViewTab("communications")
+    }
+  }, [visibleQuickViewTabIds, quickViewTab])
 
   useEffect(() => {
     const onMeta = (ev: Event) => {
@@ -1411,6 +1440,40 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (!setPage) return
     queueCustomerProfile(customerId)
     setPage("customer-profile")
+  }
+
+  function handleQuickViewCreateAction(tab: CustomerQuickViewTabId) {
+    const customerId = selectedCustomer?.id
+    if (!customerId || !setPage) return
+    queueCustomerFocus(customerId)
+    switch (tab) {
+      case "estimates":
+        queueQuotesCustomerPrefill(customerId)
+        setPage("quotes")
+        break
+      case "work_orders":
+        queueQuotesCustomerPrefill(customerId)
+        setPage("work-orders")
+        break
+      case "purchase_orders":
+        queueQuotesCustomerPrefill(customerId)
+        setPage("purchase-orders")
+        break
+      case "invoices":
+        setCustomerPaymentRequestOpen(true)
+        break
+      case "receipts":
+        queueCustomReceiptCustomerPrefill(customerId)
+        queueOpenCustomReceiptModal()
+        setPage("calendar")
+        break
+      case "scheduling":
+        queueSchedulingCustomerPrefill(customerId)
+        setPage("calendar")
+        break
+      default:
+        break
+    }
   }
 
   async function geocodeCustomerServiceAddress() {
@@ -1888,6 +1951,33 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
   }
 
+  async function saveQuickViewSettings(prefs: CustomerQuickViewPrefs) {
+    if (!supabase || !userId) return
+    setQuickViewSettingsSaveBusy(true)
+    try {
+      const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) {
+        alert(fetchErr.message)
+        return
+      }
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      prevMeta[CUSTOMER_QUICK_VIEW_PREFS_META_KEY] = buildCustomerQuickViewPrefsPayload(prefs)
+      const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+      if (error) {
+        alert(error.message)
+        return
+      }
+      setAccountProfileMetadata(prevMeta)
+      setQuickViewPrefs(prefs)
+      setShowQuickViewSettings(false)
+    } finally {
+      setQuickViewSettingsSaveBusy(false)
+    }
+  }
+
   async function saveLeadFilterPreferences() {
     if (!supabase || !userId) return
     setLeadFilterSaveBusy(true)
@@ -2108,7 +2198,30 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           Lead filter preferences
         </button>
         {userId ? <TabNotificationAlertsButton tab="customers" profileUserId={userId} /> : null}
+        <button
+          type="button"
+          onClick={() => setShowQuickViewSettings(true)}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "6px",
+            border: "1px solid #d1d5db",
+            background: "white",
+            cursor: "pointer",
+            color: theme.text,
+            fontWeight: 600,
+          }}
+        >
+          Settings
+        </button>
       </div>
+
+      <CustomerQuickViewSettingsModal
+        open={showQuickViewSettings}
+        onClose={() => setShowQuickViewSettings(false)}
+        initialPrefs={quickViewPrefs}
+        onSave={saveQuickViewSettings}
+        saveBusy={quickViewSettingsSaveBusy}
+      />
 
       <LeadFilterPreferencesModal
         open={showLeadFilterPrefs}
@@ -2575,7 +2688,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       </button>
                                     </>
                                   ) : null}
-                                  {showCustomersCustomerPayment ? (
+                                  {showCustomersCustomerPayment && !CUSTOMER_LIST_COMPACT_DETAIL ? (
                                     <button
                                       type="button"
                                       onClick={() => setCustomerPaymentRequestOpen(true)}
@@ -3022,7 +3135,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             {CUSTOMER_LIST_COMPACT_DETAIL ? (
                               <>
                             {isMobile ? (
-                              <CustomerQuickViewTabRail active={quickViewTab} onChange={setQuickViewTab} isMobile={isMobile} />
+                              <CustomerQuickViewTabRail
+                                active={quickViewTab}
+                                onChange={setQuickViewTab}
+                                isMobile={isMobile}
+                                visibleTabIds={visibleQuickViewTabIds}
+                                onCreateAction={setPage ? handleQuickViewCreateAction : undefined}
+                              />
                             ) : null}
                             <div
                               style={
@@ -3154,6 +3273,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
                                   {quickViewTab === "communications" ? (
                                   <>
+                                  <CustomerQuickViewNextSteps
+                                    customer={c}
+                                    supabase={supabase}
+                                    userId={userId}
+                                    profileMetadata={accountProfileMetadata}
+                                    onGoToTab={setQuickViewTab}
+                                    setPage={setPage}
+                                    onOpenQuote={(quoteId) => queueQuotesOpenQuote(quoteId)}
+                                  />
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>
                                     <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
                                     <button
@@ -3676,106 +3804,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       </div>
                                     </div>
                                   ) : null}
-                                  {selectedCustomer?.id === c.id ? (
-                                    <CustomerCoiQuickActions
-                                      userId={userId}
-                                      customerId={c.id}
-                                      customerName={c.display_name ?? undefined}
-                                      customerMetadata={c.metadata}
-                                      calendarEvents={customerCalendarEvents.map((ev) => ({
-                                        id: ev.id,
-                                        title: ev.title,
-                                        quote_id: ev.quote_id,
-                                      }))}
-                                      compact
-                                      onUpdated={() => void loadCustomers()}
-                                    />
-                                  ) : null}
-                                  {setPage ? (
-                                    <div
-                                      style={{
-                                        marginTop: 14,
-                                        paddingTop: 14,
-                                        borderTop: `1px solid ${theme.border}`,
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 10,
-                                      }}
-                                    >
-                                      {!CUSTOMER_LIST_COMPACT_DETAIL ? (
-                                        <>
-                                          <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 14 }}>Scheduling and estimates</div>
-                                          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                            Open Scheduling with this customer prefilled, or open their latest estimate (saved job details, line items, and notes reload).
-                                          </p>
-                                        </>
-                                      ) : null}
-                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            queueSchedulingCustomerPrefill(c.id)
-                                            queueCustomerFocus(c.id)
-                                            setPage("calendar")
-                                          }}
-                                          style={{
-                                            padding: "8px 14px",
-                                            borderRadius: 6,
-                                            border: "none",
-                                            background: theme.primary,
-                                            color: "#fff",
-                                            fontWeight: 600,
-                                            cursor: "pointer",
-                                            fontSize: 13,
-                                          }}
-                                        >
-                                          Scheduling
-                                        </button>
-                                        {!CUSTOMER_LIST_COMPACT_DETAIL ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              queueCustomReceiptCustomerPrefill(c.id)
-                                              queueCustomerFocus(c.id)
-                                              setPage("calendar")
-                                            }}
-                                            style={{
-                                              padding: "8px 14px",
-                                              borderRadius: 6,
-                                              border: `1px solid ${theme.border}`,
-                                              background: "#fff",
-                                              color: theme.text,
-                                              fontWeight: 600,
-                                              cursor: "pointer",
-                                              fontSize: 13,
-                                            }}
-                                          >
-                                            Custom Receipt
-                                          </button>
-                                        ) : null}
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            queueQuotesCustomerPrefill(c.id)
-                                            queueCustomerFocus(c.id)
-                                            setPage("quotes")
-                                          }}
-                                          style={{
-                                            padding: "8px 14px",
-                                            borderRadius: 6,
-                                            border: CUSTOMER_LIST_COMPACT_DETAIL ? "none" : `1px solid ${theme.border}`,
-                                            background: CUSTOMER_LIST_COMPACT_DETAIL ? theme.primary : "#fff",
-                                            color: CUSTOMER_LIST_COMPACT_DETAIL ? "#fff" : theme.text,
-                                            fontWeight: 600,
-                                            cursor: "pointer",
-                                            fontSize: 13,
-                                          }}
-                                        >
-                                          {CUSTOMER_LIST_COMPACT_DETAIL ? "Create estimate" : "Open estimate"}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : null}
                                   </>
                                   ) : (
                                     <CustomerQuickViewSidePane
@@ -3784,12 +3812,19 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       supabase={supabase}
                                       userId={userId}
                                       profileMetadata={accountProfileMetadata}
+                                      globalQuickViewPrefs={quickViewPrefs}
                                       setPage={setPage}
                                       onOpenFullProfile={() => openFullCustomerProfile(c.id)}
                                       contactForm={detailForm}
                                       setContactForm={setDetailForm}
                                       onSaveContact={() => void saveCustomerDetail()}
                                       contactSaving={detailSaving}
+                                      onCustomerMetadataUpdated={(metadata) => {
+                                        setSelectedCustomer((prev) => (prev?.id === c.id ? { ...prev, metadata } : prev))
+                                        void loadCustomers()
+                                      }}
+                                      onRequestCustomerPayment={() => setCustomerPaymentRequestOpen(true)}
+                                      showCustomerPayments={showCustomersCustomerPayment}
                                     />
                                   )}
                                 </div>
@@ -3925,7 +3960,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </div>
                                 ) : null}
                                 {!isMobile ? (
-                                  <CustomerQuickViewTabRail active={quickViewTab} onChange={setQuickViewTab} isMobile={isMobile} />
+                                  <CustomerQuickViewTabRail
+                                    active={quickViewTab}
+                                    onChange={setQuickViewTab}
+                                    isMobile={isMobile}
+                                    visibleTabIds={visibleQuickViewTabIds}
+                                    onCreateAction={setPage ? handleQuickViewCreateAction : undefined}
+                                  />
                                 ) : null}
                               </div>
                             </div>

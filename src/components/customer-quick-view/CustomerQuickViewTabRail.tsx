@@ -1,27 +1,46 @@
 import type { CSSProperties } from "react"
 import { theme } from "../../styles/theme"
-import { CUSTOMER_QUICK_VIEW_TABS, type CustomerQuickViewTabId } from "./customerQuickViewTabs"
+import {
+  CUSTOMER_QUICK_VIEW_CREATE_LABELS,
+  CUSTOMER_QUICK_VIEW_TABS,
+  isCustomerQuickViewCreateTab,
+  type CustomerQuickViewTabId,
+} from "./customerQuickViewTabs"
 
 type Props = {
   active: CustomerQuickViewTabId
   onChange: (tab: CustomerQuickViewTabId) => void
   isMobile: boolean
+  visibleTabIds: CustomerQuickViewTabId[]
+  onCreateAction?: (tab: CustomerQuickViewTabId) => void
 }
 
-export function CustomerQuickViewTabRail({ active, onChange, isMobile }: Props) {
+export function CustomerQuickViewTabRail({
+  active,
+  onChange,
+  isMobile,
+  visibleTabIds,
+  onCreateAction,
+}: Props) {
+  const visibleSet = new Set(visibleTabIds)
+  const tabs = CUSTOMER_QUICK_VIEW_TABS.filter((t) => visibleSet.has(t.id))
+  const showCreate = isCustomerQuickViewCreateTab(active) && onCreateAction
+
   if (isMobile) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 6,
-          marginBottom: 10,
-        }}
-      >
-        {CUSTOMER_QUICK_VIEW_TABS.map((tab) => (
-          <TabButton key={tab.id} label={tab.label} active={active === tab.id} onClick={() => onChange(tab.id)} compact />
-        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {tabs.map((tab) => (
+            <TabButton key={tab.id} label={tab.label} active={active === tab.id} onClick={() => onChange(tab.id)} compact />
+          ))}
+        </div>
+        {showCreate ? (
+          <CreateActionButton
+            label={CUSTOMER_QUICK_VIEW_CREATE_LABELS[active]}
+            onClick={() => onCreateAction(active)}
+            compact
+          />
+        ) : null}
       </div>
     )
   }
@@ -40,8 +59,16 @@ export function CustomerQuickViewTabRail({ active, onChange, isMobile }: Props) 
         alignSelf: "stretch",
       }}
     >
-      {CUSTOMER_QUICK_VIEW_TABS.map((tab) => (
-        <TabButton key={tab.id} label={tab.label} active={active === tab.id} onClick={() => onChange(tab.id)} />
+      {tabs.map((tab) => (
+        <div key={tab.id} style={{ display: "grid", gap: 4 }}>
+          <TabButton label={tab.label} active={active === tab.id} onClick={() => onChange(tab.id)} />
+          {active === tab.id && isCustomerQuickViewCreateTab(tab.id) && onCreateAction ? (
+            <CreateActionButton
+              label={CUSTOMER_QUICK_VIEW_CREATE_LABELS[tab.id]}
+              onClick={() => onCreateAction(tab.id)}
+            />
+          ) : null}
+        </div>
       ))}
     </nav>
   )
@@ -87,6 +114,38 @@ function TabButton({
   return (
     <button type="button" onClick={onClick} aria-current={active ? "page" : undefined} style={style}>
       {label}
+    </button>
+  )
+}
+
+function CreateActionButton({
+  label,
+  onClick,
+  compact,
+}: {
+  label: string
+  onClick: () => void
+  compact?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: compact ? "auto" : "100%",
+        padding: compact ? "6px 12px" : "7px 10px",
+        borderRadius: compact ? 999 : 8,
+        border: "none",
+        background: theme.charcoal,
+        color: "#fff",
+        fontSize: compact ? 11 : 11,
+        fontWeight: 700,
+        cursor: "pointer",
+        textAlign: compact ? "center" : "left",
+        alignSelf: compact ? "flex-start" : undefined,
+      }}
+    >
+      + {label}
     </button>
   )
 }

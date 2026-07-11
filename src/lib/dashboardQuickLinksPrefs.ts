@@ -185,13 +185,13 @@ export const DASHBOARD_GRID_SLOT_COUNT = DASHBOARD_GRID_COLS * DASHBOARD_GRID_RO
 
 /** Desktop customize editor: minimum visible rows (columns follow container width). */
 export const DASHBOARD_CUSTOMIZE_MIN_ROWS_DESKTOP = 2
-export const DASHBOARD_CUSTOMIZE_MIN_ROWS_MOBILE = 3
+export const DASHBOARD_CUSTOMIZE_MIN_ROWS_MOBILE = 2
 /** Upper cap when dragging to add more rows in the customize editor. */
 export const DASHBOARD_CUSTOMIZE_MAX_ROWS_DESKTOP = 6
 export const DASHBOARD_CUSTOMIZE_MAX_ROWS_MOBILE = 6
 
 export const DASHBOARD_TILE_WIDTH_DESKTOP = 132
-export const DASHBOARD_TILE_WIDTH_MOBILE = 124
+export const DASHBOARD_TILE_WIDTH_MOBILE = 78
 export const DASHBOARD_TILE_GAP_DESKTOP = 10
 export const DASHBOARD_TILE_GAP_MOBILE = 8
 

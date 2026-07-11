@@ -36,12 +36,16 @@ export default function DashboardQuickLinkGrid({ grid, gridCols, isMobile, rende
 
   const slotCount = displayRows * gridCols
 
+  const gridColumnsStyle = isMobile
+    ? `repeat(${gridCols}, minmax(0, 1fr))`
+    : `repeat(${gridCols}, ${tileW}px)`
+
   return (
     <div
       style={{
         marginTop: 14,
         display: "grid",
-        gridTemplateColumns: `repeat(${gridCols}, ${tileW}px)`,
+        gridTemplateColumns: gridColumnsStyle,
         gridTemplateRows: `repeat(${displayRows}, ${tileH}px)`,
         gap,
         width: "100%",
@@ -50,12 +54,18 @@ export default function DashboardQuickLinkGrid({ grid, gridCols, isMobile, rende
       {Array.from({ length: slotCount }, (_, slotIndex) => {
         const id = slotIndex < grid.length ? grid[slotIndex] : null
         if (!id || !filterVisible(id)) {
-          return <div key={`empty-${slotIndex}`} style={{ width: tileW, height: tileH }} aria-hidden />
+          return (
+            <div
+              key={`empty-${slotIndex}`}
+              style={{ width: isMobile ? "100%" : tileW, height: tileH }}
+              aria-hidden
+            />
+          )
         }
         return (
           <div
             key={`${id}-${slotIndex}`}
-            style={{ width: tileW, height: tileH, display: "flex" }}
+            style={{ width: isMobile ? "100%" : tileW, height: tileH, display: "flex" }}
             className="tm-dash-grid-tile-wrap"
           >
             {renderTile(id)}

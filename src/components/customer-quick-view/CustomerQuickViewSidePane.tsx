@@ -29,6 +29,19 @@ import { PurchaseOrderEditorModal } from "../document-editors/PurchaseOrderEdito
 import { PaymentRequestEditorModal } from "../document-editors/PaymentRequestEditorModal"
 import type { CustomerQuickViewTabId } from "./customerQuickViewTabs"
 import type { CommunicationUrgency } from "../../lib/customerUrgency"
+import CustomerCoiQuickActions from "../CustomerCoiQuickActions"
+import { CustomerQuickViewTabVisibilityEditor } from "./CustomerQuickViewTabVisibilityEditor"
+import {
+  buildCustomerTabVisibilityPayload,
+  CUSTOMER_QUICK_VIEW_TAB_VISIBILITY_META_KEY,
+  defaultCustomerQuickViewTabVisibility,
+  parseCustomerQuickViewPrefs,
+  resolveEffectiveTabVisibility,
+  type CustomerQuickViewPrefs,
+  type CustomerQuickViewTabVisibility,
+} from "../../lib/customerQuickViewPrefs"
+import { calendarEventDisplayStatus } from "../../lib/calendarEventProfile"
+import { queueSchedulingCustomerPrefill, queueSchedulingEventView } from "../../lib/workflowNavigation"
 
 type CustomerRowLite = {
   id: string
@@ -55,12 +68,16 @@ type Props = {
   supabase: SupabaseClient | null
   userId: string
   profileMetadata: Record<string, unknown> | null
+  globalQuickViewPrefs: CustomerQuickViewPrefs
   setPage?: (page: string) => void
   onOpenFullProfile: () => void
   contactForm: ContactForm
   setContactForm: React.Dispatch<React.SetStateAction<ContactForm>>
   onSaveContact: () => void
   contactSaving: boolean
+  onCustomerMetadataUpdated?: (metadata: unknown) => void
+  onRequestCustomerPayment?: () => void
+  showCustomerPayments?: boolean
 }
 
 function formatWhen(iso: string | null | undefined): string {
@@ -78,12 +95,16 @@ export function CustomerQuickViewSidePane({
   supabase,
   userId,
   profileMetadata,
+  globalQuickViewPrefs,
   setPage,
   onOpenFullProfile,
   contactForm,
   setContactForm,
   onSaveContact,
   contactSaving,
+  onCustomerMetadataUpdated,
+  onRequestCustomerPayment,
+  showCustomerPayments,
 }: Props) {
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
   const [loading, setLoading] = useState(false)
@@ -93,6 +114,10 @@ export function CustomerQuickViewSidePane({
   const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrderRecord | null>(null)
   const [editingPurchaseOrder, setEditingPurchaseOrder] = useState<PurchaseOrderRecord | null>(null)
   const [editingInvoice, setEditingInvoice] = useState<PaymentRequestRow | null>(null)
+  const [customerSettingsDraft, setCustomerSettingsDraft] = useState<CustomerQuickViewTabVisibility>(
+    defaultCustomerQuickViewTabVisibility(),
+  )
+  const [customerSettingsSaving, setCustomerSettingsSaving] = useState(false)
 
   const woTemplate = useMemo(
     () => templateFormFromMetadata(WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS, profileMetadata ?? {}),
@@ -118,16 +143,31 @@ export function CustomerQuickViewSidePane({
   }, [supabase, userId, customer.id])
 
   useEffect(() => {
-    if (tab === "contact" || tab === "workflow" || tab === "communications") return
+    if (tab === "contact" || tab === "workflow" || tab === "communications" || tab === "customer_settings") {
+      return
+    }
     void loadBundle()
   }, [tab, loadBundle])
+
+  useEffect(() => {
+    if (tab !== "customer_settings") return
+    setCustomerSettingsDraft(resolveEffectiveTabVisibility(globalQuickViewPrefs, customer.metadata))
+  }, [tab, globalQuickViewPrefs, customer.metadata])
 
   useEffect(() => {
     if (!supabase || !userId || tab !== "workflow") return
     void loadLinkableOrgUsers(supabase, userId).then(setLinkableUsers)
   }, [supabase, userId, tab])
 
-  if (loading && !bundle && tab !== "contact" && tab !== "workflow" && tab !== "communications") {
+  if (
+    loading &&
+    !bundle &&
+    tab !== "contact" &&
+    tab !== "workflow" &&
+    tab !== "communications" &&
+    tab !== "customer_settings" &&
+    tab !== "insurance_coi"
+  ) {
     return <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Loading…</p>
   }
   if (error && !bundle) {
@@ -213,6 +253,167 @@ export function CustomerQuickViewSidePane({
             ) : null}
           </div>
         ) : null}
+      </div>
+    )
+  }
+
+  if (tab === "insurance_coi") {
+    return (
+      <CustomerCoiQuickActions
+        userId={userId}
+        customerId={customer.id}
+        customerName={customer.display_name ?? undefined}
+        customerMetadata={customer.metadata}
+        calendarEvents={(bundle?.calendarEvents ?? []).map((ev) => ({
+          id: ev.id,
+          title: ev.title,
+          quote_id: ev.quote_id,
+        }))}
+        onUpdated={() => void loadBundle()}
+      />
+    )
+  }
+
+  if (tab === "scheduling") {
+    const events = bundle?.calendarEvents ?? []
+    return (
+      <div style={{ display: "grid", gap: 10 }}>
+        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Calendar events linked to this customer. Use Schedule in the tab menu to add a new appointment.
+        </p>
+        {events.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>No calendar events linked yet.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {events.map((ev) => {
+              const when = ev.start_at
+                ? new Date(ev.start_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
+                : "—"
+              const status = calendarEventDisplayStatus(ev)
+              return (
+                <div
+                  key={ev.id}
+                  style={{
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>{ev.title}</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                    {when} · {status}
+                    {ev.quote_id ? " · From estimate" : ""}
+                  </div>
+                  {setPage ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        queueSchedulingEventView(ev.id)
+                        queueSchedulingCustomerPrefill(customer.id)
+                        setPage("calendar")
+                      }}
+                      style={{
+                        marginTop: 8,
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${theme.border}`,
+                        background: "#f8fafc",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open in scheduling
+                    </button>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (tab === "customer_settings") {
+    async function saveCustomerSettings() {
+      if (!supabase || !userId) return
+      setCustomerSettingsSaving(true)
+      try {
+        const { data, error: fetchErr } = await supabase
+          .from("customers")
+          .select("metadata")
+          .eq("id", customer.id)
+          .eq("user_id", userId)
+          .maybeSingle()
+        if (fetchErr) throw fetchErr
+        const prevMeta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? { ...(data.metadata as Record<string, unknown>) }
+            : {}
+        prevMeta[CUSTOMER_QUICK_VIEW_TAB_VISIBILITY_META_KEY] = buildCustomerTabVisibilityPayload(customerSettingsDraft)
+        const { error } = await supabase
+          .from("customers")
+          .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
+          .eq("id", customer.id)
+          .eq("user_id", userId)
+        if (error) throw error
+        onCustomerMetadataUpdated?.(prevMeta)
+      } catch (e) {
+        alert(formatAppError(e))
+      } finally {
+        setCustomerSettingsSaving(false)
+      }
+    }
+
+    const globalPrefs = parseCustomerQuickViewPrefs(profileMetadata)
+    return (
+      <div style={{ display: "grid", gap: 14 }}>
+        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Override which tabs are visible for <strong>{customer.display_name?.trim() || "this customer"}</strong> only.
+          Defaults come from the main Settings button next to Alerts.
+        </p>
+        <CustomerQuickViewTabVisibilityEditor
+          visibility={customerSettingsDraft}
+          onChange={setCustomerSettingsDraft}
+        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() =>
+              setCustomerSettingsDraft(resolveEffectiveTabVisibility(globalPrefs, undefined))
+            }
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            Reset to account defaults
+          </button>
+          <button
+            type="button"
+            disabled={customerSettingsSaving}
+            onClick={() => void saveCustomerSettings()}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: customerSettingsSaving ? "wait" : "pointer",
+            }}
+          >
+            {customerSettingsSaving ? "Saving…" : "Save for this customer"}
+          </button>
+        </div>
       </div>
     )
   }
@@ -356,6 +557,50 @@ export function CustomerQuickViewSidePane({
   function editReceipt() {
     queueOpenCustomReceiptModal()
     setPage?.("calendar")
+  }
+
+  if (tab === "customer_payments") {
+    const rows = bundle?.invoices ?? []
+    return (
+      <>
+        <div style={{ display: "grid", gap: 10 }}>
+          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+            Payment requests and invoice links sent to this customer.
+          </p>
+          {showCustomerPayments && onRequestCustomerPayment ? (
+            <button
+              type="button"
+              onClick={onRequestCustomerPayment}
+              style={{
+                justifySelf: "start",
+                padding: "8px 14px",
+                borderRadius: 8,
+                border: "none",
+                background: theme.primary,
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Request customer payment
+            </button>
+          ) : null}
+          <DocList
+            empty="No payment requests for this customer yet."
+            rows={rows.map((inv) => ({
+              key: inv.id,
+              title: inv.description?.trim() || "Payment request",
+              meta: `${inv.status} · ${formatUsdAmount(inv.amount) ?? "—"} · ${formatWhen(inv.created_at)}`,
+              busy: false,
+              onView: inv.payment_url ? () => window.open(inv.payment_url!, "_blank", "noopener") : undefined,
+              onEdit: () => editInvoice(inv),
+            }))}
+          />
+        </div>
+        {documentEditors}
+      </>
+    )
   }
 
   if (docTab === "estimates") {

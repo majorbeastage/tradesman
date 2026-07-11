@@ -10,13 +10,15 @@ import {
 } from "../lib/dashboardQuickLinksPrefs"
 
 export const DASHBOARD_TILE_WIDTH_DESKTOP = 132
-export const DASHBOARD_TILE_WIDTH_MOBILE = 124
+export const DASHBOARD_TILE_WIDTH_MOBILE = 78
 export const DASHBOARD_TILE_HEIGHT_DESKTOP = 80
-export const DASHBOARD_TILE_HEIGHT_MOBILE = 76
+export const DASHBOARD_TILE_HEIGHT_MOBILE = 56
 
 type Zone = "visible" | "hidden"
 
 type DragSession = { id: DashboardQuickLinkId; zone: Zone }
+
+const MOBILE_DRAG_THRESHOLD_PX = 12
 
 type Props = {
   grid: DashboardTileGridSlot[]
@@ -42,6 +44,15 @@ export default function DashboardQuickLinkCustomizeZones({
   const [hoverSlot, setHoverSlot] = useState<number | "hidden" | null>(null)
   const [draggingId, setDraggingId] = useState<DashboardQuickLinkId | null>(null)
   const sessionRef = useRef<DragSession | null>(null)
+  const pointerStartRef = useRef<{
+    x: number
+    y: number
+    id: DashboardQuickLinkId
+    zone: Zone
+    pointerId: number
+    target: HTMLElement
+  } | null>(null)
+  const dragActiveRef = useRef(false)
   const gridRef = useRef<HTMLDivElement>(null)
   const visibleZoneRef = useRef<HTMLDivElement>(null)
   const hiddenZoneRef = useRef<HTMLDivElement>(null)
@@ -67,15 +78,20 @@ export default function DashboardQuickLinkCustomizeZones({
       const x = clientX - rect.left
       const y = clientY - rect.top
       if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null
-      const col = Math.min(gridCols - 1, Math.max(0, Math.floor(x / (tileW + gap))))
+      const cellW = isMobile
+        ? (rect.width - gap * Math.max(0, gridCols - 1)) / gridCols
+        : tileW
+      const col = Math.min(gridCols - 1, Math.max(0, Math.floor(x / (cellW + gap))))
       const row = Math.min(displayRows - 1, Math.max(0, Math.floor(y / (tileH + gap))))
       return row * gridCols + col
     },
-    [gridCols, displayRows, tileW, tileH, gap],
+    [gridCols, displayRows, tileW, tileH, gap, isMobile],
   )
 
   const finishDrag = useCallback(() => {
     sessionRef.current = null
+    pointerStartRef.current = null
+    dragActiveRef.current = false
     setDraggingId(null)
     clearHover()
   }, [])
@@ -153,25 +169,55 @@ export default function DashboardQuickLinkCustomizeZones({
   const beginPointerDrag = (e: React.PointerEvent, id: DashboardQuickLinkId, zone: Zone) => {
     if (e.button !== 0) return
     if ((e.target as HTMLElement).closest("[data-dash-remove-chip]")) return
-    sessionRef.current = { id, zone }
-    setDraggingId(id)
-    e.currentTarget.setPointerCapture(e.pointerId)
-    e.preventDefault()
+    pointerStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      id,
+      zone,
+      pointerId: e.pointerId,
+      target: e.currentTarget as HTMLElement,
+    }
+    dragActiveRef.current = false
+  }
+
+  const activateDrag = (start: NonNullable<typeof pointerStartRef.current>) => {
+    dragActiveRef.current = true
+    sessionRef.current = { id: start.id, zone: start.zone }
+    setDraggingId(start.id)
+    try {
+      start.target.setPointerCapture(start.pointerId)
+    } catch {
+      /* ignore */
+    }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    const start = pointerStartRef.current
+    if (!start) return
+    if (!dragActiveRef.current) {
+      const dx = e.clientX - start.x
+      const dy = e.clientY - start.y
+      const threshold = isMobile ? MOBILE_DRAG_THRESHOLD_PX : 6
+      if (Math.hypot(dx, dy) < threshold) return
+      activateDrag(start)
+      e.preventDefault()
+    }
     if (!sessionRef.current) return
     updateHoverFromPoint(e.clientX, e.clientY)
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
-    if (!sessionRef.current) return
+    const start = pointerStartRef.current
+    pointerStartRef.current = null
+    if (!start) return
+    if (!dragActiveRef.current) return
     try {
-      e.currentTarget.releasePointerCapture(e.pointerId)
+      start.target.releasePointerCapture(start.pointerId)
     } catch {
       /* ignore */
     }
     commitDropAtPoint(e.clientX, e.clientY)
+    dragActiveRef.current = false
   }
 
   const onPointerCancel = () => {
@@ -188,12 +234,12 @@ export default function DashboardQuickLinkCustomizeZones({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         style={{
-          width: tileW,
+          width: isMobile ? (zone === "hidden" ? tileW : "100%") : tileW,
           height: tileH,
           flexShrink: 0,
           opacity: isSource ? 0.45 : 1,
           cursor: isSource ? "grabbing" : "grab",
-          touchAction: "none",
+          touchAction: isDragging ? "none" : "pan-y",
         }}
         className="tm-dash-customize-tile-wrap"
       >
@@ -203,12 +249,16 @@ export default function DashboardQuickLinkCustomizeZones({
   }
 
   const zoneShell: React.CSSProperties = {
-    borderRadius: 12,
+    borderRadius: isMobile ? 10 : 12,
     border: "1px dashed rgba(100, 116, 139, 0.35)",
     background: "rgba(255,255,255,0.35)",
-    padding: isMobile ? 10 : 12,
-    minHeight: tileH * displayRows + gap * Math.max(0, displayRows - 1) + 24,
+    padding: isMobile ? 8 : 12,
+    minHeight: isMobile ? undefined : tileH * displayRows + gap * Math.max(0, displayRows - 1) + 24,
   }
+
+  const gridColumnsStyle = isMobile
+    ? `repeat(${gridCols}, minmax(0, 1fr))`
+    : `repeat(${gridCols}, ${tileW}px)`
 
   const hasVisible = grid.some((x) => x != null)
   const expansionRow = canExpand ? gridRows : -1
@@ -227,7 +277,7 @@ export default function DashboardQuickLinkCustomizeZones({
       <div
         key={`slot-${slotIndex}`}
         style={{
-          width: tileW,
+          width: isMobile ? "100%" : tileW,
           height: tileH,
           borderRadius: 8,
           border: active
@@ -248,7 +298,7 @@ export default function DashboardQuickLinkCustomizeZones({
   }
 
   return (
-    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ marginTop: isMobile ? 10 : 14, display: "flex", flexDirection: "column", gap: isMobile ? 8 : 12 }}>
       <div ref={visibleZoneRef} style={zoneShell}>
         <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{visibleTitle}</div>
         {!hasVisible && !isDragging ? (
@@ -276,10 +326,11 @@ export default function DashboardQuickLinkCustomizeZones({
             ref={gridRef}
             style={{
               display: "grid",
-              gridTemplateColumns: `repeat(${gridCols}, ${tileW}px)`,
+              gridTemplateColumns: gridColumnsStyle,
               gridTemplateRows: `repeat(${displayRows}, ${tileH}px)`,
               gap,
               width: "100%",
+              touchAction: isDragging ? "none" : "pan-y",
             }}
           >
             {Array.from({ length: slotCount }, (_, slotIndex) => {
@@ -324,7 +375,17 @@ export default function DashboardQuickLinkCustomizeZones({
             All available shortcuts are on your dashboard.
           </p>
         ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: isMobile ? "nowrap" : "wrap",
+              gap,
+              overflowX: isMobile ? "auto" : undefined,
+              WebkitOverflowScrolling: isMobile ? "touch" : undefined,
+              paddingBottom: isMobile ? 4 : undefined,
+              touchAction: isDragging ? "none" : "pan-x pan-y",
+            }}
+          >
             {hiddenIds.map((id) => tileShell(id, "hidden"))}
           </div>
         )}
