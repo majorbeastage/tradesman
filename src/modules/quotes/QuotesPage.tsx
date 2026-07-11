@@ -146,6 +146,7 @@ import { SPECIALTY_REPORT_REGISTRY_KEY, parseSpecialtyReportRegistry } from "../
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { contactTargetLabel, resolveCustomerContactByTarget, type ContactTarget } from "../../lib/customerContactRouting"
 import { fetchCustomerWorkspaceContext } from "../../lib/customerWorkspaceContext"
+import { formatCustomerNotesForAiPack } from "../../lib/customerNotesForAi"
 import {
   consumeOpenSpecialtyReportWizard,
   consumeEstimatesLibraryOpen,
@@ -4634,8 +4635,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }
 
   function buildConversationPackFromActivity(): string {
+    // Always use full activity for AI — ignore channel filter chips on the estimate page.
     const lines: string[] = []
-    for (const item of quoteActivityFiltered.slice(-55)) {
+    for (const item of quoteActivityItems.slice(-55)) {
       if (item.kind === "msg") {
         const m = item.payload
         const dir = m.direction === "inbound" ? "in" : m.direction === "outbound" ? "out" : ""
@@ -4652,8 +4654,35 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return lines.join("\n").slice(0, 12000)
   }
 
-  function buildJobPackContextString(): string {
+  async function loadCustomerNotesPackForQuote(): Promise<string> {
+    const cid = typeof selectedQuote?.customer_id === "string" ? selectedQuote.customer_id.trim() : ""
+    if (!supabase || !cid) return ""
+    try {
+      const tried = await supabase.from("customers").select("notes, notes_past").eq("id", cid).maybeSingle()
+      if (!tried.error && tried.data) {
+        return formatCustomerNotesForAiPack({
+          notes: (tried.data as { notes?: string | null }).notes,
+          notes_past: (tried.data as { notes_past?: unknown }).notes_past,
+        })
+      }
+      if (tried.error && /notes_past|column/i.test(tried.error.message ?? "")) {
+        const fb = await supabase.from("customers").select("notes").eq("id", cid).maybeSingle()
+        if (!fb.error && fb.data) {
+          return formatCustomerNotesForAiPack({ notes: (fb.data as { notes?: string | null }).notes })
+        }
+      }
+      return ""
+    } catch {
+      return ""
+    }
+  }
+
+  async function buildJobPackContextString(): Promise<string> {
     const chunks: string[] = []
+    const notes = jobDetailsText.trim()
+    if (notes) chunks.push(`Estimate / job details notes:\n${notes}`)
+    const customerNotes = await loadCustomerNotesPackForQuote()
+    if (customerNotes) chunks.push(`Customer notes:\n${customerNotes}`)
     const q = selectedQuote as QuoteRow | null
     const jtId = typeof q?.job_type_id === "string" ? q.job_type_id.trim() : ""
     if (jtId) {
@@ -4665,22 +4694,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (quoteMediaRows.length > 0) {
       chunks.push(`Files:\n${quoteMediaRows.map((r) => r.file_name?.trim() || r.storage_path || "file").join("\n")}`)
     }
-    const notes = jobDetailsText.trim()
-    if (notes) chunks.push(`Contractor notes:\n${notes}`)
     const activity = buildConversationPackFromActivity()
-    if (activity.trim()) chunks.push(`Recent thread (raw):\n${activity}`)
+    if (activity.trim()) chunks.push(`Recent thread (email / SMS / calls):\n${activity}`)
     return chunks.join("\n\n---\n\n").slice(0, 12000)
   }
 
   async function handleGenerateConversationBulletsFromWizard() {
     const pack = buildConversationPackFromActivity()
-    if (!pack.trim()) {
-      alert("No conversation activity to summarize yet.")
+    const customerNotes = await loadCustomerNotesPackForQuote()
+    const combined = [customerNotes ? `Customer notes:\n${customerNotes}` : "", pack]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim()
+    if (!combined) {
+      alert("No conversation activity or customer notes to summarize yet.")
       return
     }
     setConversationBulletsBusy(true)
     try {
-      const bullets = await fetchEstimateWizardBullets("conversation", pack)
+      const bullets = await fetchEstimateWizardBullets("conversation", combined)
       const text = bullets.join("\n")
       if (selectedQuote?.id) {
         saveEstimateGuideFlags(selectedQuote.id, { conversationScopeBullets: text })
@@ -4694,9 +4726,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }
 
   async function handleGenerateJobPackBulletsFromWizard() {
-    const pack = buildJobPackContextString()
+    const pack = await buildJobPackContextString()
     if (!pack.trim()) {
-      alert("Add conversation summary, notes, attachments, or thread activity first.")
+      alert("Add job details notes, customer notes, conversation summary, attachments, or thread activity first.")
       return
     }
     setJobPackBulletsBusy(true)

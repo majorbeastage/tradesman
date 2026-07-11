@@ -520,7 +520,7 @@ export default function EstimateStartGuideModal({
             >
               <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Scope notes (same field as the estimate page)</div>
               <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-                Keep it short: what work, where, key materials, access or timing. Avoid long narratives — bullets work best for AI.
+                Keep it short: what work, where, key materials, access or timing. Suggest scope bullets reads these notes plus customer notes and communications.
               </p>
               <textarea
                 rows={4}

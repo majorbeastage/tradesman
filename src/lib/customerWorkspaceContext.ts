@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { customerEmailFromIdentifiers, customerPhoneFromIdentifiers } from "./customerIdentifiers"
+import { formatCustomerNotesForAiPack } from "./customerNotesForAi"
 
 export type CustomerWorkspaceContext = {
   customerId: string
@@ -68,6 +69,8 @@ export async function fetchCustomerWorkspaceContext(
       service_address,
       service_lat,
       service_lng,
+      notes,
+      notes_past,
       customer_identifiers ( type, value )
     `,
     )
@@ -86,6 +89,10 @@ export async function fetchCustomerWorkspaceContext(
   const lngRaw = (cust as { service_lng?: number | null }).service_lng
   const serviceLat = latRaw != null && Number.isFinite(Number(latRaw)) ? Number(latRaw) : null
   const serviceLng = lngRaw != null && Number.isFinite(Number(lngRaw)) ? Number(lngRaw) : null
+  const customerNotesPack = formatCustomerNotesForAiPack({
+    notes: (cust as { notes?: string | null }).notes,
+    notes_past: (cust as { notes_past?: unknown }).notes_past,
+  })
 
   const [{ data: leads }, { data: quotes }, { data: convos }] = await Promise.all([
     supabase
@@ -158,7 +165,14 @@ export async function fetchCustomerWorkspaceContext(
     .order("created_at", { ascending: true })
     .limit(60)
 
-  const conversationPack = buildConversationPack(messages, events ?? [])
+  const conversationPack = [
+    customerNotesPack ? `Customer notes:\n${customerNotesPack}` : "",
+    buildConversationPack(messages, events ?? []),
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim()
+    .slice(0, 12000)
   const leadTitle = String((leads?.[0] as { title?: string | null } | undefined)?.title ?? "").trim()
   const suggestedTitle = leadTitle || (displayName ? `Estimate — ${displayName}` : "Estimate")
 

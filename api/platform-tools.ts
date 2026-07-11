@@ -550,13 +550,14 @@ async function handleEstimateWizardBullets(req: VercelRequest, res: VercelRespon
 
     const instructions =
       mode === "conversation"
-        ? `Extract only facts stated in the customer/contractor messages.
+        ? `Extract only facts stated in the customer/contractor messages and customer notes.
 Reply with JSON only, no markdown: {"bullets": string[]}
-Rules: Max 8 bullets. One short line each (no "•"). Include only what was actually said: scope requested, materials named, labor/time hints, dates, access constraints, pricing if mentioned.
-Do not speculate about permits, hazardous materials, or approvals. If the thread is empty, return {"bullets": []}.`
-        : `Summarize job scope for an estimate from the provided context (conversation summary, notes, file names).
+Rules: Max 8 bullets. One short line each (no "•"). Include only what was actually said or written in notes: scope requested, materials named, labor/time hints, dates, access constraints, pricing if mentioned.
+Treat "Customer notes" as first-class source material alongside email/SMS/calls. Do not speculate about permits, hazardous materials, or approvals. If the pack is empty, return {"bullets": []}.`
+        : `Summarize job scope for an estimate from the provided context (job details notes, customer notes, conversation summary, file names, email/SMS/call thread).
 Reply with JSON only, no markdown: {"bullets": string[]}
-Rules: Max 10 bullets. Short lines. Prioritize: scope of work, labor/crew needs, materials/supplies, travel or trip context, misc site notes.
+Rules: Max 10 bullets. Short lines. Prioritize: (1) Estimate / job details notes, (2) Customer notes, then conversation and files.
+Cover scope of work, labor/crew needs, materials/supplies, travel or trip context, misc site notes.
 Only mention permits, hazmat, or approvals if the context explicitly includes them. At most 1 bullet for unknowns if critical info is missing.`
 
     const raw =
