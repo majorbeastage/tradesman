@@ -4,16 +4,22 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
-import { formatUsdAmount } from "../../lib/customerDocumentStatus"
+import { formatUsdAmount, estimateDisplayStatus } from "../../lib/customerDocumentStatus"
 import {
+  createWorkOrderForCustomer,
   createWorkOrderFromQuote,
   generateWorkOrderNumber,
-  loadSignedQuotesForWorkOrders,
+  loadQuotesForWorkOrders,
   loadWorkOrdersFromProfile,
+  WORK_ORDER_NO_ESTIMATE,
   type SignedQuotePick,
   type WorkOrderRecord,
 } from "../../lib/workOrders"
-import { queueQuotesCustomerPrefill, consumeWorkOrdersHighlightQuote } from "../../lib/workflowNavigation"
+import {
+  queueQuotesCustomerPrefill,
+  consumeWorkOrdersHighlightQuote,
+  consumeWorkOrdersCustomerPrefill,
+} from "../../lib/workflowNavigation"
 import { loadBusinessWorkflowFromMetadata, type BusinessWorkflowDoc } from "../../lib/businessWorkflow"
 import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBanner"
 import DocumentTemplateModal from "../../components/DocumentTemplateModal"
@@ -33,10 +39,13 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
   const [orders, setOrders] = useState<WorkOrderRecord[]>([])
-  const [signedQuotes, setSignedQuotes] = useState<SignedQuotePick[]>([])
+  const [quotes, setQuotes] = useState<SignedQuotePick[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState("")
   const [selectedQuoteId, setSelectedQuoteId] = useState("")
+  const [filterCustomerId, setFilterCustomerId] = useState("")
+  const [prefillCustomerName, setPrefillCustomerName] = useState("")
+  const [customerOnlyJobTitle, setCustomerOnlyJobTitle] = useState("")
   const [woNumber, setWoNumber] = useState("")
   const [busy, setBusy] = useState(false)
   const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
@@ -72,6 +81,8 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
   useEffect(() => {
     const id = consumeWorkOrdersHighlightQuote()
     if (id) setHighlightQuoteId(id)
+    const customerId = consumeWorkOrdersCustomerPrefill()
+    if (customerId) setFilterCustomerId(customerId)
   }, [])
 
   useEffect(() => {
@@ -85,16 +96,57 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
     setLoading(true)
     setErr("")
     try {
-      const [o, q] = await Promise.all([loadWorkOrdersFromProfile(supabase, userId), loadSignedQuotesForWorkOrders(supabase, userId)])
+      const [o, q] = await Promise.all([
+        loadWorkOrdersFromProfile(supabase, userId),
+        loadQuotesForWorkOrders(supabase, userId, filterCustomerId || null),
+      ])
       setOrders(o)
-      setSignedQuotes(q)
-      setSelectedQuoteId((prev) => (prev && q.some((x) => x.id === prev) ? prev : q[0]?.id ?? ""))
+      setQuotes(q)
+      if (filterCustomerId) {
+        const match = q.find((x) => x.customer_id === filterCustomerId)
+        if (match?.customer_name) setPrefillCustomerName(match.customer_name)
+      }
+      setSelectedQuoteId((prev) => {
+        if (prev === WORK_ORDER_NO_ESTIMATE) return prev
+        if (prev && q.some((x) => x.id === prev)) return prev
+        return q[0]?.id ?? (filterCustomerId ? WORK_ORDER_NO_ESTIMATE : "")
+      })
     } catch (e: unknown) {
       setErr(formatAppError(e))
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [userId, filterCustomerId])
+
+  useEffect(() => {
+    if (!supabase || !filterCustomerId) return
+    void supabase
+      .from("customers")
+      .select("display_name")
+      .eq("id", filterCustomerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.display_name?.trim()) setPrefillCustomerName(data.display_name.trim())
+      })
+  }, [filterCustomerId])
+
+  const customerFilterOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const o of orders) {
+      if (o.customer_id) map.set(o.customer_id, o.customer_name)
+    }
+    for (const q of quotes) {
+      if (q.customer_id) map.set(q.customer_id, q.customer_name)
+    }
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [orders, quotes])
+
+  const filteredOrders = useMemo(() => {
+    if (!filterCustomerId) return orders
+    return orders.filter((o) => o.customer_id === filterCustomerId)
+  }, [orders, filterCustomerId])
 
   useEffect(() => {
     void reload()
@@ -102,13 +154,27 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
 
   async function handleCreate() {
     if (!supabase || !userId || !selectedQuoteId) return
-    const quote = signedQuotes.find((q) => q.id === selectedQuoteId)
-    if (!quote) return
     setBusy(true)
     setErr("")
     try {
-      await createWorkOrderFromQuote(supabase, userId, quote, woNumber.trim() || generateWorkOrderNumber())
+      if (selectedQuoteId === WORK_ORDER_NO_ESTIMATE) {
+        if (!filterCustomerId) {
+          setErr("Select a customer filter before creating a work order without an estimate.")
+          return
+        }
+        await createWorkOrderForCustomer(supabase, userId, {
+          customerId: filterCustomerId,
+          customerName: prefillCustomerName || customerFilterOptions.find((c) => c.id === filterCustomerId)?.name || "Customer",
+          workOrderNumber: woNumber,
+          jobTitle: customerOnlyJobTitle,
+        })
+      } else {
+        const quote = quotes.find((q) => q.id === selectedQuoteId)
+        if (!quote) return
+        await createWorkOrderFromQuote(supabase, userId, quote, woNumber.trim() || generateWorkOrderNumber())
+      }
       setWoNumber("")
+      setCustomerOnlyJobTitle("")
       await reload()
     } catch (e: unknown) {
       setErr(formatAppError(e))
@@ -194,25 +260,57 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
 
       <section style={{ ...card, marginBottom: 20 }}>
         <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Create work order</h2>
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+          Create from an estimate on file, or bypass the estimate and open a customer-only work order when needed.
+        </p>
+        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, marginBottom: 12, maxWidth: 520 }}>
+          Filter by customer
+          <select
+            value={filterCustomerId}
+            onChange={(e) => setFilterCustomerId(e.target.value)}
+            style={theme.formInput}
+          >
+            <option value="">All customers</option>
+            {customerFilterOptions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
         {loading ? (
-          <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading signed estimates…</p>
-        ) : signedQuotes.length === 0 ? (
+          <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading estimates…</p>
+        ) : !filterCustomerId && quotes.length === 0 ? (
           <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
-            No fully signed estimates yet. When a customer approves an estimate, it will appear here.
+            Select a customer above, or add an estimate first. You can also create a customer-only work order after choosing a customer.
           </p>
         ) : (
           <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
-              Signed estimate / proposal
+              Source
               <select value={selectedQuoteId} onChange={(e) => setSelectedQuoteId(e.target.value)} style={theme.formInput}>
-                {signedQuotes.map((q) => (
+                {filterCustomerId ? (
+                  <option value={WORK_ORDER_NO_ESTIMATE}>No estimate — customer work order only</option>
+                ) : null}
+                {quotes.map((q) => (
                   <option key={q.id} value={q.id}>
-                    {q.customer_name} — {q.title}
-                    {q.total > 0 ? ` (${formatUsdAmount(q.total)})` : ""}
+                    {q.customer_name} — {q.title} ({estimateDisplayStatus(q.status, null)})
+                    {q.total > 0 ? ` · ${formatUsdAmount(q.total)}` : ""}
                   </option>
                 ))}
               </select>
             </label>
+            {selectedQuoteId === WORK_ORDER_NO_ESTIMATE ? (
+              <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+                Job title (optional)
+                <input
+                  value={customerOnlyJobTitle}
+                  onChange={(e) => setCustomerOnlyJobTitle(e.target.value)}
+                  placeholder="Describe the work order"
+                  style={theme.formInput}
+                />
+              </label>
+            ) : null}
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
               Work order number (optional)
               <input
@@ -232,17 +330,36 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
       <section style={card}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Work orders on file</h2>
-          <button type="button" style={secondaryBtn} onClick={() => setTemplateModalOpen(true)}>
-            Document fields…
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600 }}>
+              Customer
+              <select
+                value={filterCustomerId}
+                onChange={(e) => setFilterCustomerId(e.target.value)}
+                style={{ ...theme.formInput, padding: "6px 10px", fontSize: 12, minWidth: 160 }}
+              >
+                <option value="">All customers</option>
+                {customerFilterOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" style={secondaryBtn} onClick={() => setTemplateModalOpen(true)}>
+              Document fields…
+            </button>
+          </div>
         </div>
         {loading ? (
           <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading…</p>
-        ) : orders.length === 0 ? (
-          <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>No work orders yet.</p>
+        ) : filteredOrders.length === 0 ? (
+          <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
+            {filterCustomerId ? "No work orders for this customer yet." : "No work orders yet."}
+          </p>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            {orders.map((o) => (
+            {filteredOrders.map((o) => (
               <div
                 key={o.id}
                 style={{

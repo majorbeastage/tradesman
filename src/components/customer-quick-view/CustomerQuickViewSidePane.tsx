@@ -315,11 +315,12 @@ export function CustomerQuickViewSidePane({
                       }}
                       style={{
                         marginTop: 8,
-                        padding: "6px 10px",
+                        padding: "6px 12px",
                         borderRadius: 6,
                         border: `1px solid ${theme.border}`,
-                        background: "#f8fafc",
-                        fontSize: 11,
+                        background: "#fff",
+                        color: "#0f172a",
+                        fontSize: 12,
                         fontWeight: 700,
                         cursor: "pointer",
                       }}
@@ -388,10 +389,11 @@ export function CustomerQuickViewSidePane({
               padding: "8px 14px",
               borderRadius: 8,
               border: `1px solid ${theme.border}`,
-              background: "#fff",
+              background: "#f1f5f9",
               fontWeight: 700,
               fontSize: 13,
               cursor: "pointer",
+              color: "#0f172a",
             }}
           >
             Reset to account defaults

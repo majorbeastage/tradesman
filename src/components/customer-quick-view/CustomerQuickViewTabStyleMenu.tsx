@@ -1,22 +1,23 @@
 import { useEffect, useRef, type CSSProperties } from "react"
-import { theme } from "../styles/theme"
+import { theme } from "../../styles/theme"
 import {
-  DASHBOARD_TILE_ACCENT_SWATCHES,
-  DASHBOARD_TILE_BLOCK_SWATCHES,
-  DASHBOARD_TILE_FONT_OPTIONS,
-  DASHBOARD_TILE_THUMBNAILS,
-  type DashboardQuickLinkId,
-  type DashboardTileStyle,
-} from "../lib/dashboardQuickLinksPrefs"
+  CUSTOMER_QUICK_VIEW_TAB_BG_SWATCHES,
+  CUSTOMER_QUICK_VIEW_TAB_ICONS,
+  CUSTOMER_QUICK_VIEW_TAB_TEXT_SWATCHES,
+  defaultCustomerQuickViewTabStyle,
+  type CustomerQuickViewTabStyle,
+} from "../../lib/customerQuickViewTabStyles"
+import { DASHBOARD_TILE_FONT_OPTIONS, type DashboardTileFontId } from "../../lib/dashboardQuickLinksPrefs"
+import type { CustomerQuickViewTabId } from "./customerQuickViewTabs"
 
 type Props = {
   open: boolean
   x: number
   y: number
-  linkId: DashboardQuickLinkId
+  tabId: CustomerQuickViewTabId
   label: string
-  style: DashboardTileStyle
-  onChange: (patch: Partial<DashboardTileStyle>) => void
+  style: CustomerQuickViewTabStyle
+  onChange: (patch: Partial<CustomerQuickViewTabStyle>) => void
   onClose: () => void
 }
 
@@ -34,15 +35,7 @@ const panelStyle: CSSProperties = {
   color: theme.text,
 }
 
-function SwatchRow({
-  colors,
-  value,
-  onPick,
-}: {
-  colors: string[]
-  value?: string
-  onPick: (c: string) => void
-}) {
+function SwatchRow({ colors, value, onPick }: { colors: string[]; value?: string; onPick: (c: string) => void }) {
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
       {colors.map((c) => (
@@ -66,7 +59,7 @@ function SwatchRow({
   )
 }
 
-export default function DashboardTileStyleMenu({ open, x, y, linkId, label, style, onChange, onClose }: Props) {
+export function CustomerQuickViewTabStyleMenu({ open, x, y, tabId, label, style, onChange, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -92,33 +85,28 @@ export default function DashboardTileStyleMenu({ open, x, y, linkId, label, styl
 
   return (
     <div ref={ref} style={{ ...panelStyle, left: clampedX, top: clampedY }} role="dialog" aria-label={`Style ${label}`}>
-      <div style={{ fontWeight: 800, marginBottom: 4, fontSize: 14 }}>Tile style</div>
+      <div style={{ fontWeight: 800, marginBottom: 4, fontSize: 14 }}>Tab style</div>
       <div style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>{label}</div>
 
       <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Block background</div>
-        <SwatchRow colors={DASHBOARD_TILE_BLOCK_SWATCHES} value={style.blockBg} onPick={(c) => onChange({ blockBg: c })} />
-      </div>
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Circle / accent</div>
-        <SwatchRow colors={DASHBOARD_TILE_ACCENT_SWATCHES} value={style.accent} onPick={(c) => onChange({ accent: c })} />
+        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Background</div>
+        <SwatchRow
+          colors={CUSTOMER_QUICK_VIEW_TAB_BG_SWATCHES}
+          value={style.backgroundColor}
+          onPick={(c) => onChange({ backgroundColor: c })}
+        />
       </div>
 
       <div style={{ marginBottom: 10 }}>
         <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Text color</div>
-        <SwatchRow
-          colors={["#0f172a", "#1e293b", "#ffffff", "#f8fafc", "#0369a1", "#b45309"]}
-          value={style.labelColor}
-          onPick={(c) => onChange({ labelColor: c })}
-        />
+        <SwatchRow colors={CUSTOMER_QUICK_VIEW_TAB_TEXT_SWATCHES} value={style.color} onPick={(c) => onChange({ color: c })} />
       </div>
 
       <div style={{ marginBottom: 10 }}>
         <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Font</div>
         <select
           value={style.fontFamily ?? "system"}
-          onChange={(e) => onChange({ fontFamily: e.target.value as DashboardTileStyle["fontFamily"] })}
+          onChange={(e) => onChange({ fontFamily: e.target.value as DashboardTileFontId })}
           style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13 }}
         >
           {DASHBOARD_TILE_FONT_OPTIONS.map((f) => (
@@ -130,18 +118,18 @@ export default function DashboardTileStyleMenu({ open, x, y, linkId, label, styl
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Thumbnail (replaces circle)</div>
+        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 12 }}>Icon</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 4 }}>
-          {DASHBOARD_TILE_THUMBNAILS.map((t) => (
+          {CUSTOMER_QUICK_VIEW_TAB_ICONS.map((t) => (
             <button
               key={t.id}
               type="button"
               title={t.label}
-              onClick={() => onChange({ thumbnail: t.id })}
+              onClick={() => onChange({ icon: t.id })}
               style={{
                 padding: "6px 2px",
                 borderRadius: 8,
-                border: (style.thumbnail ?? "none") === t.id ? "2px solid #0ea5e9" : `1px solid ${theme.border}`,
+                border: (style.icon ?? "none") === t.id ? "2px solid #0ea5e9" : `1px solid ${theme.border}`,
                 background: "#f8fafc",
                 cursor: "pointer",
                 fontSize: t.glyph ? 16 : 10,
@@ -154,52 +142,23 @@ export default function DashboardTileStyleMenu({ open, x, y, linkId, label, styl
         </div>
       </div>
 
-      <div style={{ display: "grid", gap: 8 }}>
-        <button
-          type="button"
-          onClick={() =>
-            onChange({
-              blockBg: undefined,
-              blockBorder: undefined,
-              accent: undefined,
-              labelColor: undefined,
-              fontFamily: undefined,
-              thumbnail: undefined,
-            })
-          }
-          style={{
-            width: "100%",
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: `1px solid ${theme.border}`,
-            background: "#f1f5f9",
-            color: "#0f172a",
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          Reset tile to default
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            width: "100%",
-            padding: "8px 12px",
-            borderRadius: 8,
-            border: "none",
-            background: theme.primary,
-            color: "#fff",
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: 13,
-          }}
-        >
-          Save
-        </button>
-      </div>
-      <input type="hidden" value={linkId} readOnly aria-hidden />
+      <button
+        type="button"
+        onClick={() => onChange(defaultCustomerQuickViewTabStyle(tabId))}
+        style={{
+          width: "100%",
+          padding: "8px 10px",
+          borderRadius: 8,
+          border: `1px solid ${theme.border}`,
+          background: "#f1f5f9",
+          fontWeight: 600,
+          cursor: "pointer",
+          fontSize: 12,
+          color: "#0f172a",
+        }}
+      >
+        Reset tab to default
+      </button>
     </div>
   )
 }

@@ -3,13 +3,26 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../styles/theme"
 import type { CustomerPaymentProfileMetadata } from "../lib/customerPaymentMetadata"
 import { loadCustomerPaymentPreflight } from "../lib/customerPaymentPreflight"
-import { copyCustomerPaymentShareAndLog, markQuoteCustomerPaymentCollected } from "../lib/customerPaymentsWorkflow"
+import {
+  copyCustomerPaymentShareAndLog,
+  markQuoteCustomerPaymentCollected,
+  prepareCustomerPaymentShare,
+  recordCustomerPaymentShareSent,
+} from "../lib/customerPaymentsWorkflow"
 import {
   customerPayWorkflowAgingBadge,
   customerPayWorkflowLabel,
   parseQuoteCustomerPayWorkflow,
 } from "../lib/quoteCustomerPayWorkflow"
 import type { CustomerPaymentQuoteOption } from "../lib/customerQuotePaymentOptions"
+import { customerEmailFromIdentifiers, customerPhoneFromIdentifiers } from "../lib/customerIdentifiers"
+import { listCustomerEmailValues, listCustomerPhoneValues, pickDefaultContactValue } from "../lib/customerContactList"
+import { requiresManualSmsOptInRecord } from "../lib/smsFirstOutboundCompliance"
+import { customerHasSmsConsent } from "../lib/customerSmsConsent"
+import { useAuth } from "../contexts/AuthContext"
+import { getFreshAccessToken } from "../lib/authPlatformApi"
+import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
+import { supabase as defaultSupabase } from "../lib/supabase"
 
 export type CustomerPaymentRequestModalProps = {
   open: boolean
@@ -29,6 +42,21 @@ export type CustomerPaymentRequestModalProps = {
   quoteOptions?: CustomerPaymentQuoteOption[]
   /** After copy or manual mark updates metadata on server */
   onQuoteMetadataPatched?: (meta: Record<string, unknown>) => void
+  /** Refresh customer comms after email/SMS send (e.g. Customers tab activity list). */
+  onDeliverySent?: () => void
+}
+
+function formatFetchError(response: Response, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith("{")) {
+    try {
+      const j = JSON.parse(trimmed) as { error?: string; message?: string }
+      return j.error?.trim() || j.message?.trim() || trimmed
+    } catch {
+      return trimmed || response.statusText
+    }
+  }
+  return trimmed || response.statusText
 }
 
 export default function CustomerPaymentRequestModal({
@@ -46,15 +74,22 @@ export default function CustomerPaymentRequestModal({
   quoteMetadata,
   quoteOptions,
   onQuoteMetadataPatched,
+  onDeliverySent,
 }: CustomerPaymentRequestModalProps) {
+  const { session } = useAuth()
   const [includeBarcode, setIncludeBarcode] = useState(false)
   const [preflightBusy, setPreflightBusy] = useState(false)
   const [showReminder, setShowReminder] = useState(false)
   const [acknowledgeRisk, setAcknowledgeRisk] = useState(false)
   const [copyBusy, setCopyBusy] = useState(false)
+  const [emailBusy, setEmailBusy] = useState(false)
+  const [smsBusy, setSmsBusy] = useState(false)
   const [markBusy, setMarkBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [pickedQuoteId, setPickedQuoteId] = useState<string>("")
+  const [emailTo, setEmailTo] = useState("")
+  const [phoneTo, setPhoneTo] = useState("")
+  const [smsBlocked, setSmsBlocked] = useState(false)
 
   const activeQuoteOption = useMemo(() => {
     if (!quoteOptions?.length) return null
@@ -72,6 +107,9 @@ export default function CustomerPaymentRequestModal({
     setIncludeBarcode(false)
     setAcknowledgeRisk(false)
     setNotice(null)
+    setEmailTo("")
+    setPhoneTo("")
+    setSmsBlocked(false)
     if (quoteOptions?.length) {
       const initial = quoteId?.trim() && quoteOptions.some((o) => o.quoteId === quoteId.trim()) ? quoteId.trim() : quoteOptions[0].quoteId
       setPickedQuoteId(initial)
@@ -84,8 +122,28 @@ export default function CustomerPaymentRequestModal({
     }
     setPreflightBusy(true)
     void (async () => {
-      const p = await loadCustomerPaymentPreflight(supabase, userId, customerId)
+      const [p, customerRes, eventsRes] = await Promise.all([
+        loadCustomerPaymentPreflight(supabase, userId, customerId),
+        supabase.from("customers").select("customer_identifiers, metadata").eq("id", customerId).maybeSingle(),
+        supabase
+          .from("communication_events")
+          .select("event_type, direction, created_at")
+          .eq("customer_id", customerId)
+          .order("created_at", { ascending: false })
+          .limit(50),
+      ])
       setShowReminder(p.showEstimateOrSchedulingReminder)
+      const identifiers = customerRes.data?.customer_identifiers ?? null
+      const emails = listCustomerEmailValues(identifiers)
+      const phones = listCustomerPhoneValues(identifiers)
+      setEmailTo(
+        customerEmailFromIdentifiers(identifiers) || pickDefaultContactValue(emails) || emails[0] || "",
+      )
+      setPhoneTo(customerPhoneFromIdentifiers(identifiers) || pickDefaultContactValue(phones) || phones[0] || "")
+      const events = (eventsRes.data ?? []) as { event_type?: string; direction?: string; created_at?: string }[]
+      const needsOptIn = requiresManualSmsOptInRecord(events)
+      const hasConsent = customerHasSmsConsent(customerRes.data?.metadata)
+      setSmsBlocked(needsOptIn && !hasConsent)
       setPreflightBusy(false)
     })()
   }, [open, supabase, userId, customerId, quoteOptions, quoteId])
@@ -95,15 +153,22 @@ export default function CustomerPaymentRequestModal({
   const workflow = parseQuoteCustomerPayWorkflow(resolvedQuoteMetadata ?? null)
   const aging = customerPayWorkflowAgingBadge(workflow)
   const quoteIdTrim = resolvedQuoteId
-  const canCopy =
+  const canDeliver =
     payReady &&
     Boolean(customerId) &&
+    Boolean(userId) &&
     (!showReminder || acknowledgeRisk) &&
     !preflightBusy &&
-    !copyBusy
+    !copyBusy &&
+    !emailBusy &&
+    !smsBusy
+
+  function applyPatchedMetadata(patched?: Record<string, unknown>) {
+    if (patched && onQuoteMetadataPatched) onQuoteMetadataPatched(patched)
+  }
 
   async function handleCopy() {
-    if (!userId || !customerId || !canCopy) return
+    if (!userId || !customerId || !canDeliver) return
     setCopyBusy(true)
     setNotice(null)
     try {
@@ -123,12 +188,133 @@ export default function CustomerPaymentRequestModal({
         setNotice(res.error ?? "Could not copy.")
         return
       }
-      if (res.patchedQuoteMetadata && onQuoteMetadataPatched) {
-        onQuoteMetadataPatched(res.patchedQuoteMetadata)
-      }
-      setNotice("Copied to clipboard. Paste into text or email to your customer.")
+      applyPatchedMetadata(res.patchedQuoteMetadata)
+      setNotice("Copied to clipboard. Paste into text or email if you prefer manual delivery.")
     } finally {
       setCopyBusy(false)
+    }
+  }
+
+  async function handleSendEmail() {
+    if (!userId || !customerId || !canDeliver) return
+    const to = emailTo.trim()
+    if (!to) {
+      setNotice("Enter an email address for this customer.")
+      return
+    }
+    const prepared = prepareCustomerPaymentShare({
+      profile,
+      customerName: customerName ?? null,
+      estimateLabel: resolvedEstimateLabel,
+      amountLabel: resolvedAmountLabel,
+      includeBarcodeInMessage: includeBarcode,
+    })
+    if (!prepared.ok) {
+      setNotice(prepared.error)
+      return
+    }
+    setEmailBusy(true)
+    setNotice(null)
+    try {
+      const response = await fetch("/api/outbound-messages?__channel=email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: outboundMessagesJsonBody({
+          to,
+          subject: prepared.share.subject,
+          body: prepared.share.body,
+          userId,
+          customerId,
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchError(response, raw))
+      const recorded = await recordCustomerPaymentShareSent({
+        supabase,
+        userId,
+        customerId,
+        quoteId: resolvedQuoteId || null,
+        calendarEventId: calendarEventId ?? null,
+        profile,
+        amountLabel: resolvedAmountLabel,
+        includeBarcodeInMessage: includeBarcode,
+        delivery: "email",
+        share: prepared.share,
+      })
+      applyPatchedMetadata(recorded.patchedQuoteMetadata)
+      setNotice(`Payment request emailed to ${to}.`)
+      onDeliverySent?.()
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Could not send email.")
+    } finally {
+      setEmailBusy(false)
+    }
+  }
+
+  async function handleSendSms() {
+    if (!userId || !customerId || !canDeliver) return
+    if (smsBlocked) {
+      setNotice("SMS is blocked until you record SMS opt-in consent for this customer.")
+      return
+    }
+    const to = phoneTo.trim()
+    if (!to) {
+      setNotice("Enter a phone number for this customer.")
+      return
+    }
+    const prepared = prepareCustomerPaymentShare({
+      profile,
+      customerName: customerName ?? null,
+      estimateLabel: resolvedEstimateLabel,
+      amountLabel: resolvedAmountLabel,
+      includeBarcodeInMessage: includeBarcode,
+    })
+    if (!prepared.ok) {
+      setNotice(prepared.error)
+      return
+    }
+    setSmsBusy(true)
+    setNotice(null)
+    try {
+      let token = session?.access_token ?? null
+      const sb = supabase ?? defaultSupabase
+      if (sb && session) {
+        token = (await getFreshAccessToken(sb, session)) ?? token
+      }
+      const response = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: outboundMessagesJsonBody({
+          to,
+          body: prepared.share.body,
+          userId,
+          customerId,
+        }),
+      })
+      const raw = await response.text()
+      if (!response.ok) throw new Error(formatFetchError(response, raw))
+      const recorded = await recordCustomerPaymentShareSent({
+        supabase,
+        userId,
+        customerId,
+        quoteId: resolvedQuoteId || null,
+        calendarEventId: calendarEventId ?? null,
+        profile,
+        amountLabel: resolvedAmountLabel,
+        includeBarcodeInMessage: includeBarcode,
+        delivery: "sms",
+        share: prepared.share,
+      })
+      applyPatchedMetadata(recorded.patchedQuoteMetadata)
+      setNotice(`Payment request sent by SMS to ${to}.`)
+      onDeliverySent?.()
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Could not send SMS.")
+    } finally {
+      setSmsBusy(false)
     }
   }
 
@@ -177,8 +363,8 @@ export default function CustomerPaymentRequestModal({
           left: "50%",
           top: "50%",
           transform: "translate(-50%, -50%)",
-          width: "min(440px, calc(100vw - 28px))",
-          maxHeight: "min(88vh, 560px)",
+          width: "min(480px, calc(100vw - 28px))",
+          maxHeight: "min(88vh, 640px)",
           overflow: "auto",
           background: "#fff",
           borderRadius: 14,
@@ -193,8 +379,8 @@ export default function CustomerPaymentRequestModal({
               Customer payment
             </h2>
             <p style={{ margin: "6px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-              Build a payment message from your saved pay links (Payments → Send Payment Information to Customer) and copy it to send by
-              text or email.
+              Build a payment message from your saved pay links (Payments → Send Payment Information to Customer), then send
+              by email or SMS, or copy to paste manually.
             </p>
           </div>
           <button
@@ -206,9 +392,11 @@ export default function CustomerPaymentRequestModal({
               height: 34,
               borderRadius: 8,
               border: `1px solid ${theme.border}`,
-              background: "#f8fafc",
+              background: "#fff",
+              color: "#0f172a",
               cursor: "pointer",
               fontSize: 18,
+              fontWeight: 800,
               lineHeight: 1,
             }}
             aria-label="Close"
@@ -224,7 +412,7 @@ export default function CustomerPaymentRequestModal({
             Set your hosted pay link (and optional barcode link) under{" "}
             <strong style={{ color: theme.text }}>Payments → Send Payment Information to Customer</strong>.
           </p>
-            ) : (
+        ) : (
           <>
             {quoteOptions && quoteOptions.length > 0 ? (
               <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, fontSize: 13, color: theme.text }}>
@@ -281,7 +469,7 @@ export default function CustomerPaymentRequestModal({
             ) : null}
 
             {preflightBusy ? (
-              <p style={{ fontSize: 12, color: "#94a3b8" }}>Checking estimate & schedule history…</p>
+              <p style={{ fontSize: 12, color: "#94a3b8" }}>Checking estimate, schedule, and contact info…</p>
             ) : showReminder ? (
               <div
                 style={{
@@ -304,7 +492,7 @@ export default function CustomerPaymentRequestModal({
                     onChange={(e) => setAcknowledgeRisk(e.target.checked)}
                     style={{ marginTop: 3 }}
                   />
-                  <span>I understand — copy payment request anyway</span>
+                  <span>I understand — send payment request anyway</span>
                 </label>
               </div>
             ) : (
@@ -320,23 +508,89 @@ export default function CustomerPaymentRequestModal({
               </label>
             ) : null}
 
+            <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                Email
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <input
+                    value={emailTo}
+                    onChange={(e) => setEmailTo(e.target.value)}
+                    placeholder="customer@email.com"
+                    style={{ ...theme.formInput, flex: "1 1 180px", padding: "8px 10px", fontSize: 13 }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!canDeliver || !emailTo.trim()}
+                    onClick={() => void handleSendEmail()}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: canDeliver && emailTo.trim() ? theme.primary : "#94a3b8",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: canDeliver && emailTo.trim() ? "pointer" : "not-allowed",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {emailBusy ? "Sending…" : "Send email"}
+                  </button>
+                </div>
+              </label>
+              <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                SMS
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <input
+                    value={phoneTo}
+                    onChange={(e) => setPhoneTo(e.target.value)}
+                    placeholder="(555) 555-5555"
+                    style={{ ...theme.formInput, flex: "1 1 180px", padding: "8px 10px", fontSize: 13 }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!canDeliver || !phoneTo.trim() || smsBlocked}
+                    onClick={() => void handleSendSms()}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: canDeliver && phoneTo.trim() && !smsBlocked ? "#047857" : "#94a3b8",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: canDeliver && phoneTo.trim() && !smsBlocked ? "pointer" : "not-allowed",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {smsBusy ? "Sending…" : "Send SMS"}
+                  </button>
+                </div>
+                {smsBlocked ? (
+                  <span style={{ fontSize: 12, color: "#b45309", fontWeight: 600 }}>
+                    Record SMS opt-in consent on this customer before sending texts.
+                  </span>
+                ) : null}
+              </label>
+            </div>
+
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <button
                 type="button"
-                disabled={!canCopy}
+                disabled={!canDeliver}
                 onClick={() => void handleCopy()}
                 style={{
-                  padding: "10px 18px",
+                  padding: "10px 16px",
                   borderRadius: 8,
-                  border: "none",
-                  background: canCopy ? theme.primary : "#94a3b8",
-                  color: "#fff",
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: theme.text,
                   fontWeight: 700,
                   fontSize: 14,
-                  cursor: canCopy ? "pointer" : "not-allowed",
+                  cursor: canDeliver ? "pointer" : "not-allowed",
                 }}
               >
-                {copyBusy ? "Copying…" : "Copy payment request"}
+                {copyBusy ? "Copying…" : "Copy message"}
               </button>
               <button
                 type="button"
@@ -403,7 +657,9 @@ export default function CustomerPaymentRequestModal({
               </div>
             ) : null}
             {notice ? (
-              <p style={{ margin: "10px 0 0", fontSize: 13, color: notice.includes("Copied") ? "#047857" : "#b91c1c" }}>{notice}</p>
+              <p style={{ margin: "10px 0 0", fontSize: 13, color: notice.includes("Could not") || notice.includes("blocked") || notice.includes("Enter") ? "#b91c1c" : "#047857" }}>
+                {notice}
+              </p>
             ) : null}
           </>
         )}

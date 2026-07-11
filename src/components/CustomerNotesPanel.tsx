@@ -285,7 +285,16 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
             onChange={(e) => setComposer(e.target.value)}
             placeholder="Write a note…"
             rows={4}
-            style={{ width: "100%", padding: 10, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, resize: "vertical", boxSizing: "border-box" }}
+            style={{
+              width: "100%",
+              padding: 10,
+              border: `1px solid ${theme.border}`,
+              borderRadius: 6,
+              background: "#fff",
+              color: "#0f172a",
+              resize: "vertical",
+              boxSizing: "border-box",
+            }}
           />
           <button
             type="button"
@@ -309,7 +318,7 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
 
           <div style={{ flex: 1, minHeight: 0, marginTop: 18, display: "flex", flexDirection: "column" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 8 }}>History</div>
-            <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, flex: 1, overflow: "auto", background: "#f9fafb" }}>
+            <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, flex: 1, overflow: "auto", background: "#fff" }}>
               {notesList.length === 0 ? (
                 <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>No saved notes yet.</p>
               ) : (
@@ -369,6 +378,8 @@ export default function CustomerNotesPanel({ customerId, customerName, onClose, 
                             padding: 8,
                             border: `1px solid ${theme.border}`,
                             borderRadius: 6,
+                            background: "#fff",
+                            color: "#0f172a",
                             resize: "vertical",
                             boxSizing: "border-box",
                             marginBottom: 8,

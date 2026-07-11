@@ -58,15 +58,18 @@ export async function buildWorkOrderDocumentPdf(
   templateForm: Record<string, string>,
 ): Promise<Uint8Array> {
   const on = (id: string) => isTemplateChecked(templateForm, id)
+  const hasQuote = Boolean(workOrder.quote_id?.trim())
 
   const [{ data: prof }, quoteRes, customerRes, eventsRes, workflowOrders] = await Promise.all([
     supabase.from("profiles").select("display_name, metadata").eq("id", userId).maybeSingle(),
-    supabase
-      .from("quotes")
-      .select("id, status, metadata, customer_id, customers ( display_name, service_address, customer_identifiers )")
-      .eq("id", workOrder.quote_id)
-      .eq("user_id", userId)
-      .maybeSingle(),
+    hasQuote
+      ? supabase
+          .from("quotes")
+          .select("id, status, metadata, customer_id, customers ( display_name, service_address, customer_identifiers )")
+          .eq("id", workOrder.quote_id)
+          .eq("user_id", userId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
     workOrder.customer_id
       ? supabase
           .from("customers")
@@ -74,14 +77,25 @@ export async function buildWorkOrderDocumentPdf(
           .eq("id", workOrder.customer_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase
-      .from("calendar_events")
-      .select("id, title, start_at, end_at, notes, metadata, job_types ( name, materials_list )")
-      .eq("user_id", userId)
-      .eq("quote_id", workOrder.quote_id)
-      .is("removed_at", null)
-      .order("start_at", { ascending: true })
-      .limit(12),
+    hasQuote
+      ? supabase
+          .from("calendar_events")
+          .select("id, title, start_at, end_at, notes, metadata, job_types ( name, materials_list )")
+          .eq("user_id", userId)
+          .eq("quote_id", workOrder.quote_id)
+          .is("removed_at", null)
+          .order("start_at", { ascending: true })
+          .limit(12)
+      : workOrder.customer_id
+        ? supabase
+            .from("calendar_events")
+            .select("id, title, start_at, end_at, notes, metadata, job_types ( name, materials_list )")
+            .eq("user_id", userId)
+            .eq("customer_id", workOrder.customer_id)
+            .is("removed_at", null)
+            .order("start_at", { ascending: true })
+            .limit(12)
+        : Promise.resolve({ data: [] }),
     loadPurchaseOrdersFromProfile(supabase, userId),
   ])
 
@@ -118,11 +132,13 @@ export async function buildWorkOrderDocumentPdf(
   const wfState = parseQuoteInternalWorkflow(quoteMeta)
   const approvalStatus = estimateDisplayStatus(quote?.status ?? null, quote?.metadata)
 
-  const { data: quoteItems } = await supabase
-    .from("quote_items")
-    .select("description, quantity, unit_price, metadata")
-    .eq("quote_id", workOrder.quote_id)
-    .order("created_at", { ascending: true })
+  const { data: quoteItems } = hasQuote
+    ? await supabase
+        .from("quote_items")
+        .select("description, quantity, unit_price, metadata")
+        .eq("quote_id", workOrder.quote_id)
+        .order("created_at", { ascending: true })
+    : { data: [] }
 
   const events = (eventsRes.data ?? []) as Array<{
     id: string

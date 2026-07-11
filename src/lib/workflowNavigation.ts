@@ -8,6 +8,7 @@ export const SCHEDULING_EVENT_VIEW_EVENT = "tradesman-scheduling-event-view"
 const QUOTES_OPEN_QUOTE = "tradesman_quotes_open_quote_id_v1"
 const QUOTES_OPEN_LIBRARY = "tradesman_quotes_open_library_v1"
 const WORK_ORDERS_HIGHLIGHT_QUOTE = "tradesman_work_orders_highlight_quote_id_v1"
+const WORK_ORDERS_PREFILL_CUSTOMER = "tradesman_work_orders_prefill_customer_id_v1"
 const PURCHASE_ORDERS_HIGHLIGHT_QUOTE = "tradesman_purchase_orders_highlight_quote_id_v1"
 const PAYMENTS_COLLECT_PREFILL = "tradesman_payments_collect_prefill_v1"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
@@ -341,6 +342,29 @@ export function consumeWorkOrdersHighlightQuote(): string | null {
     const id = (sessionStorage.getItem(WORK_ORDERS_HIGHLIGHT_QUOTE) ?? "").trim()
     if (id) {
       sessionStorage.removeItem(WORK_ORDERS_HIGHLIGHT_QUOTE)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export function queueWorkOrdersCustomerPrefill(customerId: string): void {
+  if (!customerId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(WORK_ORDERS_PREFILL_CUSTOMER, customerId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeWorkOrdersCustomerPrefill(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(WORK_ORDERS_PREFILL_CUSTOMER) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(WORK_ORDERS_PREFILL_CUSTOMER)
       return id
     }
   } catch {

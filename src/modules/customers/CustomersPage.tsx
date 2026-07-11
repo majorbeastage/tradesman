@@ -56,6 +56,7 @@ import {
   queueSchedulingQuotePrefill,
   queueQuotesOpenQuote,
   queueOpenCustomReceiptModal,
+  queueWorkOrdersCustomerPrefill,
   CUSTOMERS_HUB_REFRESH_EVENT,
   CUSTOMERS_EMAIL_INBOX_REFRESH_EVENT,
   notifyCustomersEmailSync,
@@ -126,6 +127,11 @@ import {
   parseCustomerQuickViewPrefs,
   type CustomerQuickViewPrefs,
 } from "../../lib/customerQuickViewPrefs"
+import {
+  CUSTOMER_QUICK_VIEW_TAB_STYLES_META_KEY,
+  parseCustomerQuickViewTabStyles,
+  type CustomerQuickViewTabStyle,
+} from "../../lib/customerQuickViewTabStyles"
 import { customerHubJobStatusLabel } from "../../lib/customerWorkflowProgress"
 
 const JOB_PIPELINE_OPTIONS = [
@@ -394,6 +400,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [quickViewPrefs, setQuickViewPrefs] = useState<CustomerQuickViewPrefs>(defaultCustomerQuickViewPrefs())
   const [showQuickViewSettings, setShowQuickViewSettings] = useState(false)
   const [quickViewSettingsSaveBusy, setQuickViewSettingsSaveBusy] = useState(false)
+  const [quickViewTabStyles, setQuickViewTabStyles] = useState<Partial<Record<string, CustomerQuickViewTabStyle>>>({})
   const visibleQuickViewTabIds = useMemo(() => {
     const customerMeta = selectedCustomer?.metadata
     return CUSTOMER_QUICK_VIEW_TABS.filter((t) => isQuickViewTabVisible(t.id, quickViewPrefs, customerMeta)).map((t) => t.id)
@@ -1193,6 +1200,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         const meta = data.metadata as Record<string, unknown>
         setAccountProfileMetadata(meta)
         setQuickViewPrefs(parseCustomerQuickViewPrefs(meta))
+        setQuickViewTabStyles(parseCustomerQuickViewTabStyles(meta))
         hydrateLeadFilterPrefsFromMetadata(meta)
       })
     return () => {
@@ -1452,7 +1460,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         setPage("quotes")
         break
       case "work_orders":
-        queueQuotesCustomerPrefill(customerId)
+        queueWorkOrdersCustomerPrefill(customerId)
         setPage("work-orders")
         break
       case "purchase_orders":
@@ -1948,6 +1956,28 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     if (reusedExisting) {
       alert("A customer with that phone or email already exists — opened their record.")
+    }
+  }
+
+  async function saveQuickViewTabStyle(tabId: CustomerQuickViewTabId, patch: Partial<CustomerQuickViewTabStyle>) {
+    if (!supabase || !userId) return
+    const nextStyles = {
+      ...quickViewTabStyles,
+      [tabId]: { ...(quickViewTabStyles[tabId] ?? {}), ...patch },
+    }
+    setQuickViewTabStyles(nextStyles)
+    try {
+      const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) return
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      prevMeta[CUSTOMER_QUICK_VIEW_TAB_STYLES_META_KEY] = nextStyles
+      await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
+      setAccountProfileMetadata(prevMeta)
+    } catch {
+      /* ignore persistence errors — local preview still applies */
     }
   }
 
@@ -3141,6 +3171,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 isMobile={isMobile}
                                 visibleTabIds={visibleQuickViewTabIds}
                                 onCreateAction={setPage ? handleQuickViewCreateAction : undefined}
+                                tabStyles={quickViewTabStyles}
+                                onTabStyleChange={(tabId, patch) => void saveQuickViewTabStyle(tabId, patch)}
                               />
                             ) : null}
                             <div
@@ -3273,15 +3305,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
                                   {quickViewTab === "communications" ? (
                                   <>
-                                  <CustomerQuickViewNextSteps
-                                    customer={c}
-                                    supabase={supabase}
-                                    userId={userId}
-                                    profileMetadata={accountProfileMetadata}
-                                    onGoToTab={setQuickViewTab}
-                                    setPage={setPage}
-                                    onOpenQuote={(quoteId) => queueQuotesOpenQuote(quoteId)}
-                                  />
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>
                                     <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>
                                     <button
@@ -3598,6 +3621,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         </div>
                                       ) : null}
                                     </div>
+                                    <CustomerQuickViewNextSteps
+                                      customer={c}
+                                      supabase={supabase}
+                                      userId={userId}
+                                      profileMetadata={accountProfileMetadata}
+                                      onGoToTab={setQuickViewTab}
+                                      setPage={setPage}
+                                      onOpenQuote={(quoteId) => queueQuotesOpenQuote(quoteId)}
+                                    />
                                     </div>
 
                                   {commHistoryChannel ? (
@@ -3966,6 +3998,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     isMobile={isMobile}
                                     visibleTabIds={visibleQuickViewTabIds}
                                     onCreateAction={setPage ? handleQuickViewCreateAction : undefined}
+                                    tabStyles={quickViewTabStyles}
+                                    onTabStyleChange={(tabId, patch) => void saveQuickViewTabStyle(tabId, patch)}
                                   />
                                 ) : null}
                               </div>
@@ -4004,6 +4038,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           quoteId={customerPaymentQuoteOptions[0]?.quoteId ?? null}
           quoteOptions={customerPaymentQuoteOptions.length > 0 ? customerPaymentQuoteOptions : undefined}
           quoteMetadata={customerPaymentQuoteOptions[0]?.metadata ?? null}
+          onDeliverySent={() => {
+            if (selectedCustomer?.id) void loadCustomerActivity(selectedCustomer.id)
+          }}
         />
       ) : null}
 

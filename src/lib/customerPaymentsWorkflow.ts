@@ -76,19 +76,22 @@ function parseAmountFromLabel(amountLabel: string | null | undefined): number | 
   return Number.isFinite(n) ? n : null
 }
 
-/** Copy payment request text to clipboard and log customer_payment_events (same behavior everywhere). */
-export async function copyCustomerPaymentShareAndLog(input: {
-  supabase: SupabaseClient | null
-  userId: string
-  customerId: string | null
-  quoteId?: string | null
-  calendarEventId?: string | null
+export type CustomerPaymentSharePrepared = {
+  body: string
+  subject: string
+  payLink: string
+  eventType: CustomerPaymentEventType
+  amount: number | null
+}
+
+/** Build payment message text from saved pay links (used for copy, email, and SMS). */
+export function prepareCustomerPaymentShare(input: {
   profile: CustomerPaymentProfileMetadata
   customerName: string | null
   estimateLabel: string | null
   amountLabel: string | null
   includeBarcodeInMessage: boolean
-}): Promise<{ ok: boolean; error?: string; patchedQuoteMetadata?: Record<string, unknown> }> {
+}): { ok: true; share: CustomerPaymentSharePrepared } | { ok: false; error: string } {
   const payLink = input.profile.customer_pay_link_url?.trim() ?? ""
   const barcodeLink = input.profile.customer_pay_barcode_url?.trim() ?? ""
   if (!payLink && !barcodeLink) {
@@ -108,26 +111,46 @@ export async function copyCustomerPaymentShareAndLog(input: {
     includeBarcode: input.includeBarcodeInMessage && Boolean(barcodeLink),
     instructions: input.profile.customer_pay_instructions ?? null,
   })
-  try {
-    if (typeof navigator.clipboard?.writeText === "function") {
-      await navigator.clipboard.writeText(body)
-    } else {
-      return { ok: false, error: "Clipboard is not available in this browser." }
-    }
-  } catch {
-    return { ok: false, error: "Could not copy to clipboard." }
-  }
-  const amt = parseAmountFromLabel(input.amountLabel)
+  const subject = input.estimateLabel?.trim()
+    ? `Payment request — ${input.estimateLabel.trim()}`
+    : "Payment request"
   const eventType: CustomerPaymentEventType = payLink ? "payment_link_sent" : "payment_barcode_sent"
+  return {
+    ok: true,
+    share: {
+      body,
+      subject,
+      payLink: primaryPayUrl,
+      eventType,
+      amount: parseAmountFromLabel(input.amountLabel),
+    },
+  }
+}
+
+export type CustomerPaymentDeliveryChannel = "clipboard" | "email" | "sms"
+
+/** Log payment sent and update quote workflow after a successful delivery. */
+export async function recordCustomerPaymentShareSent(input: {
+  supabase: SupabaseClient | null
+  userId: string
+  customerId: string | null
+  quoteId?: string | null
+  calendarEventId?: string | null
+  profile: CustomerPaymentProfileMetadata
+  amountLabel: string | null
+  includeBarcodeInMessage: boolean
+  delivery: CustomerPaymentDeliveryChannel
+  share: CustomerPaymentSharePrepared
+}): Promise<{ patchedQuoteMetadata?: Record<string, unknown> }> {
   await logCustomerPaymentEvent(input.supabase, {
     userId: input.userId,
     customerId: input.customerId,
     quoteId: input.quoteId ?? null,
     calendarEventId: input.calendarEventId ?? null,
-    eventType,
-    amount: amt,
+    eventType: input.share.eventType,
+    amount: input.share.amount,
     metadata: {
-      delivery: "clipboard",
+      delivery: input.delivery,
       include_barcode_line: input.includeBarcodeInMessage,
       provider: input.profile.customer_pay_provider ?? "helcim",
     },
@@ -137,7 +160,52 @@ export async function copyCustomerPaymentShareAndLog(input: {
     userId: input.userId,
     amountLabel: input.amountLabel,
   })
-  return patched ? { ok: true, patchedQuoteMetadata: patched } : { ok: true }
+  return patched ? { patchedQuoteMetadata: patched } : {}
+}
+
+/** Copy payment request text to clipboard and log customer_payment_events (same behavior everywhere). */
+export async function copyCustomerPaymentShareAndLog(input: {
+  supabase: SupabaseClient | null
+  userId: string
+  customerId: string | null
+  quoteId?: string | null
+  calendarEventId?: string | null
+  profile: CustomerPaymentProfileMetadata
+  customerName: string | null
+  estimateLabel: string | null
+  amountLabel: string | null
+  includeBarcodeInMessage: boolean
+}): Promise<{ ok: boolean; error?: string; patchedQuoteMetadata?: Record<string, unknown> }> {
+  const prepared = prepareCustomerPaymentShare({
+    profile: input.profile,
+    customerName: input.customerName,
+    estimateLabel: input.estimateLabel,
+    amountLabel: input.amountLabel,
+    includeBarcodeInMessage: input.includeBarcodeInMessage,
+  })
+  if (!prepared.ok) return { ok: false, error: prepared.error }
+  try {
+    if (typeof navigator.clipboard?.writeText === "function") {
+      await navigator.clipboard.writeText(prepared.share.body)
+    } else {
+      return { ok: false, error: "Clipboard is not available in this browser." }
+    }
+  } catch {
+    return { ok: false, error: "Could not copy to clipboard." }
+  }
+  const recorded = await recordCustomerPaymentShareSent({
+    supabase: input.supabase,
+    userId: input.userId,
+    customerId: input.customerId,
+    quoteId: input.quoteId,
+    calendarEventId: input.calendarEventId,
+    profile: input.profile,
+    amountLabel: input.amountLabel,
+    includeBarcodeInMessage: input.includeBarcodeInMessage,
+    delivery: "clipboard",
+    share: prepared.share,
+  })
+  return { ok: true, patchedQuoteMetadata: recorded.patchedQuoteMetadata }
 }
 
 async function persistQuoteCustomerPayWorkflowAfterSent(
