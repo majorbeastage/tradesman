@@ -5,7 +5,8 @@
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
 import { sortedWorkflowNodes } from "./businessWorkflow"
 import { parseCustomerHubKindExplicit, isCustomerManuallyArchived } from "./customerContactKind"
-import { parseCustomerWorkflowMeta } from "./customerWorkflowRouting"
+import { mergeCustomerWorkflowMeta, parseCustomerWorkflowMeta, resolveWorkflowNodeDepartmentKey } from "./customerWorkflowRouting"
+import type { OrganizationChartDoc } from "./organizationChart"
 
 export type SequentialWorkflowProgress = {
   currentNodeId: string | null
@@ -34,6 +35,33 @@ export function resolveSequentialWorkflowProgress(
     currentNodeId: activeId,
     currentNodeLabel: active?.label ?? (allDone ? "Completed" : null),
     completedNodeIds: nodes.filter((n) => completed.has(n.id)).map((n) => n.id),
+  }
+}
+
+export function buildCustomerWorkflowStepCompleteUpdate(input: {
+  workflow: BusinessWorkflowDoc
+  orgChart: OrganizationChartDoc
+  customerMetadata: unknown
+  completedNodeIds: string[]
+  nodeId: string
+  quoteId?: string | null
+}): { metadata: Record<string, unknown>; jobPipelineStatus: string; progress: SequentialWorkflowProgress } {
+  const progress = applyManualWorkflowNodeComplete(input.workflow, input.completedNodeIds, input.nodeId)
+  const nextNode = progress.currentNodeId
+    ? input.workflow.nodes.find((n) => n.id === progress.currentNodeId) ?? null
+    : null
+  const departmentKey = nextNode ? resolveWorkflowNodeDepartmentKey(nextNode, input.orgChart) : null
+  const metadata = mergeCustomerWorkflowMeta(input.customerMetadata, {
+    quoteId: input.quoteId ?? null,
+    activeNodeId: progress.currentNodeId,
+    departmentKey,
+    completedNodeIds: progress.completedNodeIds,
+    pendingNodeIds: [],
+  })
+  return {
+    metadata,
+    jobPipelineStatus: progress.currentNodeLabel ?? "Completed",
+    progress,
   }
 }
 

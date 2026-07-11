@@ -106,14 +106,16 @@ export function loadCustomerWorkflowSnapshotFromProfile(
 
   if (customerMeta?.activeNodeId) {
     const node = bundle.workflow.nodes.find((n) => n.id === customerMeta.activeNodeId) ?? null
-    return {
-      quoteId: customerMeta.quoteId ?? quoteId,
-      activeNodeId: customerMeta.activeNodeId,
-      activeNodeLabel: node?.label ?? null,
-      departmentKey: customerMeta.departmentKey ?? (node ? nodeDepartmentKey(node, bundle.orgChart) : null),
-      assignedUserId: node?.assignedUserId ?? null,
-      completedNodeIds: customerMeta.completedNodeIds ?? [],
-      pendingNodeIds: customerMeta.pendingNodeIds ?? [],
+    if (node) {
+      return {
+        quoteId: customerMeta.quoteId ?? quoteId,
+        activeNodeId: customerMeta.activeNodeId,
+        activeNodeLabel: node.label,
+        departmentKey: customerMeta.departmentKey ?? nodeDepartmentKey(node, bundle.orgChart),
+        assignedUserId: node.assignedUserId ?? null,
+        completedNodeIds: customerMeta.completedNodeIds ?? [],
+        pendingNodeIds: customerMeta.pendingNodeIds ?? [],
+      }
     }
   }
 

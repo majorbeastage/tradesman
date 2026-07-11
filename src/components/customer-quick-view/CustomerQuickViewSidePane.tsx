@@ -15,6 +15,7 @@ import { customReceiptDraftToFormState, loadReceiptTemplateSettings, buildCustom
 import { downloadPdfBlob } from "../../lib/documentPdf"
 import CustomerWorkflowProgressViewer from "../CustomerWorkflowProgressViewer"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
+import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
 import type { WorkOrderRecord } from "../../lib/workOrders"
 import type { PurchaseOrderRecord } from "../../lib/purchaseOrders"
 import type { PaymentRequestRow } from "../../lib/paymentRequests"
@@ -118,6 +119,7 @@ export function CustomerQuickViewSidePane({
     defaultCustomerQuickViewTabVisibility(),
   )
   const [customerSettingsSaving, setCustomerSettingsSaving] = useState(false)
+  const [workflowStepCompleteBusy, setWorkflowStepCompleteBusy] = useState(false)
 
   const woTemplate = useMemo(
     () => templateFormFromMetadata(WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS, profileMetadata ?? {}),
@@ -156,8 +158,9 @@ export function CustomerQuickViewSidePane({
 
   useEffect(() => {
     if (!supabase || !userId || tab !== "workflow") return
+    void loadBundle()
     void loadLinkableOrgUsers(supabase, userId).then(setLinkableUsers)
-  }, [supabase, userId, tab])
+  }, [supabase, userId, tab, loadBundle, customer.id, customer.metadata, profileMetadata])
 
   if (
     loading &&
@@ -427,13 +430,50 @@ export function CustomerQuickViewSidePane({
     const quoteWorkflowState = quoteForWorkflow ? parseQuoteInternalWorkflow(quoteForWorkflow.metadata) : null
     const workflowSnapshot =
       profileMetadata != null
-        ? loadCustomerWorkflowSnapshotFromProfile(profileMetadata, quoteForWorkflow?.id ?? null, quoteWorkflowState, bundle?.customer.metadata)
+        ? loadCustomerWorkflowSnapshotFromProfile(profileMetadata, quoteForWorkflow?.id ?? null, quoteWorkflowState, bundle?.customer.metadata ?? customer.metadata)
         : null
     const inferred =
       bundle && workflowBundle ? inferCustomerWorkflowStep(workflowBundle.workflow, bundle, workflowSnapshot) : null
+    const activeNodeId = inferred?.currentNodeId ?? workflowSnapshot?.activeNodeId ?? null
+
+    async function completeWorkflowStep(nodeId: string) {
+      if (!supabase || !userId || !workflowBundle || !inferred) return
+      setWorkflowStepCompleteBusy(true)
+      try {
+        const update = buildCustomerWorkflowStepCompleteUpdate({
+          workflow: workflowBundle.workflow,
+          orgChart: workflowBundle.orgChart,
+          customerMetadata: bundle?.customer.metadata ?? customer.metadata,
+          completedNodeIds: inferred.completedNodeIds,
+          nodeId,
+          quoteId: quoteForWorkflow?.id ?? null,
+        })
+        const nowIso = new Date().toISOString()
+        const { error: custErr } = await supabase
+          .from("customers")
+          .update({
+            metadata: update.metadata,
+            job_pipeline_status: update.jobPipelineStatus,
+            updated_at: nowIso,
+          })
+          .eq("id", customer.id)
+          .eq("user_id", userId)
+        if (custErr) throw custErr
+        onCustomerMetadataUpdated?.(update.metadata)
+        await loadBundle()
+      } catch (e) {
+        alert(formatAppError(e))
+      } finally {
+        setWorkflowStepCompleteBusy(false)
+      }
+    }
 
     if (!workflowBundle) {
       return <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No company workflow configured yet.</p>
+    }
+
+    if (loading && !bundle) {
+      return <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Loading workflow…</p>
     }
 
     return (
@@ -447,7 +487,9 @@ export function CustomerQuickViewSidePane({
         linkableUsers={linkableUsers}
         completedNodeIds={inferred?.completedNodeIds ?? workflowSnapshot?.completedNodeIds ?? []}
         pendingNodeIds={quoteWorkflowState?.pendingNodeIds ?? []}
-        currentNodeId={inferred?.currentNodeId ?? null}
+        currentNodeId={activeNodeId}
+        onCompleteStep={(nodeId) => void completeWorkflowStep(nodeId)}
+        completeBusy={workflowStepCompleteBusy}
       />
     )
   }

@@ -55,7 +55,7 @@ export function inferWorkflowStepIntention(node: WorkflowNode, tool: WorkflowToo
   if (/signed by shop|shop manager sign|estimate signed/.test(label)) {
     return "await_approval"
   }
-  if (/intake|reception|customer care|built|build estimate|estimate is built/.test(label)) {
+  if (/intake|reception|customer care|gather.*job|job information|built|build estimate|estimate is built/.test(label)) {
     return "internal_handoff"
   }
   return "unknown"

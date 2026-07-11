@@ -9,8 +9,9 @@ import {
   resolveWorkflowNodeAssignee,
 } from "../../lib/estimateWorkflowRuntime"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
+import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
 import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
-import { inferWorkflowStepIntention } from "../../lib/workflowStepIntention"
+import { inferWorkflowStepIntention, intentionPrimaryButtonLabel } from "../../lib/workflowStepIntention"
 import { loadLinkableOrgUsers } from "../../lib/orgChartMembers"
 import type { CustomerQuickViewTabId } from "./customerQuickViewTabs"
 
@@ -27,6 +28,7 @@ type Props = {
   onGoToTab: (tab: CustomerQuickViewTabId) => void
   setPage?: (page: string) => void
   onOpenQuote?: (quoteId: string) => void
+  onCustomerMetadataUpdated?: (metadata: unknown) => void
 }
 
 function ownerLabel(displayName: string | null | undefined): string {
@@ -59,7 +61,13 @@ function targetTabForIntention(
   }
 }
 
-function actionLabelForIntention(intention: ReturnType<typeof inferWorkflowStepIntention>, stepLabel: string | null): string {
+function actionLabelForIntention(
+  intention: ReturnType<typeof inferWorkflowStepIntention>,
+  stepLabel: string | null,
+): string {
+  if (intention === "internal_handoff" || intention === "unknown") {
+    return intentionPrimaryButtonLabel(intention, [], stepLabel ?? undefined)
+  }
   switch (intention) {
     case "create_work_order":
       return "Go to work orders"
@@ -76,11 +84,13 @@ function actionLabelForIntention(intention: ReturnType<typeof inferWorkflowStepI
     case "send_to_approver":
     case "await_approval":
       return "Open estimate approvals"
-    case "internal_handoff":
-      return stepLabel ? `Open ${stepLabel}` : "Open workflow step"
     default:
-      return "Open workflow"
+      return stepLabel ? `Complete ${stepLabel}` : "Open workflow"
   }
+}
+
+function shouldCompleteStepOnAction(intention: ReturnType<typeof inferWorkflowStepIntention>): boolean {
+  return intention === "internal_handoff" || intention === "unknown"
 }
 
 export function CustomerQuickViewNextSteps({
@@ -91,9 +101,11 @@ export function CustomerQuickViewNextSteps({
   onGoToTab,
   setPage,
   onOpenQuote,
+  onCustomerMetadataUpdated,
 }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [completeBusy, setCompleteBusy] = useState(false)
 
   const workflowBundle = useMemo(
     () => (profileMetadata ? loadAccountWorkflowBundleFromMetadata(profileMetadata) : null),
@@ -106,6 +118,9 @@ export function CustomerQuickViewNextSteps({
   const [actionLabel, setActionLabel] = useState("Open workflow")
   const [targetTab, setTargetTab] = useState<CustomerQuickViewTabId>("workflow")
   const [quoteId, setQuoteId] = useState<string | null>(null)
+  const [currentNodeId, setCurrentNodeId] = useState<string | null>(null)
+  const [completedNodeIds, setCompletedNodeIds] = useState<string[]>([])
+  const [stepIntention, setStepIntention] = useState<ReturnType<typeof inferWorkflowStepIntention>>("unknown")
 
   const load = useCallback(async () => {
     if (!supabase || !userId || !customer.id) return
@@ -146,6 +161,8 @@ export function CustomerQuickViewNextSteps({
       setStepLabel(inferred.currentNodeLabel)
       setReason(inferred.reason)
       setQuoteId(quoteForWorkflow?.id ?? null)
+      setCurrentNodeId(inferred.currentNodeId)
+      setCompletedNodeIds(inferred.completedNodeIds)
 
       if (currentNode) {
         const assignee = resolveWorkflowNodeAssignee(
@@ -154,27 +171,69 @@ export function CustomerQuickViewNextSteps({
           workflowBundle.externalContacts,
           users,
         )
-        setOwner(ownerLabel(assignee.displayName))
+        const ownerName = ownerLabel(assignee.displayName)
+        setOwner(ownerName)
         const intention = inferWorkflowStepIntention(currentNode, "generic")
+        setStepIntention(intention)
         setTargetTab(targetTabForIntention(intention))
         setActionLabel(actionLabelForIntention(intention, currentNode.label))
       } else {
         setOwner("—")
+        setStepIntention("unknown")
         setTargetTab("workflow")
         setActionLabel("Open workflow")
+        setCurrentNodeId(null)
+        setCompletedNodeIds([])
       }
     } catch (e) {
       setError(formatAppError(e))
     } finally {
       setLoading(false)
     }
-  }, [supabase, userId, customer.id, profileMetadata, workflowBundle])
+  }, [supabase, userId, customer.id, customer.metadata, profileMetadata, workflowBundle])
 
   useEffect(() => {
     void load()
   }, [load])
 
+  async function completeCurrentStep() {
+    if (!supabase || !userId || !customer.id || !workflowBundle || !currentNodeId) return
+    setCompleteBusy(true)
+    setError("")
+    try {
+      const update = buildCustomerWorkflowStepCompleteUpdate({
+        workflow: workflowBundle.workflow,
+        orgChart: workflowBundle.orgChart,
+        customerMetadata: customer.metadata,
+        completedNodeIds,
+        nodeId: currentNodeId,
+        quoteId,
+      })
+      const nowIso = new Date().toISOString()
+      const { error: custErr } = await supabase
+        .from("customers")
+        .update({
+          metadata: update.metadata,
+          job_pipeline_status: update.jobPipelineStatus,
+          updated_at: nowIso,
+        })
+        .eq("id", customer.id)
+        .eq("user_id", userId)
+      if (custErr) throw custErr
+      onCustomerMetadataUpdated?.(update.metadata)
+      await load()
+    } catch (e) {
+      setError(formatAppError(e))
+    } finally {
+      setCompleteBusy(false)
+    }
+  }
+
   function handleAction() {
+    if (shouldCompleteStepOnAction(stepIntention) && currentNodeId) {
+      void completeCurrentStep()
+      return
+    }
     if (targetTab === "estimates" && quoteId && onOpenQuote) {
       onOpenQuote(quoteId)
       if (setPage) setPage("quotes")
@@ -267,6 +326,7 @@ export function CustomerQuickViewNextSteps({
         ) : null}
         <button
           type="button"
+          disabled={completeBusy}
           onClick={handleAction}
           style={{
             justifySelf: "start",
@@ -277,10 +337,10 @@ export function CustomerQuickViewNextSteps({
             color: "#fff",
             fontWeight: 700,
             fontSize: 13,
-            cursor: "pointer",
+            cursor: completeBusy ? "wait" : "pointer",
           }}
         >
-          {actionLabel}
+          {completeBusy ? "Saving…" : actionLabel}
         </button>
       </div>
     </div>

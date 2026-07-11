@@ -117,7 +117,7 @@ export default function CustomerWorkflowProgressViewer({
                   {assigneeLabel}
                   {isDone ? " · Completed" : isPending ? " · Awaiting approval" : isActive ? " · Current step" : " · Not complete"}
                 </div>
-                {!isDone && onCompleteStep ? (
+                {!isDone && isActive && onCompleteStep ? (
                   <button
                     type="button"
                     disabled={completeBusy}
@@ -134,7 +134,7 @@ export default function CustomerWorkflowProgressViewer({
                       cursor: completeBusy ? "wait" : "pointer",
                     }}
                   >
-                    {completeBusy ? "Saving…" : "Mark step complete"}
+                    {completeBusy ? "Saving…" : `Complete ${node.label}`}
                   </button>
                 ) : null}
               </div>

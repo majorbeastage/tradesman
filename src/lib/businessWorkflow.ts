@@ -247,6 +247,43 @@ function buildExampleEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
   return edges
 }
 
+/** Default workflow seeded at signup and used when no chart is saved yet. */
+export const DEFAULT_SIGNUP_WORKFLOW_LABELS = [
+  "Customer Intake",
+  "Build Estimate",
+  "Customer Approves",
+  "Schedule Job",
+  "Complete Calendar Event",
+  "Customer Payment Received",
+  "Send Receipt",
+] as const
+
+function defaultNodeColor(label: string, index: number, total: number): WorkflowNodeColor {
+  if (index === 0) return "blue"
+  if (index === total - 1) return "green"
+  if (/approv|payment|receipt/i.test(label)) return "teal"
+  if (/schedule|calendar/i.test(label)) return "purple"
+  return "default"
+}
+
+export function createDefaultBusinessWorkflow(): BusinessWorkflowDoc {
+  const nodes: WorkflowNode[] = DEFAULT_SIGNUP_WORKFLOW_LABELS.map((label, i) => ({
+    id: `default-step-${i + 1}`,
+    label,
+    x: 40 + (i % 2) * 280,
+    y: 24 + i * 88,
+    order: i,
+    boxColor: defaultNodeColor(label, i, DEFAULT_SIGNUP_WORKFLOW_LABELS.length),
+  }))
+  return {
+    v: 1,
+    title: "Customer job lifecycle",
+    nodes,
+    edges: deriveSequentialEdges(nodes),
+    updated_at: new Date().toISOString(),
+  }
+}
+
 function exampleNodeColor(label: string): WorkflowNodeColor {
   if (label.includes("Approval")) return "yellow"
   if (label.includes("Customer")) return "blue"
@@ -318,10 +355,10 @@ export function parseBusinessWorkflow(raw: unknown): BusinessWorkflowDoc | null 
 
 export function loadBusinessWorkflowFromMetadata(metadata: unknown): BusinessWorkflowDoc {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return createExampleBusinessWorkflow()
+    return createDefaultBusinessWorkflow()
   }
   const raw = (metadata as Record<string, unknown>)[BUSINESS_WORKFLOW_META_KEY]
-  return parseBusinessWorkflow(raw) ?? createExampleBusinessWorkflow()
+  return parseBusinessWorkflow(raw) ?? createDefaultBusinessWorkflow()
 }
 
 export function mergeBusinessWorkflowMetadata(

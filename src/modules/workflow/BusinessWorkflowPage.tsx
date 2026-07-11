@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useAuth } from "../../contexts/AuthContext"
+import { notifyProfileMetadataApplied } from "../../lib/profileMetadataEvents"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
@@ -14,6 +15,7 @@ import {
   WORKFLOW_NODE_COLORS,
   WORKFLOW_REQUIREMENT_SUGGESTIONS,
   buildShareWithAdminMailto,
+  createDefaultBusinessWorkflow,
   createExampleBusinessWorkflow,
   downloadWorkflowSvg,
   loadBusinessWorkflowFromMetadata,
@@ -87,7 +89,7 @@ const APPROVAL_OPTIONS: WorkflowEdgeApproval[] = ["approved", "needs_approval", 
 export default function BusinessWorkflowPage({ setPage }: Props) {
   const { user } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
-  const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createExampleBusinessWorkflow())
+  const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createDefaultBusinessWorkflow())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveFlash, setSaveFlash] = useState("")
@@ -152,11 +154,13 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
               : {}
+          const merged = mergeBusinessWorkflowMetadata(prevMeta, next)
           const { error } = await supabase
             .from("profiles")
-            .update({ metadata: mergeBusinessWorkflowMetadata(prevMeta, next) })
+            .update({ metadata: merged })
             .eq("id", userId)
           if (error) throw error
+          notifyProfileMetadataApplied(userId, merged)
         } catch (e: unknown) {
           setErr(formatAppError(e))
         } finally {

@@ -23,6 +23,7 @@ import {
   parseBillingPromoCodesStore,
   validatePromoForSignup,
 } from "../_shared/billing-promo-codes.ts"
+import { mergeDefaultBusinessWorkflowMetadata } from "../_shared/default-business-workflow.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -439,7 +440,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  const metadata: Record<string, unknown> = { ui_language: uiLang }
+  const metadata: Record<string, unknown> = mergeDefaultBusinessWorkflowMetadata({ ui_language: uiLang }, now)
   if (productPackage) metadata.product_package = productPackage
   if (paidPackage) {
     metadata.billing_product_type = PACKAGE_TO_BILLING[paidPackage]

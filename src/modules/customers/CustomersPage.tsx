@@ -134,6 +134,7 @@ import {
   type CustomerQuickViewTabStyle,
 } from "../../lib/customerQuickViewTabStyles"
 import { customerHubJobStatusLabel } from "../../lib/customerWorkflowProgress"
+import { resolveWorkflowMetadataUserId } from "../../lib/alertTeamMembers"
 
 const JOB_PIPELINE_OPTIONS = [
   "New Lead",
@@ -376,7 +377,8 @@ const CUSTOMER_LIST_COMPACT_DETAIL = true
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
   const emailSig = useEmailComposeSignature(userId)
-  const { session } = useAuth()
+  const { session, user } = useAuth()
+  const authUserId = user?.id ?? null
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
@@ -1194,25 +1196,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   }, [])
 
   useEffect(() => {
-    if (!supabase || !userId) return
+    if (!supabase || !authUserId) return
     let cancelled = false
-    void supabase
-      .from("profiles")
-      .select("metadata")
-      .eq("id", userId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
-        const meta = data.metadata as Record<string, unknown>
-        setAccountProfileMetadata(meta)
+    void (async () => {
+      const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+      if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
+      const meta = data.metadata as Record<string, unknown>
+      setAccountProfileMetadata(meta)
+      if (ownerId === authUserId) {
         setQuickViewPrefs(parseCustomerQuickViewPrefs(meta))
         setQuickViewTabStyles(parseCustomerQuickViewTabStyles(meta))
         hydrateLeadFilterPrefsFromMetadata(meta)
-      })
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [userId, hydrateLeadFilterPrefsFromMetadata])
+  }, [authUserId, hydrateLeadFilterPrefsFromMetadata])
 
   useEffect(() => {
     if (!visibleQuickViewTabIds.includes(quickViewTab)) {
@@ -1223,12 +1224,20 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   useEffect(() => {
     const onMeta = (ev: Event) => {
       const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
-      if (!detail || detail.userId !== userId) return
-      hydrateLeadFilterPrefsFromMetadata(detail.metadata)
+      if (!detail || !authUserId) return
+      void resolveWorkflowMetadataUserId(supabase!, authUserId).then((ownerId) => {
+        if (detail.userId !== ownerId) return
+        setAccountProfileMetadata(detail.metadata)
+        if (ownerId === authUserId) {
+          setQuickViewPrefs(parseCustomerQuickViewPrefs(detail.metadata))
+          setQuickViewTabStyles(parseCustomerQuickViewTabStyles(detail.metadata))
+          hydrateLeadFilterPrefsFromMetadata(detail.metadata)
+        }
+      })
     }
     window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
     return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
-  }, [userId, hydrateLeadFilterPrefsFromMetadata])
+  }, [authUserId, hydrateLeadFilterPrefsFromMetadata])
 
   useEffect(() => {
     void loadCustomers()
@@ -3652,6 +3661,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       onGoToTab={setQuickViewTab}
                                       setPage={setPage}
                                       onOpenQuote={(quoteId) => queueQuotesOpenQuote(quoteId)}
+                                      onCustomerMetadataUpdated={(metadata) => {
+                                        setSelectedCustomer((prev) => (prev?.id === c.id ? { ...prev, metadata } : prev))
+                                        void loadCustomers()
+                                      }}
                                     />
                                     </div>
 

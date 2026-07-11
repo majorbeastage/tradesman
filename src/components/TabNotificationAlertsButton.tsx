@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import type { NotificationTabId, TabNotificationPrefs } from "../types/notificationPreferences"
@@ -12,6 +12,14 @@ import {
 } from "../lib/tabNotificationPrefs"
 import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
 import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
+import { useAuth } from "../contexts/AuthContext"
+import {
+  loadAlertEditableTeamMembers,
+  resolveWorkflowMetadataUserId,
+  type AlertTeamMember,
+} from "../lib/alertTeamMembers"
+import { sanitizeTabNotificationPrefsForStatuses } from "../lib/workflowAlertStatuses"
+import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../lib/profileMetadataEvents"
 
 const BTN: CSSProperties = {
   padding: "8px 14px",
@@ -46,8 +54,9 @@ function ChannelBlock(props: {
   statuses: readonly string[]
   prefs: TabNotificationPrefs
   setPrefs: (p: TabNotificationPrefs) => void
+  statusLabel?: string
 }) {
-  const { label, channel, statuses, prefs, setPrefs } = props
+  const { label, channel, statuses, prefs, setPrefs, statusLabel = "status" } = props
   const ch = prefs[channel]
   const toggleStatus = (st: string) => {
     const has = ch.statuses.includes(st)
@@ -71,13 +80,17 @@ function ChannelBlock(props: {
       </label>
       {ch.onStatusChange && (
         <div style={{ marginTop: 10, display: "grid", gap: 6, paddingLeft: 4 }}>
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Notify when status becomes:</span>
-          {statuses.map((st) => (
-            <label key={st} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", color: theme.text }}>
-              <input type="checkbox" checked={ch.statuses.includes(st)} onChange={() => toggleStatus(st)} />
-              {st}
-            </label>
-          ))}
+          <span style={{ fontSize: 12, color: "#6b7280" }}>Notify when {statusLabel} becomes:</span>
+          {statuses.length === 0 ? (
+            <span style={{ fontSize: 12, color: "#9ca3af" }}>No workflow steps configured yet. Add steps in Business workflow.</span>
+          ) : (
+            statuses.map((st) => (
+              <label key={st} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", color: theme.text }}>
+                <input type="checkbox" checked={ch.statuses.includes(st)} onChange={() => toggleStatus(st)} />
+                {st}
+              </label>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -85,6 +98,9 @@ function ChannelBlock(props: {
 }
 
 export default function TabNotificationAlertsButton({ tab, profileUserId, guideWizardId }: Props) {
+  const { user, role: authRole } = useAuth()
+  const authUserId = user?.id ?? null
+
   const [open, setOpen] = useState(false)
   const [prefs, setPrefs] = useState<TabNotificationPrefs>(() => defaultTabNotificationPrefs())
   const [loading, setLoading] = useState(false)
@@ -93,46 +109,134 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
   const [urgencyEscalationEnabled, setUrgencyEscalationEnabled] = useState(false)
   const [urgencyEscalationUnit, setUrgencyEscalationUnit] = useState<"hours" | "days">("days")
   const [urgencyEscalationAmount, setUrgencyEscalationAmount] = useState("")
-  const statuses = statusOptionsForTab(tab)
+  const [workflowMetadata, setWorkflowMetadata] = useState<Record<string, unknown> | null>(null)
+  const [teamMembers, setTeamMembers] = useState<AlertTeamMember[]>([])
+  const [selectedAlertUserId, setSelectedAlertUserId] = useState(profileUserId)
+
+  const showTeamPicker = (tab === "customers" || tab === "calendar") && teamMembers.length > 1
+
+  const statuses = useMemo(
+    () => statusOptionsForTab(tab, tab === "customers" ? { workflowMetadata } : undefined),
+    [tab, workflowMetadata],
+  )
+
+  const loadWorkflowMetadata = useCallback(async () => {
+    if (!supabase || !authUserId) return
+    const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
+    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+    if (error) throw error
+    const meta =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? (data.metadata as Record<string, unknown>)
+        : {}
+    setWorkflowMetadata(meta)
+  }, [authUserId])
+
+  const loadPrefsForUser = useCallback(
+    async (targetUserId: string, workflowMeta?: Record<string, unknown> | null) => {
+      if (!supabase || !targetUserId) return
+      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
+      if (error) throw error
+      const meta = (data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>
+      const map = parseTabNotificationsMap(meta)
+      let nextPrefs = getPrefsForTab(map, tab)
+      if (tab === "customers") {
+        const valid = statusOptionsForTab("customers", { workflowMetadata: workflowMeta ?? workflowMetadata })
+        nextPrefs = sanitizeTabNotificationPrefsForStatuses(nextPrefs, valid)
+      }
+      setPrefs(nextPrefs)
+      if (tab === "customers") {
+        const ua = meta.customers_urgency_automation
+        if (ua && typeof ua === "object" && !Array.isArray(ua)) {
+          const o = ua as Record<string, unknown>
+          setUrgencyEscalationEnabled(o.enabled === true)
+          setUrgencyEscalationUnit(o.unit === "hours" ? "hours" : "days")
+          const amt = typeof o.amount === "number" ? o.amount : Number.parseFloat(String(o.amount ?? ""))
+          setUrgencyEscalationAmount(Number.isFinite(amt) && amt > 0 ? String(amt) : "")
+        } else {
+          setUrgencyEscalationEnabled(false)
+          setUrgencyEscalationUnit("days")
+          setUrgencyEscalationAmount("")
+        }
+      }
+    },
+    [tab, workflowMetadata],
+  )
+
+  const handleTeamUserChange = useCallback(
+    (nextUserId: string) => {
+      setSelectedAlertUserId(nextUserId)
+      setLoading(true)
+      setMsg(null)
+      void loadPrefsForUser(nextUserId)
+        .catch((e) => setMsg(e instanceof Error ? e.message : "Could not load team member alerts."))
+        .finally(() => setLoading(false))
+    },
+    [loadPrefsForUser],
+  )
 
   useEffect(() => {
-    if (!open || !profileUserId || !supabase) return
+    if (!open || !authUserId || !supabase) return
     setLoading(true)
     setMsg(null)
-    void Promise.resolve(
-      supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle(),
-    )
-      .then(({ data, error }) => {
-        if (error) {
-          setMsg(error.message)
-          return
-        }
-        const meta = (data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>
-        const map = parseTabNotificationsMap(meta)
-        setPrefs(getPrefsForTab(map, tab))
+    setSelectedAlertUserId(profileUserId)
+    void (async () => {
+      try {
+        let workflowMeta: Record<string, unknown> | null = null
         if (tab === "customers") {
-          const ua = meta.customers_urgency_automation
-          if (ua && typeof ua === "object" && !Array.isArray(ua)) {
-            const o = ua as Record<string, unknown>
-            setUrgencyEscalationEnabled(o.enabled === true)
-            setUrgencyEscalationUnit(o.unit === "hours" ? "hours" : "days")
-            const amt = typeof o.amount === "number" ? o.amount : Number.parseFloat(String(o.amount ?? ""))
-            setUrgencyEscalationAmount(Number.isFinite(amt) && amt > 0 ? String(amt) : "")
-          } else {
-            setUrgencyEscalationEnabled(false)
-            setUrgencyEscalationUnit("days")
-            setUrgencyEscalationAmount("")
-          }
+          await loadWorkflowMetadata()
+          const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
+          const { data: ownerData } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+          workflowMeta =
+            ownerData?.metadata && typeof ownerData.metadata === "object" && !Array.isArray(ownerData.metadata)
+              ? (ownerData.metadata as Record<string, unknown>)
+              : {}
+          setWorkflowMetadata(workflowMeta)
         }
+        const members = await loadAlertEditableTeamMembers(supabase, authUserId, authRole)
+        setTeamMembers(members)
+        const allowed = new Set(members.map((m) => m.userId))
+        const target = allowed.has(profileUserId) ? profileUserId : authUserId
+        setSelectedAlertUserId(target)
+        await loadPrefsForUser(target, workflowMeta)
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not load alert settings.")
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [open, authUserId, authRole, profileUserId, tab, loadWorkflowMetadata, loadPrefsForUser])
+
+  useEffect(() => {
+    if (!open || tab !== "customers" || !workflowMetadata) return
+    setPrefs((prev) => sanitizeTabNotificationPrefsForStatuses(prev, statuses))
+  }, [open, tab, statuses, workflowMetadata])
+
+  useEffect(() => {
+    if (!open || !authUserId) return
+    const onMeta = (ev: Event) => {
+      const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
+      if (!detail) return
+      void resolveWorkflowMetadataUserId(supabase!, authUserId).then((ownerId) => {
+        if (detail.userId !== ownerId) return
+        setWorkflowMetadata(detail.metadata)
       })
-      .finally(() => setLoading(false))
-  }, [open, profileUserId, tab])
+    }
+    window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+    return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+  }, [open, authUserId])
 
   async function save() {
-    if (!supabase || !profileUserId) return
+    if (!supabase || !selectedAlertUserId || !authUserId) return
+    const allowed = new Set(teamMembers.map((m) => m.userId))
+    if (!allowed.has(selectedAlertUserId)) {
+      setMsg("You can only save alerts for yourself or team members who report to you.")
+      return
+    }
+
     setSaving(true)
     setMsg(null)
-    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", selectedAlertUserId).maybeSingle()
     if (error) {
       setMsg(error.message)
       setSaving(false)
@@ -140,7 +244,11 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
     }
     const meta = { ...((data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>) }
     const prevMap = parseTabNotificationsMap(meta)
-    const nextMap = setPrefsForTab(prevMap, tab, prefs)
+    let nextPrefs = prefs
+    if (tab === "customers") {
+      nextPrefs = sanitizeTabNotificationPrefsForStatuses(prefs, statuses)
+    }
+    const nextMap = setPrefsForTab(prevMap, tab, nextPrefs)
     meta[NOTIFICATION_METADATA_KEY] = nextMap
     if (tab === "customers") {
       const amtN = Number.parseFloat(String(urgencyEscalationAmount).replace(/[^0-9.]/g, ""))
@@ -151,7 +259,7 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
         amount: Number.isFinite(amtN) && amtN > 0 ? amtN : 0,
       }
     }
-    const { error: upErr } = await supabase.from("profiles").update({ metadata: meta }).eq("id", profileUserId)
+    const { error: upErr } = await supabase.from("profiles").update({ metadata: meta }).eq("id", selectedAlertUserId)
     setSaving(false)
     if (upErr) setMsg(upErr.message)
     else {
@@ -170,6 +278,15 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
           : tab === "customers"
             ? "Customers"
             : "Calendar"
+
+  const statusHint =
+    tab === "customers"
+      ? "workflow step"
+      : tab === "calendar"
+        ? "calendar event status"
+        : "status"
+
+  const selectedMemberLabel = teamMembers.find((m) => m.userId === selectedAlertUserId)?.label ?? "Team member"
 
   return (
     <>
@@ -208,18 +325,70 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                 </button>
               </div>
             </div>
+
+            {showTeamPicker ? (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#4b5563", fontWeight: 700 }}>
+                  Alerts for
+                  <select
+                    value={selectedAlertUserId}
+                    onChange={(e) => handleTeamUserChange(e.target.value)}
+                    style={{ ...theme.formInput, margin: 0 }}
+                  >
+                    {teamMembers.map((m) => (
+                      <option key={m.userId} value={m.userId}>
+                        {m.isSelf ? `${m.label} (you)` : m.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedAlertUserId !== authUserId ? (
+                  <p style={{ margin: "8px 0 0", fontSize: 11, color: "#6b7280", lineHeight: 1.45 }}>
+                    Editing notification settings for <strong>{selectedMemberLabel}</strong>. Changes are saved to their profile.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()} record&apos;s status
-              changes. Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs{" "}
-              <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
+              Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()}{" "}
+              {tab === "customers" ? " job reaches a workflow step" : " record's status changes"}.
+              {tab === "customers" ? (
+                <>
+                  {" "}
+                  Workflow step names come from your Business workflow chart and update automatically when you rename steps.
+                </>
+              ) : null}{" "}
+              Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
             </p>
             {loading ? (
               <p style={{ color: theme.text }}>Loading…</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <ChannelBlock label="Send mobile push when job / record status changes" channel="push" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
-                <ChannelBlock label="Send email when job / record status changes" channel="email" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
-                <ChannelBlock label="Send text (SMS) when job / record status changes" channel="sms" statuses={statuses} prefs={prefs} setPrefs={setPrefs} />
+                <ChannelBlock
+                  label="Send mobile push when job / record status changes"
+                  channel="push"
+                  statuses={statuses}
+                  prefs={prefs}
+                  setPrefs={setPrefs}
+                  statusLabel={statusHint}
+                />
+                <ChannelBlock
+                  label="Send email when job / record status changes"
+                  channel="email"
+                  statuses={statuses}
+                  prefs={prefs}
+                  setPrefs={setPrefs}
+                  statusLabel={statusHint}
+                />
+                <ChannelBlock
+                  label="Send text (SMS) when job / record status changes"
+                  channel="sms"
+                  statuses={statuses}
+                  prefs={prefs}
+                  setPrefs={setPrefs}
+                  statusLabel={statusHint}
+                />
                 {tab === "customers" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#fffbeb" }}>
                     <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Customers — urgency automation</div>

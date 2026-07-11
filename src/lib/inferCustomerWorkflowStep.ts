@@ -6,6 +6,7 @@
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
 import type { CustomerProfileBundle } from "./customerProfileData"
 import type { CustomerWorkflowSnapshot } from "./customerWorkflowRouting"
+import { parseCustomerWorkflowMeta } from "./customerWorkflowRouting"
 import { resolveSequentialWorkflowProgress } from "./customerWorkflowProgress"
 import { calendarEventDisplayStatus } from "./calendarEventProfile"
 import { estimateDisplayStatus } from "./customerDocumentStatus"
@@ -143,20 +144,29 @@ export function inferCustomerWorkflowStep(
     }
   }
 
+  const customerMeta = parseCustomerWorkflowMeta(bundle.customer.metadata)
+  const manualCompleted = customerMeta?.completedNodeIds ?? []
+
   const sequential = resolveSequentialWorkflowProgress(workflow, bundle.customer.metadata)
   if (sequential.currentNodeLabel) {
-    return {
-      currentNodeId: sequential.currentNodeId,
-      currentNodeLabel: sequential.currentNodeLabel,
-      completedNodeIds: sequential.completedNodeIds,
-      summary:
-        sequential.currentNodeLabel === "Completed"
-          ? "Workflow complete"
-          : `Currently at: ${sequential.currentNodeLabel}`,
-      reason:
-        sequential.completedNodeIds.length > 0
-          ? "Based on workflow steps marked complete for this customer."
-          : "Mark earlier steps complete in the workflow chart as you work the job.",
+    const useSequential =
+      manualCompleted.length > 0 ||
+      !quoteSnapshot?.pendingNodeIds?.length ||
+      (sequential.currentNodeId != null && !quoteSnapshot?.activeNodeId)
+    if (useSequential) {
+      return {
+        currentNodeId: sequential.currentNodeId,
+        currentNodeLabel: sequential.currentNodeLabel,
+        completedNodeIds: sequential.completedNodeIds,
+        summary:
+          sequential.currentNodeLabel === "Completed"
+            ? "Workflow complete"
+            : `Currently at: ${sequential.currentNodeLabel}`,
+        reason:
+          sequential.completedNodeIds.length > 0
+            ? "Based on workflow steps marked complete for this customer."
+            : "The first workflow step is active until you mark it complete.",
+      }
     }
   }
 

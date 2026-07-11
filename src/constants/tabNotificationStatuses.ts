@@ -1,5 +1,6 @@
 import { CONVERSATION_STATUS_OPTIONS } from "../types/portal-builder"
 import type { NotificationTabId } from "../types/notificationPreferences"
+import { workflowStepLabelsForAlerts } from "../lib/workflowAlertStatuses"
 
 const LEAD_STATUSES = ["New", "Contacted", "Qualified", "Lost"] as const
 
@@ -14,20 +15,12 @@ export const QUOTE_STATUS_SELECT_OPTIONS: { value: string; label: string }[] = Q
 
 const CALENDAR_STATUSES = ["Scheduled", "In progress", "Completed", "Cancelled"] as const
 
-/** Customers hub — pipeline stages (align with job_pipeline_status when saved). */
-const CUSTOMERS_PIPELINE_STATUSES = [
-  "New Lead",
-  "First Contact Sent",
-  "First Reply Received",
-  "Job Description Received",
-  "Quote Sent",
-  "Quote Approved",
-  "Scheduled",
-  "Lost",
-  "Completed",
-] as const
+export type StatusOptionsInput = {
+  /** Account owner profile metadata — drives Customers tab workflow step labels. */
+  workflowMetadata?: unknown
+}
 
-export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {
+export function statusOptionsForTab(tab: NotificationTabId, input?: StatusOptionsInput): readonly string[] {
   switch (tab) {
     case "leads":
       return LEAD_STATUSES as unknown as readonly string[]
@@ -38,7 +31,7 @@ export function statusOptionsForTab(tab: NotificationTabId): readonly string[] {
     case "calendar":
       return CALENDAR_STATUSES as unknown as readonly string[]
     case "customers":
-      return CUSTOMERS_PIPELINE_STATUSES as unknown as readonly string[]
+      return workflowStepLabelsForAlerts(input?.workflowMetadata ?? {})
     default:
       return []
   }

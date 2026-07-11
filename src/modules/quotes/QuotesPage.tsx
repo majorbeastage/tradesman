@@ -30,6 +30,7 @@ import {
   type WorkflowActionButton,
 } from "../../lib/estimateWorkflowRuntime"
 import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
+import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import type { WorkflowNode } from "../../lib/businessWorkflow"
 import { resolveEstimatePrimaryDeliveryAction, inferWorkflowStepIntention, operationalHandoffButtonLabel } from "../../lib/workflowStepIntention"
 import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
@@ -730,6 +731,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
       cancelled = true
     }
   }, [supabase, authUserId, sandboxTraining])
+
+  useEffect(() => {
+    if (!authUserId) return
+    const ownerId = resolveSandboxDataUserId(authUserId, authUserId)
+    const onMeta = (ev: Event) => {
+      const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
+      if (!detail || detail.userId !== ownerId) return
+      setProfileMetadata(detail.metadata)
+      setAccountWorkflowBundle(loadAccountWorkflowBundleFromMetadata(detail.metadata))
+    }
+    window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+    return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+  }, [authUserId])
 
   const quoteInternalWorkflowState = useMemo((): QuoteInternalWorkflowState => {
     return parseQuoteInternalWorkflow(selectedQuote?.metadata)

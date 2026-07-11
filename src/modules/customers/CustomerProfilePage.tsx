@@ -63,7 +63,8 @@ import {
   suggestRollbackTargetForCancellation,
 } from "../../lib/customerWorkflowRollback"
 import { inferCustomerWorkflowStep, shouldOpenEstimatePdfFromWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
-import { applyManualWorkflowNodeComplete } from "../../lib/customerWorkflowProgress"
+import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
+import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { notifyCustomersHubRefresh } from "../../lib/workflowNavigation"
 
@@ -443,6 +444,17 @@ export default function CustomerProfilePage({ setPage }: Props) {
       setLoading(false)
     }
   }, [userId, customerId, user?.id, viewAsDemoId])
+
+  useEffect(() => {
+    if (!userId || viewAsDemoId) return
+    const onMeta = (ev: Event) => {
+      const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
+      if (!detail || detail.userId !== userId) return
+      setProfileMetadata(detail.metadata)
+    }
+    window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+    return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
+  }, [userId, viewAsDemoId])
 
   const leaveProfileTo = useCallback(
     (nextPage: string, run?: () => void) => {
@@ -1020,30 +1032,21 @@ export default function CustomerProfilePage({ setPage }: Props) {
       const targetNode = workflowBundle.workflow.nodes.find((n) => n.id === nodeId)
       if (!targetNode) return
 
-      const progress = applyManualWorkflowNodeComplete(
-        workflowBundle.workflow,
-        inferredWorkflow.completedNodeIds,
+      const update = buildCustomerWorkflowStepCompleteUpdate({
+        workflow: workflowBundle.workflow,
+        orgChart: workflowBundle.orgChart,
+        customerMetadata: c.metadata,
+        completedNodeIds: inferredWorkflow.completedNodeIds,
         nodeId,
-      )
-      const nextNode = progress.currentNodeId
-        ? workflowBundle.workflow.nodes.find((n) => n.id === progress.currentNodeId) ?? null
-        : null
-      const departmentKey = nextNode ? resolveWorkflowNodeDepartmentKey(nextNode, workflowBundle.orgChart) : null
-
-      const nextCustomerMeta = mergeCustomerWorkflowMeta(c.metadata, {
         quoteId: quoteForWorkflow?.id ?? null,
-        activeNodeId: progress.currentNodeId,
-        departmentKey,
-        completedNodeIds: progress.completedNodeIds,
-        pendingNodeIds: [],
       })
 
       const nowIso = new Date().toISOString()
       const { error: custErr } = await supabase
         .from("customers")
         .update({
-          metadata: nextCustomerMeta,
-          job_pipeline_status: progress.currentNodeLabel ?? "Completed",
+          metadata: update.metadata,
+          job_pipeline_status: update.jobPipelineStatus,
           updated_at: nowIso,
         })
         .eq("id", c.id)
