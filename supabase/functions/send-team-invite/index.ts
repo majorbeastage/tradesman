@@ -3,6 +3,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
+import { resolveEffectiveEntitlementsFromMetadata } from "../_shared/effective-entitlements.ts"
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -64,6 +66,84 @@ Deno.serve(async (req) => {
   }
 
   const inviteRole = body.invite_role === "office_manager" ? "office_manager" : "user"
+
+  const { data: ownerProf, error: ownerProfErr } = await admin
+    .from("profiles")
+    .select("metadata, display_name")
+    .eq("id", ownerId)
+    .maybeSingle()
+  if (ownerProfErr) {
+    return new Response(JSON.stringify({ error: ownerProfErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+  const ownerMeta =
+    ownerProf?.metadata && typeof ownerProf.metadata === "object" && !Array.isArray(ownerProf.metadata)
+      ? (ownerProf.metadata as Record<string, unknown>)
+      : {}
+  const ent = resolveEffectiveEntitlementsFromMetadata(ownerMeta)
+
+  const { data: inviteRows, error: inviteListErr } = await admin
+    .from("team_member_invites")
+    .select("id, invite_role, status, accepted_at, shell_profile_id")
+    .eq("account_owner_id", ownerId)
+  if (inviteListErr) {
+    return new Response(JSON.stringify({ error: inviteListErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
+  const { data: omLinks } = await admin.from("office_manager_clients").select("user_id").eq("office_manager_id", ownerId)
+  const activeMemberIds = new Set<string>()
+  for (const inv of inviteRows ?? []) {
+    const shellId = (inv as { shell_profile_id?: string | null }).shell_profile_id
+    if (shellId) activeMemberIds.add(shellId)
+  }
+  for (const row of omLinks ?? []) {
+    const uid = (row as { user_id?: string }).user_id
+    if (uid && uid !== ownerId) activeMemberIds.add(uid)
+  }
+
+  const pending = (inviteRows ?? []).filter((i) => (i as { status?: string }).status === "pending").length
+  const shells = (inviteRows ?? []).filter((i) => (i as { status?: string }).status === "shell").length
+  const usedSeats = activeMemberIds.size + pending
+  if (usedSeats >= ent.teamMemberSlots + shells) {
+    return new Response(JSON.stringify({ error: "Team seat limit reached for your subscription. Add seats in Billing or upgrade your package." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
+  let officeManagersUsed = 0
+  let usersUsed = 0
+  if (activeMemberIds.size > 0) {
+    const { data: profs } = await admin.from("profiles").select("id, role").in("id", [...activeMemberIds])
+    for (const row of profs ?? []) {
+      const role = (row as { role?: string }).role
+      if (role === "office_manager") officeManagersUsed += 1
+      else usersUsed += 1
+    }
+  }
+  for (const inv of inviteRows ?? []) {
+    if ((inv as { status?: string }).status !== "pending") continue
+    if ((inv as { invite_role?: string }).invite_role === "office_manager") officeManagersUsed += 1
+    else usersUsed += 1
+  }
+  if (inviteRole === "office_manager" && officeManagersUsed >= ent.officeManagerInviteLimit) {
+    return new Response(JSON.stringify({ error: "Office manager seat limit reached for your subscription." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+  if (inviteRole === "user" && usersUsed >= ent.userInviteLimit) {
+    return new Response(JSON.stringify({ error: "User seat limit reached for your subscription." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
   const tokenHash = crypto.randomUUID()
   const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString()
   const siteUrl = Deno.env.get("VITE_SITE_URL")?.trim() || "https://tradesman-us.vercel.app"
@@ -92,7 +172,6 @@ Deno.serve(async (req) => {
   const resendKey = Deno.env.get("RESEND_API_KEY")?.trim()
   const resendFrom = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
   if (resendKey && resendFrom) {
-    const { data: ownerProf } = await admin.from("profiles").select("display_name").eq("id", ownerId).maybeSingle()
     const ownerName = ownerProf?.display_name?.trim() || "Your team admin"
     const text = [
       `${ownerName} invited you to Tradesman Systems.`,

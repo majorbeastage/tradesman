@@ -419,10 +419,10 @@ export async function getUserRoutingProfile(
 }
 
 /** Lookup saved customer display name for caller ID whisper; does not create rows. */
-export async function lookupCustomerDisplayNameByPhone(
+export async function lookupCustomerIdByPhone(
   supabase: SupabaseClient,
   userId: string,
-  phone: string
+  phone: string,
 ): Promise<string | null> {
   const normalized = normalizePhone(phone)
   if (!normalized) return null
@@ -435,10 +435,23 @@ export async function lookupCustomerDisplayNameByPhone(
     .limit(1)
     .maybeSingle()
   if (error || !ident?.customer_id) return null
+  return String(ident.customer_id)
+}
+
+/** Lookup saved customer display name for caller ID whisper; does not create rows. */
+export async function lookupCustomerDisplayNameByPhone(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string
+): Promise<string | null> {
+  const normalized = normalizePhone(phone)
+  if (!normalized) return null
+  const customerId = await lookupCustomerIdByPhone(supabase, userId, phone)
+  if (!customerId) return null
   const { data: cust } = await supabase
     .from("customers")
     .select("display_name")
-    .eq("id", ident.customer_id)
+    .eq("id", customerId)
     .eq("user_id", userId)
     .maybeSingle()
   const name = typeof cust?.display_name === "string" ? cust.display_name.trim() : ""

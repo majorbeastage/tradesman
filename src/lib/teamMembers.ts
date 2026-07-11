@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import {
-  PACKAGE_ENTITLEMENTS,
-  type PackageEntitlements,
-} from "./subscriptionEntitlements"
+  resolveEffectiveEntitlements,
+  type EffectiveEntitlements,
+} from "./effectiveEntitlements"
 import { type ProductPackageId, PRODUCT_PACKAGE_IDS } from "./productPackages"
 
 export type TeamInviteRow = {
@@ -28,7 +28,8 @@ export type ActiveTeamMember = {
 export type TeamSeatSummary = {
   packageId: ProductPackageId | null
   packageLabel: string
-  entitlements: PackageEntitlements
+  entitlements: EffectiveEntitlements
+  seatSummaryLabel: string
   totalSeats: number
   usedSeats: number
   availableSeats: number
@@ -36,6 +37,53 @@ export type TeamSeatSummary = {
   officeManagersUsed: number
   userLimit: number
   usersUsed: number
+  canInviteOfficeManager: boolean
+  canInviteUser: boolean
+  teamInvitesAllowed: boolean
+}
+
+export function teamSeatSummaryFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  invites: TeamInviteRow[],
+  activeMembers: ActiveTeamMember[],
+): TeamSeatSummary {
+  const ent = resolveEffectiveEntitlements(metadata)
+  return teamSeatSummary(ent, invites, activeMembers)
+}
+
+export function teamSeatSummary(
+  entitlements: EffectiveEntitlements,
+  invites: TeamInviteRow[],
+  activeMembers: ActiveTeamMember[],
+): TeamSeatSummary {
+  const pending = invites.filter((i) => i.status === "pending").length
+  const pendingOm = invites.filter((i) => i.status === "pending" && i.invite_role === "office_manager").length
+  const pendingUsers = invites.filter((i) => i.status === "pending" && i.invite_role !== "office_manager").length
+  const shells = invites.filter((i) => i.status === "shell").length
+  const acceptedInvites = invites.filter((i) => i.status === "accepted" || i.accepted_at).length
+  const usedSeats = activeMembers.length + pending + Math.max(0, acceptedInvites - activeMembers.length)
+  const totalSeats = entitlements.teamMemberSlots
+  const officeManagersUsed = activeMembers.filter((m) => m.role === "office_manager").length + pendingOm
+  const usersUsed = activeMembers.filter((m) => m.role === "user").length + pendingUsers
+  const omLimit = entitlements.officeManagerInviteLimit
+  const userLimit = entitlements.userInviteLimit
+
+  return {
+    packageId: entitlements.packageId,
+    packageLabel: entitlements.packageLabel,
+    entitlements,
+    seatSummaryLabel: entitlements.seatSummaryLabel,
+    totalSeats,
+    usedSeats: Math.min(usedSeats, Math.max(totalSeats, 0)),
+    availableSeats: Math.max(0, totalSeats - usedSeats) + shells,
+    officeManagerLimit: omLimit,
+    officeManagersUsed,
+    userLimit,
+    usersUsed,
+    canInviteOfficeManager: omLimit <= 0 ? false : officeManagersUsed < omLimit,
+    canInviteUser: userLimit <= 0 ? false : usersUsed < userLimit,
+    teamInvitesAllowed: totalSeats > 0 && usedSeats < totalSeats + shells,
+  }
 }
 
 export function resolveProductPackageId(metadata: Record<string, unknown> | null | undefined): ProductPackageId | null {
@@ -44,36 +92,6 @@ export function resolveProductPackageId(metadata: Record<string, unknown> | null
     return raw as ProductPackageId
   }
   return null
-}
-
-export function teamSeatSummary(
-  packageId: ProductPackageId | null,
-  invites: TeamInviteRow[],
-  activeMembers: ActiveTeamMember[],
-): TeamSeatSummary {
-  const ent = packageId ? PACKAGE_ENTITLEMENTS[packageId] : PACKAGE_ENTITLEMENTS.base
-  const pending = invites.filter((i) => i.status === "pending").length
-  const shells = invites.filter((i) => i.status === "shell").length
-  const acceptedInvites = invites.filter((i) => i.status === "accepted" || i.accepted_at).length
-  const usedSeats = activeMembers.length + pending + Math.max(0, acceptedInvites - activeMembers.length)
-  const totalSeats = Math.max(1, ent.maxUsers)
-  const officeManagersUsed = activeMembers.filter((m) => m.role === "office_manager").length
-  const usersUsed = activeMembers.filter((m) => m.role === "user").length
-  const omLimit = ent.maxOfficeManagers
-  const userLimit = Math.max(0, totalSeats - omLimit)
-
-  return {
-    packageId,
-    packageLabel: packageId ?? "base",
-    entitlements: ent,
-    totalSeats,
-    usedSeats: Math.min(usedSeats, totalSeats),
-    availableSeats: Math.max(0, totalSeats - usedSeats) + shells,
-    officeManagerLimit: omLimit,
-    officeManagersUsed,
-    userLimit,
-    usersUsed,
-  }
 }
 
 export async function loadTeamInvites(client: SupabaseClient, ownerUserId: string): Promise<TeamInviteRow[]> {

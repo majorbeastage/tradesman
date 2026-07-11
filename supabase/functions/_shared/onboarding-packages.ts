@@ -32,7 +32,7 @@ export const PACKAGE_MAX_USERS: Record<ProductPackageId, number> = {
   office_manager_entry: 2,
   office_manager_pro: 5,
   office_manager_elite: 10,
-  corporate: 20,
+  corporate: 23,
 }
 
 export const PACKAGE_MAX_OFFICE_MANAGERS: Record<ProductPackageId, number> = {
@@ -41,17 +41,17 @@ export const PACKAGE_MAX_OFFICE_MANAGERS: Record<ProductPackageId, number> = {
   office_manager_entry: 1,
   office_manager_pro: 1,
   office_manager_elite: 2,
-  corporate: 5,
+  corporate: 3,
 }
 
 export function isProductPackageId(s: string): s is ProductPackageId {
   return s in PACKAGE_TO_BILLING
 }
 
+/** Team invite shell rows at signup (excludes account owner seat). */
 export function shellSlotCount(packageId: ProductPackageId): number {
   const users = PACKAGE_MAX_USERS[packageId] ?? 1
-  const oms = PACKAGE_MAX_OFFICE_MANAGERS[packageId] ?? 0
-  return Math.max(0, users + oms - 1)
+  return Math.max(0, users - 1)
 }
 
 function fullOperationsTabs(): Record<string, boolean> {

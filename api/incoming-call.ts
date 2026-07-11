@@ -19,6 +19,7 @@ import {
   toTwilioE164,
 } from "./_communications.js"
 import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
+import { shouldSkipCallScreeningForCaller } from "./_callScreeningSkip.js"
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
 
@@ -143,12 +144,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         screeningSettings.mode !== "off" &&
         activeScreeningSteps(screeningSettings).length > 0
       if (useScreening) {
-        const screeningUrl = buildCallScreeningRedirectUrl(origin, query)
-        console.info("[incoming-call] call_screening_redirect", { callSid, userId: channel.user_id })
-        return sendTwiml(
-          res,
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">${xmlEscape(screeningUrl)}</Redirect></Response>`,
-        )
+        const skipScreening =
+          from ? await shouldSkipCallScreeningForCaller(supabase, channel.user_id, from) : false
+        if (skipScreening) {
+          console.info("[incoming-call] call_screening_skip_returning_customer", {
+            callSid,
+            userId: channel.user_id,
+            from,
+          })
+        } else {
+          const screeningUrl = buildCallScreeningRedirectUrl(origin, query)
+          console.info("[incoming-call] call_screening_redirect", { callSid, userId: channel.user_id })
+          return sendTwiml(
+            res,
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">${xmlEscape(screeningUrl)}</Redirect></Response>`,
+          )
+        }
       }
     } catch (e) {
       console.error("[incoming-call] screening check failed — falling back to direct dial", e instanceof Error ? e.message : e)

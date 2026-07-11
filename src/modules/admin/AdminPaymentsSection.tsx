@@ -17,6 +17,9 @@ import {
   type BillingProductTypeId,
 } from "../../lib/billingProductTypes"
 import AdminPromoCodesSection from "./AdminPromoCodesSection"
+import { resolveEffectiveEntitlements } from "../../lib/effectiveEntitlements"
+import { PRODUCT_PACKAGE_TO_BILLING } from "../../lib/subscriptionEntitlements"
+import type { ProductPackageId } from "../../lib/productPackages"
 
 type BillingRow = {
   id: string
@@ -26,6 +29,7 @@ type BillingRow = {
   account_disabled: boolean
   client_id: string | null
   billing: BillingProfileMetadata
+  profileMetadata: Record<string, unknown>
 }
 
 type BillingDraft = {
@@ -114,6 +118,7 @@ export default function AdminPaymentsSection() {
         account_disabled: p.account_disabled === true,
         client_id: typeof p.client_id === "string" ? p.client_id : null,
         billing,
+        profileMetadata: meta,
       }
     })
     setRows(next)
@@ -199,6 +204,15 @@ export default function AdminPaymentsSection() {
         billing_additional_products: additionalClean,
         billing_payment_due_date: /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : "",
       })
+      const primaryBilling = d.billing_product_type?.trim()
+      if (primaryBilling && isBillingProductTypeId(primaryBilling)) {
+        for (const [pkg, bill] of Object.entries(PRODUCT_PACKAGE_TO_BILLING) as [ProductPackageId, string][]) {
+          if (bill === primaryBilling) {
+            nextMeta.product_package = pkg
+            break
+          }
+        }
+      }
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
       if (upErr) throw upErr
       await load()
@@ -383,6 +397,12 @@ export default function AdminPaymentsSection() {
             {filteredRows.map((r) => {
               const d = drafts[r.id] ?? emptyDraft()
               const sum = sumMonthlyBillingUsd(d.billing_product_type, d.billing_additional_products)
+              const seatMeta = {
+                ...r.profileMetadata,
+                billing_product_type: d.billing_product_type,
+                billing_additional_products: d.billing_additional_products.filter((x) => isBillingProductTypeId(x)),
+              }
+              const seats = resolveEffectiveEntitlements(seatMeta)
               const isOpen = expanded[r.id] === true
               return (
                 <div
@@ -447,6 +467,30 @@ export default function AdminPaymentsSection() {
                           Product type
                           {productSelect(d.billing_product_type, (v) => setDraft(r.id, { billing_product_type: v }), `primary-${r.id}`)}
                         </label>
+
+                        <div
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: "#f8fafc",
+                            fontSize: 12,
+                            color: "#475569",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <strong style={{ color: theme.charcoal }}>Team seats (MyT → Team members)</strong>
+                          <div style={{ marginTop: 4 }}>
+                            {seats.seatSummaryLabel} — {seats.teamMemberSlots} invite slot{seats.teamMemberSlots === 1 ? "" : "s"} for team
+                            members (account owner not counted).
+                            {seats.officeManagerInviteLimit > 0
+                              ? ` Up to ${seats.officeManagerInviteLimit} additional office manager${seats.officeManagerInviteLimit === 1 ? "" : "s"}.`
+                              : ""}
+                            {seats.userInviteLimit > 0
+                              ? ` Up to ${seats.userInviteLimit} user${seats.userInviteLimit === 1 ? "" : "s"}.`
+                              : ""}
+                          </div>
+                        </div>
 
                         <div>
                           <div style={{ fontSize: 13, fontWeight: 700, color: theme.charcoal, marginBottom: 8 }}>Additional products</div>

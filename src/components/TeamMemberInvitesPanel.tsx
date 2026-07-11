@@ -2,13 +2,11 @@ import { useCallback, useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
-import { labelForProductPackageId } from "../lib/productPackages"
 import {
   loadActiveTeamMembers,
   loadTeamInvites,
-  resolveProductPackageId,
   teamMembersApiFetch,
-  teamSeatSummary,
+  teamSeatSummaryFromMetadata,
   type ActiveTeamMember,
   type TeamInviteRow,
 } from "../lib/teamMembers"
@@ -35,7 +33,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
   const [open, setOpen] = useState(!defaultCollapsed)
   const [invites, setInvites] = useState<TeamInviteRow[]>([])
   const [activeMembers, setActiveMembers] = useState<ActiveTeamMember[]>([])
-  const [packageId, setPackageId] = useState<ReturnType<typeof resolveProductPackageId>>(null)
+  const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<"user" | "office_manager">("user")
   const [busy, setBusy] = useState(false)
@@ -56,14 +54,14 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
       prof.data?.metadata && typeof prof.data.metadata === "object" && !Array.isArray(prof.data.metadata)
         ? (prof.data.metadata as Record<string, unknown>)
         : {}
-    setPackageId(resolveProductPackageId(meta))
+    setProfileMetadata(meta)
   }, [ownerUserId])
 
   useEffect(() => {
     void load().catch(() => {})
   }, [load])
 
-  const seats = teamSeatSummary(packageId, invites, activeMembers)
+  const seats = teamSeatSummaryFromMetadata(profileMetadata, invites, activeMembers)
   const pendingInvites = invites.filter((i) => i.status === "pending")
   const openSlots = invites.filter((i) => i.status === "shell")
   const foldStyle = category ? accountSettingsFoldButtonStyle(category) : undefined
@@ -72,6 +70,18 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
   async function sendInvite(e: React.FormEvent) {
     e.preventDefault()
     if (!supabase) return
+    if (!seats.teamInvitesAllowed) {
+      setError("Your plan has no available team seats. Add seats in Billing or upgrade your package.")
+      return
+    }
+    if (role === "office_manager" && !seats.canInviteOfficeManager) {
+      setError("Office manager seat limit reached for your plan.")
+      return
+    }
+    if (role === "user" && !seats.canInviteUser) {
+      setError("User seat limit reached for your plan.")
+      return
+    }
     setBusy(true)
     setMessage("")
     setError("")
@@ -173,20 +183,24 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
       {open ? (
         <div style={{ padding: 16, display: "grid", gap: 14, borderTop: category ? `1px solid ${category.color.border}` : `1px solid ${theme.border}` }}>
           <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
-            {packageId ? (
-              <strong>{labelForProductPackageId(packageId)}</strong>
-            ) : (
-              <span>Your subscription</span>
-            )}
+            <strong>{seats.packageLabel}</strong>
             {" · "}
-            <span>
-              {seats.usedSeats} of {seats.totalSeats} seat(s) in use
+            <span>{seats.seatSummaryLabel}</span>
+            <br />
+            <span style={{ marginTop: 4, display: "inline-block" }}>
+              {seats.usedSeats} of {seats.totalSeats} team seat{seats.totalSeats === 1 ? "" : "s"} in use
               {seats.officeManagerLimit > 0
                 ? ` · Office managers ${seats.officeManagersUsed}/${seats.officeManagerLimit}`
                 : ""}
               {seats.userLimit > 0 ? ` · Users ${seats.usersUsed}/${seats.userLimit}` : ""}
             </span>
           </div>
+
+          {seats.totalSeats <= 0 ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              Your current plan includes only the account owner sign-in. Upgrade to an Office Manager or Corporate package to invite team members.
+            </p>
+          ) : null}
 
           {activeMembers.length > 0 ? (
             <div style={{ display: "grid", gap: 8 }}>
@@ -298,13 +312,18 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
               value={role}
               onChange={(e) => setRole(e.target.value === "office_manager" ? "office_manager" : "user")}
               style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}` }}
+              disabled={seats.totalSeats <= 0}
             >
-              <option value="user">User</option>
-              <option value="office_manager">Office manager</option>
+              <option value="user" disabled={!seats.canInviteUser && seats.availableSeats <= 0}>
+                User
+              </option>
+              <option value="office_manager" disabled={!seats.canInviteOfficeManager}>
+                Office manager
+              </option>
             </select>
             <button
               type="submit"
-              disabled={busy || seats.availableSeats <= 0}
+              disabled={busy || seats.availableSeats <= 0 || seats.totalSeats <= 0 || !seats.teamInvitesAllowed}
               style={{
                 padding: "8px 14px",
                 background: theme.primary,

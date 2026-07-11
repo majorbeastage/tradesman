@@ -67,7 +67,7 @@ export const PACKAGE_ENTITLEMENTS: Record<ProductPackageId, PackageEntitlements>
   },
   corporate: {
     monthlyUsd: 649.99,
-    maxUsers: 20,
+    maxUsers: 23,
     maxOfficeManagers: 3,
     maxLeadsPerMonth: 50,
     voiceMinutesPerUser: 200,
@@ -113,6 +113,6 @@ export function computeSignupProrationUsd(params: {
 
 export function shellUserCountForPackage(packageId: ProductPackageId): number {
   const e = PACKAGE_ENTITLEMENTS[packageId]
-  if (!e) return 1
-  return Math.max(1, e.maxUsers + e.maxOfficeManagers)
+  if (!e) return 0
+  return Math.max(0, e.maxUsers - 1)
 }
