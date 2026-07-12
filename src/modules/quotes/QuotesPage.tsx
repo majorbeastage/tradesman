@@ -178,6 +178,8 @@ import {
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
 import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
+import { uploadBytesForOutbound } from "../../lib/uploadCommAttachment"
+import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS } from "../../lib/smsComplianceLimits"
 import {
   CUSTOMER_SIGNED_ESTIMATE_LABEL,
   filterCustomerSignedEstimateAttachments,
@@ -532,7 +534,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobPackBulletsBusy, setJobPackBulletsBusy] = useState(false)
   const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
-  const [bottomActionEmailOpen, setBottomActionEmailOpen] = useState(false)
+  const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<null | "email" | "sms">(null)
+  const [quoteSmsBody, setQuoteSmsBody] = useState("")
+  const [quoteSmsSending, setQuoteSmsSending] = useState(false)
+  const [quoteSmsAttachEntity, setQuoteSmsAttachEntity] = useState(true)
   const [jobDetailsText, setJobDetailsText] = useState("")
   const [jobDetailsSpeechSupported, setJobDetailsSpeechSupported] = useState(false)
   const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
@@ -1387,6 +1392,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const name = selectedQuote.customers?.display_name ?? "Customer"
     setQuoteEmailSubject(`Quote for ${name}`)
     setQuoteEmailBody("Please see the quote below and let us know if you have any questions.\n\nThank you,")
+    setQuoteSmsBody(`Hi ${name}, please see your estimate attached. Reply with any questions. Thank you!`)
   }, [selectedQuote?.id])
 
   useEffect(() => {
@@ -4535,7 +4541,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         /* ignore */
       }
       if (simulated) {
-        setBottomActionEmailOpen(false)
+        setCustomerDeliveryPanel(null)
         return
       }
       if (!sandboxTraining && attachmentCount < 1) {
@@ -4545,11 +4551,113 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "email").catch(() => undefined)
       }
-      setBottomActionEmailOpen(false)
+      setCustomerDeliveryPanel(null)
     } catch (e) {
       sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")
     } finally {
       setQuoteEmailSending(false)
+    }
+  }
+
+  const SMS_ESTIMATE_PDF_MAX_BYTES = 4_000_000
+
+  async function sendQuoteCustomerSms() {
+    if (!customerSendWorkflowGate.allowed) {
+      alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals before sending to the customer.")
+      return
+    }
+    if (!supabase || !userId || !selectedQuote) return
+    const token = session?.access_token?.trim()
+    if (!token) {
+      alert("Sign in again to send SMS.")
+      return
+    }
+    const contact = resolveCustomerContactByTarget(selectedQuote.customers?.customer_identifiers ?? [], quoteContactTarget)
+    const phone = contact.phone?.trim()
+    if (!phone) {
+      alert(`No phone number is set for ${contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer details.`)
+      return
+    }
+    const body = quoteSmsBody.trim()
+    if (!body) {
+      alert("Enter a message to send.")
+      return
+    }
+    if (!selectedQuoteItems.length) {
+      alert("Add at least one quote item before sending an estimate.")
+      return
+    }
+    const hasFileOrPhoto = quoteMediaRows.length > 0
+    const hasAttachmentDescription = quoteMediaRows.some((row) => {
+      const p = parseQuoteAttachmentMeta(row.metadata)
+      return Boolean(p.note.trim())
+    })
+    const hasDetails = quoteActivityFiltered.length > 0 || Boolean(jobDetailsText.trim())
+    if (!hasFileOrPhoto && !hasAttachmentDescription && !hasDetails) {
+      const proceed = window.confirm(
+        "You may be missing Job Details. Are you sure you want to proceed with sending this Estimate to your Customer?",
+      )
+      if (!proceed) return
+    }
+    setQuoteSmsSending(true)
+    try {
+      const pdfPayload = await buildCurrentEstimatePdfPayload()
+      if (!pdfPayload) throw new Error("Could not build estimate document.")
+      const pdfBytes = await buildQuotePdfBytes(pdfPayload)
+      if (!pdfBytes.length) throw new Error("Estimate PDF is empty.")
+      if (pdfBytes.length > SMS_ESTIMATE_PDF_MAX_BYTES) {
+        throw new Error("Estimate PDF is too large to send via MMS. Try Download and send manually, or use email.")
+      }
+      const shortId = selectedQuote.id.slice(0, 8)
+      const pdfFilename = `estimate-${shortId}.pdf`
+      const pdfUrl = await uploadBytesForOutbound(userId, pdfBytes, pdfFilename, "estimate-sms", "application/pdf")
+      if (!pdfUrl) throw new Error("Could not upload estimate PDF for MMS.")
+      const mediaPublicUrls: string[] = [pdfUrl]
+      if (quoteSmsAttachEntity) {
+        const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
+        for (const row of copyRows) {
+          const url = row.public_url?.trim()
+          if (url && mediaPublicUrls.length < 10) mediaPublicUrls.push(url)
+        }
+      }
+      const res = await fetch("/api/outbound-messages?__channel=sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: outboundMessagesJsonBody({
+          to: phone,
+          body: clampAutomatedNotifyInnerText(body),
+          userId,
+          conversationId: selectedQuote.conversation_id || undefined,
+          customerId: selectedQuote.customer_id,
+          mediaPublicUrls,
+        }),
+      })
+      const raw = await res.text()
+      if (!res.ok) throw new Error(raw.slice(0, 400))
+      let simulated = false
+      try {
+        const parsed = JSON.parse(raw) as { simulated?: boolean; logWarning?: string }
+        if (parsed.simulated === true) simulated = true
+        if (parsed.logWarning) console.warn("[quote-sms]", parsed.logWarning)
+      } catch {
+        /* ignore */
+      }
+      if (simulated) {
+        setCustomerDeliveryPanel(null)
+        return
+      }
+      if (!sandboxTraining) alert("Text sent with estimate PDF attached.")
+      if (supabase && userId && selectedQuote?.id) {
+        void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "manual").catch(() => undefined)
+      }
+      setCustomerDeliveryPanel(null)
+    } catch (e) {
+      sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")
+    } finally {
+      setQuoteSmsSending(false)
     }
   }
 
@@ -5952,7 +6060,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 }
                               }}
                               onPreviewSaveAndSend={() => {
-                                setBottomActionEmailOpen(true)
+                                setCustomerDeliveryPanel("email")
                                 if (selectedQuote?.id) {
                                   saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
                                   setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
@@ -7742,7 +7850,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         )
                         return
                       }
-                      setBottomActionEmailOpen((v) => !v)
+                      setCustomerDeliveryPanel((v) => (v === "email" ? null : "email"))
                     }}
                     style={{
                       padding: "10px 14px",
@@ -7767,10 +7875,53 @@ export default function QuotesPage(_props: QuotesPageProps) {
                           : "pointer",
                     }}
                   >
-                    {estimatePrimaryDelivery.mode === "customer_email" && bottomActionEmailOpen
+                    {estimatePrimaryDelivery.mode === "customer_email" && customerDeliveryPanel === "email"
                       ? "Hide email to customer"
                       : estimatePrimaryDelivery.buttonLabel}
                   </button>
+                  {estimatePrimaryDelivery.mode === "customer_email" ? (
+                    <button
+                      type="button"
+                      disabled={
+                        !selectedQuote?.customer_id ||
+                        selectedQuoteItems.length === 0 ||
+                        !estimatePrimaryDelivery.customerSendAllowed
+                      }
+                      title={
+                        !selectedQuote?.customer_id
+                          ? "Select a customer first"
+                          : selectedQuoteItems.length === 0
+                            ? "Add quote items first"
+                            : estimatePrimaryDelivery.customerBlockReason ?? undefined
+                      }
+                      onClick={() => {
+                        if (!estimatePrimaryDelivery.customerSendAllowed) {
+                          alert(
+                            estimatePrimaryDelivery.customerBlockReason ??
+                              "Complete internal workflow approvals first.",
+                          )
+                          return
+                        }
+                        setCustomerDeliveryPanel((v) => (v === "sms" ? null : "sms"))
+                      }}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `2px solid ${theme.primary}`,
+                        background: customerDeliveryPanel === "sms" ? theme.primary : "#fff7ed",
+                        color: customerDeliveryPanel === "sms" ? "#fff" : theme.text,
+                        fontWeight: 700,
+                        cursor:
+                          !selectedQuote?.customer_id ||
+                          selectedQuoteItems.length === 0 ||
+                          !estimatePrimaryDelivery.customerSendAllowed
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {customerDeliveryPanel === "sms" ? "Hide text to customer" : "Text to customer"}
+                    </button>
+                  ) : null}
                   {estimateParallelHandoffs.map((action) => (
                     <button
                       key={`handoff-${action.nodeId}`}
@@ -7838,7 +7989,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     </span>
                   ) : null}
                 </div>
-                {bottomActionEmailOpen ? (
+                {customerDeliveryPanel === "email" ? (
                   <div
                     style={{
                       padding: 12,
@@ -7952,6 +8103,79 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       }}
                     >
                       {quoteEmailSending ? "Sending…" : "Send email"}
+                    </button>
+                  </div>
+                ) : null}
+                {customerDeliveryPanel === "sms" ? (
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    {(() => {
+                      const contact = resolveCustomerContactByTarget(
+                        selectedQuote?.customers?.customer_identifiers ?? [],
+                        quoteContactTarget,
+                      )
+                      const toPhone = contact.phone?.trim() ?? ""
+                      return toPhone ? (
+                        <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                          <strong style={{ color: theme.text }}>To:</strong> {toPhone}{" "}
+                          <span style={{ color: "#94a3b8" }}>({contactTargetLabel(quoteContactTarget)})</span>
+                        </p>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: 12, color: "#b45309", fontWeight: 600 }}>
+                          No phone on file for {contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer
+                          details.
+                        </p>
+                      )
+                    })()}
+                    <textarea
+                      value={quoteSmsBody}
+                      onChange={(e) => setQuoteSmsBody(e.target.value)}
+                      rows={4}
+                      placeholder="Message"
+                      maxLength={SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS}
+                      style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
+                    />
+                    <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                      The estimate PDF (same as Preview / Download) is sent as an MMS attachment. A compliance footer is
+                      added automatically. PDFs over 4 MB cannot be sent via text — use email instead.
+                    </p>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#0f172a" }}>
+                      <input
+                        type="checkbox"
+                        style={{ marginTop: 3 }}
+                        checked={quoteSmsAttachEntity}
+                        onChange={(e) => setQuoteSmsAttachEntity(e.target.checked)}
+                      />
+                      <span>
+                        Also attach files flagged for <strong>customer copy</strong> (
+                        {entityAttachmentsForCustomerCopy(quoteEntityRows).length} on this estimate)
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void sendQuoteCustomerSms()}
+                      disabled={quoteSmsSending || !customerSendWorkflowGate.allowed}
+                      title={!customerSendWorkflowGate.allowed ? customerSendWorkflowGate.reason : undefined}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: !customerSendWorkflowGate.allowed ? "#94a3b8" : theme.primary,
+                        color: "#fff",
+                        fontWeight: 600,
+                        cursor: quoteSmsSending || !customerSendWorkflowGate.allowed ? "not-allowed" : "pointer",
+                        justifySelf: "start",
+                      }}
+                    >
+                      {quoteSmsSending ? "Sending…" : "Send text"}
                     </button>
                   </div>
                 ) : null}
