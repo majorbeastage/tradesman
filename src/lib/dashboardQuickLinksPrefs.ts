@@ -376,6 +376,8 @@ export type DashboardQuickLinksStored = {
   tile_grid_rows?: number
   tile_styles?: Partial<Record<string, DashboardTileStyle>>
   tile_scheme?: DashboardTileScheme
+  /** ISO timestamp — used to resolve local vs cloud layout conflicts. */
+  updated_at?: string
 }
 
 export function emptyDashboardTileGrid(): DashboardTileGridSlot[] {
@@ -647,6 +649,8 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
         tile_styles[k] = v as DashboardTileStyle
       }
     }
+    const updatedRaw = o.updated_at
+    const updated_at = typeof updatedRaw === "string" && updatedRaw.trim() ? updatedRaw.trim() : undefined
     return {
       v: o.v === 4 ? 4 : o.v === 3 ? 3 : 2,
       tile_grid,
@@ -657,6 +661,7 @@ export function parseDashboardQuickLinks(raw: unknown): DashboardQuickLinksStore
       tile_grid_rows,
       tile_scheme,
       tile_styles,
+      updated_at,
     }
   }
   if (o.v === 1) {
@@ -731,6 +736,7 @@ export function migrateStoredTileOrder(
   styles: Partial<Record<string, DashboardTileStyle>>
   scheme: DashboardTileScheme
   gridColumns: DashboardGridColumns
+  updatedAt: string | undefined
 } {
   const fallbackOrder = defaultDashboardTileOrder(fourthCalendar)
   const defaultGrid = orderToTileGrid(fallbackOrder)
@@ -744,6 +750,7 @@ export function migrateStoredTileOrder(
       styles: {},
       scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
       gridColumns: 5,
+      updatedAt: undefined,
     }
   }
   const o = raw as Record<string, unknown>
@@ -765,6 +772,7 @@ export function migrateStoredTileOrder(
       styles: parsed?.tile_styles ?? {},
       scheme: parsed?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
       gridColumns: 5,
+      updatedAt: parsed?.updated_at,
     }
   }
   if (o.v === 1) {
@@ -783,6 +791,7 @@ export function migrateStoredTileOrder(
       styles: {},
       scheme,
       gridColumns: 5,
+      updatedAt: undefined,
     }
   }
   return {
@@ -794,6 +803,7 @@ export function migrateStoredTileOrder(
     styles: {},
     scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
     gridColumns: 5,
+    updatedAt: undefined,
   }
 }
 
@@ -802,7 +812,7 @@ export function mergeDashboardQuickLinksMetadata(
   patch: Partial<
     Pick<
       DashboardQuickLinksStored,
-      "tile_grid" | "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme" | "grid_columns" | "tile_grid_cols" | "tile_grid_rows"
+      "tile_grid" | "tile_order" | "tile_rows" | "tile_styles" | "tile_scheme" | "grid_columns" | "tile_grid_cols" | "tile_grid_rows" | "updated_at"
     >
   > & {
     optional_order?: DashboardOptionalQuickLinkId[]
@@ -841,6 +851,7 @@ export function mergeDashboardQuickLinksMetadata(
     ...(gridRows != null ? { tile_grid_rows: gridRows } : {}),
     tile_styles: patch.tile_styles ?? existing?.tile_styles ?? migrated.styles,
     tile_scheme: patch.tile_scheme ?? existing?.tile_scheme ?? legacyV1?.tile_scheme ?? DEFAULT_DASHBOARD_TILE_SCHEME,
+    updated_at: patch.updated_at ?? new Date().toISOString(),
   }
   return { ...prevMeta, dashboard_quick_links: next }
 }

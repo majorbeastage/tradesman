@@ -21,6 +21,7 @@ import {
   defaultDashboardTileOrder,
   migrateStoredTileOrder,
   mergeDashboardQuickLinksMetadata,
+  parseDashboardQuickLinks,
   normalizeCustomizeGrid,
   normalizeDashboardTileOrder,
   orderToTileGrid,
@@ -50,6 +51,29 @@ import { useJobTypesModalOptional } from "../contexts/JobTypesModalContext"
 const LS_TILE_GRID = "tradesman_dashboard_tile_grid_v1"
 const LS_TILE_GRID_COLS = "tradesman_dashboard_tile_grid_cols_v1"
 const LS_TILE_GRID_ROWS = "tradesman_dashboard_tile_grid_rows_v1"
+const LS_TILE_GRID_UPDATED_AT = "tradesman_dashboard_tile_grid_updated_at_v1"
+const DASHBOARD_LAYOUT_SAVE_DEBOUNCE_MS = 400
+
+function readLocalDashboardLayoutUpdatedAt(): number {
+  if (typeof window === "undefined") return 0
+  try {
+    const raw = localStorage.getItem(LS_TILE_GRID_UPDATED_AT)
+    if (!raw) return 0
+    const ts = Date.parse(raw)
+    return Number.isFinite(ts) ? ts : 0
+  } catch {
+    return 0
+  }
+}
+
+function writeLocalDashboardLayoutUpdatedAt(iso: string) {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.setItem(LS_TILE_GRID_UPDATED_AT, iso)
+  } catch {
+    /* ignore */
+  }
+}
 
 export type OptionalQuickLinkId = DashboardQuickLinkId
 
@@ -632,7 +656,7 @@ export default function DashboardQuickActions(props: Props) {
     [tileGrid, gridCols, isMobile],
   )
   const [tileStyles, setTileStyles] = useState<Partial<Record<string, DashboardTileStyle>>>({})
-  const [persistNote, setPersistNote] = useState<"idle" | "cloud" | "local">("idle")
+  const [persistNote, setPersistNote] = useState<"idle" | "saving" | "cloud" | "local">("idle")
   const [customize, setCustomize] = useState(false)
   const [styleMenu, setStyleMenu] = useState<{ id: DashboardQuickLinkId; x: number; y: number } | null>(null)
   const [todayOpen, setTodayOpen] = useState(false)
@@ -644,12 +668,54 @@ export default function DashboardQuickActions(props: Props) {
   }, [])
   const [prefsHydrated, setPrefsHydrated] = useState(false)
   const userModifiedRef = useRef(false)
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveGenerationRef = useRef(0)
+  const latestPersistRef = useRef({
+    tileGrid,
+    tileStyles,
+    gridCols,
+    gridRows,
+    fourthLinkId,
+    profileUserId: profileUserId ?? null,
+  })
 
   useEffect(() => {
+    latestPersistRef.current = {
+      tileGrid,
+      tileStyles,
+      gridCols,
+      gridRows,
+      fourthLinkId,
+      profileUserId: profileUserId ?? null,
+    }
+  }, [tileGrid, tileStyles, gridCols, gridRows, fourthLinkId, profileUserId])
+
+  const readLocalTileGrid = useCallback(() => {
+    if (typeof window === "undefined") return null
+    try {
+      const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
+      const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
+      const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
+      const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
+      const raw = localStorage.getItem(LS_TILE_GRID)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, gridCols)
+      }
+    } catch {
+      /* ignore */
+    }
+    return null
+  }, [buildCustomizeGrid, gridCols])
+
+  useEffect(() => {
+    const updatedAt = new Date().toISOString()
     try {
       localStorage.setItem(LS_TILE_GRID, JSON.stringify(tileGrid))
       localStorage.setItem(LS_TILE_GRID_COLS, String(gridCols))
       localStorage.setItem(LS_TILE_GRID_ROWS, String(gridRows))
+      writeLocalDashboardLayoutUpdatedAt(updatedAt)
     } catch {
       /* ignore */
     }
@@ -698,31 +764,27 @@ export default function DashboardQuickActions(props: Props) {
           data?.metadata && typeof data.metadata === "object"
             ? (data.metadata as Record<string, unknown>).dashboard_quick_links
             : null
+        const parsed = parseDashboardQuickLinks(raw)
         const migrated = migrateStoredTileOrder(raw, fourthLinkId)
-        if (migrated.grid.length) {
+        const cloudTs = migrated.updatedAt ? Date.parse(migrated.updatedAt) : 0
+        const localTs = readLocalDashboardLayoutUpdatedAt()
+        const localGrid = readLocalTileGrid()
+        const hasCloudSaved = Boolean(parsed?.tile_grid?.length)
+
+        if (localGrid && localTs > cloudTs) {
+          savedColsRef.current = Number.parseInt(localStorage.getItem(LS_TILE_GRID_COLS) ?? "", 10) || migrated.gridCols
+          setTileGrid(localGrid)
+          setPersistNote("local")
+          userModifiedRef.current = true
+        } else if (hasCloudSaved && migrated.grid.length) {
           savedColsRef.current = migrated.gridCols
           setTileGrid(buildCustomizeGrid(migrated.grid, migrated.gridCols, migrated.gridRows, gridCols))
           setTileStyles(migrated.styles)
+          if (migrated.updatedAt) writeLocalDashboardLayoutUpdatedAt(migrated.updatedAt)
           setPersistNote("cloud")
-        } else {
-          const loc = (() => {
-            try {
-              const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
-              const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
-              const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
-              const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
-              const raw = localStorage.getItem(LS_TILE_GRID)
-              if (!raw) return null
-              const parsed = JSON.parse(raw) as unknown
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, gridCols)
-              }
-            } catch {
-              /* ignore */
-            }
-            return null
-          })()
-          if (loc?.length) setTileGrid(loc)
+        } else if (localGrid?.length) {
+          setTileGrid(localGrid)
+          setPersistNote("local")
         }
         setPrefsHydrated(true)
         prevColsRef.current = gridCols
@@ -730,41 +792,71 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [profileUserId, fourthLinkId, buildCustomizeGrid])
+  }, [profileUserId, fourthLinkId, buildCustomizeGrid, gridCols, readLocalTileGrid])
+
+  const flushCloudPersist = useCallback(async () => {
+    const snapshot = latestPersistRef.current
+    if (!supabase || !snapshot.profileUserId || !prefsHydrated) return
+    const generation = ++saveGenerationRef.current
+    setPersistNote("saving")
+    const updatedAt = new Date().toISOString()
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from("profiles")
+        .select("metadata")
+        .eq("id", snapshot.profileUserId)
+        .maybeSingle()
+      if (fetchErr) throw fetchErr
+      const prevMeta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? { ...(data.metadata as Record<string, unknown>) }
+          : {}
+      const nextMeta = mergeDashboardQuickLinksMetadata(
+        prevMeta,
+        {
+          tile_grid: snapshot.tileGrid,
+          tile_grid_cols: snapshot.gridCols,
+          tile_grid_rows: snapshot.gridRows,
+          tile_styles: snapshot.tileStyles,
+          tile_scheme: "paper",
+          updated_at: updatedAt,
+        },
+        snapshot.fourthLinkId,
+      )
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", snapshot.profileUserId)
+      if (upErr) throw upErr
+      if (generation !== saveGenerationRef.current) return
+      writeLocalDashboardLayoutUpdatedAt(updatedAt)
+      setPersistNote("cloud")
+    } catch {
+      if (generation === saveGenerationRef.current) setPersistNote("local")
+    }
+  }, [prefsHydrated])
 
   useEffect(() => {
     if (!prefsHydrated) return
+    if (!userModifiedRef.current) {
+      if (!supabase || !profileUserId) setPersistNote("local")
+      return
+    }
     if (!supabase || !profileUserId) {
       setPersistNote("local")
       return
     }
-    let cancelled = false
-    void (async () => {
-      try {
-        const { data, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
-        if (cancelled) return
-        if (fetchErr) throw fetchErr
-        const prevMeta =
-          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-            ? { ...(data.metadata as Record<string, unknown>) }
-            : {}
-        const nextMeta = mergeDashboardQuickLinksMetadata(
-          prevMeta,
-          { tile_grid: tileGrid, tile_grid_cols: gridCols, tile_grid_rows: gridRows, tile_styles: tileStyles, tile_scheme: "paper" },
-          fourthLinkId,
-        )
-        const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
-        if (cancelled) return
-        if (upErr) throw upErr
-        setPersistNote("cloud")
-      } catch {
-        if (!cancelled) setPersistNote("local")
-      }
-    })()
+    setPersistNote("saving")
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null
+      void flushCloudPersist()
+    }, DASHBOARD_LAYOUT_SAVE_DEBOUNCE_MS)
     return () => {
-      cancelled = true
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current)
+        persistTimerRef.current = null
+      }
+      void flushCloudPersist()
     }
-  }, [tileGrid, tileStyles, gridCols, gridRows, profileUserId, prefsHydrated, fourthLinkId])
+  }, [tileGrid, tileStyles, gridCols, gridRows, profileUserId, prefsHydrated, fourthLinkId, flushCloudPersist])
 
   const linkAvailable = useCallback(
     (id: DashboardQuickLinkId): boolean => {
@@ -1390,7 +1482,9 @@ export default function DashboardQuickActions(props: Props) {
         {customize ? (
           <div style={{ margin: "10px 0 0", fontSize: 11, color: "rgba(15,23,42,0.72)", maxWidth: 960, lineHeight: 1.45 }}>
             <span>{labels.customizeAddHint}</span>
-            {persistNote === "cloud" ? (
+            {persistNote === "saving" ? (
+              <span style={{ display: "block", marginTop: 4, color: "rgba(100, 116, 139, 0.95)" }}>Saving…</span>
+            ) : persistNote === "cloud" ? (
               <span style={{ display: "block", marginTop: 4, color: "rgba(16,185,129,0.95)" }}>{labels.savedCloud}</span>
             ) : persistNote === "local" ? (
               <span style={{ display: "block", marginTop: 4 }}>{labels.savedDeviceOnly}</span>
