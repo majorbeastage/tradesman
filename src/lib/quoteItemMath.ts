@@ -70,6 +70,44 @@ export function materialDescriptionsFromQuoteItemRows(items: QuoteItemRowLike[])
   return lines.join("\n")
 }
 
+/** All quote line descriptions for calendar notes (qty × unit when present). */
+export function scopeLineItemsTextFromQuoteRows(items: QuoteItemRowLike[]): string {
+  const lines: string[] = []
+  for (const item of items) {
+    const d = String(item.description ?? "").trim()
+    if (!d) continue
+    const qty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
+    const up = typeof item.unit_price === "number" ? item.unit_price : Number.parseFloat(String(item.unit_price ?? 0)) || 0
+    const meta = parseQuoteItemMetadata(item.metadata)
+    const lineTotal = computeQuoteLineTotal(qty, up, meta).total
+    const qtyPart = Number.isFinite(qty) && qty !== 1 ? ` × ${qty}` : ""
+    const pricePart = lineTotal > 0 ? ` — $${lineTotal.toFixed(2)}` : ""
+    lines.push(`${d}${qtyPart}${pricePart}`)
+  }
+  return lines.join("\n")
+}
+
+/** Primary line for calendar title: first line item, or highest-dollar line if none at top. */
+export function primaryLineItemTitleFromQuoteRows(items: QuoteItemRowLike[]): string {
+  let bestDesc = ""
+  let bestTotal = -1
+  let firstDesc = ""
+  for (const item of items) {
+    const d = String(item.description ?? "").trim()
+    if (!d) continue
+    if (!firstDesc) firstDesc = d
+    const qty = typeof item.quantity === "number" ? item.quantity : Number.parseFloat(String(item.quantity ?? 0)) || 0
+    const up = typeof item.unit_price === "number" ? item.unit_price : Number.parseFloat(String(item.unit_price ?? 0)) || 0
+    const meta = parseQuoteItemMetadata(item.metadata)
+    const lineTotal = computeQuoteLineTotal(qty, up, meta).total
+    if (lineTotal > bestTotal) {
+      bestTotal = lineTotal
+      bestDesc = d
+    }
+  }
+  return firstDesc || bestDesc
+}
+
 /** Quote material lines first, then job-type checklist (newline-separated). */
 export function mergeMaterialsListsForCalendar(quoteMaterials: string | null | undefined, jobTypeMaterials: string | null | undefined): string | null {
   const q = quoteMaterials?.trim() ?? ""

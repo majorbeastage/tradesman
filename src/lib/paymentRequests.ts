@@ -1,5 +1,6 @@
 import { supabase } from "./supabase"
 import { withSupabasePublicCredentials, platformToolsFetchOrigins } from "./platformToolsJsonBody"
+import { totalFromQuoteItemRows } from "./quoteItemMath"
 
 export type PaymentRequestStatus = "draft" | "sent" | "paid" | "failed" | "canceled"
 export type PaymentProviderId = "helcim" | "square" | "manual"
@@ -170,6 +171,21 @@ export async function loadPaymentSourceQuotes(userId: string, customerId: string
     .order("updated_at", { ascending: false })
     .limit(40)
   if (error) return []
+  const quoteIds = (data ?? []).map((row) => String((row as { id: string }).id))
+  const itemsByQuote = new Map<string, Array<{ quantity?: unknown; unit_price?: unknown; metadata?: unknown }>>()
+  if (quoteIds.length > 0) {
+    const { data: items } = await supabase
+      .from("quote_items")
+      .select("quote_id, quantity, unit_price, metadata")
+      .in("quote_id", quoteIds)
+    for (const row of items ?? []) {
+      const qid = String((row as { quote_id?: string }).quote_id ?? "")
+      if (!qid) continue
+      const list = itemsByQuote.get(qid) ?? []
+      list.push(row)
+      itemsByQuote.set(qid, list)
+    }
+  }
   return (data ?? []).map((row) => {
     const r = row as { id: string; customer_id?: string | null; metadata?: unknown }
     const meta =
@@ -180,8 +196,11 @@ export async function loadPaymentSourceQuotes(userId: string, customerId: string
       (typeof meta.job_title === "string" && meta.job_title.trim()) ||
       (typeof meta.title === "string" && meta.title.trim()) ||
       `Estimate ${String(r.id).slice(0, 8)}`
-    const amount = parseQuoteAmountFromMetadata(meta)
-    return { id: String(r.id), label: title, amount, customer_id: r.customer_id ?? null }
+    const itemRows = itemsByQuote.get(String(r.id)) ?? []
+    const fromItems = totalFromQuoteItemRows(itemRows)
+    const amount = fromItems > 0 ? fromItems : parseQuoteAmountFromMetadata(meta)
+    const priceLabel = amount != null && amount > 0 ? ` · $${amount.toFixed(2)}` : ""
+    return { id: String(r.id), label: `${title}${priceLabel}`, amount, customer_id: r.customer_id ?? null }
   })
 }
 

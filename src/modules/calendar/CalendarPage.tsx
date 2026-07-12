@@ -76,7 +76,6 @@ import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
 import { applyEmailTemplatePlaceholders, findEmailTemplate } from "../../lib/emailTemplates"
 import { htmlToPlainText } from "../../lib/emailSignature"
-import { buildAutomatedNotifySmsBody } from "../../lib/smsComplianceLimits"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { queueCustomerProfile } from "../../lib/customerNavigation"
 import { useJobTypesModalOptional } from "../../contexts/JobTypesModalContext"
@@ -88,7 +87,7 @@ import {
   consumeSchedulingCustomerPrefill,
   consumeSchedulingEventView,
   consumeSchedulingQuotePrefill,
-  queueQuotesCustomerPrefill,
+  queueQuotesCreateNewForCustomer,
   notifyCustomersHubRefresh,
   SCHEDULING_ADD_WIZARD_PREFILL_EVENT,
   SCHEDULING_EVENT_VIEW_EVENT,
@@ -122,8 +121,17 @@ import {
   materialDescriptionsFromQuoteItemRows,
   parseQuoteItemMetadata,
   prependQuoteMaterialsToEventChecklist,
+  primaryLineItemTitleFromQuoteRows,
+  scopeLineItemsTextFromQuoteRows,
   totalFromQuoteItemRows,
 } from "../../lib/quoteItemMath"
+import { loadCalendarQuotePickerOptions, type CalendarQuotePickerOption } from "../../lib/customerQuotePaymentOptions"
+import {
+  buildAppointmentCancelSmsInner,
+  buildAppointmentConfirmSmsInner,
+  buildAppointmentRescheduleSmsInner,
+  wrapAppointmentSmsBody,
+} from "../../lib/appointmentCustomerNotify"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "../../lib/quoteLogoImage"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
@@ -461,6 +469,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addCustomerSearch, setAddCustomerSearch] = useState("")
   const [addNotifyEmail, setAddNotifyEmail] = useState(false)
   const [addNotifySms, setAddNotifySms] = useState(false)
+  const [addQuoteOptions, setAddQuoteOptions] = useState<CalendarQuotePickerOption[]>([])
+  const [addQuoteOptionsLoading, setAddQuoteOptionsLoading] = useState(false)
+  const [ownerBusinessDisplayName, setOwnerBusinessDisplayName] = useState("")
+  const [eventNotesDraft, setEventNotesDraft] = useState("")
+  const [eventNotesSaving, setEventNotesSaving] = useState(false)
+  const [rescheduleNotifyEmail, setRescheduleNotifyEmail] = useState(false)
+  const [rescheduleNotifySms, setRescheduleNotifySms] = useState(false)
+  const [removeNotifyEmail, setRemoveNotifyEmail] = useState(false)
+  const [removeNotifySms, setRemoveNotifySms] = useState(false)
   const [addSaving, setAddSaving] = useState(false)
 
   // Job type form (managed in shared JobTypesManagerModal)
@@ -533,11 +550,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     let cancelled = false
     void supabase
       .from("profiles")
-      .select("metadata")
+      .select("metadata, display_name")
       .eq("id", calendarDbUserId)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
+        const dn = (data as { display_name?: string | null } | null)?.display_name
+        if (typeof dn === "string" && dn.trim()) setOwnerBusinessDisplayName(dn.trim())
         const m =
           data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
             ? (data.metadata as Record<string, unknown>)
@@ -1842,7 +1861,72 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setSelectedEvent((prev) =>
       prev && prev.id === selectedEvent.id ? { ...prev, start_at: startIso, end_at: endIso } : prev,
     )
+    if (eventScheduleDirty && selectedEvent.customer_id && (rescheduleNotifyEmail || rescheduleNotifySms)) {
+      const ownerUserId = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
+      const notifyErrs = await sendCustomerAppointmentNotify({
+        customerId: selectedEvent.customer_id,
+        eventId: selectedEvent.id,
+        notifyEmail: rescheduleNotifyEmail,
+        notifySms: rescheduleNotifySms,
+        kind: "reschedule",
+        title: selectedEvent.title?.trim() || "Your appointment",
+        startIso,
+        ownerUserId: ownerUserId || userId,
+      })
+      if (notifyErrs.length > 0) {
+        alert(`Schedule saved, but could not notify the customer:\n${notifyErrs.join("\n")}`)
+      }
+      setRescheduleNotifyEmail(false)
+      setRescheduleNotifySms(false)
+    }
     loadEvents()
+  }
+
+  async function saveEventNotes() {
+    if (!supabase || !selectedEvent?.id) return
+    setEventNotesSaving(true)
+    const notes = eventNotesDraft.trim() || null
+    const { data, error } = await supabase
+      .from("calendar_events")
+      .update({ notes })
+      .eq("id", selectedEvent.id)
+      .select("id")
+    setEventNotesSaving(false)
+    if (error) {
+      alert(error.message ?? String(error))
+      return
+    }
+    if (!data?.length) {
+      alert("Could not save notes — this event may no longer be editable.")
+      return
+    }
+    setSelectedEvent((prev) => (prev && prev.id === selectedEvent.id ? { ...prev, notes } : prev))
+    loadEvents()
+  }
+
+  async function removeCalendarEventWithOptionalNotify(event: CalendarEvent, removeFn: () => Promise<void>) {
+    if (event.customer_id && (removeNotifyEmail || removeNotifySms)) {
+      const ownerUserId = resolveSandboxDataUserId(event.user_id ?? userId, authUserId || userId)
+      const notifyErrs = await sendCustomerAppointmentNotify({
+        customerId: event.customer_id,
+        eventId: event.id,
+        notifyEmail: removeNotifyEmail,
+        notifySms: removeNotifySms,
+        kind: "cancel",
+        title: event.title?.trim() || "Your appointment",
+        startIso: event.start_at,
+        ownerUserId: ownerUserId || userId,
+      })
+      if (notifyErrs.length > 0) {
+        const proceed = window.confirm(
+          `Could not verify customer contact for cancellation notice:\n${notifyErrs.join("\n")}\n\nRemove the event anyway?`,
+        )
+        if (!proceed) return
+      }
+    }
+    await removeFn()
+    setRemoveNotifyEmail(false)
+    setRemoveNotifySms(false)
   }
 
   async function commitEventTimeChange(ev: CalendarEvent, newStart: Date, durationMs: number): Promise<boolean> {
@@ -2067,7 +2151,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (offerNewEstimate && selectedEvent.customer_id && setPage && window.confirm(
       "Additional receipt line items were saved. Create a new estimate from these items and send it to the customer?",
     )) {
-      queueQuotesCustomerPrefill(selectedEvent.customer_id)
+      queueQuotesCreateNewForCustomer(selectedEvent.customer_id)
       setPage("quotes")
     }
   }
@@ -2241,7 +2325,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const mins = Math.max(timeIncrement, Math.round(durMs / 60000))
     setEventEditDurationStr(formatDurationFieldFromMinutes(snapMinutesToIncrement(mins, timeIncrement), timeIncrement))
     setEventEditJobTypeId(selectedEvent.job_type_id ?? "")
-  }, [selectedEvent?.id, selectedEvent?.start_at, selectedEvent?.end_at, selectedEvent?.job_type_id, timeIncrement])
+    setEventNotesDraft(selectedEvent.notes?.trim() || "")
+    setRescheduleNotifyEmail(false)
+    setRescheduleNotifySms(false)
+  }, [selectedEvent?.id, selectedEvent?.start_at, selectedEvent?.end_at, selectedEvent?.job_type_id, selectedEvent?.notes, timeIncrement])
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -2626,76 +2713,17 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
     const sendErrs: string[] = []
     if ((addNotifyEmail || addNotifySms) && addCustomerId) {
-      const cust = addCustomerOptions.find((c) => c.id === addCustomerId)
-      if (cust) {
-        const startIso = newRanges[0].s.toISOString()
-        const senderName =
-          typeof authUser?.user_metadata?.display_name === "string" && authUser.user_metadata.display_name.trim()
-            ? authUser.user_metadata.display_name.trim()
-            : "Our team"
-        const customerName = cust.display_name?.trim() || "there"
-        const templateVars = {
-          customer_name: customerName,
-          sender_name: senderName,
-          company: "Our team",
-          appointment_date: formatAddAppointmentDate(startIso),
-          appointment_time: formatAddAppointmentTime(startIso),
-          appointment_title: addTitle.trim() || "Your appointment",
-        }
-        const t = findEmailTemplate("appointment_confirm")
-        const applied = t
-          ? applyEmailTemplatePlaceholders(t, templateVars)
-          : {
-              subject: `Appointment confirmed — ${templateVars.appointment_date}`,
-              bodyHtml: `<p>Hi ${customerName},</p><p>Your appointment is scheduled for <strong>${templateVars.appointment_date}</strong> at <strong>${templateVars.appointment_time}</strong>.</p>`,
-            }
-        const bodyPlain = htmlToPlainText(applied.bodyHtml)
-        const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
-          const { data: sessionData } = await supabase!.auth.getSession()
-          const token = sessionData.session?.access_token
-          return fetch(`/api/outbound-messages?__channel=${channel}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: outboundMessagesJsonBody(payload),
-          })
-        }
-        if (addNotifyEmail) {
-          if (!cust.email?.trim()) {
-            sendErrs.push("No customer email on file.")
-          } else {
-            const res = await postOutbound("email", {
-              userId: eventOwnerUserId,
-              customerId: addCustomerId,
-              to: cust.email.trim(),
-              subject: applied.subject,
-              body: bodyPlain,
-              bodyHtml: applied.bodyHtml,
-              ...(insertedEventIds[0] ? { calendarEventId: insertedEventIds[0] } : {}),
-            })
-            const raw = await res.text()
-            if (!res.ok) sendErrs.push(formatOutboundError(raw))
-          }
-        }
-        if (addNotifySms) {
-          if (!cust.phone?.trim()) {
-            sendErrs.push("No customer phone on file.")
-          } else {
-            const smsInner = `Hi ${customerName}, your appointment is confirmed for ${templateVars.appointment_date} at ${templateVars.appointment_time}.${addTitle.trim() ? ` Service: ${addTitle.trim()}.` : ""}`
-            const res = await postOutbound("sms", {
-              userId: eventOwnerUserId,
-              customerId: addCustomerId,
-              to: cust.phone.trim(),
-              body: buildAutomatedNotifySmsBody(smsInner, "appointment"),
-              ...(insertedEventIds[0] ? { calendarEventId: insertedEventIds[0] } : {}),
-            })
-            const raw = await res.text()
-            if (!res.ok) sendErrs.push(formatOutboundError(raw))
-          }
-        }
-      }
+      const notifyErrs = await sendCustomerAppointmentNotify({
+        customerId: addCustomerId,
+        eventId: insertedEventIds[0],
+        notifyEmail: addNotifyEmail,
+        notifySms: addNotifySms,
+        kind: "confirm",
+        title: addTitle.trim(),
+        startIso: newRanges[0].s.toISOString(),
+        ownerUserId: eventOwnerUserId,
+      })
+      sendErrs.push(...notifyErrs)
     }
     if (sendErrs.length > 0) {
       alert(`Saved to calendar, but could not notify the customer:\n${sendErrs.join("\n")}`)
@@ -2749,6 +2777,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     setAddCustomerId(customerId)
+    if (addQuoteId) {
+      const opt = addQuoteOptions.find((o) => o.quoteId === addQuoteId)
+      if (opt?.customerId && opt.customerId !== customerId) setAddQuoteId(null)
+    }
     const row = addCustomerOptions.find((c) => c.id === customerId)
     if (!row) return
     setAddTitle((prev) => prev.trim() || row.display_name)
@@ -2803,7 +2835,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     if (!setPage) return
-    queueQuotesCustomerPrefill(customerId)
+    queueQuotesCreateNewForCustomer(customerId)
     setSelectedEvent(null)
     setPage("quotes")
   }
@@ -2853,19 +2885,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setAddQuoteId(quotePrefill.quoteId)
       setShowAddItem(true)
       setAddTargetUserId(userId)
-      void (async () => {
-        const { data } = await supabase
-          .from("quotes")
-          .select("id, job_type_id, customers(display_name)")
-          .eq("id", quotePrefill.quoteId)
-          .maybeSingle()
-        if (!data) return
-        const custName =
-          (data as { customers?: { display_name?: string | null } }).customers?.display_name?.trim() || "Job"
-        const jtId = String((data as { job_type_id?: string }).job_type_id ?? "").trim()
-        if (jtId) setAddJobTypeId(jtId)
-        setAddTitle(custName)
-      })()
+      void applyAddQuoteSelection(quotePrefill.quoteId)
       return
     }
     const cid = consumeSchedulingCustomerPrefill()
@@ -3069,6 +3089,220 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   const addCustomerCanEmail = Boolean(selectedAddCustomer?.email?.trim())
   const addCustomerCanSms = Boolean(selectedAddCustomer?.phone?.trim())
+
+  useEffect(() => {
+    if (!showAddItem || !supabase || !userId) return
+    let cancelled = false
+    setAddQuoteOptionsLoading(true)
+    void loadCalendarQuotePickerOptions(supabase, userId, addCustomerId).then((opts) => {
+      if (cancelled) return
+      setAddQuoteOptions(opts)
+      setAddQuoteOptionsLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [showAddItem, supabase, userId, addCustomerId])
+
+  const applyAddQuoteSelection = useCallback(
+    async (quoteId: string) => {
+      setAddQuoteId(quoteId || null)
+      if (!quoteId || !supabase) return
+      const opt = addQuoteOptions.find((o) => o.quoteId === quoteId)
+      if (opt?.customerId) {
+        setAddCustomerId(opt.customerId)
+        if (opt.customerName) setAddCustomerSearch(opt.customerName)
+      }
+      const { data: quoteRow } = await supabase
+        .from("quotes")
+        .select("job_type_id, metadata")
+        .eq("id", quoteId)
+        .maybeSingle()
+      const jtId = String((quoteRow as { job_type_id?: string } | null)?.job_type_id ?? "").trim()
+      if (jtId) {
+        setAddJobTypeId(jtId)
+        applyJobTypeToAddForm(jtId)
+      }
+      const { data: items } = await supabase
+        .from("quote_items")
+        .select("description, quantity, unit_price, metadata")
+        .eq("quote_id", quoteId)
+        .order("created_at", { ascending: true })
+      const rows = (items ?? []) as Array<{
+        description?: string | null
+        quantity?: unknown
+        unit_price?: unknown
+        metadata?: unknown
+      }>
+      const titleLine = primaryLineItemTitleFromQuoteRows(rows)
+      const notesText = scopeLineItemsTextFromQuoteRows(rows)
+      if (titleLine) setAddTitle(titleLine)
+      if (notesText) setAddNotes(notesText)
+    },
+    [supabase, addQuoteOptions],
+  )
+
+  const eventScheduleDirty = useMemo(() => {
+    if (!selectedEvent) return false
+    const start = parseLocalDateTime(eventEditStartDate, eventEditStartTime)
+    if (Number.isNaN(start.getTime())) return false
+    const addMinRaw = parseDurationFieldToMinutes(eventEditDurationStr, timeIncrement)
+    if (addMinRaw == null) return false
+    const working = readCalendarWorkingHoursFromStorage()
+    const addMin = clampAppointmentDurationMinutes(addMinRaw, {
+      start,
+      workingStart: working.enabled ? working.start : undefined,
+      workingEnd: working.enabled ? working.end : undefined,
+    })
+    const end = new Date(start.getTime() + addMin * 60 * 1000)
+    const startIso = start.toISOString()
+    const endIso = end.toISOString()
+    return startIso !== selectedEvent.start_at || endIso !== selectedEvent.end_at
+  }, [selectedEvent, eventEditStartDate, eventEditStartTime, eventEditDurationStr, timeIncrement])
+
+  async function resolveCustomerNotifyContact(customerId: string): Promise<{
+    display_name: string
+    email: string
+    phone: string
+  } | null> {
+    const cached = addCustomerOptions.find((c) => c.id === customerId)
+    if (cached) return cached
+    if (!supabase) return null
+    const { data } = await supabase
+      .from("customers")
+      .select("id, display_name, customer_identifiers(type, value, is_primary)")
+      .eq("id", customerId)
+      .maybeSingle()
+    if (!data) return null
+    const ids = (data as { customer_identifiers?: { type: string; value: string; is_primary?: boolean }[] })
+      .customer_identifiers
+    const email =
+      ids?.find((x) => x.type === "email" && x.is_primary)?.value?.trim() ||
+      ids?.find((x) => x.type === "email")?.value?.trim() ||
+      ""
+    const phone =
+      ids?.find((x) => x.type === "phone" && x.is_primary)?.value?.trim() ||
+      ids?.find((x) => x.type === "phone")?.value?.trim() ||
+      ""
+    return {
+      id: customerId,
+      display_name: String((data as { display_name?: string | null }).display_name ?? "").trim() || "Customer",
+      email,
+      phone,
+      service_address: "",
+    } as CustomerReceiptPickerRow
+  }
+
+  async function sendCustomerAppointmentNotify(input: {
+    customerId: string
+    eventId?: string
+    notifyEmail: boolean
+    notifySms: boolean
+    kind: "confirm" | "reschedule" | "cancel"
+    title: string
+    startIso: string
+    ownerUserId: string
+  }): Promise<string[]> {
+    const errs: string[] = []
+    if (!input.notifyEmail && !input.notifySms) return errs
+    if (!supabase) return ["Not connected."]
+    const cust = await resolveCustomerNotifyContact(input.customerId)
+    if (!cust) {
+      errs.push("Customer not found.")
+      return errs
+    }
+    const businessName =
+      ownerBusinessDisplayName.trim() ||
+      (typeof authUser?.user_metadata?.display_name === "string" ? authUser.user_metadata.display_name.trim() : "") ||
+      "Our team"
+    const customerName = cust.display_name?.trim() || "there"
+    const appointmentDate = formatAddAppointmentDate(input.startIso)
+    const appointmentTime = formatAddAppointmentTime(input.startIso)
+    const smsInner =
+      input.kind === "reschedule"
+        ? buildAppointmentRescheduleSmsInner({
+            customerName,
+            appointmentDate,
+            appointmentTime,
+            businessName,
+            appointmentTitle: input.title,
+          })
+        : input.kind === "cancel"
+          ? buildAppointmentCancelSmsInner({
+              customerName,
+              appointmentDate,
+              appointmentTime,
+              businessName,
+              appointmentTitle: input.title,
+            })
+          : buildAppointmentConfirmSmsInner({
+              customerName,
+              appointmentDate,
+              appointmentTime,
+              businessName,
+              appointmentTitle: input.title,
+            })
+    const templateVars = {
+      customer_name: customerName,
+      sender_name: businessName,
+      company: businessName,
+      appointment_date: appointmentDate,
+      appointment_time: appointmentTime,
+      appointment_title: input.title.trim() || "Your appointment",
+    }
+    const t = findEmailTemplate("appointment_confirm")
+    const applied = t
+      ? applyEmailTemplatePlaceholders(t, templateVars)
+      : {
+          subject: `Appointment confirmed — ${templateVars.appointment_date}`,
+          bodyHtml: `<p>Hi ${customerName},</p><p>Your appointment with <strong>${businessName}</strong> is scheduled for <strong>${templateVars.appointment_date}</strong> at <strong>${templateVars.appointment_time}</strong> for: ${templateVars.appointment_title}</p>`,
+        }
+    const bodyPlain = htmlToPlainText(applied.bodyHtml)
+    const sb = supabase
+    const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
+      const { data: sessionData } = await sb.auth.getSession()
+      const token = sessionData.session?.access_token
+      return fetch(`/api/outbound-messages?__channel=${channel}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: outboundMessagesJsonBody(payload),
+      })
+    }
+    if (input.notifyEmail) {
+      if (!cust.email?.trim()) errs.push("No customer email on file.")
+      else {
+        const res = await postOutbound("email", {
+          userId: input.ownerUserId,
+          customerId: input.customerId,
+          to: cust.email.trim(),
+          subject: applied.subject,
+          body: bodyPlain,
+          bodyHtml: applied.bodyHtml,
+          ...(input.eventId ? { calendarEventId: input.eventId } : {}),
+        })
+        const raw = await res.text()
+        if (!res.ok) errs.push(formatOutboundError(raw))
+      }
+    }
+    if (input.notifySms) {
+      if (!cust.phone?.trim()) errs.push("No customer phone on file.")
+      else {
+        const res = await postOutbound("sms", {
+          userId: input.ownerUserId,
+          customerId: input.customerId,
+          to: cust.phone.trim(),
+          body: wrapAppointmentSmsBody(smsInner),
+          ...(input.eventId ? { calendarEventId: input.eventId } : {}),
+        })
+        const raw = await res.text()
+        if (!res.ok) errs.push(formatOutboundError(raw))
+      }
+    }
+    return errs
+  }
 
 
   function renderJobTypeSelect(
@@ -4026,6 +4260,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 ) : null}
               </div>
 
+              <div>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Estimate (optional)</label>
+                <select
+                  value={addQuoteId ?? ""}
+                  onChange={(e) => void applyAddQuoteSelection(e.target.value)}
+                  style={{ ...addInputStyle, marginTop: 4 }}
+                  disabled={addQuoteOptionsLoading}
+                >
+                  <option value="">— None —</option>
+                  {addQuoteOptions.map((opt) => (
+                    <option key={opt.quoteId} value={opt.quoteId}>
+                      {opt.estimateLabel}
+                    </option>
+                  ))}
+                </select>
+                {addQuoteOptionsLoading ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>Loading estimates…</p>
+                ) : addQuoteOptions.length === 0 ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                    {addCustomerId ? "No estimates for this customer yet." : "Select a customer to filter estimates, or pick from all estimates below."}
+                  </p>
+                ) : null}
+              </div>
+
               <div style={isMobile ? undefined : { gridColumn: "1 / -1" }}>
                 <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Title</label>
                 <input placeholder="Title" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} style={{ ...addInputStyle, marginTop: 4 }} />
@@ -4718,6 +4976,27 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     style={addInputStyle}
                   />
                 </div>
+                {eventScheduleDirty && selectedEvent.customer_id ? (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: theme.text }}>Notify customer of schedule change</p>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                      <input
+                        type="checkbox"
+                        checked={rescheduleNotifyEmail}
+                        onChange={(e) => setRescheduleNotifyEmail(e.target.checked)}
+                      />
+                      Email customer
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                      <input
+                        type="checkbox"
+                        checked={rescheduleNotifySms}
+                        onChange={(e) => setRescheduleNotifySms(e.target.checked)}
+                      />
+                      Text customer
+                    </label>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   disabled={eventScheduleSaving || !supabase}
@@ -4789,12 +5068,33 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               <div>
                 <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Notes / description</label>
                 <textarea
-                  readOnly
-                  value={selectedEvent.notes?.trim() || ""}
-                  placeholder="No notes on this event"
+                  value={eventNotesDraft}
+                  onChange={(e) => setEventNotesDraft(e.target.value)}
+                  placeholder="Notes for this appointment"
                   rows={isMobile ? 2 : 4}
-                  style={{ ...addInputStyle, marginTop: 4, resize: "vertical", minHeight: 72, color: selectedEvent.notes?.trim() ? theme.text : "#94a3b8" }}
+                  style={{ ...addInputStyle, marginTop: 4, resize: "vertical", minHeight: 72 }}
                 />
+                <button
+                  type="button"
+                  disabled={eventNotesSaving || !supabase}
+                  onClick={() => void saveEventNotes()}
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: theme.primary,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: eventNotesSaving ? "wait" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  {eventNotesSaving ? "Saving…" : "Save description"}
+                </button>
+                <p style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                  Description changes are saved without notifying the customer.
+                </p>
                 {selectedEvent.quote_total != null && selectedEvent.quote_total > 0 ? (
                   <p style={{ margin: "8px 0 0", fontSize: "14px", fontWeight: 600, color: theme.text }}>
                     Total: ${Number(selectedEvent.quote_total).toFixed(2)}
@@ -5565,6 +5865,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     Complete
                   </button>
                 )}
+                {selectedEvent.customer_id ? (
+                  <div style={{ width: "100%", marginTop: 4, marginBottom: 4 }}>
+                    <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 600, color: theme.text }}>Notify customer of cancellation</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                        <input type="checkbox" checked={removeNotifyEmail} onChange={(e) => setRemoveNotifyEmail(e.target.checked)} />
+                        Email customer
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                        <input type="checkbox" checked={removeNotifySms} onChange={(e) => setRemoveNotifySms(e.target.checked)} />
+                        Text customer
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
                 {showRecurringRemoveChoices ? (
                   <>
                     <button
@@ -5572,19 +5887,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       disabled={calendarEventActionBusy}
                       onClick={async () => {
                         if (!supabase || !selectedEvent.id) return
-                        const prevCal = calendarEventEffectiveStatus(selectedEvent)
-                        setCalendarEventActionBusy(true)
-                        const { error: err } = await supabase
-                          .from("calendar_events")
-                          .update({ removed_at: new Date().toISOString() })
-                          .eq("id", selectedEvent.id)
-                        setCalendarEventActionBusy(false)
-                        if (err) alert(err.message)
-                        else {
-                          void invokeNotifyCalendarStatus([selectedEvent.id], prevCal, "Cancelled")
+                        const ev = selectedEvent
+                        await removeCalendarEventWithOptionalNotify(ev, async () => {
+                          if (!supabase) return
+                          const prevCal = calendarEventEffectiveStatus(ev)
+                          setCalendarEventActionBusy(true)
+                          const { error: err } = await supabase
+                            .from("calendar_events")
+                            .update({ removed_at: new Date().toISOString() })
+                            .eq("id", ev.id)
+                          setCalendarEventActionBusy(false)
+                          if (err) {
+                            alert(err.message)
+                            return
+                          }
+                          void invokeNotifyCalendarStatus([ev.id], prevCal, "Cancelled")
                           setSelectedEvent(null)
                           loadEvents()
-                        }
+                        })
                       }}
                       style={{
                         padding: "8px 14px",
@@ -5657,19 +5977,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     disabled={calendarEventActionBusy}
                     onClick={async () => {
                       if (!supabase || !selectedEvent.id) return
-                      const prevCal = calendarEventEffectiveStatus(selectedEvent)
-                      setCalendarEventActionBusy(true)
-                      const { error: err } = await supabase
-                        .from("calendar_events")
-                        .update({ removed_at: new Date().toISOString() })
-                        .eq("id", selectedEvent.id)
-                      setCalendarEventActionBusy(false)
-                      if (err) alert(err.message)
-                      else {
-                        void invokeNotifyCalendarStatus([selectedEvent.id], prevCal, "Cancelled")
+                      const ev = selectedEvent
+                      await removeCalendarEventWithOptionalNotify(ev, async () => {
+                        if (!supabase) return
+                        const prevCal = calendarEventEffectiveStatus(ev)
+                        setCalendarEventActionBusy(true)
+                        const { error: err } = await supabase
+                          .from("calendar_events")
+                          .update({ removed_at: new Date().toISOString() })
+                          .eq("id", ev.id)
+                        setCalendarEventActionBusy(false)
+                        if (err) {
+                          alert(err.message)
+                          return
+                        }
+                        void invokeNotifyCalendarStatus([ev.id], prevCal, "Cancelled")
                         setSelectedEvent(null)
                         loadEvents()
-                      }
+                      })
                     }}
                     style={{
                       padding: "8px 14px",

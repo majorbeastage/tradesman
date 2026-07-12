@@ -13,8 +13,7 @@ export const STARTER_EMAIL_TEMPLATES: EmailTemplate[] = [
     description: "Confirm date and time for a scheduled visit.",
     subject: "Appointment confirmed — {{appointment_date}}",
     bodyHtml: `<p>Hi {{customer_name}},</p>
-<p>This confirms your appointment with us on <strong>{{appointment_date}}</strong> at <strong>{{appointment_time}}</strong>.</p>
-<p>Service: {{appointment_title}}</p>
+<p>This confirms your appointment with <strong>{{company}}</strong> on <strong>{{appointment_date}}</strong> at <strong>{{appointment_time}}</strong> for: {{appointment_title}}</p>
 <p>If you need to reschedule, reply to this email or call us.</p>
 <p>Thank you,<br/>{{sender_name}}</p>`,
   },

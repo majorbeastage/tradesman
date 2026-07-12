@@ -152,10 +152,12 @@ import {
   consumeOpenSpecialtyReportWizard,
   consumeEstimatesLibraryOpen,
   consumeQuotesCustomerPrefill,
+  consumeQuotesCreateNewForCustomer,
   consumeQuotesOpenQuote,
   notifyCustomersHubRefresh,
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
   peekQuotesCustomerPrefill,
+  peekQuotesOpenQuote,
   queueWorkOrdersHighlightQuote,
   queuePurchaseOrdersHighlightQuote,
   queuePaymentsCollectPrefill,
@@ -2143,11 +2145,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
 
   useEffect(() => {
-    const openQuoteId = consumeQuotesOpenQuote()
-    if (openQuoteId) setSelectedQuoteId(openQuoteId)
-  }, [userId])
-
-  useEffect(() => {
     if (!consumeEstimatesLibraryOpen()) return
     setPastLibSearch("")
     setPastLibStatus("")
@@ -2170,6 +2167,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!userId || !supabase || estimateSuite !== "home") return
     if (estimatesBootstrapRef.current) return
+
+    const openQuoteId = peekQuotesOpenQuote()
+    if (openQuoteId) {
+      estimatesBootstrapRef.current = true
+      consumeQuotesOpenQuote()
+      setEstimateSuite("home")
+      void openQuote(openQuoteId)
+      return
+    }
+
+    const createNewFor = consumeQuotesCreateNewForCustomer()
+    if (createNewFor) {
+      estimatesBootstrapRef.current = true
+      void createNewEstimateForCustomer(createNewFor)
+      return
+    }
 
     const queuedCustomerId = peekQuotesCustomerPrefill()
     if (queuedCustomerId) {
@@ -2349,6 +2362,64 @@ export default function QuotesPage(_props: QuotesPageProps) {
     } catch (err: unknown) {
       console.error(err)
       alert(err instanceof Error ? err.message : "Failed to open estimate for customer.")
+      return false
+    } finally {
+      customerPrefillBusyRef.current = false
+    }
+  }
+
+  async function createNewEstimateForCustomer(customerId: string): Promise<boolean> {
+    if (!supabase || !userId || customerPrefillBusyRef.current) return false
+    customerPrefillBusyRef.current = true
+    try {
+      closeEstimateWorkspace()
+      const cid = customerId.trim()
+      if (!cid) return false
+
+      const ctx = await fetchCustomerWorkspaceContext(supabase, userId, cid)
+      if (accountWorkflowBundle) {
+        const { data: custRow } = await supabase
+          .from("customers")
+          .select("metadata")
+          .eq("id", cid)
+          .eq("user_id", userId)
+          .maybeSingle()
+        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata)
+        if (!gate.allowed) {
+          alert(
+            `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,
+          )
+          return false
+        }
+      }
+      const { data, error } = await supabase
+        .from("quotes")
+        .insert({
+          user_id: userId,
+          customer_id: cid,
+          status: defaultQuoteStatus,
+          conversation_id: ctx?.primaryConversationId ?? null,
+        })
+        .select("id")
+        .single()
+      if (error) {
+        alert(error.message || "Could not create estimate for this customer.")
+        return false
+      }
+      if (!data?.id) return false
+      setEstimateSuite("home")
+      await loadQuotes()
+      const opened = await openQuote(data.id as string)
+      if (!opened) return false
+      await refreshCustomerPipelineOnEngagement(supabase, cid, "estimate_work")
+      setEstimateGuideCustomerPick(cid)
+      setCustomerPickerCustomerId(cid)
+      await prefillNewEstimateFromCustomerContext(data.id as string, cid)
+      void loadCustomerList()
+      return true
+    } catch (err: unknown) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to create estimate for customer.")
       return false
     } finally {
       customerPrefillBusyRef.current = false

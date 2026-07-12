@@ -13,6 +13,7 @@ import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/workOrderDocumentT
 import { PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/purchaseOrderDocumentTemplate"
 import { customReceiptDraftToFormState, loadReceiptTemplateSettings, buildCustomReceiptPdfBytes } from "../../lib/customReceipt"
 import { downloadPdfBlob } from "../../lib/documentPdf"
+import DocumentPdfViewerModal from "../DocumentPdfViewerModal"
 import CustomerWorkflowProgressViewer from "../CustomerWorkflowProgressViewer"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
 import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
@@ -120,6 +121,13 @@ export function CustomerQuickViewSidePane({
   )
   const [customerSettingsSaving, setCustomerSettingsSaving] = useState(false)
   const [workflowStepCompleteBusy, setWorkflowStepCompleteBusy] = useState(false)
+  const [estimatePdfView, setEstimatePdfView] = useState<{
+    quoteId: string
+    url: string
+    title: string
+    preparedAtLabel?: string | null
+    revokeOnClose: boolean
+  } | null>(null)
 
   const woTemplate = useMemo(
     () => templateFormFromMetadata(WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS, profileMetadata ?? {}),
@@ -500,7 +508,32 @@ export function CustomerQuickViewSidePane({
     if (!supabase) return
     setPdfBusy(`q-${quoteId}`)
     try {
-      await openEstimatePdfForProfile(supabase, userId, quoteId)
+      const view = await openEstimatePdfForProfile(supabase, userId, quoteId)
+      const q = bundle?.quotes.find((row) => row.id === quoteId)
+      setEstimatePdfView({
+        quoteId,
+        url: view.url,
+        title: q?.title?.trim() || `Estimate ${quoteId.slice(0, 8).toUpperCase()}`,
+        preparedAtLabel: view.preparedAtLabel ?? undefined,
+        revokeOnClose: view.url.startsWith("blob:"),
+      })
+    } catch (e) {
+      alert(formatAppError(e))
+    } finally {
+      setPdfBusy(null)
+    }
+  }
+
+  async function downloadEstimate(quoteId: string) {
+    if (!supabase) return
+    setPdfBusy(`q-${quoteId}`)
+    try {
+      const view = await openEstimatePdfForProfile(supabase, userId, quoteId)
+      const res = await fetch(view.url)
+      const blob = await res.blob()
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      downloadPdfBlob(bytes, `estimate-${quoteId.slice(0, 8)}.pdf`)
+      if (view.url.startsWith("blob:")) URL.revokeObjectURL(view.url)
     } catch (e) {
       alert(formatAppError(e))
     } finally {
@@ -595,6 +628,23 @@ export function CustomerQuickViewSidePane({
         paymentRequest={editingInvoice}
         onSaved={() => void loadBundle()}
       />
+      {estimatePdfView ? (
+        <DocumentPdfViewerModal
+          title={estimatePdfView.title}
+          pdfUrl={estimatePdfView.url}
+          preparedAtLabel={estimatePdfView.preparedAtLabel}
+          onClose={() => {
+            if (estimatePdfView.revokeOnClose) URL.revokeObjectURL(estimatePdfView.url)
+            setEstimatePdfView(null)
+          }}
+          onEditEstimate={() => {
+            const quoteId = estimatePdfView.quoteId
+            if (estimatePdfView.revokeOnClose) URL.revokeObjectURL(estimatePdfView.url)
+            setEstimatePdfView(null)
+            editEstimate(quoteId)
+          }}
+        />
+      ) : null}
     </>
   )
 
@@ -659,7 +709,7 @@ export function CustomerQuickViewSidePane({
             meta: `${estimateDisplayStatus(q.status, q.metadata)}${formatUsdAmount(q.total) ? ` · ${formatUsdAmount(q.total)}` : ""} · ${formatWhen(q.updated_at ?? q.created_at)}`,
             busy: pdfBusy === `q-${q.id}`,
             onView: () => void viewEstimate(q.id),
-            onDownload: () => void viewEstimate(q.id),
+            onDownload: () => void downloadEstimate(q.id),
             onEdit: () => editEstimate(q.id),
           }))}
         />

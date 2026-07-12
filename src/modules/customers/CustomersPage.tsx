@@ -52,6 +52,7 @@ import {
 } from "../../lib/customerSchedulingActivity"
 import {
   queueQuotesCustomerPrefill,
+  queueQuotesCreateNewForCustomer,
   queueSchedulingCustomerPrefill,
   queueCustomReceiptCustomerPrefill,
   queueSchedulingQuotePrefill,
@@ -1471,7 +1472,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     queueCustomerFocus(customerId)
     switch (tab) {
       case "estimates":
-        queueQuotesCustomerPrefill(customerId)
+        queueQuotesCreateNewForCustomer(customerId)
         setPage("quotes")
         break
       case "work_orders":

@@ -1,6 +1,7 @@
 /** Cross-tab navigation queues (sessionStorage) for Customers ↔ Estimates ↔ Scheduling. */
 
 const QUOTES_PREFILL = "tradesman_quotes_prefill_customer_id"
+const QUOTES_CREATE_NEW = "tradesman_quotes_create_new_customer_id_v1"
 const CUSTOMER_SMS_FOCUS = "tradesman_assistant_focus_customer_sms"
 const SCHEDULING_PREFILL = "tradesman_scheduling_prefill_customer_id"
 const SCHEDULING_EVENT_VIEW = "tradesman_scheduling_view_event_id_v1"
@@ -57,6 +58,50 @@ export function queueQuotesCustomerPrefill(customerId: string): void {
     sessionStorage.setItem(QUOTES_PREFILL, customerId.trim())
   } catch {
     /* ignore */
+  }
+}
+
+/** Open Estimates with a blank new estimate for this customer (not the latest existing quote). */
+export function queueQuotesCreateNewForCustomer(customerId: string): void {
+  if (!customerId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(QUOTES_CREATE_NEW, customerId.trim())
+  } catch {
+    /* ignore */
+  }
+}
+
+export function peekQuotesCreateNewForCustomer(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(QUOTES_CREATE_NEW) ?? "").trim()
+    return id || null
+  } catch {
+    return null
+  }
+}
+
+export function consumeQuotesCreateNewForCustomer(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(QUOTES_CREATE_NEW) ?? "").trim()
+    if (id) {
+      sessionStorage.removeItem(QUOTES_CREATE_NEW)
+      return id
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+export function peekQuotesOpenQuote(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const id = (sessionStorage.getItem(QUOTES_OPEN_QUOTE) ?? "").trim()
+    return id || null
+  } catch {
+    return null
   }
 }
 

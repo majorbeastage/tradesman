@@ -1980,7 +1980,6 @@ export default function CustomerProfilePage({ setPage }: Props) {
             if (estimatePdfView.revokeOnClose) URL.revokeObjectURL(estimatePdfView.url)
             setEstimatePdfView(null)
             leaveProfileTo("quotes", () => {
-              queueQuotesCustomerPrefill(customerId)
               queueQuotesOpenQuote(quoteId)
             })
           }}
