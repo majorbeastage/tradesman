@@ -1390,10 +1390,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!selectedQuote?.id) return
     const name = selectedQuote.customers?.display_name ?? "Customer"
+    const businessName = profileDisplayNameForPdf.trim() || "our team"
     setQuoteEmailSubject(`Quote for ${name}`)
     setQuoteEmailBody("Please see the quote below and let us know if you have any questions.\n\nThank you,")
-    setQuoteSmsBody(`Hi ${name}, please see your estimate attached. Reply with any questions. Thank you!`)
-  }, [selectedQuote?.id])
+    setQuoteSmsBody(`Hi ${name}, please see your estimate attached, from ${businessName}. Reply with any questions. Thank you!`)
+  }, [selectedQuote?.id, profileDisplayNameForPdf])
 
   useEffect(() => {
     if (!showSettings || quoteSettingsItems.length === 0) return
