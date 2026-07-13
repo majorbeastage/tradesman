@@ -61,12 +61,13 @@ export default function SetupMiniWizardModal({ wizardId, userId, onClose, onAppl
 
   useEffect(() => {
     if (!q?.speakAloud) return
+    if (wizardId === "estimates_line_items" || wizardId === "estimates_job_types") return
     const t = window.setTimeout(() => speakNaturalPrompt(q.prompt), 400)
     return () => {
       window.clearTimeout(t)
       stopNaturalPrompt()
     }
-  }, [step, q?.prompt, q?.speakAloud])
+  }, [step, q?.prompt, q?.speakAloud, wizardId])
 
   async function finishWizard() {
     if (!supabase) return

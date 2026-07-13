@@ -1,8 +1,9 @@
 /** Command routing for the platform assistant (registry + rules; LLM in Phase 2). */
 
+import type { BusinessAiVocabulary } from "./businessAiVocabulary"
 import {
-  ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
   ADMIN_PANEL_LABELS,
+  ASSISTANT_ADMIN_PANEL_STORAGE_KEY,
   PLATFORM_ADMIN_INTENTS,
   PLATFORM_PAGE_INTENTS,
   PLATFORM_WIZARD_INTENTS,
@@ -106,6 +107,8 @@ export type GlobalAssistantParseContext = {
   customVocabulary?: AssistantCustomVocabularyEntry[]
   /** Resolved product package for this session. */
   clientPackage?: ClientPackageContext | null
+  /** Job types + saved line items — injected into LLM catalog and handoff parsing. */
+  businessAiVocabulary?: BusinessAiVocabulary | null
 }
 
 export function customPayloadToGlobalAction(
@@ -297,7 +300,7 @@ export function parseAssistantCommand(raw: string, ctx: GlobalAssistantParseCont
     }
   }
 
-  const lineItemsHandoff = parseEstimateLineItemsHandoffIntent(text)
+  const lineItemsHandoff = parseEstimateLineItemsHandoffIntent(text, ctx.businessAiVocabulary?.jobTypeNames)
   if (lineItemsHandoff) {
     const baseHandoff = {
       type: "handoff_specialist_assistant" as const,

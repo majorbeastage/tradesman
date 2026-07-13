@@ -438,7 +438,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
     const serviceArea = settings.showServiceArea ? formatServiceArea(profile) : null
     const businessHours = settings.showBusinessHours ? formatBusinessHoursForPublic(profile.business_hours) : []
 
-    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300")
+    res.setHeader("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120")
     res.status(200).json({
       ok: true,
       slug,

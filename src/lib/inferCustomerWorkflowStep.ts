@@ -4,6 +4,7 @@
  */
 
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
+import { sortedWorkflowNodes } from "./businessWorkflow"
 import type { CustomerProfileBundle } from "./customerProfileData"
 import type { CustomerWorkflowSnapshot } from "./customerWorkflowRouting"
 import { parseCustomerWorkflowMeta } from "./customerWorkflowRouting"
@@ -42,10 +43,6 @@ function stageForNodeLabel(label: string): StageKey | null {
   if (/invoice|bill|payment|collect|accounting/.test(l)) return "billing"
   if (/close|done|complete|finish|archive/.test(l)) return "complete"
   return null
-}
-
-function sortedWorkflowNodes(workflow: BusinessWorkflowDoc): WorkflowNode[] {
-  return [...workflow.nodes].sort((a, b) => a.order - b.order || a.y - b.y)
 }
 
 function highestStageReached(signals: Record<StageKey, boolean>): StageKey {

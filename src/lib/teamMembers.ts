@@ -3,6 +3,7 @@ import {
   resolveEffectiveEntitlements,
   type EffectiveEntitlements,
 } from "./effectiveEntitlements"
+import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { type ProductPackageId, PRODUCT_PACKAGE_IDS } from "./productPackages"
 
 export type TeamInviteRow = {
@@ -126,7 +127,7 @@ export async function loadActiveTeamMembers(client: SupabaseClient, ownerUserId:
 
   const { data: profiles, error: profErr } = await client
     .from("profiles")
-    .select("id, email, display_name, role")
+    .select("id, email, display_name, role, metadata")
     .in("id", [...profileIds])
   if (profErr) throw profErr
 
@@ -137,14 +138,14 @@ export async function loadActiveTeamMembers(client: SupabaseClient, ownerUserId:
 
   const out: ActiveTeamMember[] = []
   for (const row of profiles ?? []) {
-    const r = row as { id: string; email?: string | null; display_name?: string | null; role?: string | null }
+    const r = row as { id: string; email?: string | null; display_name?: string | null; role?: string | null; metadata?: unknown }
     if (r.id === ownerUserId) continue
     const inv = inviteByProfile.get(r.id)
     const role = inv?.invite_role === "office_manager" || r.role === "office_manager" ? "office_manager" : "user"
     out.push({
       profileId: r.id,
       email: r.email ?? inv?.invite_email ?? null,
-      displayName: String(r.display_name ?? "").trim() || r.email || "Team member",
+      displayName: resolveInternalMemberLabel(r),
       role,
       inviteId: inv?.id ?? null,
       status: "active",

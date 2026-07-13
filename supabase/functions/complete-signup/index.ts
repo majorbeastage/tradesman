@@ -24,6 +24,7 @@ import {
   validatePromoForSignup,
 } from "../_shared/billing-promo-codes.ts"
 import { mergeDefaultBusinessWorkflowMetadata } from "../_shared/default-business-workflow.ts"
+import { buildDefaultDashboardQuickLinksForRole } from "../_shared/dashboard-quick-links-defaults.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -441,6 +442,7 @@ Deno.serve(async (req) => {
   }
 
   const metadata: Record<string, unknown> = mergeDefaultBusinessWorkflowMetadata({ ui_language: uiLang }, now)
+  metadata.dashboard_quick_links = buildDefaultDashboardQuickLinksForRole(signupRole)
   if (productPackage) metadata.product_package = productPackage
   if (paidPackage) {
     metadata.billing_product_type = PACKAGE_TO_BILLING[paidPackage]

@@ -11,9 +11,20 @@ export type ParsedSpokenLineItem = {
   line_kind: string
 }
 
-export function parseSpokenLineItem(raw: string): ParsedSpokenLineItem | null {
+export function parseSpokenLineItem(raw: string, knownDescriptions: string[] = []): ParsedSpokenLineItem | null {
   const text = raw.trim()
   if (text.length < 3) return null
+
+  const lower = text.toLowerCase()
+  let matchedDescription: string | undefined
+  for (const desc of knownDescriptions) {
+    const d = desc.trim()
+    if (d.length < 3) continue
+    const dl = d.toLowerCase()
+    if (lower.includes(dl) || dl.includes(lower)) {
+      if (!matchedDescription || d.length > matchedDescription.length) matchedDescription = d
+    }
+  }
 
   let unit_price = 0
   const dollar = text.match(/\$\s*(\d+(?:\.\d{1,2})?)/) ?? text.match(/(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?)\b/i)
@@ -45,8 +56,8 @@ export function parseSpokenLineItem(raw: string): ParsedSpokenLineItem | null {
     .replace(/\s+/g, " ")
     .trim()
 
-  const title = cleaned.slice(0, 120) || text.slice(0, 120)
-  const description = cleaned || title
+  const title = (matchedDescription ?? cleaned).slice(0, 120) || text.slice(0, 120)
+  const description = matchedDescription ?? (cleaned || title)
 
   if (!title) return null
   return { title, description, quantity, unit_price, unit_basis, line_kind }

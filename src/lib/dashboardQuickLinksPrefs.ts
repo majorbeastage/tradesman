@@ -487,7 +487,6 @@ function filterRowId(
 ): DashboardQuickLinkId | null {
   if (typeof id !== "string" || !ALL_DASHBOARD_LINK_IDS.has(id as DashboardQuickLinkId)) return null
   const linkId = id as DashboardQuickLinkId
-  if (linkId === "reporting") return null
   if (linkId === "team_management" && fourthCalendar === "scheduling_tools") return null
   if (linkId === "scheduling_tools" && fourthCalendar === "team_management") return null
   if (seen.has(linkId)) return null
@@ -680,7 +679,6 @@ export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLin
   const seen = new Set<DashboardOptionalQuickLinkId>()
   const out: DashboardOptionalQuickLinkId[] = []
   for (const id of base) {
-    if (id === "reporting") continue
     if (!ALL_DASHBOARD_OPTIONAL_IDS.has(id) || seen.has(id)) continue
     seen.add(id)
     out.push(id)
@@ -695,6 +693,85 @@ export function normalizeDashboardOptionalOrder(saved: DashboardOptionalQuickLin
 
 export function defaultFourthCalendarLinkId(): DashboardCoreQuickLinkId {
   return "team_management"
+}
+
+/** Standard team-member quick links (first-time default). */
+export const DEFAULT_USER_QUICK_LINK_ORDER: DashboardQuickLinkId[] = [
+  "today_todo",
+  "time_clock",
+  "calendar",
+  "team_management",
+  "customers",
+  "operations_work_orders",
+  "operations_purchase_orders",
+  "operations_inventory",
+  "setup_guide",
+]
+
+/** Office manager / corporate management quick links (first-time default). */
+export const DEFAULT_OFFICE_MANAGER_QUICK_LINK_ORDER: DashboardQuickLinkId[] = [
+  "today_todo",
+  "team_management",
+  "customers",
+  "estimates",
+  "calendar",
+  "customer_payments_soon",
+  "email_client",
+  "time_clock",
+  "payments",
+  "growth",
+  "operations",
+  "operations_work_orders",
+  "operations_purchase_orders",
+  "operations_invoicing",
+  "operations_inventory",
+  "custom_receipt",
+  "setup_guide",
+  "organization_chart",
+  "business_workflow",
+  "job_types",
+  "reporting",
+  "insurance",
+]
+
+const OFFICE_MANAGER_LIKE_QUICK_LINK_ROLES = new Set([
+  "office_manager",
+  "admin",
+  "corporate_management",
+])
+
+export function usesOfficeManagerQuickLinkDefaults(role: string | null | undefined): boolean {
+  if (!role) return false
+  return OFFICE_MANAGER_LIKE_QUICK_LINK_ROLES.has(role)
+}
+
+export function defaultDashboardTileOrderForRole(
+  role: string | null | undefined,
+  fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+): DashboardQuickLinkId[] {
+  const base = usesOfficeManagerQuickLinkDefaults(role)
+    ? DEFAULT_OFFICE_MANAGER_QUICK_LINK_ORDER
+    : DEFAULT_USER_QUICK_LINK_ORDER
+  return normalizeDashboardTileOrder(base, fourthCalendar)
+}
+
+export function buildDefaultDashboardQuickLinksForRole(
+  role: string | null | undefined,
+  fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+): DashboardQuickLinksStored {
+  const order = defaultDashboardTileOrderForRole(role, fourthCalendar)
+  const cols = 4
+  const rows = Math.max(2, Math.ceil(order.length / cols))
+  const grid: DashboardTileGridSlot[] = order.map((id) => id)
+  return {
+    v: 4,
+    tile_grid: grid,
+    tile_order: order,
+    tile_grid_cols: cols,
+    tile_grid_rows: rows,
+    tile_scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
+    updated_at: new Date().toISOString(),
+  }
 }
 
 /** Build default tile order (core row + optional shortcuts). */
@@ -713,7 +790,6 @@ export function normalizeDashboardTileOrder(
   const seen = new Set<DashboardQuickLinkId>()
   const out: DashboardQuickLinkId[] = []
   for (const id of base) {
-    if (id === "reporting") continue
     if (id === "team_management" && fourthCalendar === "scheduling_tools") continue
     if (id === "scheduling_tools" && fourthCalendar === "team_management") continue
     if (!ALL_DASHBOARD_LINK_IDS.has(id) || seen.has(id)) continue
@@ -727,6 +803,7 @@ export function normalizeDashboardTileOrder(
 export function migrateStoredTileOrder(
   raw: unknown,
   fourthCalendar: DashboardCoreQuickLinkId,
+  role?: string | null,
 ): {
   order: DashboardQuickLinkId[]
   rows: DashboardQuickLinkId[][]
@@ -738,15 +815,16 @@ export function migrateStoredTileOrder(
   gridColumns: DashboardGridColumns
   updatedAt: string | undefined
 } {
-  const fallbackOrder = defaultDashboardTileOrder(fourthCalendar)
-  const defaultGrid = orderToTileGrid(fallbackOrder)
+  const fallbackOrder = role != null ? defaultDashboardTileOrderForRole(role, fourthCalendar) : defaultDashboardTileOrder(fourthCalendar)
+  const roleDefaultGrid = role != null ? buildDefaultDashboardQuickLinksForRole(role, fourthCalendar).tile_grid : undefined
+  const defaultGrid = roleDefaultGrid ?? orderToTileGrid(fallbackOrder)
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {
       order: fallbackOrder,
       rows: orderToDefaultRows(fallbackOrder),
       grid: defaultGrid,
-      gridCols: undefined,
-      gridRows: undefined,
+      gridCols: role != null ? 4 : undefined,
+      gridRows: role != null ? buildDefaultDashboardQuickLinksForRole(role, fourthCalendar).tile_grid_rows : undefined,
       styles: {},
       scheme: DEFAULT_DASHBOARD_TILE_SCHEME,
       gridColumns: 5,

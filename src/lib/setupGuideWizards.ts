@@ -49,14 +49,14 @@ export const SETUP_MINI_WIZARDS: SetupMiniWizardDef[] = [
     id: "estimates_line_items",
     label: "Estimate line items",
     page: "quotes",
-    locationHint: "Estimates → Library → Line items",
+    locationHint: "Estimates → Library → Job types & line items",
     summary: "Speak or type one line item; we fill title, qty, and price.",
   },
   {
     id: "estimates_job_types",
     label: "Job types",
     page: "quotes",
-    locationHint: "Estimates → Library → Job types",
+    locationHint: "Estimates → Library → Job types & line items",
     summary: "Name, duration, and color for a reusable job type.",
   },
   {

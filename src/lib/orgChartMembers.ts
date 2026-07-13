@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
+import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { parseJobTitleNickname } from "./jobTitleNickname"
 import { labelForProfileRole } from "./profileRoles"
 import { loadOrganizationPeerIds } from "./organizationPeers"
@@ -24,7 +25,7 @@ function pushProfileRow(
   seen.add(row.id)
   out.push({
     id: row.id,
-    displayName: displayNameOverride ?? (String(row.display_name ?? "").trim() || "Team member"),
+    displayName: displayNameOverride ?? resolveInternalMemberLabel(row),
     email: row.email ?? null,
     jobTitle: parseJobTitleNickname(row.metadata),
   })

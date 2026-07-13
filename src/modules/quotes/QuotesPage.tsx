@@ -101,6 +101,9 @@ import {
 } from "../../lib/estimateLinePresets"
 import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistantPanel"
 import EstimateLineItemsHandoffPanel from "../../components/EstimateLineItemsHandoffPanel"
+import JobTypesLineItemsLibraryHub from "../../components/JobTypesLineItemsLibraryHub"
+import { notifyBusinessAiVocabularyChanged } from "../../lib/businessAiVocabulary"
+import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
 import {
   consumeAssistantHandoff,
   consumeOpenEstimateLineItemsModalFlag,
@@ -500,8 +503,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const sortAsc = true
   const [estimateSuite, setEstimateSuite] = useState<"home" | "library">("home")
   const [librarySection, setLibrarySection] = useState<
-    "quick_access" | "previous_estimates" | "estimate_line_items" | "job_types" | "reports"
-  >("quick_access")
+    "quick_access" | "previous_estimates" | "job_types_line_items" | "reports"
+  >("previous_estimates")
+  const [libraryJobsTab, setLibraryJobsTab] = useState<"line_items" | "job_types">("line_items")
   const [reportsLibrarySearch, setReportsLibrarySearch] = useState("")
   const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
   const [pastLibSearch, setPastLibSearch] = useState("")
@@ -2157,7 +2161,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!consumeEstimatesLibraryOpen()) return
     setPastLibSearch("")
     setPastLibStatus("")
-    setLibrarySection("quick_access")
+    setLibrarySection("previous_estimates")
     setEstimateSuite("library")
   }, [userId])
 
@@ -3643,41 +3647,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }, [selectedQuoteId, selectedQuote?.job_type_id, quoteItemsReviewKey, userId, supabase, selectedQuoteItems])
 
-  function parseDefaultLaborRateNumber(): number {
-    const laborItem = estimateLineItemsPortal.find((i) => i.id === "eli_default_labor_rate")
-    const raw =
-      laborItem && isEstimateLinePortalItemVisible(laborItem)
-        ? (estimateLinePortalValues.eli_default_labor_rate ?? "").trim()
-        : String(estimateDefaultLaborRate).trim()
-    const n = Number.parseFloat(raw.replace(/[^0-9.]/g, ""))
-    return Number.isFinite(n) ? n : 0
-  }
-
-  function openEstimateLineItemsModal() {
-    setEstimateLineDraft(estimateLinePresets.map((r) => ({ ...r })))
-    setExpandedEliById({})
-    setEliLinkJtPick({})
-    setEliSimpleKind("labor")
-    setEliSimpleUnit("hours")
-    setEliSimpleQty("1")
-    const lr = parseDefaultLaborRateNumber()
-    setEliSimplePrice(lr > 0 ? String(lr) : "")
-    setShowEstimateLineItemsModal(true)
+  function openJobTypesLineItemsLibrary(tab: "line_items" | "job_types" = "line_items") {
+    setLibraryJobsTab(tab)
+    setEstimateSuite("library")
+    setLibrarySection("job_types_line_items")
   }
 
   useEffect(() => {
     const handoff = consumeAssistantHandoff()
     if (handoff?.specialist === "estimate_line_items_library") {
       setLineItemsHandoff(handoff)
-      openEstimateLineItemsModal()
+      openJobTypesLineItemsLibrary("line_items")
       return
     }
     if (handoff?.specialist === "estimate_job_types_library") {
-      openQuoteJobTypesModal({ expandCreate: true, initialName: handoff.jobTypeName ?? "" })
+      openJobTypesLineItemsLibrary("job_types")
       return
     }
     if (consumeOpenEstimateLineItemsModalFlag()) {
-      openEstimateLineItemsModal()
+      openJobTypesLineItemsLibrary("line_items")
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when Estimates tab mounts
   }, [])
@@ -4127,9 +4115,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
         completedNodeIds: snapshot.completedNodeIds,
         pendingNodeIds: snapshot.pendingNodeIds,
       })
+      let customerMeta = merged
+      try {
+        const shareResult = await maybeAutoShareCustomerWithWorkflowAssignee({
+          customerId: selectedQuote.customer_id,
+          customerMetadata: customerMeta,
+          workflow: accountWorkflowBundle.workflow,
+          orgChart: accountWorkflowBundle.orgChart,
+          externalContacts: accountWorkflowBundle.externalContacts,
+          linkableUsers: linkableOrgUsers,
+          activeNodeId: snapshot.activeNodeId,
+        })
+        if (shareResult.shared) customerMeta = shareResult.metadata
+      } catch {
+        /* best-effort */
+      }
       await supabase
         .from("customers")
-        .update({ metadata: merged, updated_at: new Date().toISOString() })
+        .update({ metadata: customerMeta, updated_at: new Date().toISOString() })
         .eq("id", selectedQuote.customer_id)
         .eq("user_id", userId)
     }
@@ -4980,7 +4983,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   onClick={() => {
                     setPastLibSearch("")
                     setPastLibStatus("")
-                    setLibrarySection("quick_access")
+                    setLibrarySection("previous_estimates")
                     setEstimateSuite("library")
                   }}
                   style={{ padding: "8px 14px", borderRadius: "6px", border: `2px solid ${theme.primary}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
@@ -5513,6 +5516,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
               </button>
               <button
                 type="button"
+                onClick={() => setLibrarySection("previous_estimates")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: librarySection === "previous_estimates" ? theme.primary : "#e5e7eb",
+                  color: librarySection === "previous_estimates" ? "#fff" : "#0f172a",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                Previous Estimates
+              </button>
+              <button
+                type="button"
                 onClick={() => setLibrarySection("quick_access")}
                 style={{
                   padding: "6px 12px",
@@ -5527,46 +5546,22 @@ export default function QuotesPage(_props: QuotesPageProps) {
               >
                 Quick Access Templates
               </button>
-              {showQuotesEstimateLineItems ? (
+              {(showQuotesEstimateLineItems || showQuotesJobTypesPanel) ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setLibrarySection("estimate_line_items")
-                    openEstimateLineItemsModal()
-                  }}
+                  onClick={() => openJobTypesLineItemsLibrary("line_items")}
                   style={{
                     padding: "6px 12px",
                     borderRadius: 6,
                     border: "none",
-                    background: librarySection === "estimate_line_items" ? theme.primary : "#e5e7eb",
-                    color: librarySection === "estimate_line_items" ? "#fff" : "#0f172a",
+                    background: librarySection === "job_types_line_items" ? theme.primary : "#e5e7eb",
+                    color: librarySection === "job_types_line_items" ? "#fff" : "#0f172a",
                     cursor: "pointer",
                     fontWeight: 600,
                     fontSize: 13,
                   }}
                 >
-                  {estimateLineItemsButtonLabel}
-                </button>
-              ) : null}
-              {showQuotesJobTypesPanel ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLibrarySection("job_types")
-                    openQuoteJobTypesModal()
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: librarySection === "job_types" ? theme.primary : "#e5e7eb",
-                    color: librarySection === "job_types" ? "#fff" : "#0f172a",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    fontSize: 13,
-                  }}
-                >
-                  {quoteJobTypesButtonLabel}
+                  Job types &amp; line items
                 </button>
               ) : null}
               <button
@@ -5584,22 +5579,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 }}
               >
                 Reports
-              </button>
-              <button
-                type="button"
-                onClick={() => setLibrarySection("previous_estimates")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: librarySection === "previous_estimates" ? theme.primary : "#e5e7eb",
-                  color: librarySection === "previous_estimates" ? "#fff" : "#0f172a",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 13,
-                }}
-              >
-                Previous Estimates
               </button>
             </div>
 
@@ -5765,15 +5744,39 @@ export default function QuotesPage(_props: QuotesPageProps) {
               </>
             ) : null}
 
-            {librarySection === "estimate_line_items" ? (
-              <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>
-                The Estimate Line Items editor opens in a modal. If it did not open, use the button in the menu row above.
-              </p>
-            ) : null}
-            {librarySection === "job_types" ? (
-              <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>
-                Job types open in a modal. If it did not open, use the button in the menu row above.
-              </p>
+            {librarySection === "job_types_line_items" && userId ? (
+              <JobTypesLineItemsLibraryHub
+                userId={userId}
+                lineItemsButtonLabel={estimateLineItemsButtonLabel}
+                jobTypesButtonLabel={quoteJobTypesButtonLabel}
+                showLineItems={showQuotesEstimateLineItems}
+                showJobTypes={showQuotesJobTypesPanel}
+                initialTab={libraryJobsTab}
+                lineItemsHandoff={lineItemsHandoff}
+                onDismissHandoff={() => setLineItemsHandoff(null)}
+                onJobTypeFollowUp={
+                  showQuotesJobTypesPanel
+                    ? (name, presetIds) => {
+                        const checks: Record<string, boolean> = {}
+                        for (const id of presetIds) checks[id] = true
+                        setLibraryJobsTab("job_types")
+                        openQuoteJobTypesModal({
+                          expandCreate: true,
+                          initialName: name,
+                          initialPresetChecks: checks,
+                        })
+                      }
+                    : undefined
+                }
+                onDataChanged={() => {
+                  void reloadQuoteJobTypesList()
+                  notifyBusinessAiVocabularyChanged()
+                }}
+                onLineItemsSaved={(rows) => {
+                  setEstimateLinePresets(rows)
+                  notifyBusinessAiVocabularyChanged()
+                }}
+              />
             ) : null}
             {librarySection === "reports" ? (
               <div style={{ display: "grid", gap: 10 }}>

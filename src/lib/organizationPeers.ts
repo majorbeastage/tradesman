@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
+import { resolveInternalMemberLabel } from "./profileContactMeta"
 
 /** Matches AuthContext DEFAULT_CLIENT_ID — Tradesman platform org. */
 export const TRADESMAN_PLATFORM_ORG_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
@@ -57,6 +58,7 @@ type ProfileRow = {
   email?: string | null
   role?: string | null
   client_id?: string | null
+  metadata?: unknown
 }
 
 async function loadManagedUserIds(client: SupabaseClient, officeManagerId: string): Promise<string[]> {
@@ -102,7 +104,7 @@ export async function loadOrganizationPeerIds(client: SupabaseClient, userId: st
   if (clientErr) throw clientErr
   for (const row of sameClient ?? []) peerIds.add(row.id as string)
 
-  if (role === "admin") {
+  if (role === "admin" || role === "corporate_management" || role === "office_manager") {
     const { data: admins, error: adminErr } = await client.from("profiles").select("id").eq("role", "admin").neq("id", userId)
     if (adminErr) throw adminErr
     for (const row of admins ?? []) peerIds.add(row.id as string)
@@ -123,13 +125,13 @@ export async function loadOrganizationPeers(client: SupabaseClient, userId: stri
   const peerIds = await loadOrganizationPeerIds(client, userId)
   if (!peerIds.length) return []
 
-  const { data, error } = await client.from("profiles").select("id, display_name, email, role").in("id", peerIds)
+  const { data, error } = await client.from("profiles").select("id, display_name, email, role, metadata").in("id", peerIds)
   if (error) throw error
 
   return (data as ProfileRow[])
     .map((row) => ({
       id: row.id,
-      displayName: String(row.display_name ?? "").trim() || String(row.email ?? "").trim() || "Team member",
+      displayName: resolveInternalMemberLabel(row),
       email: row.email ?? null,
       role: (typeof row.role === "string" ? row.role : null) as UserRole | null,
     }))

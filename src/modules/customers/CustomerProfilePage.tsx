@@ -65,6 +65,7 @@ import {
 } from "../../lib/customerWorkflowRollback"
 import { inferCustomerWorkflowStep, shouldOpenEstimatePdfFromWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
+import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { notifyCustomersHubRefresh } from "../../lib/workflowNavigation"
@@ -1037,17 +1038,35 @@ export default function CustomerProfilePage({ setPage }: Props) {
       const update = buildCustomerWorkflowStepCompleteUpdate({
         workflow: workflowBundle.workflow,
         orgChart: workflowBundle.orgChart,
+        externalContacts: workflowBundle.externalContacts,
+        linkableUsers,
         customerMetadata: c.metadata,
         completedNodeIds: inferredWorkflow.completedNodeIds,
         nodeId,
         quoteId: quoteForWorkflow?.id ?? null,
       })
 
+      let nextMetadata = update.metadata
+      try {
+        const shareResult = await maybeAutoShareCustomerWithWorkflowAssignee({
+          customerId: c.id,
+          customerMetadata: nextMetadata,
+          workflow: workflowBundle.workflow,
+          orgChart: workflowBundle.orgChart,
+          externalContacts: workflowBundle.externalContacts,
+          linkableUsers,
+          activeNodeId: update.progress.currentNodeId,
+        })
+        if (shareResult.shared) nextMetadata = shareResult.metadata
+      } catch {
+        /* share is best-effort — step completion still saves */
+      }
+
       const nowIso = new Date().toISOString()
       const { error: custErr } = await supabase
         .from("customers")
         .update({
-          metadata: update.metadata,
+          metadata: nextMetadata,
           job_pipeline_status: update.jobPipelineStatus,
           updated_at: nowIso,
         })

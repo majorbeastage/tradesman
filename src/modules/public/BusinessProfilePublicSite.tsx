@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react"
 import logo from "../../assets/logo.png"
+import { PhotoLightbox } from "../../components/PhotoLightbox"
 import type { BusinessProfileTemplateId, BusinessProfileTheme } from "../../lib/businessPublicProfile"
 import { DEFAULT_BUSINESS_PROFILE_THEME } from "../../lib/businessPublicProfile"
 
@@ -160,31 +161,56 @@ function HoursBlock({ hours }: { hours: Array<{ day: string; hours: string }> })
   )
 }
 
-function WorkPhotosBlock({ urls, dense }: { urls: string[]; dense?: boolean }) {
+function WorkPhotosBlock({
+  urls,
+  dense,
+  onPhotoClick,
+}: {
+  urls: string[]
+  dense?: boolean
+  onPhotoClick?: (url: string, index: number) => void
+}) {
   if (!urls.length) return null
   return (
     <section style={{ padding: dense ? "12px 0 24px" : "24px 0" }}>
       {!dense ? <SectionHeading>Our work</SectionHeading> : null}
       <div
+        className={dense ? "bp-work-photos bp-work-photos-dense" : "bp-work-photos"}
         style={{
           display: "grid",
-          gridTemplateColumns: dense ? "repeat(auto-fill, minmax(140px, 1fr))" : "repeat(auto-fill, minmax(160px, 1fr))",
           gap: 12,
         }}
       >
-        {urls.map((url) => (
-          <img
+        {urls.map((url, index) => (
+          <button
             key={url}
-            src={url}
-            alt=""
+            type="button"
+            className="bp-work-photo-btn"
+            onClick={() => onPhotoClick?.(url, index)}
+            aria-label={`View work photo ${index + 1} full size`}
             style={{
-              width: "100%",
-              aspectRatio: dense ? "4 / 3" : "1",
-              objectFit: "cover",
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              cursor: onPhotoClick ? "zoom-in" : "default",
               borderRadius: 12,
-              border: "1px solid rgba(15,23,42,0.08)",
+              overflow: "hidden",
             }}
-          />
+          >
+            <img
+              src={url}
+              alt={`Work photo ${index + 1}`}
+              style={{
+                width: "100%",
+                aspectRatio: dense ? "4 / 3" : "1",
+                objectFit: "cover",
+                borderRadius: 12,
+                border: "1px solid rgba(15,23,42,0.08)",
+                display: "block",
+                transition: "transform 0.15s ease, box-shadow 0.15s ease",
+              }}
+            />
+          </button>
         ))}
       </div>
     </section>
@@ -342,30 +368,68 @@ function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormPr
   )
 }
 
-function ProfileHeader({ data, hero }: { data: PublicBusinessProfileData; hero?: boolean }) {
+function ProfileHeader({
+  data,
+  hero,
+  onPhotoClick,
+}: {
+  data: PublicBusinessProfileData
+  hero?: boolean
+  onPhotoClick?: (url: string) => void
+}) {
   return (
     <header
+      className={hero ? "bp-hero-header" : undefined}
       style={{
         textAlign: hero ? "left" : "center",
-        padding: hero ? "48px clamp(20px, 5vw, 64px)" : "36px 24px 24px",
+        padding: hero ? "48px clamp(20px, 4vw, 64px)" : "36px 24px 24px",
         background: hero ? "linear-gradient(135deg, var(--bp-primary) 0%, var(--bp-secondary) 100%)" : "transparent",
         color: hero ? "#fff" : "var(--bp-font)",
       }}
     >
       <div style={{ display: "flex", flexDirection: hero ? "row" : "column", gap: 20, alignItems: hero ? "center" : "center" }}>
         {data.profilePhotoUrl ? (
-          <img
-            src={data.profilePhotoUrl}
-            alt=""
-            style={{
-              width: hero ? 112 : 104,
-              height: hero ? 112 : 104,
-              borderRadius: hero ? 16 : "50%",
-              objectFit: "cover",
-              border: hero ? "3px solid rgba(255,255,255,0.35)" : "3px solid rgba(15,23,42,0.08)",
-              flexShrink: 0,
-            }}
-          />
+          onPhotoClick ? (
+            <button
+              type="button"
+              onClick={() => onPhotoClick(data.profilePhotoUrl!)}
+              aria-label="View company logo full size"
+              style={{
+                padding: 0,
+                border: "none",
+                background: "transparent",
+                cursor: "zoom-in",
+                flexShrink: 0,
+                borderRadius: hero ? 16 : "50%",
+              }}
+            >
+              <img
+                src={data.profilePhotoUrl}
+                alt={`${data.businessName} logo`}
+                style={{
+                  width: hero ? 112 : 104,
+                  height: hero ? 112 : 104,
+                  borderRadius: hero ? 16 : "50%",
+                  objectFit: "cover",
+                  border: hero ? "3px solid rgba(255,255,255,0.35)" : "3px solid rgba(15,23,42,0.08)",
+                  display: "block",
+                }}
+              />
+            </button>
+          ) : (
+            <img
+              src={data.profilePhotoUrl}
+              alt={`${data.businessName} logo`}
+              style={{
+                width: hero ? 112 : 104,
+                height: hero ? 112 : 104,
+                borderRadius: hero ? 16 : "50%",
+                objectFit: "cover",
+                border: hero ? "3px solid rgba(255,255,255,0.35)" : "3px solid rgba(15,23,42,0.08)",
+                flexShrink: 0,
+              }}
+            />
+          )
         ) : null}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 style={{ margin: "0 0 8px", fontSize: hero ? "clamp(28px, 4vw, 42px)" : 30, fontWeight: 900, lineHeight: 1.15 }}>
@@ -392,13 +456,21 @@ function AboutBlock({ aboutUs }: { aboutUs?: string }) {
   )
 }
 
-function ClassicLayout({ data, theme }: { data: PublicBusinessProfileData; theme: BusinessProfileTheme }) {
+function ClassicLayout({
+  data,
+  theme,
+  onPhotoClick,
+}: {
+  data: PublicBusinessProfileData
+  theme: BusinessProfileTheme
+  onPhotoClick: (url: string) => void
+}) {
   return (
-    <div style={{ width: "100%", maxWidth: 920, margin: "0 auto", padding: "0 clamp(16px, 4vw, 32px)" }}>
-      <ProfileHeader data={data} />
-      <div style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(15,23,42,0.08)", padding: "8px 24px 28px", boxShadow: "0 12px 40px rgba(15,23,42,0.06)" }}>
+    <div className="bp-shell bp-shell-classic">
+      <ProfileHeader data={data} onPhotoClick={onPhotoClick} />
+      <div className="bp-classic-card">
         <AboutBlock aboutUs={data.aboutUs} />
-        <WorkPhotosBlock urls={data.workPhotoUrls ?? []} />
+        <WorkPhotosBlock urls={data.workPhotoUrls ?? []} onPhotoClick={(url) => onPhotoClick(url)} />
         <ServicesBlock items={data.servicesOffered ?? []} />
         <ServiceAreasBlock items={data.serviceAreas ?? []} />
         <ContactBlock data={data} />
@@ -409,46 +481,51 @@ function ClassicLayout({ data, theme }: { data: PublicBusinessProfileData; theme
   )
 }
 
-function HeroLayout({ data, theme }: { data: PublicBusinessProfileData; theme: BusinessProfileTheme }) {
+function HeroLayout({
+  data,
+  theme,
+  onPhotoClick,
+}: {
+  data: PublicBusinessProfileData
+  theme: BusinessProfileTheme
+  onPhotoClick: (url: string) => void
+}) {
   return (
     <>
-      <ProfileHeader data={data} hero />
-      <div style={{ width: "100%", padding: "0 clamp(16px, 4vw, 48px) 32px" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gap: 0 }}>
-          <div style={{ background: "#fff", borderRadius: "0 0 16px 16px", padding: "24px clamp(20px, 4vw, 40px)", border: "1px solid rgba(15,23,42,0.08)", borderTop: "none" }}>
-            <AboutBlock aboutUs={data.aboutUs} />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 32 }}>
-              <div>
-                <ServicesBlock items={data.servicesOffered ?? []} />
-                <ServiceAreasBlock items={data.serviceAreas ?? []} />
-                <ContactBlock data={data} />
-                <HoursBlock hours={data.businessHours ?? []} />
-              </div>
-              <WorkPhotosBlock urls={data.workPhotoUrls ?? []} />
+      <ProfileHeader data={data} hero onPhotoClick={onPhotoClick} />
+      <div className="bp-shell bp-shell-hero">
+        <div className="bp-hero-body">
+          <AboutBlock aboutUs={data.aboutUs} />
+          <div className="bp-hero-grid">
+            <div>
+              <ServicesBlock items={data.servicesOffered ?? []} />
+              <ServiceAreasBlock items={data.serviceAreas ?? []} />
+              <ContactBlock data={data} />
+              <HoursBlock hours={data.businessHours ?? []} />
             </div>
-            {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
+            <WorkPhotosBlock urls={data.workPhotoUrls ?? []} onPhotoClick={(url) => onPhotoClick(url)} />
           </div>
+          {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
         </div>
       </div>
     </>
   )
 }
 
-function SplitLayout({ data, theme }: { data: PublicBusinessProfileData; theme: BusinessProfileTheme }) {
+function SplitLayout({
+  data,
+  theme,
+  onPhotoClick,
+}: {
+  data: PublicBusinessProfileData
+  theme: BusinessProfileTheme
+  onPhotoClick: (url: string) => void
+}) {
   return (
-    <div style={{ width: "100%", padding: "clamp(20px, 4vw, 48px)" }}>
-      <div
-        className="bp-split-grid"
-        style={{
-          maxWidth: 1280,
-          margin: "0 auto",
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr)",
-          gap: "clamp(24px, 4vw, 48px)",
-        }}
-      >
+    <div className="bp-shell bp-shell-split">
+      <div className="bp-split-grid">
         <div>
-          <ProfileHeader data={data} />
+          <ProfileHeader data={data} onPhotoClick={onPhotoClick} />
           <AboutBlock aboutUs={data.aboutUs} />
           <ServicesBlock items={data.servicesOffered ?? []} />
           <ServiceAreasBlock items={data.serviceAreas ?? []} />
@@ -457,24 +534,32 @@ function SplitLayout({ data, theme }: { data: PublicBusinessProfileData; theme: 
           {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
         </div>
         <div>
-          <WorkPhotosBlock urls={data.workPhotoUrls ?? []} dense />
+          <WorkPhotosBlock urls={data.workPhotoUrls ?? []} dense onPhotoClick={(url) => onPhotoClick(url)} />
         </div>
       </div>
     </div>
   )
 }
 
-function GalleryLayout({ data, theme }: { data: PublicBusinessProfileData; theme: BusinessProfileTheme }) {
+function GalleryLayout({
+  data,
+  theme,
+  onPhotoClick,
+}: {
+  data: PublicBusinessProfileData
+  theme: BusinessProfileTheme
+  onPhotoClick: (url: string) => void
+}) {
   return (
-    <div style={{ width: "100%" }}>
-      <div style={{ padding: "32px clamp(16px, 4vw, 48px) 12px", maxWidth: 1280, margin: "0 auto" }}>
-        <ProfileHeader data={data} />
+    <div className="bp-shell bp-shell-gallery">
+      <div className="bp-gallery-intro">
+        <ProfileHeader data={data} onPhotoClick={onPhotoClick} />
         <AboutBlock aboutUs={data.aboutUs} />
       </div>
-      <div style={{ width: "100%", padding: "0 clamp(12px, 3vw, 32px)" }}>
-        <WorkPhotosBlock urls={data.workPhotoUrls ?? []} dense />
+      <div className="bp-gallery-photos-wrap">
+        <WorkPhotosBlock urls={data.workPhotoUrls ?? []} dense onPhotoClick={(url) => onPhotoClick(url)} />
       </div>
-      <div style={{ maxWidth: 920, margin: "0 auto", padding: "12px clamp(16px, 4vw, 32px) 32px" }}>
+      <div className="bp-gallery-details">
         <ServicesBlock items={data.servicesOffered ?? []} />
         <ServiceAreasBlock items={data.serviceAreas ?? []} />
         <ContactBlock data={data} />
@@ -488,6 +573,9 @@ function GalleryLayout({ data, theme }: { data: PublicBusinessProfileData; theme
 export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfileData }) {
   const theme = useMemo(() => ({ ...DEFAULT_BUSINESS_PROFILE_THEME, ...(data.theme ?? {}) }), [data.theme])
   const templateId = data.templateId ?? "classic"
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+
+  const openPhoto = (url: string, alt = "Work photo") => setLightbox({ src: url, alt })
 
   const shell: CSSProperties = {
     minHeight: "100vh",
@@ -498,23 +586,109 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
     ...themeVars(theme),
   }
 
+  const layoutProps = { data, theme, onPhotoClick: openPhoto }
+
   return (
     <div style={shell}>
       <style>{`
-        @media (max-width: 860px) {
-          .bp-split-grid { grid-template-columns: 1fr !important; }
+        .bp-shell {
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .bp-shell-classic {
+          max-width: min(1120px, 96vw);
+          margin: 0 auto;
+          padding: 0 clamp(16px, 3vw, 40px);
+        }
+        .bp-classic-card {
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid rgba(15,23,42,0.08);
+          padding: 8px clamp(20px, 3vw, 36px) 28px;
+          box-shadow: 0 12px 40px rgba(15,23,42,0.06);
+        }
+        .bp-shell-hero {
+          padding: 0 clamp(16px, 3vw, 56px) 32px;
+        }
+        .bp-hero-header {
+          width: 100%;
+        }
+        .bp-hero-body {
+          max-width: min(1400px, 100%);
+          margin: 0 auto;
+          background: #fff;
+          border-radius: 0 0 16px 16px;
+          padding: 24px clamp(20px, 3vw, 48px);
+          border: 1px solid rgba(15,23,42,0.08);
+          border-top: none;
+        }
+        .bp-hero-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+          gap: clamp(24px, 4vw, 48px);
+        }
+        .bp-shell-split {
+          padding: clamp(20px, 3vw, 56px);
+        }
+        .bp-split-grid {
+          max-width: min(1680px, 100%);
+          margin: 0 auto;
+          display: grid;
+          grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+          gap: clamp(24px, 4vw, 56px);
+        }
+        .bp-gallery-intro {
+          padding: 32px clamp(16px, 3vw, 56px) 12px;
+          max-width: min(1400px, 100%);
+          margin: 0 auto;
+        }
+        .bp-gallery-photos-wrap {
+          width: 100%;
+          padding: 0 clamp(12px, 2.5vw, 48px);
+        }
+        .bp-gallery-details {
+          max-width: min(1120px, 96vw);
+          margin: 0 auto;
+          padding: 12px clamp(16px, 3vw, 40px) 32px;
+        }
+        .bp-work-photos {
+          grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+        }
+        .bp-work-photos-dense {
+          grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+          max-width: min(1800px, 100%);
+          margin: 0 auto;
+        }
+        .bp-work-photo-btn:hover img {
+          transform: scale(1.02);
+          box-shadow: 0 8px 24px rgba(15,23,42,0.14);
+        }
+        @media (min-width: 1200px) {
+          .bp-work-photos {
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          }
+          .bp-work-photos-dense {
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+          }
+        }
+        @media (max-width: 900px) {
+          .bp-hero-grid,
+          .bp-split-grid {
+            grid-template-columns: 1fr !important;
+          }
         }
       `}</style>
       {templateId === "hero" ? (
-        <HeroLayout data={data} theme={theme} />
+        <HeroLayout {...layoutProps} />
       ) : templateId === "split" ? (
-        <SplitLayout data={data} theme={theme} />
+        <SplitLayout {...layoutProps} />
       ) : templateId === "gallery" ? (
-        <GalleryLayout data={data} theme={theme} />
+        <GalleryLayout {...layoutProps} />
       ) : (
-        <ClassicLayout data={data} theme={theme} />
+        <ClassicLayout {...layoutProps} />
       )}
       <PoweredByFooter />
+      {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>
   )
 }

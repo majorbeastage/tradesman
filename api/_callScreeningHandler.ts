@@ -75,12 +75,14 @@ function buildGatherStepTwiml(params: {
   promptText: string
   recordingUrl?: string
   intro?: string
+  speechHints?: string
 }): string {
   const intro = params.intro ? `<Say ${SAY}>${xmlEscape(params.intro)}</Say>` : ""
   const prompt = promptVerb(params.settings, { prompt: params.promptText, recordingUrl: params.recordingUrl })
+  const hintsAttr = params.speechHints?.trim() ? ` hints="${xmlEscape(params.speechHints.trim())}"` : ""
   return (
     intro +
-    `<Gather input="speech" speechTimeout="auto" timeout="12" action="${xmlEscape(params.actionUrl)}" method="POST" language="en-US">` +
+    `<Gather input="speech" speechTimeout="auto" timeout="12" action="${xmlEscape(params.actionUrl)}" method="POST" language="en-US"${hintsAttr}>` +
     prompt +
     `</Gather>` +
     `<Say ${SAY}>We did not hear a response. Goodbye.</Say><Hangup/>`
@@ -269,6 +271,15 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
   const steps = activeScreeningSteps(settings)
   const origin = requestPublicOrigin(req)
 
+  let speechHints = ""
+  try {
+    const { loadBusinessAiVocabulary, twilioSpeechHintsCsv } = await import("../src/lib/businessAiVocabulary.js")
+    const vocab = await loadBusinessAiVocabulary(supabase, channel.user_id)
+    speechHints = twilioSpeechHintsCsv(vocab)
+  } catch {
+    speechHints = ""
+  }
+
   const routingProfile = await getUserRoutingProfile(supabase, channel.user_id)
   const forwardingAllowed = isWithinBusinessHours(routingProfile)
   const forwardRaw = channel.voice_enabled && forwardingAllowed ? channel.forward_to_phone : null
@@ -316,6 +327,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
             settings,
             promptText: nextPrompt,
             recordingUrl: nextStep.recordingUrl,
+            speechHints,
           }),
         ),
       )
@@ -419,6 +431,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
         promptText: firstPrompt,
         recordingUrl: first.recordingUrl,
         intro,
+        speechHints,
       }),
     ),
   )

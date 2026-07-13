@@ -372,7 +372,20 @@ export function mergeBusinessWorkflowMetadata(
 }
 
 export function sortedWorkflowNodes(doc: BusinessWorkflowDoc): WorkflowNode[] {
+  const steps = workflowProgressDisplaySteps(doc)
+  if (steps.length) return steps.map((s) => s.node)
   return [...doc.nodes].sort((a, b) => a.order - b.order)
+}
+
+/** Reassign node.order to match chart display sequence (call before persisting workflow). */
+export function syncWorkflowNodeOrdersFromChart(doc: BusinessWorkflowDoc): BusinessWorkflowDoc {
+  const steps = workflowProgressDisplaySteps(doc)
+  const orderById = new Map(steps.map((s, i) => [s.node.id, i]))
+  const nodes = doc.nodes.map((n) => ({
+    ...n,
+    order: orderById.has(n.id) ? orderById.get(n.id)! : n.order,
+  }))
+  return { ...doc, nodes }
 }
 
 export type WorkflowProgressDisplayStep = {

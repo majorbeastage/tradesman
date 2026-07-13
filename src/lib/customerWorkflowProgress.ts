@@ -7,6 +7,9 @@ import { sortedWorkflowNodes } from "./businessWorkflow"
 import { parseCustomerHubKindExplicit, isCustomerManuallyArchived } from "./customerContactKind"
 import { mergeCustomerWorkflowMeta, parseCustomerWorkflowMeta, resolveWorkflowNodeDepartmentKey } from "./customerWorkflowRouting"
 import type { OrganizationChartDoc } from "./organizationChart"
+import type { ExternalContactsDoc } from "./externalContacts"
+import type { LinkableOrgUser } from "./orgChartMembers"
+import { resolveWorkflowOrgAssigneeUserId } from "./workflowStepAutoShare"
 
 export type SequentialWorkflowProgress = {
   currentNodeId: string | null
@@ -41,16 +44,29 @@ export function resolveSequentialWorkflowProgress(
 export function buildCustomerWorkflowStepCompleteUpdate(input: {
   workflow: BusinessWorkflowDoc
   orgChart: OrganizationChartDoc
+  externalContacts: ExternalContactsDoc
+  linkableUsers: LinkableOrgUser[]
   customerMetadata: unknown
   completedNodeIds: string[]
   nodeId: string
   quoteId?: string | null
-}): { metadata: Record<string, unknown>; jobPipelineStatus: string; progress: SequentialWorkflowProgress } {
+}): {
+  metadata: Record<string, unknown>
+  jobPipelineStatus: string
+  progress: SequentialWorkflowProgress
+  autoShareUserId: string | null
+} {
   const progress = applyManualWorkflowNodeComplete(input.workflow, input.completedNodeIds, input.nodeId)
   const nextNode = progress.currentNodeId
     ? input.workflow.nodes.find((n) => n.id === progress.currentNodeId) ?? null
     : null
   const departmentKey = nextNode ? resolveWorkflowNodeDepartmentKey(nextNode, input.orgChart) : null
+  const autoShareUserId = resolveWorkflowOrgAssigneeUserId(
+    nextNode,
+    input.orgChart,
+    input.externalContacts,
+    input.linkableUsers,
+  )
   const metadata = mergeCustomerWorkflowMeta(input.customerMetadata, {
     quoteId: input.quoteId ?? null,
     activeNodeId: progress.currentNodeId,
@@ -62,6 +78,7 @@ export function buildCustomerWorkflowStepCompleteUpdate(input: {
     metadata,
     jobPipelineStatus: progress.currentNodeLabel ?? "Completed",
     progress,
+    autoShareUserId,
   }
 }
 

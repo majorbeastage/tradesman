@@ -26,6 +26,8 @@ export type JobTypesManagerModalProps = {
   title?: string
   estimateLineItemsLabel?: string
   showSetupWizard?: boolean
+  /** Inline embed (Estimates Library) vs centered modal popup. */
+  variant?: "modal" | "inline"
   /** Prefill create form fields on open. (Create section stays collapsed by default for consistency.) */
   expandCreateOnOpen?: boolean
   initialName?: string
@@ -41,6 +43,7 @@ export default function JobTypesManagerModal({
   title = "Job types",
   estimateLineItemsLabel = "Saved line templates",
   showSetupWizard = true,
+  variant = "modal",
   expandCreateOnOpen = false,
   initialName = "",
   initialPresetChecks,
@@ -244,7 +247,8 @@ export default function JobTypesManagerModal({
   if (!open) return null
 
   const sorted = sortJobTypesByName(jobTypes)
-  const CloseButton = () => (
+  const CloseButton = () =>
+    variant === "inline" ? null : (
     <button
       type="button"
       aria-label="Close"
@@ -256,43 +260,16 @@ export default function JobTypesManagerModal({
     >
       ✕
     </button>
-  )
+    )
 
-  return (
+  const panelBody = (
     <>
-      <div
-        onClick={() => {
-          cancelEdit()
-          onClose()
-        }}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 10000 }}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="job-types-modal-title"
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: "92%",
-          maxWidth: 520,
-          maxHeight: "90vh",
-          overflow: "auto",
-          background: "white",
-          borderRadius: 8,
-          padding: 24,
-          boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
-          zIndex: 10001,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h3 id="job-types-modal-title" style={{ margin: 0, color: theme.text, fontSize: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: variant === "inline" ? 12 : 16 }}>
+          <h3 id="job-types-modal-title" style={{ margin: 0, color: theme.text, fontSize: variant === "inline" ? 16 : 18 }}>
             {title}
           </h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {showSetupWizard ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
+            {showSetupWizard && variant === "modal" ? <SetupWizardLaunchButton wizardId="estimates_job_types" compact /> : null}
             <CloseButton />
           </div>
         </div>
@@ -597,6 +574,43 @@ export default function JobTypesManagerModal({
             ))}
           </div>
         ) : null}
+    </>
+  )
+
+  if (variant === "inline") {
+    return <div style={{ display: "grid", gap: 12 }}>{panelBody}</div>
+  }
+
+  return (
+    <>
+      <div
+        onClick={() => {
+          cancelEdit()
+          onClose()
+        }}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 10000 }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="job-types-modal-title"
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "92%",
+          maxWidth: 520,
+          maxHeight: "90vh",
+          overflow: "auto",
+          background: "white",
+          borderRadius: 8,
+          padding: 24,
+          boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+          zIndex: 10001,
+        }}
+      >
+        {panelBody}
       </div>
     </>
   )

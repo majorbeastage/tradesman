@@ -18,7 +18,7 @@ import {
   customizeGridRowsFromLength,
   dashboardCustomizeMinRows,
   dashboardColsFromWidth,
-  defaultDashboardTileOrder,
+  defaultDashboardTileOrderForRole,
   migrateStoredTileOrder,
   mergeDashboardQuickLinksMetadata,
   parseDashboardQuickLinks,
@@ -569,6 +569,8 @@ export default function DashboardQuickActions(props: Props) {
     setPage,
     labels,
     sectionTitle,
+    authRole,
+    officeManager,
     showSettingsShortcut,
     showPaymentsShortcut,
     profileUserId,
@@ -599,7 +601,12 @@ export default function DashboardQuickActions(props: Props) {
 
   const [gridCols, setGridCols] = useState(() => dashboardColsFromWidth(isMobile ? 360 : 1400, isMobile))
 
-  const fallbackOrder = useMemo(() => defaultDashboardTileOrder(fourthLinkId), [fourthLinkId])
+  const quickLinksRole = officeManager ? "office_manager" : authRole
+
+  const fallbackOrder = useMemo(
+    () => defaultDashboardTileOrderForRole(quickLinksRole, fourthLinkId),
+    [quickLinksRole, fourthLinkId],
+  )
 
   const buildCustomizeGrid = useCallback(
     (raw: DashboardTileGridSlot[] | undefined, savedCols: number | undefined, savedRows: number | undefined, cols: number) =>
@@ -765,7 +772,7 @@ export default function DashboardQuickActions(props: Props) {
             ? (data.metadata as Record<string, unknown>).dashboard_quick_links
             : null
         const parsed = parseDashboardQuickLinks(raw)
-        const migrated = migrateStoredTileOrder(raw, fourthLinkId)
+        const migrated = migrateStoredTileOrder(raw, fourthLinkId, quickLinksRole)
         const cloudTs = migrated.updatedAt ? Date.parse(migrated.updatedAt) : 0
         const localTs = readLocalDashboardLayoutUpdatedAt()
         const localGrid = readLocalTileGrid()
@@ -792,7 +799,7 @@ export default function DashboardQuickActions(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [profileUserId, fourthLinkId, buildCustomizeGrid, gridCols, readLocalTileGrid])
+  }, [profileUserId, fourthLinkId, quickLinksRole, buildCustomizeGrid, gridCols, readLocalTileGrid])
 
   const flushCloudPersist = useCallback(async () => {
     const snapshot = latestPersistRef.current

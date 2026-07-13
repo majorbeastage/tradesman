@@ -3,8 +3,9 @@
  */
 
 import type { EstimateScopeLineSuggestion } from "./estimateScopeAssistant"
-import type { EstimateLinePresetRow } from "./estimateLinePresets"
+import { matchJobTypeNameInText } from "./businessAiVocabulary"
 import { normalizeAssistantPhrase } from "./platformAssistantVocabulary"
+import type { EstimateLinePresetRow } from "./estimateLinePresets"
 
 export const ASSISTANT_HANDOFF_STORAGE_KEY = "tradesman_assistant_handoff_v1"
 export const OPEN_ESTIMATE_LINE_ITEMS_MODAL_KEY = "tradesman_open_estimate_line_items_modal"
@@ -92,7 +93,10 @@ export function consumeOpenEstimateLineItemsModalFlag(): boolean {
 }
 
 /** User wants saved estimate line items / library AI (not an open-quote scope panel only). */
-export function parseEstimateLineItemsHandoffIntent(raw: string): {
+export function parseEstimateLineItemsHandoffIntent(
+  raw: string,
+  knownJobTypeNames: string[] = [],
+): {
   scopeText: string
   jobTypeName?: string
   needsClarification: boolean
@@ -112,19 +116,21 @@ export function parseEstimateLineItemsHandoffIntent(raw: string): {
   if (!mentionsLineItems && !(mentionsJobType && mentionsBuild)) return null
   if (!mentionsBuild && !/\b(line\s*items?|saved\s+lines?)\b/i.test(text)) return null
 
-  let jobTypeName: string | undefined
-  const jtPatterns = [
-    /\bjob\s*type\s+(?:is\s+)?(?:going\s+to\s+be|will\s+be|called|named)\s+(.+?)(?:\s+and\b|\s*,|\s*\.|$)/i,
-    /\bfor\s+(?:a\s+)?([a-z][a-z0-9\s-]{1,36})\s+job\b/i,
-    /\b(roofing|plumbing|hvac|electrical|landscaping|painting|remodel|siding|gutters?)\b/i,
-  ]
-  for (const p of jtPatterns) {
-    const m = text.match(p)
-    if (m?.[1]) {
-      const name = m[1].replace(/\b(the|a|an)\b/gi, "").trim()
-      if (name.length >= 2 && name.length <= 48) {
-        jobTypeName = name.charAt(0).toUpperCase() + name.slice(1)
-        break
+  let jobTypeName: string | undefined = matchJobTypeNameInText(text, knownJobTypeNames)
+  if (!jobTypeName) {
+    const jtPatterns = [
+      /\bjob\s*type\s+(?:is\s+)?(?:going\s+to\s+be|will\s+be|called|named)\s+(.+?)(?:\s+and\b|\s*,|\s*\.|$)/i,
+      /\bfor\s+(?:a\s+)?([a-z][a-z0-9\s-]{1,36})\s+job\b/i,
+      /\b(roofing|plumbing|hvac|electrical|landscaping|painting|remodel|siding|gutters?)\b/i,
+    ]
+    for (const p of jtPatterns) {
+      const m = text.match(p)
+      if (m?.[1]) {
+        const name = m[1].replace(/\b(the|a|an)\b/gi, "").trim()
+        if (name.length >= 2 && name.length <= 48) {
+          jobTypeName = name.charAt(0).toUpperCase() + name.slice(1)
+          break
+        }
       }
     }
   }

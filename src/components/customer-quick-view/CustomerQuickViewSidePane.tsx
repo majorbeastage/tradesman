@@ -17,6 +17,7 @@ import DocumentPdfViewerModal from "../DocumentPdfViewerModal"
 import CustomerWorkflowProgressViewer from "../CustomerWorkflowProgressViewer"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
 import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
+import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
 import type { WorkOrderRecord } from "../../lib/workOrders"
 import type { PurchaseOrderRecord } from "../../lib/purchaseOrders"
 import type { PaymentRequestRow } from "../../lib/paymentRequests"
@@ -453,23 +454,40 @@ export function CustomerQuickViewSidePane({
         const update = buildCustomerWorkflowStepCompleteUpdate({
           workflow: workflowBundle.workflow,
           orgChart: workflowBundle.orgChart,
+          externalContacts: workflowBundle.externalContacts,
+          linkableUsers,
           customerMetadata: bundle?.customer.metadata ?? customer.metadata,
           completedNodeIds: inferred.completedNodeIds,
           nodeId,
           quoteId: quoteForWorkflow?.id ?? null,
         })
+        let nextMetadata = update.metadata
+        try {
+          const shareResult = await maybeAutoShareCustomerWithWorkflowAssignee({
+            customerId: customer.id,
+            customerMetadata: nextMetadata,
+            workflow: workflowBundle.workflow,
+            orgChart: workflowBundle.orgChart,
+            externalContacts: workflowBundle.externalContacts,
+            linkableUsers,
+            activeNodeId: update.progress.currentNodeId,
+          })
+          if (shareResult.shared) nextMetadata = shareResult.metadata
+        } catch {
+          /* best-effort */
+        }
         const nowIso = new Date().toISOString()
         const { error: custErr } = await supabase
           .from("customers")
           .update({
-            metadata: update.metadata,
+            metadata: nextMetadata,
             job_pipeline_status: update.jobPipelineStatus,
             updated_at: nowIso,
           })
           .eq("id", customer.id)
           .eq("user_id", userId)
         if (custErr) throw custErr
-        onCustomerMetadataUpdated?.(update.metadata)
+        onCustomerMetadataUpdated?.(nextMetadata)
         await loadBundle()
       } catch (e) {
         alert(formatAppError(e))

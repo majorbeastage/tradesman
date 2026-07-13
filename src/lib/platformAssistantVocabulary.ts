@@ -4,6 +4,8 @@
  */
 
 import { TAB_ID_LABELS } from "../types/portal-builder"
+import type { BusinessAiVocabulary } from "./businessAiVocabulary"
+import { formatBusinessAiVocabularyForLlm } from "./businessAiVocabulary"
 import type { ClientPackageContext } from "./clientPackageContext"
 
 /** Subset of parse context used for vocabulary / catalog (avoids circular imports). */
@@ -13,6 +15,8 @@ export type AssistantVocabularyContext = {
   selectedCustomerName?: string | null
   selectedQuoteId?: string | null
   clientPackage?: ClientPackageContext | null
+  /** Saved job types + line items from Estimates Library — biases routing and specialist handoffs. */
+  businessAiVocabulary?: BusinessAiVocabulary | null
 }
 
 export function normalizeAssistantPhrase(raw: string): string {
@@ -199,6 +203,14 @@ export function buildPlatformAssistantDomainTraining(ctx: AssistantVocabularyCon
   lines.push("| automatic replies, estimate line items, call forwarding, call screening | open_mini_wizard |")
   lines.push("| operations, work orders, org chart, business workflow | navigate |")
   lines.push("")
+
+  if (ctx.businessAiVocabulary) {
+    const tenantVocab = formatBusinessAiVocabularyForLlm(ctx.businessAiVocabulary)
+    if (tenantVocab) {
+      lines.push(tenantVocab)
+      lines.push("")
+    }
+  }
 
   const pkg = ctx.clientPackage
   if (pkg) {

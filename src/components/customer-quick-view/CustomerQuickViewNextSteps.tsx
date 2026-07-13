@@ -10,6 +10,7 @@ import {
 } from "../../lib/estimateWorkflowRuntime"
 import { loadCustomerWorkflowSnapshotFromProfile } from "../../lib/customerWorkflowRouting"
 import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkflowProgress"
+import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
 import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { inferWorkflowStepIntention, intentionPrimaryButtonLabel } from "../../lib/workflowStepIntention"
 import { loadLinkableOrgUsers } from "../../lib/orgChartMembers"
@@ -120,6 +121,7 @@ export function CustomerQuickViewNextSteps({
   const [quoteId, setQuoteId] = useState<string | null>(null)
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null)
   const [completedNodeIds, setCompletedNodeIds] = useState<string[]>([])
+  const [linkableUsers, setLinkableUsers] = useState<Awaited<ReturnType<typeof loadLinkableOrgUsers>>>([])
   const [stepIntention, setStepIntention] = useState<ReturnType<typeof inferWorkflowStepIntention>>("unknown")
 
   const load = useCallback(async () => {
@@ -131,6 +133,7 @@ export function CustomerQuickViewNextSteps({
         loadCustomerProfileBundle(supabase, userId, customer.id),
         loadLinkableOrgUsers(supabase, userId),
       ])
+      setLinkableUsers(users)
 
       if (!workflowBundle) {
         setStepLabel(null)
@@ -204,23 +207,40 @@ export function CustomerQuickViewNextSteps({
       const update = buildCustomerWorkflowStepCompleteUpdate({
         workflow: workflowBundle.workflow,
         orgChart: workflowBundle.orgChart,
+        externalContacts: workflowBundle.externalContacts,
+        linkableUsers,
         customerMetadata: customer.metadata,
         completedNodeIds,
         nodeId: currentNodeId,
         quoteId,
       })
+      let nextMetadata = update.metadata
+      try {
+        const shareResult = await maybeAutoShareCustomerWithWorkflowAssignee({
+          customerId: customer.id,
+          customerMetadata: nextMetadata,
+          workflow: workflowBundle.workflow,
+          orgChart: workflowBundle.orgChart,
+          externalContacts: workflowBundle.externalContacts,
+          linkableUsers,
+          activeNodeId: update.progress.currentNodeId,
+        })
+        if (shareResult.shared) nextMetadata = shareResult.metadata
+      } catch {
+        /* best-effort */
+      }
       const nowIso = new Date().toISOString()
       const { error: custErr } = await supabase
         .from("customers")
         .update({
-          metadata: update.metadata,
+          metadata: nextMetadata,
           job_pipeline_status: update.jobPipelineStatus,
           updated_at: nowIso,
         })
         .eq("id", customer.id)
         .eq("user_id", userId)
       if (custErr) throw custErr
-      onCustomerMetadataUpdated?.(update.metadata)
+      onCustomerMetadataUpdated?.(nextMetadata)
       await load()
     } catch (e) {
       setError(formatAppError(e))

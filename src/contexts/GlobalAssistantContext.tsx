@@ -39,6 +39,11 @@ import {
 import { useSetupWizardOptional } from "./SetupWizardContext"
 import { getSetupMiniWizardDef } from "../lib/setupGuideWizards"
 import { resolveClientPackage } from "../lib/clientPackageContext"
+import {
+  BUSINESS_AI_VOCABULARY_CHANGED_EVENT,
+  loadBusinessAiVocabulary,
+  type BusinessAiVocabulary,
+} from "../lib/businessAiVocabulary"
 import type { PortalConfig } from "../types/portal-builder"
 import type { UserRole } from "./AuthContext"
 
@@ -150,6 +155,7 @@ export function GlobalAssistantProvider({
     [isAdmin],
   )
   const [customVocabulary, setCustomVocabulary] = useState<AssistantCustomVocabularyEntry[]>([])
+  const [businessAiVocabulary, setBusinessAiVocabulary] = useState<BusinessAiVocabulary | null>(null)
   const [vocabularyTrainOpen, setVocabularyTrainOpen] = useState(false)
   const [vocabularySaveBusy, setVocabularySaveBusy] = useState(false)
   const [vocabularySaveError, setVocabularySaveError] = useState<string | null>(null)
@@ -188,6 +194,30 @@ export function GlobalAssistantProvider({
     void reloadCustomVocabulary()
   }, [reloadCustomVocabulary, profileUserId])
 
+  const reloadBusinessAiVocabulary = useCallback(async () => {
+    if (!supabase || !profileUserId) {
+      setBusinessAiVocabulary(null)
+      return
+    }
+    try {
+      const vocab = await loadBusinessAiVocabulary(supabase, profileUserId)
+      setBusinessAiVocabulary(vocab)
+    } catch {
+      setBusinessAiVocabulary(null)
+    }
+  }, [profileUserId])
+
+  useEffect(() => {
+    void reloadBusinessAiVocabulary()
+  }, [reloadBusinessAiVocabulary])
+
+  useEffect(() => {
+    if (!profileUserId) return
+    const onChanged = () => void reloadBusinessAiVocabulary()
+    window.addEventListener(BUSINESS_AI_VOCABULARY_CHANGED_EVENT, onChanged)
+    return () => window.removeEventListener(BUSINESS_AI_VOCABULARY_CHANGED_EVENT, onChanged)
+  }, [profileUserId, reloadBusinessAiVocabulary])
+
   const clientPackage = useMemo(
     () => resolveClientPackage(profileMetadata, portalConfig, accountRole),
     [profileMetadata, portalConfig, accountRole],
@@ -204,8 +234,9 @@ export function GlobalAssistantProvider({
       selectedQuoteId: pageSnapshot.selectedQuoteId,
       customVocabulary,
       clientPackage,
+      businessAiVocabulary,
     }),
-    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary, clientPackage],
+    [platform, availableTabIds, isAdmin, currentPage, pageSnapshot, customVocabulary, clientPackage, businessAiVocabulary],
   )
 
   const routingCatalog = useMemo(() => buildAssistantRoutingCatalog(parseContext), [parseContext])

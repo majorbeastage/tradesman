@@ -100,7 +100,7 @@ export const SETUP_MINI_WIZARD_FLOWS: Record<SetupMiniWizardId, SetupMiniWizardF
         prompt: "Describe the line item (voice or type)",
         type: "voice_text",
         placeholder: 'e.g. "Copper repipe labor 6 hours at 125" or "Permit fee 150 each"',
-        speakAloud: true,
+        speakAloud: false,
       },
     ],
   },
@@ -114,7 +114,7 @@ export const SETUP_MINI_WIZARD_FLOWS: Record<SetupMiniWizardId, SetupMiniWizardF
         prompt: "What do you call this type of job?",
         type: "voice_text",
         placeholder: "e.g. Water heater replacement",
-        speakAloud: true,
+        speakAloud: false,
       },
       {
         id: "duration_hours",

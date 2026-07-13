@@ -20,7 +20,10 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch(`/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}`)
+        const res = await fetch(
+          `/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}&v=${Date.now()}`,
+          { cache: "no-store" },
+        )
         const text = await res.text()
         let json: PublicBusinessProfilePayload
         try {

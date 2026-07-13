@@ -23,6 +23,7 @@ import {
   type ManageableUserRow,
   type PortalShell,
 } from "../lib/portalViewRules"
+import { resolveInternalMemberLabel } from "../lib/profileContactMeta"
 import {
   isSandboxDemoUserId,
   parseSandboxDemoTeam,
@@ -89,7 +90,11 @@ async function loadAllUsersForAdmin(accessToken: string): Promise<ManageableUser
       if (res.ok && Array.isArray(data.users)) {
         const base = data.users.map((u) => ({
           userId: u.id,
-          label: u.display_name?.trim() || u.email?.trim() || u.id.slice(0, 8) + "…",
+          label: resolveInternalMemberLabel({
+            display_name: u.display_name,
+            email: u.email,
+            metadata: null,
+          }),
           email: u.email ?? null,
           role: roleFromProfileRow(u.role),
           clientId: null as string | null,
@@ -97,10 +102,22 @@ async function loadAllUsersForAdmin(accessToken: string): Promise<ManageableUser
         if (supabase && base.length > 0) {
           const { data: profs } = await supabase
             .from("profiles")
-            .select("id, client_id")
+            .select("id, client_id, display_name, email, metadata")
             .in("id", base.map((b) => b.userId))
-          const cidById = new Map((profs ?? []).map((p) => [p.id as string, (p.client_id as string | null) ?? null]))
-          return base.map((b) => ({ ...b, clientId: cidById.get(b.userId) ?? null }))
+          const profById = new Map(
+            (profs ?? []).map((p) => [
+              p.id as string,
+              p as { id: string; client_id: string | null; display_name?: string | null; email?: string | null; metadata?: unknown },
+            ]),
+          )
+          return base.map((b) => {
+            const prof = profById.get(b.userId)
+            return {
+              ...b,
+              clientId: (prof?.client_id as string | null) ?? null,
+              label: prof ? resolveInternalMemberLabel(prof) : b.label,
+            }
+          })
         }
         return base
       }
@@ -109,10 +126,10 @@ async function loadAllUsersForAdmin(accessToken: string): Promise<ManageableUser
     }
   }
   if (!supabase) return []
-  const { data } = await supabase.from("profiles").select("id, display_name, email, role, client_id")
+  const { data } = await supabase.from("profiles").select("id, display_name, email, role, client_id, metadata")
   return (data ?? []).map((p) => ({
     userId: p.id as string,
-    label: (p.display_name as string | null)?.trim() || (p.email as string | null)?.trim() || (p.id as string).slice(0, 8) + "…",
+    label: resolveInternalMemberLabel(p as { display_name?: string | null; email?: string | null; metadata?: unknown }),
     email: (p.email as string | null) ?? null,
     role: roleFromProfileRow(p.role as string),
     clientId: (p.client_id as string | null) ?? null,
@@ -130,11 +147,11 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
   const profileIds = Array.from(new Set([authUserId, ...managedIds]))
   const { data: profs, error: e2 } = await supabase
     .from("profiles")
-    .select("id, display_name, email, role, client_id")
+    .select("id, display_name, email, role, client_id, metadata")
     .in("id", profileIds)
   if (e2) throw new Error(e2.message)
   const profileById = new Map(
-    (profs ?? []).map((p: { id: string; display_name: string | null; email?: string | null; role: string; client_id: string | null }) => [
+    (profs ?? []).map((p: { id: string; display_name: string | null; email?: string | null; role: string; client_id: string | null; metadata?: unknown }) => [
       p.id,
       p,
     ]),
@@ -144,7 +161,7 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
   const rows: ManageableUserRow[] = [
     {
       userId: authUserId,
-      label: selfProfile?.display_name?.trim() || "Me",
+      label: selfProfile ? resolveInternalMemberLabel(selfProfile) : "Me",
       email: selfProfile?.email ?? null,
       role: selfRole,
       clientId: selfProfile?.client_id ?? null,
@@ -154,7 +171,7 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
       const p = profileById.get(managedId)
       return {
         userId: managedId,
-        label: p?.display_name?.trim() || managedId.slice(0, 8) + "…",
+        label: p ? resolveInternalMemberLabel(p) : managedId.slice(0, 8) + "…",
         email: p?.email ?? null,
         role: roleFromProfileRow(p?.role),
         clientId: p?.client_id ?? null,

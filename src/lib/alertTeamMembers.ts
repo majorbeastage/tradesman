@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
 import { loadOrganizationChartFromMetadata } from "./organizationChart"
+import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { isOfficeManagerLikeRole } from "./profileRoles"
 
 export type AlertTeamMember = {
@@ -60,7 +61,7 @@ export async function loadAlertEditableTeamMembers(
     .maybeSingle()
   if (selfErr) throw selfErr
 
-  const selfLabel = selfRow?.display_name?.trim() || selfRow?.email?.trim() || "My alerts"
+  const selfLabel = selfRow ? resolveInternalMemberLabel(selfRow) : "My alerts"
   const out: AlertTeamMember[] = [
     {
       userId: managerUserId,
@@ -87,7 +88,7 @@ export async function loadAlertEditableTeamMembers(
 
   const { data: rows, error: rowsErr } = await client
     .from("profiles")
-    .select("id, display_name, email")
+    .select("id, display_name, email, metadata")
     .in("id", [...reportIds])
   if (rowsErr) throw rowsErr
 
@@ -96,7 +97,7 @@ export async function loadAlertEditableTeamMembers(
     if (!id || id === managerUserId) continue
     out.push({
       userId: id,
-      label: String(row.display_name ?? "").trim() || String(row.email ?? "").trim() || `${id.slice(0, 8)}…`,
+      label: resolveInternalMemberLabel(row as { display_name?: string | null; email?: string | null; metadata?: unknown }),
       email: (row.email as string | null) ?? null,
     })
   }

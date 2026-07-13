@@ -52,6 +52,25 @@ export function formatPersonName(firstName: string, lastName: string): string {
   return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ")
 }
 
+/** Internal org views: first name before business name (Estimates Library popups stay business-first). */
+export function resolveInternalMemberLabel(profile: {
+  display_name?: string | null
+  email?: string | null
+  metadata?: unknown
+}): string {
+  const contact = parseProfileContactFields(profile.metadata)
+  const first = contact.firstName.trim()
+  const business = String(profile.display_name ?? "").trim()
+  const email = String(profile.email ?? "").trim()
+  if (first && business && first.toLowerCase() !== business.toLowerCase()) return `${first} · ${business}`
+  if (first) return first
+  return business || email || "Team member"
+}
+
+export function resolveExternalBusinessLabel(profile: { display_name?: string | null; email?: string | null }): string {
+  return String(profile.display_name ?? "").trim() || String(profile.email ?? "").trim() || "Your business"
+}
+
 export function resolvePublicBusinessProfileImageUrl(
   webProfileSettings: { profilePhotoUrl: string | null },
   profileMeta: unknown,

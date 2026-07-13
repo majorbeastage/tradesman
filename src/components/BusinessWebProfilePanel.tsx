@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
+import { BusinessProfileTemplatePicker } from "./BusinessProfileTemplatePicker"
+import { PhotoLightbox } from "./PhotoLightbox"
 import {
-  BUSINESS_PROFILE_TEMPLATE_OPTIONS,
   BUSINESS_WEB_PROFILE_TAGLINE_MAX,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
   DEFAULT_BUSINESS_PROFILE_THEME,
@@ -29,6 +30,8 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
   const [error, setError] = useState("")
   const [settings, setSettings] = useState<BusinessPublicProfileSettings>(() => emptyBusinessPublicProfileSettings())
   const [slug, setSlug] = useState("")
+  const [publicCacheBust, setPublicCacheBust] = useState(() => Date.now())
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
 
   const publicUrl = useMemo(() => {
     if (!slug) return ""
@@ -112,12 +115,19 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           throw new Error(
             "Another business already uses this web address. Adjust your business name slightly (it must be unique on tradesman-us.com).",
           )
+        } else {
+          throw upErr
         }
-        throw upErr
       }
       setSettings(next)
       setSlug(nextSlug)
-      setMessage(next.enabled ? "Public business profile saved and published." : "Business web profile saved (not published).")
+      setPublicCacheBust(Date.now())
+      await load()
+      setMessage(
+        next.enabled
+          ? "Public business profile saved and published. Open Preview to see changes (allow a few seconds if you viewed the page recently)."
+          : "Business web profile saved (not published).",
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -285,28 +295,15 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
       <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
         <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Page design</legend>
         <div style={{ display: "grid", gap: 12 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 700 }}>Layout template</span>
-            <select
-              value={settings.templateId}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  templateId: e.target.value as BusinessPublicProfileSettings["templateId"],
-                }))
-              }
-              style={theme.formInput}
-            >
-              {BUSINESS_PROFILE_TEMPLATE_OPTIONS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-              {BUSINESS_PROFILE_TEMPLATE_OPTIONS.find((o) => o.id === settings.templateId)?.hint}
-            </span>
-          </label>
+          <BusinessProfileTemplatePicker
+            value={settings.templateId}
+            theme={settings.theme}
+            onChange={(templateId) => {
+              const next = { ...settings, templateId }
+              setSettings(next)
+              void persist(next)
+            }}
+          />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
             {(
               [
@@ -334,15 +331,20 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           </div>
           <button
             type="button"
-            onClick={() => setSettings((s) => ({ ...s, theme: { ...DEFAULT_BUSINESS_PROFILE_THEME } }))}
+            onClick={() => {
+              const next = { ...settings, theme: { ...DEFAULT_BUSINESS_PROFILE_THEME } }
+              setSettings(next)
+              void persist(next)
+            }}
             style={{
               justifySelf: "start",
-              padding: "6px 12px",
+              padding: "8px 14px",
               borderRadius: 8,
               border: `1px solid ${theme.border}`,
-              background: "#fff",
-              fontSize: 12,
-              fontWeight: 600,
+              background: "#f1f5f9",
+              color: "#0f172a",
+              fontSize: 13,
+              fontWeight: 700,
               cursor: "pointer",
             }}
           >
@@ -443,7 +445,21 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
           {settings.workPhotoUrls.map((url) => (
             <div key={url} style={{ position: "relative" }}>
-              <img src={url} alt="" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: `1px solid ${theme.border}` }} />
+              <button
+                type="button"
+                onClick={() => setLightboxUrl(url)}
+                aria-label="View work photo full size"
+                style={{
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  cursor: "zoom-in",
+                  borderRadius: 8,
+                  display: "block",
+                }}
+              >
+                <img src={url} alt="" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: `1px solid ${theme.border}` }} />
+              </button>
               <button
                 type="button"
                 onClick={() => removeWorkPhoto(url)}
@@ -497,7 +513,12 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
       {message ? <p style={{ margin: 0, color: "#166534", fontSize: 13 }}>{message}</p> : null}
 
       {publicUrl && settings.enabled ? (
-        <a href={publicUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: theme.primary }}>
+        <a
+          href={`${publicUrl}?v=${publicCacheBust}`}
+          target="_blank"
+          rel="noreferrer"
+          style={{ fontSize: 13, fontWeight: 700, color: theme.primary }}
+        >
           Preview public page ↗
         </a>
       ) : null}
@@ -519,6 +540,8 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
       >
         {saving ? "Saving…" : "Save business web profile"}
       </button>
+
+      {lightboxUrl ? <PhotoLightbox src={lightboxUrl} alt="Work photo" onClose={() => setLightboxUrl(null)} /> : null}
     </div>
   )
 }

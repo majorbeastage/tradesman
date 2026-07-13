@@ -4,6 +4,7 @@ import {
   serializePresetForProfile,
   type EstimateLinePresetRow,
 } from "./estimateLinePresets"
+import { notifyBusinessAiVocabularyChanged } from "./businessAiVocabulary"
 
 export type JobTypeRow = {
   id: string
@@ -153,6 +154,7 @@ export async function persistEstimateLinePresetsForUser(
   prevMeta.estimate_line_presets = trimmed.map(serializePresetForProfile)
   const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
   if (error) return { error: error.message, rows: trimmed }
+  notifyBusinessAiVocabularyChanged()
   return { error: null, rows: trimmed }
 }
 

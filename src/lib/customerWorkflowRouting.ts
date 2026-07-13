@@ -25,6 +25,7 @@ export type CustomerWorkflowMetaV1 = {
   departmentKey?: string | null
   completedNodeIds?: string[]
   pendingNodeIds?: string[]
+  sharedWithUserIds?: string[]
   rollbackNote?: string | null
   updatedAt?: string
 }
@@ -65,6 +66,9 @@ export function parseCustomerWorkflowMeta(metadata: unknown): CustomerWorkflowMe
       : undefined,
     pendingNodeIds: Array.isArray(o.pendingNodeIds)
       ? o.pendingNodeIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
+    sharedWithUserIds: Array.isArray(o.sharedWithUserIds)
+      ? o.sharedWithUserIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : undefined,
     rollbackNote: typeof o.rollbackNote === "string" ? o.rollbackNote : null,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,

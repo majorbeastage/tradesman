@@ -433,11 +433,36 @@ async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse)
       return
     }
 
+    let service: ReturnType<typeof createServiceSupabase>
+    try {
+      service = createServiceSupabase()
+    } catch {
+      service = null as unknown as ReturnType<typeof createServiceSupabase>
+    }
+
+    let tenantVocabularyBlock = ""
+    if (service) {
+      try {
+        const { loadBusinessAiVocabulary, formatBusinessAiVocabularyForLlm } = await import(
+          "../src/lib/businessAiVocabulary.js"
+        )
+        const vocab = await loadBusinessAiVocabulary(service, auth.userId)
+        tenantVocabularyBlock = formatBusinessAiVocabularyForLlm(vocab)
+      } catch {
+        tenantVocabularyBlock = ""
+      }
+    }
+
     const pack = JSON.stringify({
       scope: scopeText,
       trade: tradeHint || "residential / commercial contractor",
       existingLines,
+      tenantVocabulary: tenantVocabularyBlock || undefined,
     }).slice(0, 12000)
+
+    const vocabRules = tenantVocabularyBlock
+      ? `- **Strong preference:** reuse saved line templates and job type names from tenantVocabulary when scope matches — use their descriptions and typical pricing.\n- Map scope phrases to known job types and line item keywords in tenantVocabulary before inventing new lines.\n`
+      : ""
 
     const raw =
       (await openAiText(
@@ -445,7 +470,7 @@ async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse)
 Reply with JSON only, no markdown:
 {"suggestions":[{"description":"string","quantity":number,"unit_price":number,"line_kind":"labor"|"material"|"travel"|"misc","rationale":"optional short note"}],"clarifications":["max 3 short questions only when pricing or scope is impossible without an answer"]}
 Rules:
-- Max 8 suggestions. Only include work clearly stated or strongly implied in the scope — do not pad the list.
+${vocabRules}- Max 8 suggestions. Only include work clearly stated or strongly implied in the scope — do not pad the list.
 - line_kind must be one of: labor, material, travel, misc. Focus on these four categories.
 - Do NOT add permits, hazardous-material handling, job-approval fees, disposal, or admin lines unless the scope explicitly mentions them.
 - Skip lines that duplicate existingLines descriptions.
@@ -548,20 +573,38 @@ async function handleEstimateWizardBullets(req: VercelRequest, res: VercelRespon
       return
     }
 
+    let tenantVocabularyBlock = ""
+    try {
+      const service = createServiceSupabase()
+      const { loadBusinessAiVocabulary, formatBusinessAiVocabularyForLlm } = await import(
+        "../src/lib/businessAiVocabulary.js"
+      )
+      const vocab = await loadBusinessAiVocabulary(service, auth.userId)
+      tenantVocabularyBlock = formatBusinessAiVocabularyForLlm(vocab)
+    } catch {
+      tenantVocabularyBlock = ""
+    }
+
+    const packWithVocab = tenantVocabularyBlock
+      ? `${pack}\n\n---\n${tenantVocabularyBlock}`
+      : pack
+
     const instructions =
       mode === "conversation"
         ? `Extract only facts stated in the customer/contractor messages and customer notes.
 Reply with JSON only, no markdown: {"bullets": string[]}
 Rules: Max 8 bullets. One short line each (no "•"). Include only what was actually said or written in notes: scope requested, materials named, labor/time hints, dates, access constraints, pricing if mentioned.
-Treat "Customer notes" as first-class source material alongside email/SMS/calls. Do not speculate about permits, hazardous materials, or approvals. If the pack is empty, return {"bullets": []}.`
+Treat "Customer notes" as first-class source material alongside email/SMS/calls. Do not speculate about permits, hazardous materials, or approvals. If the pack is empty, return {"bullets": []}.
+When tenant job types / line vocabulary is included, use those names when the scope matches saved services.`
         : `Summarize job scope for an estimate from the provided context (job details notes, customer notes, conversation summary, file names, email/SMS/call thread).
 Reply with JSON only, no markdown: {"bullets": string[]}
 Rules: Max 10 bullets. Short lines. Prioritize: (1) Estimate / job details notes, (2) Customer notes, then conversation and files.
 Cover scope of work, labor/crew needs, materials/supplies, travel or trip context, misc site notes.
-Only mention permits, hazmat, or approvals if the context explicitly includes them. At most 1 bullet for unknowns if critical info is missing.`
+Only mention permits, hazmat, or approvals if the context explicitly includes them. At most 1 bullet for unknowns if critical info is missing.
+When tenant job types / saved line vocabulary is included, align bullet wording with those service names and line items when relevant.`
 
     const raw =
-      (await openAiText(instructions, pack.slice(0, 14000), { maxTokens: 2400, timeoutMs: 52_000 }))?.trim() ?? "{}"
+      (await openAiText(instructions, packWithVocab.slice(0, 14000), { maxTokens: 2400, timeoutMs: 52_000 }))?.trim() ?? "{}"
 
     let bullets: string[] = []
     try {

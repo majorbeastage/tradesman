@@ -4,7 +4,17 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
+import { loadBusinessAiVocabulary, mergedAcceptedJobTypeTokenList } from "../src/lib/businessAiVocabulary.js"
 import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
+
+async function resolveAcceptedJobTypeTokens(supabase: SupabaseClient, userId: string): Promise<string[]> {
+  try {
+    const vocab = await loadBusinessAiVocabulary(supabase, userId)
+    return mergedAcceptedJobTypeTokenList(vocab)
+  } catch {
+    return []
+  }
+}
 
 async function openAiJsonAssist(system: string, user: string): Promise<string | null> {
   const key = firstEnv("OPENAI_API_KEY")
@@ -156,11 +166,17 @@ type AiSignals = {
   notes: string
 }
 
-async function interpretWithAi(corpus: string, prefs: LeadFilterPreferencesV1): Promise<AiSignals | null> {
+async function interpretWithAi(
+  corpus: string,
+  prefs: LeadFilterPreferencesV1,
+  acceptedTokens: string[],
+): Promise<AiSignals | null> {
   if (!prefs.use_ai_for_unclear) return null
+  const acceptedHint =
+    acceptedTokens.length > 0 ? acceptedTokens.join(", ").slice(0, 900) : prefs.accepted_job_types.slice(0, 800)
   const system =
-    'Reply with one JSON object only, no markdown. Keys: jobTypeHints (string array, short trade keywords inferred from text), budgetSignal ("none"|"low"|"medium"|"high"|"unknown"), urgency ("unknown"|"asap"|"flexible"), notes (one short sentence). Do not classify good/bad leads. If unsure, use unknown/flexible and empty hints. Weight auto-attendant phone Q&A heavily when present (name, job scope, address, urgency, SMS opt-in).'
-  const user = `Contractor accepted job types (hints): ${prefs.accepted_job_types.slice(0, 800)}\n\nLead text:\n${corpus.slice(0, 6000)}`
+    'Reply with one JSON object only, no markdown. Keys: jobTypeHints (string array, short trade keywords inferred from text), budgetSignal ("none"|"low"|"medium"|"high"|"unknown"), urgency ("unknown"|"asap"|"flexible"), notes (one short sentence). Do not classify good/bad leads. If unsure, use unknown/flexible and empty hints. Weight auto-attendant phone Q&A heavily when present (name, job scope, address, urgency, SMS opt-in). Prefer matching the contractor saved job types and line item vocabulary when inferring jobTypeHints.'
+  const user = `Contractor accepted job types & line vocabulary (hints): ${acceptedHint}\n\nLead text:\n${corpus.slice(0, 6000)}`
   const raw = await openAiJsonAssist(system, user)
   if (!raw) return null
   try {
@@ -254,7 +270,9 @@ export async function evaluateAndPersistLeadFit(
   let corpus = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`.toLowerCase()
   const corpusRaw = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`
 
-  const accepted = tokenizeJobTypes(prefs.accepted_job_types)
+  const acceptedFromLibrary = await resolveAcceptedJobTypeTokens(supabase, lead.user_id)
+  const accepted =
+    acceptedFromLibrary.length > 0 ? acceptedFromLibrary : tokenizeJobTypes(prefs.accepted_job_types)
   const minSize = prefs.minimum_job_size
   const estVal =
     typeof lead.estimated_value === "number" && Number.isFinite(lead.estimated_value) ? lead.estimated_value : null
@@ -268,7 +286,7 @@ export async function evaluateAndPersistLeadFit(
   const ambiguousBudget = minSize != null && effectiveValue == null
 
   if (prefs.use_ai_for_unclear && aiVisible && (ambiguousJob || ambiguousBudget || corpus.trim().length < 24)) {
-    aiSignals = await interpretWithAi(corpusRaw, prefs)
+    aiSignals = await interpretWithAi(corpusRaw, prefs, accepted)
     if (aiSignals) {
       source = "hybrid"
       corpus = mergeHintsIntoCorpus(corpus, aiSignals).toLowerCase()
@@ -473,7 +491,9 @@ export async function evaluateAndPersistCustomerFit(
   const engagementCorpus = await fetchInboundEngagementCorpus(supabase, cust.user_id, customerId)
   const corpusRaw = `${cust.display_name ?? ""}\n${cust.service_address ?? ""}\n${cust.job_pipeline_status ?? ""}\n${cust.communication_urgency ?? ""}\n${engagementCorpus}`
   let corpus = corpusRaw.toLowerCase()
-  const accepted = tokenizeJobTypes(prefs.accepted_job_types)
+  const acceptedFromLibrary = await resolveAcceptedJobTypeTokens(supabase, cust.user_id)
+  const accepted =
+    acceptedFromLibrary.length > 0 ? acceptedFromLibrary : tokenizeJobTypes(prefs.accepted_job_types)
   const minSize = prefs.minimum_job_size
   const extracted = extractMaxDollars(corpusRaw)
   const effectiveValue = extracted
@@ -485,7 +505,7 @@ export async function evaluateAndPersistCustomerFit(
   const ambiguousBudget = minSize != null && effectiveValue == null
 
   if (prefs.use_ai_for_unclear && aiVisible && (ambiguousJob || ambiguousBudget || corpus.trim().length < 24)) {
-    aiSignals = await interpretWithAi(corpusRaw, prefs)
+    aiSignals = await interpretWithAi(corpusRaw, prefs, accepted)
     if (aiSignals) {
       source = "hybrid"
       corpus = mergeHintsIntoCorpus(corpus, aiSignals).toLowerCase()

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
 import { parseLeadFilterPreferences } from "./_leadFitClassification.js"
 import type { ScreeningAnswer } from "./_voiceAutoAttendant.js"
+import { formatBusinessAiVocabularyForLlm, loadBusinessAiVocabulary } from "../src/lib/businessAiVocabulary.js"
 
 export type ScreeningVerdict = "good_lead" | "spam" | "cold_call" | "uncertain"
 
@@ -57,11 +58,19 @@ export async function loadCallScreeningBusinessContext(
     lines.push(`Services / job types this business handles: ${prefs.accepted_job_types.trim().slice(0, 700)}`)
   }
 
-  const { data: jobTypes } = await supabase.from("job_types").select("name").eq("user_id", userId).limit(30)
+  const { data: jobTypes } = await supabase.from("job_types").select("name, materials_list").eq("user_id", userId).limit(40)
   const names = (jobTypes ?? [])
     .map((r) => String((r as { name?: string }).name ?? "").trim())
     .filter(Boolean)
   if (names.length) lines.push(`Job type library: ${names.join(", ").slice(0, 500)}`)
+
+  try {
+    const vocab = await loadBusinessAiVocabulary(supabase, userId)
+    const block = formatBusinessAiVocabularyForLlm(vocab)
+    if (block) lines.push(block)
+  } catch {
+    /* optional enrichment */
+  }
 
   if (lines.length === 0) {
     return "Business context: not specified — callers may be from any industry or product line."

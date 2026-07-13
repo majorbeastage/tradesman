@@ -10,7 +10,7 @@ import {
   type OrgSharedInboxEntry,
   usersShareSameOrganization,
 } from "../src/lib/organizationPeers.js"
-import { createServiceSupabase } from "./_communications.js"
+import { resolveInternalMemberLabel } from "../src/lib/profileContactMeta.js"
 
 function bodyAsRecord(req: VercelRequest): Record<string, unknown> {
   const b = req.body
@@ -52,11 +52,8 @@ export async function handleShareOrgContact(req: VercelRequest, res: VercelRespo
     return
   }
 
-  const { data: senderProf } = await service.from("profiles").select("display_name, email").eq("id", senderId).maybeSingle()
-  const senderName =
-    (typeof senderProf?.display_name === "string" && senderProf.display_name.trim()) ||
-    (typeof senderProf?.email === "string" && senderProf.email.trim()) ||
-    "Team member"
+  const { data: senderProf } = await service.from("profiles").select("display_name, email, metadata").eq("id", senderId).maybeSingle()
+  const senderName = senderProf ? resolveInternalMemberLabel(senderProf) : "Team member"
 
   const { data: customer, error: custErr } = await service
     .from("customers")
@@ -108,11 +105,8 @@ export async function handleShareOrgContact(req: VercelRequest, res: VercelRespo
       }
       let assigneeLabel: string | undefined
       if (ev.assignee_user_id) {
-        const { data: ap } = await service.from("profiles").select("display_name, email").eq("id", ev.assignee_user_id).maybeSingle()
-        assigneeLabel =
-          (typeof ap?.display_name === "string" && ap.display_name.trim()) ||
-          (typeof ap?.email === "string" && ap.email.trim()) ||
-          undefined
+        const { data: ap } = await service.from("profiles").select("display_name, email, metadata").eq("id", ev.assignee_user_id).maybeSingle()
+        assigneeLabel = ap ? resolveInternalMemberLabel(ap) : undefined
       }
       const meta = ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata) ? (ev.metadata as Record<string, unknown>) : {}
       calendarEvent = {

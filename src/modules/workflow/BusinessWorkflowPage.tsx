@@ -20,6 +20,7 @@ import {
   downloadWorkflowSvg,
   loadBusinessWorkflowFromMetadata,
   mergeBusinessWorkflowMetadata,
+  syncWorkflowNodeOrdersFromChart,
   newWorkflowEdge,
   newWorkflowNode,
   sortedWorkflowNodes,
@@ -149,12 +150,13 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       setSaving(true)
       return (async () => {
         try {
+          const synced = syncWorkflowNodeOrdersFromChart(next)
           const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
           const prevMeta =
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
               : {}
-          const merged = mergeBusinessWorkflowMetadata(prevMeta, next)
+          const merged = mergeBusinessWorkflowMetadata(prevMeta, synced)
           const { error } = await supabase
             .from("profiles")
             .update({ metadata: merged })
