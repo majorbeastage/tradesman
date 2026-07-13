@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react"
+import { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent } from "react"
 import { supabase } from "../../lib/supabase"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
@@ -27,9 +27,12 @@ import {
   mergeCalendarEventDisplayMeta,
   readCalendarEventDisplayMeta,
   saveCalendarDisplayPrefs,
+  calendarChipSurfaceStyle,
   CALENDAR_TITLE_FIELD_OPTIONS,
+  CALENDAR_CHIP_STYLE_OPTIONS,
   type CalendarDisplayPrefs,
   type CalendarTitleFieldId,
+  type CalendarChipStyleId,
 } from "../../lib/calendarEventDisplayPrefs"
 import { JOB_TYPE_CALENDAR_COLORS, JOB_TYPE_ICON_OPTIONS, glyphForJobTypeIcon } from "../../lib/jobTypeIcons"
 import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
@@ -210,6 +213,16 @@ type GridEventDragState = {
   moved: boolean
   ghostDayIso: string
   ghostMinutes: number
+  startX: number
+  startY: number
+}
+
+type MonthEventDragState = {
+  event: CalendarEvent
+  durationMs: number
+  pointerId: number
+  moved: boolean
+  ghostDayIso: string
   startX: number
   startY: number
 }
@@ -837,6 +850,25 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
   }, [eventCtxMenu])
 
+  useLayoutEffect(() => {
+    if (!eventCtxMenu) {
+      setEventCtxMenuPos(null)
+      return
+    }
+    const pad = 8
+    const el = eventCtxMenuRef.current
+    const w = el?.offsetWidth || 280
+    const h = el?.offsetHeight || 340
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    let left = eventCtxMenu.x
+    let top = eventCtxMenu.y
+    if (left + w > vw - pad) left = Math.max(pad, vw - w - pad)
+    if (top + h > vh - pad) top = Math.max(pad, eventCtxMenu.y - h)
+    if (top < pad) top = pad
+    setEventCtxMenuPos({ left, top })
+  }, [eventCtxMenu])
+
   useEffect(() => {
     if (!sandboxTraining || !supabase || !calendarDbUserId) return
     let cancelled = false
@@ -976,6 +1008,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     try { const v = localStorage.getItem("calendar_timeIncrement"); return v === "60" ? 60 : 15 } catch { return 15 }
   })
   const [gridEventDrag, setGridEventDrag] = useState<GridEventDragState | null>(null)
+  const [monthEventDrag, setMonthEventDrag] = useState<MonthEventDragState | null>(null)
+  const eventCtxMenuRef = useRef<HTMLDivElement | null>(null)
+  const [eventCtxMenuPos, setEventCtxMenuPos] = useState<{ left: number; top: number } | null>(null)
   const gridWrapperRef = useRef<HTMLDivElement>(null)
   const skipNextColumnClickRef = useRef(false)
   const gridTimeParamsRef = useRef({ dayViewStartHour: DAY_START_HOUR, timeIncrement: 15 as 15 | 60 })
@@ -2311,7 +2346,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const nextFields = has
       ? displayPrefs.titleFields.filter((f) => f !== id)
       : [...displayPrefs.titleFields, id]
-    updateDisplayPrefs({ titleFields: nextFields.length ? nextFields : ["title"] })
+    updateDisplayPrefs({ ...displayPrefs, titleFields: nextFields.length ? nextFields : ["title"] })
+  }
+
+  function setChipStyle(chipStyle: CalendarChipStyleId) {
+    updateDisplayPrefs({ ...displayPrefs, chipStyle })
+  }
+
+  function eventChipStyle(ev: CalendarEvent): React.CSSProperties {
+    return calendarChipSurfaceStyle(getEventColor(ev), getEventRibbonColorForEvent(ev), displayPrefs.chipStyle)
   }
 
   function getEventRibbonColor(): string {
@@ -2868,8 +2911,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddNotifySms(false)
   }
 
+  const pendingAddJobTypeRef = useRef<string | null>(null)
+
   const applySchedulingAddWizardPrefill = useCallback(
     (prefill: SchedulingAddWizardPrefill) => {
+      resetAddForm()
       if (prefill.title) setAddTitle(prefill.title)
       if (prefill.startDate) setAddStartDate(prefill.startDate)
       if (prefill.startTime) setAddStartTime(prefill.startTime)
@@ -2878,15 +2924,32 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
       if (prefill.jobTypeId) {
         setAddJobTypeId(prefill.jobTypeId)
-        applyJobTypeToAddForm(prefill.jobTypeId)
+        const jt = jobTypes.find((j) => j.id === prefill.jobTypeId)
+        if (jt) {
+          applyJobTypeToAddForm(prefill.jobTypeId)
+          if (!prefill.title) setAddTitle(jt.name)
+        } else {
+          pendingAddJobTypeRef.current = prefill.jobTypeId
+        }
       }
       if (prefill.customerId) setAddCustomerId(prefill.customerId)
       if (prefill.notes) setAddNotes(prefill.notes)
       setShowAddItem(true)
       if (userId) setAddTargetUserId(userId)
     },
-    [timeIncrement, userId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jobTypes resolved via pending ref when still loading
+    [timeIncrement, userId, jobTypes],
   )
+
+  useEffect(() => {
+    const jtId = pendingAddJobTypeRef.current
+    if (!jtId) return
+    if (!jobTypes.some((j) => j.id === jtId)) return
+    pendingAddJobTypeRef.current = null
+    applyJobTypeToAddForm(jtId)
+    const jt = jobTypes.find((j) => j.id === jtId)
+    if (jt) setAddTitle((prev) => prev.trim() || jt.name)
+  }, [jobTypes])
 
   function onAddCustomerPick(customerId: string) {
     if (!customerId) {
@@ -3054,6 +3117,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       if (!prefill) return
       applySchedulingAddWizardPrefill(prefill)
     }
+    // Consume any handoff queued before this page mounted (e.g. from Estimates library).
+    onPrefill()
     window.addEventListener(SCHEDULING_ADD_WIZARD_PREFILL_EVENT, onPrefill)
     return () => window.removeEventListener(SCHEDULING_ADD_WIZARD_PREFILL_EVENT, onPrefill)
   }, [applySchedulingAddWizardPrefill])
@@ -3121,6 +3186,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   function beginGridEventPointerDown(e: React.PointerEvent, ev: CalendarEvent, calDay: Date) {
+    if (e.button === 2) return
     e.stopPropagation()
     const start = new Date(ev.start_at)
     const end = new Date(ev.end_at)
@@ -3135,6 +3201,36 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       startY: e.clientY,
     })
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  function beginMonthEventPointerDown(e: React.PointerEvent, ev: CalendarEvent) {
+    if (e.button === 2) return
+    e.stopPropagation()
+    const start = new Date(ev.start_at)
+    setMonthEventDrag({
+      event: ev,
+      durationMs: Math.max(15 * 60 * 1000, new Date(ev.end_at).getTime() - start.getTime()),
+      pointerId: e.pointerId,
+      moved: false,
+      ghostDayIso: calDayIsoLocal(start),
+      startX: e.clientX,
+      startY: e.clientY,
+    })
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  function resolveMonthDayFromPointer(clientX: number, clientY: number): Date | null {
+    const cells = document.querySelectorAll<HTMLElement>("[data-cal-month-day]")
+    for (const cell of cells) {
+      const rect = cell.getBoundingClientRect()
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue
+      const iso = cell.dataset.calMonthDay
+      if (!iso) continue
+      const [yy, mm, dd] = iso.split("-").map((n) => parseInt(n, 10))
+      if (!yy || !mm || !dd) continue
+      return new Date(yy, mm - 1, dd)
+    }
+    return null
   }
 
   useEffect(() => {
@@ -3159,10 +3255,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       if (e.pointerId !== gridEventDrag.pointerId) return
       const drag = gridEventDrag
       setGridEventDrag(null)
-      if (!drag.moved) {
-        setSelectedEvent(drag.event)
-        return
-      }
+      // Single click / short press: select for drag affordance only — open requires double-click.
+      if (!drag.moved) return
       skipNextColumnClickRef.current = true
       const slot = resolveGridSlotFromPointer(e.clientX, e.clientY)
       if (!slot) return
@@ -3179,6 +3273,42 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- drag session tied to pointer id
   }, [gridEventDrag])
+
+  useEffect(() => {
+    if (!monthEventDrag) return
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== monthEventDrag.pointerId) return
+      const dist = Math.hypot(e.clientX - monthEventDrag.startX, e.clientY - monthEventDrag.startY)
+      const moved = dist > 4 || monthEventDrag.moved
+      const day = resolveMonthDayFromPointer(e.clientX, e.clientY)
+      setMonthEventDrag((prev) => {
+        if (!prev || prev.pointerId !== e.pointerId) return prev
+        if (!day) return moved !== prev.moved ? { ...prev, moved } : prev
+        return { ...prev, moved, ghostDayIso: calDayIsoLocal(day) }
+      })
+    }
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerId !== monthEventDrag.pointerId) return
+      const drag = monthEventDrag
+      setMonthEventDrag(null)
+      if (!drag.moved) return
+      const day = resolveMonthDayFromPointer(e.clientX, e.clientY)
+      if (!day) return
+      const prevStart = new Date(drag.event.start_at)
+      const newStart = new Date(day)
+      newStart.setHours(prevStart.getHours(), prevStart.getMinutes(), 0, 0)
+      void commitEventTimeChange(drag.event, newStart, drag.durationMs)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthEventDrag])
 
   const addInputStyle: React.CSSProperties = {
     ...theme.formInput,
@@ -3514,7 +3644,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               {showTeamManagementEntry ? (
                 <button
                   type="button"
-                  onClick={() => setPage?.("operations-team_management")}
+                  onClick={() => setCalendarSuite({ id: "team_management", panel: "team_members" })}
                   style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
                 >
                   Team management
@@ -3818,7 +3948,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   top: "100%",
                   marginTop: 6,
                   zIndex: 40,
-                  width: 260,
+                  width: 280,
                   padding: 12,
                   background: "#fff",
                   border: `1px solid ${theme.border}`,
@@ -3844,6 +3974,25 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     </label>
                   )
                 })}
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", marginTop: 6 }}>Month chip style</div>
+                {CALENDAR_CHIP_STYLE_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.id}
+                    style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#0f172a", cursor: "pointer" }}
+                  >
+                    <input
+                      type="radio"
+                      name="cal-chip-style"
+                      checked={displayPrefs.chipStyle === opt.id}
+                      onChange={() => setChipStyle(opt.id)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 700 }}>{opt.label}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#64748b" }}>{opt.hint}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
             ) : null}
           </div>
@@ -3875,13 +4024,19 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                       return (
                         <td
                           key={di}
+                          data-cal-month-day={calDayIsoLocal(cell)}
                           onClick={() => openAddItemForDate(cell)}
                           style={{
                             padding: "4px",
                             border: `1px solid ${theme.border}`,
                             verticalAlign: "top",
                             height: expanded ? "120px" : "80px",
-                            background: inMonth ? "white" : "#f9fafb",
+                            background:
+                              monthEventDrag?.moved && monthEventDrag.ghostDayIso === calDayIsoLocal(cell)
+                                ? "#e0f2fe"
+                                : inMonth
+                                  ? "white"
+                                  : "#f9fafb",
                             color: inMonth ? theme.text : "#9ca3af",
                             cursor: "pointer",
                           }}
@@ -3890,7 +4045,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           {dayEvents.slice(0, expanded ? 10 : 3).map((ev) => (
                             <div
                               key={ev.id}
-                              onClick={(e) => {
+                              data-cal-event
+                              onPointerDown={(e) => beginMonthEventPointerDown(e, ev)}
+                              onDoubleClick={(e) => {
                                 e.stopPropagation()
                                 setSelectedEvent(ev)
                               }}
@@ -3900,21 +4057,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                                 setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
                               }}
                               style={{
-                                fontSize: "11px",
-                                padding: "3px 7px",
-                                marginBottom: "3px",
-                                borderRadius: "6px",
-                                background: getEventColor(ev),
-                                boxShadow: `inset 3px 0 0 ${getEventRibbonColorForEvent(ev)}`,
-                                color: "#fff",
-                                cursor: "pointer",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                fontWeight: 600,
-                                letterSpacing: "0.01em",
+                                ...eventChipStyle(ev),
+                                opacity: monthEventDrag?.event.id === ev.id && monthEventDrag.moved ? 0.35 : 1,
+                                cursor: monthEventDrag?.event.id === ev.id ? "grabbing" : "grab",
                               }}
-                              title={formatEventChipLabel(ev)}
+                              title={`${formatEventChipLabel(ev)} · Double-click to open · Drag to move day`}
                             >
                               {formatEventChipLabel(ev)}
                             </div>
@@ -4032,9 +4179,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             key={ev.id}
                             data-cal-event
                             onPointerDown={(e) => beginGridEventPointerDown(e, ev, calDayStart)}
-                            onClick={(e) => {
+                            onDoubleClick={(e) => {
                               e.stopPropagation()
-                              if (gridEventDrag?.moved) return
+                              setSelectedEvent(ev)
                             }}
                             onContextMenu={(e) => {
                               e.preventDefault()
@@ -4061,7 +4208,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               zIndex: dragging ? 2 : 1,
                               fontWeight: 600,
                             }}
-                            title={formatEventChipLabel(ev)}
+                            title={`${formatEventChipLabel(ev)} · Double-click to open`}
                           >
                             {formatEventChipLabel(ev)}
                           </div>
@@ -4148,9 +4295,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           key={ev.id}
                           data-cal-event
                           onPointerDown={(e) => beginGridEventPointerDown(e, ev, currentDate)}
-                          onClick={(e) => {
+                          onDoubleClick={(e) => {
                             e.stopPropagation()
-                            if (gridEventDrag?.moved) return
+                            setSelectedEvent(ev)
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault()
@@ -4178,7 +4325,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             fontWeight: 600,
                             lineHeight: 1.35,
                           }}
-                          title={formatEventChipLabel(ev)}
+                          title={`${formatEventChipLabel(ev)} · Double-click to open`}
                         >
                           {formatEventChipLabel(ev)}
                         </div>
@@ -4931,14 +5078,17 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
       {eventCtxMenu ? (
         <div
+          ref={eventCtxMenuRef}
           role="menu"
           onPointerDown={(e) => e.stopPropagation()}
           style={{
             position: "fixed",
-            left: Math.min(eventCtxMenu.x, typeof window !== "undefined" ? window.innerWidth - 280 : eventCtxMenu.x),
-            top: Math.min(eventCtxMenu.y, typeof window !== "undefined" ? window.innerHeight - 320 : eventCtxMenu.y),
+            left: eventCtxMenuPos?.left ?? eventCtxMenu.x,
+            top: eventCtxMenuPos?.top ?? eventCtxMenu.y,
             zIndex: 10050,
             width: 268,
+            maxHeight: "min(70vh, 420px)",
+            overflow: "auto",
             background: "#fff",
             border: `1px solid ${theme.border}`,
             borderRadius: 12,
@@ -4946,6 +5096,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             padding: 12,
             display: "grid",
             gap: 10,
+            visibility: eventCtxMenuPos ? "visible" : "hidden",
           }}
         >
           <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Event look</div>

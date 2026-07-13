@@ -35,6 +35,8 @@ type Props = {
   userId: string
   onClose: () => void
   onApplied?: () => void
+  onUseForEstimate?: (jobType: { id: string; name: string }) => void
+  onUseForCalendar?: (jobType: { id: string; name: string; duration_minutes?: number }) => void
 }
 
 const primaryBtn = {
@@ -80,7 +82,14 @@ function summarizeLines(lines: JobSetupLineDraft[], jobName: string): string {
   return `It looks like ${jobName} includes: ${bits.join("; ")}. Review and edit anything before you save.`
 }
 
-export default function JobTypesSetupWizardModal({ open, userId, onClose, onApplied }: Props) {
+export default function JobTypesSetupWizardModal({
+  open,
+  userId,
+  onClose,
+  onApplied,
+  onUseForEstimate,
+  onUseForCalendar,
+}: Props) {
   const [phase, setPhase] = useState<Phase>("intro")
   const [hasExisting, setHasExisting] = useState(false)
   const [servicesText, setServicesText] = useState("")
@@ -95,6 +104,7 @@ export default function JobTypesSetupWizardModal({ open, userId, onClose, onAppl
   const [error, setError] = useState("")
   const [statusNote, setStatusNote] = useState("")
   const [assignEnabled, setAssignEnabled] = useState(false)
+  const [lastSaved, setLastSaved] = useState<{ id: string; name: string; durationMinutes: number } | null>(null)
 
   const currentName = queue[index] ?? ""
   const current = details[currentName] ?? emptyJobSetupDetail(JOB_TYPE_CALENDAR_COLORS[0]!.hex)
@@ -155,6 +165,7 @@ export default function JobTypesSetupWizardModal({ open, userId, onClose, onAppl
       setError("")
       setStatusNote("")
       setAssignEnabled(false)
+      setLastSaved(null)
       stopListening()
     }
   }, [open, stopListening])
@@ -241,9 +252,15 @@ export default function JobTypesSetupWizardModal({ open, userId, onClose, onAppl
     setBusy(true)
     setError("")
     try {
-      const { message } = await applySingleJobTypeSetup(supabase, userId, currentName, {
+      const { message, jobTypeId } = await applySingleJobTypeSetup(supabase, userId, currentName, {
         ...current,
         assignUserId: assignEnabled ? current.assignUserId : null,
+      })
+      const hours = Number.parseFloat(current.durationHours) || 1
+      setLastSaved({
+        id: jobTypeId,
+        name: (current.titleOverride?.trim() || currentName).trim(),
+        durationMinutes: Math.max(15, Math.round(hours * 60)),
       })
       setStatusNote(message)
       onApplied?.()
@@ -640,7 +657,44 @@ export default function JobTypesSetupWizardModal({ open, userId, onClose, onAppl
               Job types and line items are saved and available in Estimates Library and on new estimates. You can run this
               wizard again anytime to add more.
             </p>
-            <button type="button" style={primaryBtn} onClick={onClose}>
+            {lastSaved ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
+                  Try “{lastSaved.name}” right now:
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {onUseForEstimate ? (
+                    <button
+                      type="button"
+                      style={primaryBtn}
+                      onClick={() => {
+                        onUseForEstimate({ id: lastSaved.id, name: lastSaved.name })
+                        onClose()
+                      }}
+                    >
+                      Create an Estimate
+                    </button>
+                  ) : null}
+                  {onUseForCalendar ? (
+                    <button
+                      type="button"
+                      style={secondaryBtn}
+                      onClick={() => {
+                        onUseForCalendar({
+                          id: lastSaved.id,
+                          name: lastSaved.name,
+                          duration_minutes: lastSaved.durationMinutes,
+                        })
+                        onClose()
+                      }}
+                    >
+                      Create a Calendar Event
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            <button type="button" style={secondaryBtn} onClick={onClose}>
               Done
             </button>
           </div>

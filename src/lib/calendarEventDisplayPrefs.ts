@@ -1,5 +1,7 @@
 /** Calendar event label composition + per-event display overrides (metadata). */
 
+import type { CSSProperties } from "react"
+
 export const CALENDAR_DISPLAY_PREFS_KEY = "tradesman_calendar_display_prefs_v1"
 
 export type CalendarTitleFieldId =
@@ -10,13 +12,18 @@ export type CalendarTitleFieldId =
   | "assignee"
   | "icon"
 
+export type CalendarChipStyleId = "compact" | "pill" | "bar" | "soft"
+
 export type CalendarDisplayPrefs = {
   /** Ordered fragments used to build the on-grid event label. */
   titleFields: CalendarTitleFieldId[]
+  /** Month (and shared) chip visual style. */
+  chipStyle: CalendarChipStyleId
 }
 
 export const DEFAULT_CALENDAR_DISPLAY_PREFS: CalendarDisplayPrefs = {
   titleFields: ["time", "title"],
+  chipStyle: "compact",
 }
 
 export const CALENDAR_TITLE_FIELD_OPTIONS: Array<{ id: CalendarTitleFieldId; label: string }> = [
@@ -28,18 +35,32 @@ export const CALENDAR_TITLE_FIELD_OPTIONS: Array<{ id: CalendarTitleFieldId; lab
   { id: "icon", label: "Job type icon" },
 ]
 
+export const CALENDAR_CHIP_STYLE_OPTIONS: Array<{ id: CalendarChipStyleId; label: string; hint: string }> = [
+  { id: "compact", label: "Compact strip", hint: "Dense chips that leave room for more events" },
+  { id: "pill", label: "Rounded pill", hint: "Softer rounded ends" },
+  { id: "bar", label: "Solid bar", hint: "Strong color block with sharp corners" },
+  { id: "soft", label: "Soft tint", hint: "Light fill with colored text for busy months" },
+]
+
 export function loadCalendarDisplayPrefs(): CalendarDisplayPrefs {
   if (typeof window === "undefined") return { ...DEFAULT_CALENDAR_DISPLAY_PREFS }
   try {
     const raw = localStorage.getItem(CALENDAR_DISPLAY_PREFS_KEY)
     if (!raw) return { ...DEFAULT_CALENDAR_DISPLAY_PREFS }
-    const parsed = JSON.parse(raw) as CalendarDisplayPrefs
+    const parsed = JSON.parse(raw) as Partial<CalendarDisplayPrefs>
     const fields = Array.isArray(parsed?.titleFields)
       ? parsed.titleFields.filter((f): f is CalendarTitleFieldId =>
           CALENDAR_TITLE_FIELD_OPTIONS.some((o) => o.id === f),
         )
       : []
-    return { titleFields: fields.length ? fields : [...DEFAULT_CALENDAR_DISPLAY_PREFS.titleFields] }
+    const chipStyle =
+      parsed?.chipStyle && CALENDAR_CHIP_STYLE_OPTIONS.some((o) => o.id === parsed.chipStyle)
+        ? parsed.chipStyle
+        : DEFAULT_CALENDAR_DISPLAY_PREFS.chipStyle
+    return {
+      titleFields: fields.length ? fields : [...DEFAULT_CALENDAR_DISPLAY_PREFS.titleFields],
+      chipStyle,
+    }
   } catch {
     return { ...DEFAULT_CALENDAR_DISPLAY_PREFS }
   }
@@ -114,6 +135,70 @@ export function formatCalendarEventLabel(ev: CalendarEventLabelInput, prefs?: Ca
     }
   }
   return parts.join(" · ") || (ev.title ?? "").trim() || "Event"
+}
+
+export function calendarChipSurfaceStyle(
+  colorHex: string,
+  ribbonHex: string,
+  style: CalendarChipStyleId = "compact",
+): CSSProperties {
+  const base: CSSProperties = {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: 600,
+    letterSpacing: "0.01em",
+    cursor: "grab",
+    boxSizing: "border-box",
+  }
+  switch (style) {
+    case "pill":
+      return {
+        ...base,
+        fontSize: 11,
+        padding: "4px 10px",
+        marginBottom: 3,
+        borderRadius: 999,
+        background: colorHex,
+        color: "#fff",
+        boxShadow: `inset 3px 0 0 ${ribbonHex}`,
+      }
+    case "bar":
+      return {
+        ...base,
+        fontSize: 11,
+        padding: "4px 6px",
+        marginBottom: 2,
+        borderRadius: 2,
+        background: colorHex,
+        color: "#fff",
+        boxShadow: `inset 4px 0 0 ${ribbonHex}`,
+      }
+    case "soft":
+      return {
+        ...base,
+        fontSize: 11,
+        padding: "3px 7px",
+        marginBottom: 3,
+        borderRadius: 6,
+        background: `${colorHex}26`,
+        color: colorHex,
+        border: `1px solid ${colorHex}66`,
+        boxShadow: `inset 3px 0 0 ${ribbonHex}`,
+      }
+    case "compact":
+    default:
+      return {
+        ...base,
+        fontSize: 11,
+        padding: "3px 7px",
+        marginBottom: 3,
+        borderRadius: 6,
+        background: colorHex,
+        color: "#fff",
+        boxShadow: `inset 3px 0 0 ${ribbonHex}`,
+      }
+  }
 }
 
 export type CalendarEventDisplayMeta = {

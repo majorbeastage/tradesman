@@ -398,19 +398,48 @@ export function queueEstimatesLibraryOpen(target?: EstimatesLibraryOpenTarget): 
 
 export const OPEN_ESTIMATES_LIBRARY_EVENT = "tradesman:open-estimates-library"
 
+function parseEstimatesLibraryOpenPayload(v: string): EstimatesLibraryOpenTarget {
+  if (v === "1") return { section: "previous_estimates" }
+  try {
+    const parsed = JSON.parse(v) as EstimatesLibraryOpenTarget
+    return parsed && typeof parsed === "object" ? parsed : { section: "previous_estimates" }
+  } catch {
+    return { section: "previous_estimates" }
+  }
+}
+
+/** Non-consuming peek so Estimates bootstrap can skip auto-create while library navigation is pending. */
+export function peekEstimatesLibraryOpen(): EstimatesLibraryOpenTarget | null {
+  if (typeof window === "undefined") return null
+  try {
+    const v = sessionStorage.getItem(QUOTES_OPEN_LIBRARY)
+    if (!v) return null
+    return parseEstimatesLibraryOpenPayload(v)
+  } catch {
+    return null
+  }
+}
+
 export function consumeEstimatesLibraryOpen(): EstimatesLibraryOpenTarget | null {
   if (typeof window === "undefined") return null
   try {
     const v = sessionStorage.getItem(QUOTES_OPEN_LIBRARY)
     if (!v) return null
     sessionStorage.removeItem(QUOTES_OPEN_LIBRARY)
-    if (v === "1") return { section: "previous_estimates" }
-    try {
-      const parsed = JSON.parse(v) as EstimatesLibraryOpenTarget
-      return parsed && typeof parsed === "object" ? parsed : { section: "previous_estimates" }
-    } catch {
-      return { section: "previous_estimates" }
-    }
+    return parseEstimatesLibraryOpenPayload(v)
+  } catch {
+    return null
+  }
+}
+
+export function peekQuotesJobTypePrefill(): QuotesJobTypePrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(QUOTES_JOB_TYPE_PREFILL)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as QuotesJobTypePrefill
+    if (!parsed?.jobTypeId?.trim()) return null
+    return { jobTypeId: parsed.jobTypeId.trim(), jobTypeName: parsed.jobTypeName?.trim() || undefined }
   } catch {
     return null
   }

@@ -154,6 +154,8 @@ import { formatCustomerNotesForAiPack } from "../../lib/customerNotesForAi"
 import {
   consumeOpenSpecialtyReportWizard,
   consumeEstimatesLibraryOpen,
+  peekEstimatesLibraryOpen,
+  peekQuotesJobTypePrefill,
   consumeQuotesCustomerPrefill,
   consumeQuotesCreateNewForCustomer,
   consumeQuotesJobTypePrefill,
@@ -506,11 +508,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const filterPhone = ""
   const sortField: string = "name"
   const sortAsc = true
-  const [estimateSuite, setEstimateSuite] = useState<"home" | "library">("home")
+  const [estimateSuite, setEstimateSuite] = useState<"home" | "library">(() =>
+    peekEstimatesLibraryOpen() ? "library" : "home",
+  )
   const [librarySection, setLibrarySection] = useState<
     "quick_access" | "previous_estimates" | "job_types_line_items" | "reports"
-  >("previous_estimates")
-  const [libraryJobsTab, setLibraryJobsTab] = useState<"line_items" | "job_types">("line_items")
+  >(() => (peekEstimatesLibraryOpen()?.section === "job_types_line_items" ? "job_types_line_items" : "previous_estimates"))
+  const [libraryJobsTab, setLibraryJobsTab] = useState<"line_items" | "job_types">(() =>
+    peekEstimatesLibraryOpen()?.tab === "job_types" ? "job_types" : "line_items",
+  )
   const [reportsLibrarySearch, setReportsLibrarySearch] = useState("")
   const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
   const [pastLibSearch, setPastLibSearch] = useState("")
@@ -2187,15 +2193,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
     function onQueuedJobType() {
       const prefill = consumeQuotesJobTypePrefill()
       if (!prefill) return
+      estimatesBootstrapRef.current = true
       setEstimateSuite("home")
       void (async () => {
-        if (!selectedQuoteId) {
-          alert(
-            `Opened Estimates for job type “${prefill.jobTypeName || "selected"}”. Create or open an estimate, then set Job type to apply its line items.`,
-          )
+        const quoteId = await createNewEstimateReturningId()
+        if (!quoteId) {
+          alert(`Could not start an estimate for job type “${prefill.jobTypeName || "selected"}”.`)
           return
         }
-        await persistQuoteJobType(prefill.jobTypeId)
+        await persistQuoteJobType(prefill.jobTypeId, quoteId)
+        await applyJobTypeLinesToQuoteItems(prefill.jobTypeId, quoteId, { silentIfEmpty: true })
       })()
     }
     onQueuedJobType()
@@ -2219,6 +2226,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!userId || !supabase || estimateSuite !== "home") return
     if (estimatesBootstrapRef.current) return
+
+    // Do not auto-create an estimate when navigating to Estimates Library.
+    if (peekEstimatesLibraryOpen()) return
+
+    // Job-type handoff owns estimate creation (dedicated effect above).
+    if (peekQuotesJobTypePrefill()) {
+      estimatesBootstrapRef.current = true
+      return
+    }
 
     const openQuoteId = peekQuotesOpenQuote()
     if (openQuoteId) {
@@ -2496,7 +2512,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }
 
   async function createNewEstimate(): Promise<boolean> {
-    if (!supabase || !userId) return false
+    const id = await createNewEstimateReturningId()
+    return Boolean(id)
+  }
+
+  async function createNewEstimateReturningId(): Promise<string | null> {
+    if (!supabase || !userId) return null
     try {
       const { data, error } = await supabase
         .from("quotes")
@@ -2517,19 +2538,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
         } else {
           alert(msg || "Could not create estimate.")
         }
-        return false
+        return null
       }
       setEstimateSuite("home")
       await loadQuotes()
       if (data?.id) {
         const opened = await openQuote(data.id)
-        return opened
+        return opened ? (data.id as string) : null
       }
-      return false
+      return null
     } catch (err: any) {
       console.error(err)
       alert(err?.message ?? "Failed to create estimate.")
-      return false
+      return null
     }
   }
 
@@ -3820,21 +3841,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return true
   }
 
-  async function applyJobTypeLinesToQuoteItems() {
+  async function applyJobTypeLinesToQuoteItems(
+    jobTypeIdOverride?: string,
+    quoteIdOverride?: string,
+    opts?: { silentIfEmpty?: boolean },
+  ) {
     const jtId =
-      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string"
+      (jobTypeIdOverride ?? "").trim() ||
+      (selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string"
         ? String((selectedQuote as QuoteRow).job_type_id ?? "").trim()
-        : ""
+        : "")
     if (!jtId) {
-      alert("Choose a quote job type first.")
+      if (!opts?.silentIfEmpty) alert("Choose a quote job type first.")
       return
     }
-    if (!supabase || !selectedQuoteId) return
+    const quoteId = quoteIdOverride ?? selectedQuoteId
+    if (!supabase || !quoteId) return
     const presets = estimateLinePresets.filter((p) => (p.linked_job_type_ids ?? []).includes(jtId))
     if (presets.length === 0) {
-      alert(
-        "No saved line templates are linked to this job type. Link them under Job types or Estimate line items (Add to job type), then try again.",
-      )
+      if (!opts?.silentIfEmpty) {
+        alert(
+          "No saved line templates are linked to this job type. Link them under Job types or Estimate line items (Add to job type), then try again.",
+        )
+      }
       return
     }
     const existingIds = new Set<string>()
@@ -3844,7 +3873,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     const toInsert = presets.filter((p) => !existingIds.has(p.id))
     if (toInsert.length === 0) {
-      alert("Every template line linked to this job type is already on the quote.")
+      if (!opts?.silentIfEmpty) alert("Every template line linked to this job type is already on the quote.")
       return
     }
     setApplyJtLinesBusy(true)
@@ -3914,13 +3943,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
     })
   }
 
-  async function persistQuoteJobType(jobTypeId: string) {
-    if (!supabase || !selectedQuoteId) return
+  async function persistQuoteJobType(jobTypeId: string, quoteIdOverride?: string) {
+    if (!supabase) return
+    const quoteId = quoteIdOverride ?? selectedQuoteId
+    if (!quoteId) return
     const v = jobTypeId.trim() || null
     const { error } = await supabase
       .from("quotes")
       .update({ job_type_id: v, updated_at: new Date().toISOString() })
-      .eq("id", selectedQuoteId)
+      .eq("id", quoteId)
     if (error) {
       const msg = String(error.message ?? "")
       alert(
@@ -3931,7 +3962,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       )
       return
     }
-    setSelectedQuote((prev: QuoteRow | null) => (prev && typeof prev === "object" ? { ...prev, job_type_id: v } : prev))
+    setSelectedQuote((prev: QuoteRow | null) =>
+      prev && typeof prev === "object" && prev.id === quoteId ? { ...prev, job_type_id: v } : prev,
+    )
   }
 
   async function saveEstimateLineItemsModal() {

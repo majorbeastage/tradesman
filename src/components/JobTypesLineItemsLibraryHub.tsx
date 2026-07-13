@@ -144,6 +144,23 @@ export default function JobTypesLineItemsLibraryHub({
         userId={userId}
         onClose={() => setWizardOpen(false)}
         onApplied={handleWizardApplied}
+        onUseForEstimate={
+          onUseJobTypeForEstimate
+            ? (jt) => onUseJobTypeForEstimate({ id: jt.id, name: jt.name, duration_minutes: 60, description: null, color_hex: null })
+            : undefined
+        }
+        onUseForCalendar={
+          onUseJobTypeForCalendar
+            ? (jt) =>
+                onUseJobTypeForCalendar({
+                  id: jt.id,
+                  name: jt.name,
+                  duration_minutes: jt.duration_minutes ?? 60,
+                  description: null,
+                  color_hex: null,
+                })
+            : undefined
+        }
       />
     </div>
   )
