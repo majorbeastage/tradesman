@@ -189,11 +189,6 @@ import { canStartEstimateForCustomer } from "../../lib/customerWorkflowProgress"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
 import CustomerPaymentRequestModal from "../../components/CustomerPaymentRequestModal"
 import {
-  customerPayWorkflowAgingBadge,
-  customerPayWorkflowLabel,
-  parseQuoteCustomerPayWorkflow,
-} from "../../lib/quoteCustomerPayWorkflow"
-import {
   combineSpeechSessionDisplay,
   createThrottledSpeechDisplay,
   parseSpeechResultsList,
@@ -534,7 +529,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobPackBulletsBusy, setJobPackBulletsBusy] = useState(false)
   const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
-  const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<null | "email" | "sms">(null)
+  type EstimateCustomerDeliveryPanel = null | "email" | "sms" | "separate_email" | "both"
+  const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<EstimateCustomerDeliveryPanel>(null)
+  const [estimateSaveMenuOpen, setEstimateSaveMenuOpen] = useState(false)
+  const [estimateSendMenuOpen, setEstimateSendMenuOpen] = useState(false)
+  const estimateSaveMenuRef = useRef<HTMLDivElement>(null)
+  const estimateSendMenuRef = useRef<HTMLDivElement>(null)
   const [quoteSmsBody, setQuoteSmsBody] = useState("")
   const [quoteSmsSending, setQuoteSmsSending] = useState(false)
   const [quoteSmsAttachEntity, setQuoteSmsAttachEntity] = useState(true)
@@ -621,6 +621,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteEmailAttachEntity, setQuoteEmailAttachEntity] = useState(true)
   const [quoteEmailCopySelf, setQuoteEmailCopySelf] = useState(true)
   const [quoteEmailAdditionalTo, setQuoteEmailAdditionalTo] = useState("")
+  const [quoteEmailSeparateTo, setQuoteEmailSeparateTo] = useState("")
   const [quoteEmailCc, setQuoteEmailCc] = useState("")
   const [quoteEmailBcc, setQuoteEmailBcc] = useState("")
   const [customerPaymentProfile, setCustomerPaymentProfile] = useState<CustomerPaymentProfileMetadata>({})
@@ -1225,22 +1226,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
     getOmPageActionVisible(portalConfig, "quotes", "estimate_line_items")
   const showQuotesJobTypesPanel =
     getPageActionVisible(portalConfig, "quotes", "job_types") && getOmPageActionVisible(portalConfig, "quotes", "job_types")
-  const showQuotesCustomerPayment =
-    getPageActionVisible(portalConfig, "quotes", "customer_payment") &&
-    getOmPageActionVisible(portalConfig, "quotes", "customer_payment")
   const showQuotesAddToCalendar =
     getPageActionVisible(portalConfig, "quotes", "add_quote_to_calendar") &&
     getOmPageActionVisible(portalConfig, "quotes", "add_quote_to_calendar")
-  const portalCustomerPayOnlyAfterEstimateSent = portalConfig?.customer_pay_only_after_estimate_sent === true
-  const estimateEligibleForCustomerPayShare = useMemo(() => {
-    if (!portalCustomerPayOnlyAfterEstimateSent) return true
-    const st = String(selectedQuote?.status ?? "")
-      .trim()
-      .toLowerCase()
-    return ["sent", "viewed", "accepted", "declined"].includes(st)
-  }, [portalCustomerPayOnlyAfterEstimateSent, selectedQuote?.status])
-  const quotePayWorkflowUi = parseQuoteCustomerPayWorkflow(selectedQuote?.metadata ?? null)
-  const quotePayWorkflowAging = customerPayWorkflowAgingBadge(quotePayWorkflowUi)
   const estimateLineItemsButtonLabel = portalConfig?.controlLabels?.estimate_line_items ?? "Estimate line items"
   const quoteJobTypesButtonLabel = portalConfig?.controlLabels?.job_types ?? "Job types"
   const quoteAutomaticRepliesItems = useMemo(
@@ -1385,6 +1373,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   useEffect(() => {
     setQuoteEmailSignature(loadStoredEmailSignature())
+  }, [])
+
+  useEffect(() => {
+    function onDocPointerDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (estimateSaveMenuRef.current && !estimateSaveMenuRef.current.contains(target)) {
+        setEstimateSaveMenuOpen(false)
+      }
+      if (estimateSendMenuRef.current && !estimateSendMenuRef.current.contains(target)) {
+        setEstimateSendMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onDocPointerDown)
+    return () => document.removeEventListener("mousedown", onDocPointerDown)
   }, [])
 
   useEffect(() => {
@@ -4435,32 +4437,42 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
   }
 
-  async function sendQuoteCustomerEmail() {
+  async function sendQuoteCustomerEmail(options?: { skipPanelClose?: boolean; separateToOnly?: boolean }): Promise<boolean> {
     if (!customerSendWorkflowGate.allowed) {
       alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals before sending to the customer.")
-      return
+      return false
     }
-    if (!supabase || !userId || !selectedQuote) return
+    if (!supabase || !userId || !selectedQuote) return false
     const token = session?.access_token?.trim()
     if (!token) {
       alert("Sign in again to send email.")
-      return
+      return false
     }
-    const contact = resolveCustomerContactByTarget(selectedQuote.customers?.customer_identifiers ?? [], quoteContactTarget)
-    const email = contact.email?.trim()
-    if (!email) {
-      alert(`No email is set for ${contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer details.`)
-      return
+    const separateToOnly = options?.separateToOnly === true
+    let email = ""
+    if (separateToOnly) {
+      email = quoteEmailSeparateTo.trim()
+      if (!email) {
+        alert("Enter an email address to send to.")
+        return false
+      }
+    } else {
+      const contact = resolveCustomerContactByTarget(selectedQuote.customers?.customer_identifiers ?? [], quoteContactTarget)
+      email = contact.email?.trim() ?? ""
+      if (!email) {
+        alert(`No email is set for ${contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer details.`)
+        return false
+      }
     }
     const subject = quoteEmailSubject.trim()
     const body = quoteEmailBody.trim()
     if (!subject || !body) {
       alert("Enter subject and body.")
-      return
+      return false
     }
     if (!selectedQuoteItems.length) {
       alert("Add at least one quote item before sending an estimate.")
-      return
+      return false
     }
     const hasFileOrPhoto = quoteMediaRows.length > 0
     const hasAttachmentDescription = quoteMediaRows.some((row) => {
@@ -4470,7 +4482,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     const hasDetails = quoteActivityFiltered.length > 0 || Boolean(jobDetailsText.trim())
     if (!hasFileOrPhoto && !hasAttachmentDescription && !hasDetails) {
       const proceed = window.confirm("You may be missing Job Details. Are you sure you want to proceed with sending this Estimate to your Customer?")
-      if (!proceed) return
+      if (!proceed) return false
     }
     const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
     let bodyForSend = appendEmailSignature(body, quoteEmailSignature)
@@ -4516,7 +4528,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         },
         body: outboundMessagesJsonBody({
           to: email,
-          toAdditional: quoteEmailAdditionalTo.trim() || undefined,
+          toAdditional: separateToOnly ? undefined : quoteEmailAdditionalTo.trim() || undefined,
           cc: ccMerged || undefined,
           bcc: bccMerged || undefined,
           subject,
@@ -4542,19 +4554,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
         /* ignore */
       }
       if (simulated) {
-        setCustomerDeliveryPanel(null)
-        return
+        if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
+        return true
       }
       if (!sandboxTraining && attachmentCount < 1) {
         throw new Error("Email was sent but the estimate PDF could not be attached. Try again or use Download.")
       }
-      if (!sandboxTraining) alert("Email sent with estimate PDF attached.")
+      if (!sandboxTraining && !options?.skipPanelClose) alert("Email sent with estimate PDF attached.")
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "email").catch(() => undefined)
       }
-      setCustomerDeliveryPanel(null)
+      if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
+      return true
     } catch (e) {
       sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")
+      return false
     } finally {
       setQuoteEmailSending(false)
     }
@@ -4562,31 +4576,31 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const SMS_ESTIMATE_PDF_MAX_BYTES = 4_000_000
 
-  async function sendQuoteCustomerSms() {
+  async function sendQuoteCustomerSms(options?: { skipPanelClose?: boolean }): Promise<boolean> {
     if (!customerSendWorkflowGate.allowed) {
       alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals before sending to the customer.")
-      return
+      return false
     }
-    if (!supabase || !userId || !selectedQuote) return
+    if (!supabase || !userId || !selectedQuote) return false
     const token = session?.access_token?.trim()
     if (!token) {
       alert("Sign in again to send SMS.")
-      return
+      return false
     }
     const contact = resolveCustomerContactByTarget(selectedQuote.customers?.customer_identifiers ?? [], quoteContactTarget)
     const phone = contact.phone?.trim()
     if (!phone) {
       alert(`No phone number is set for ${contactTargetLabel(quoteContactTarget).toLowerCase()}. Add it in Customer details.`)
-      return
+      return false
     }
     const body = quoteSmsBody.trim()
     if (!body) {
       alert("Enter a message to send.")
-      return
+      return false
     }
     if (!selectedQuoteItems.length) {
       alert("Add at least one quote item before sending an estimate.")
-      return
+      return false
     }
     const hasFileOrPhoto = quoteMediaRows.length > 0
     const hasAttachmentDescription = quoteMediaRows.some((row) => {
@@ -4598,7 +4612,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const proceed = window.confirm(
         "You may be missing Job Details. Are you sure you want to proceed with sending this Estimate to your Customer?",
       )
-      if (!proceed) return
+      if (!proceed) return false
     }
     setQuoteSmsSending(true)
     try {
@@ -4647,19 +4661,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
         /* ignore */
       }
       if (simulated) {
-        setCustomerDeliveryPanel(null)
-        return
+        if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
+        return true
       }
-      if (!sandboxTraining) alert("Text sent with estimate PDF attached.")
+      if (!sandboxTraining && !options?.skipPanelClose) alert("Text sent with estimate PDF attached.")
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "manual").catch(() => undefined)
       }
-      setCustomerDeliveryPanel(null)
+      if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
+      return true
     } catch (e) {
       sandboxTrainingAlert(sandboxTraining, e instanceof Error ? e.message : String(e), "communication")
+      return false
     } finally {
       setQuoteSmsSending(false)
     }
+  }
+
+  async function sendQuoteCustomerBoth() {
+    const emailOk = await sendQuoteCustomerEmail({ skipPanelClose: true })
+    if (!emailOk) return
+    const smsOk = await sendQuoteCustomerSms({ skipPanelClose: true })
+    if (!smsOk) return
+    if (!sandboxTraining) alert("Email and text sent with estimate PDF attached.")
+    setCustomerDeliveryPanel(null)
   }
 
   const filteredQuotes = quotes.filter((q: any) => {
@@ -5580,7 +5605,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
             {librarySection === "quick_access" ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
-                  Save reusable estimate layouts here from the Estimates tool (<strong>Save Estimate Template</strong>). Apply a template when
+                  Save reusable estimate layouts here from the Estimates tool (<strong>Save as a template</strong>). Apply a template when
                   building an estimate using <strong>Quick Access Template</strong> on the estimate page.
                 </p>
                 {quickAccessTemplates.length === 0 ? (
@@ -5921,48 +5946,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     }}
                                   >
                                     Start report
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  disabled={quotePdfBusy}
-                                  onClick={() => void previewEstimateDocument()}
-                                  style={{
-                                    padding: "8px 14px",
-                                    borderRadius: 8,
-                                    border: `1px solid ${theme.border}`,
-                                    background: "#fff",
-                                    cursor: quotePdfBusy ? "wait" : "pointer",
-                                    fontWeight: 700,
-                                    fontSize: 14,
-                                    color: "#0f172a",
-                                  }}
-                                >
-                                  {quotePdfBusy ? "Working…" : "Preview Estimate"}
-                                </button>
-                                {showQuotesAddToCalendar ? (
-                                  <button
-                                    type="button"
-                                    disabled={!selectedQuote.customer_id || addToCalendarLoading}
-                                    title={
-                                      selectedQuote.customer_id
-                                        ? "Schedule this estimate on the calendar"
-                                        : "Link a customer on this estimate before scheduling"
-                                    }
-                                    onClick={() => openAddToCalendarFromEstimate()}
-                                    style={{
-                                      padding: "8px 14px",
-                                      borderRadius: 8,
-                                      border: `2px solid ${theme.primary}`,
-                                      background: "#fff7ed",
-                                      cursor: !selectedQuote.customer_id || addToCalendarLoading ? "not-allowed" : "pointer",
-                                      fontWeight: 800,
-                                      fontSize: 14,
-                                      color: theme.primary,
-                                      opacity: !selectedQuote.customer_id ? 0.55 : 1,
-                                    }}
-                                  >
-                                    {addToCalendarLoading ? "Scheduling…" : "Add to calendar"}
                                   </button>
                                 ) : null}
                                 <button
@@ -7693,146 +7676,344 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                   <button
                     type="button"
-                    disabled={!selectedQuote?.customer_id}
-                    title={!selectedQuote?.customer_id ? "Link a customer first" : undefined}
-                    onClick={() => {
-                      if (!selectedQuote?.customer_id) {
-                        alert("Select a customer on this estimate before saving to them.")
-                        return
-                      }
-                      alert("Estimate is linked to this customer. Changes save automatically as you edit.")
-                    }}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: selectedQuote?.customer_id ? theme.primary : "#94a3b8",
-                      color: "#fff",
-                      fontWeight: 700,
-                      cursor: selectedQuote?.customer_id ? "pointer" : "not-allowed",
-                    }}
-                  >
-                    Save to Customer Profile
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void saveCurrentEstimateAsQuickAccessTemplate()}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      color: theme.text,
-                    }}
-                  >
-                    Save Estimate Template
-                  </button>
-                  <button
-                    type="button"
                     disabled={quotePdfBusy}
-                    title="Print the estimate PDF preview (not this screen)"
-                    onClick={() => void printEstimateDocument()}
+                    onClick={() => void previewEstimateDocument()}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 8,
                       border: `1px solid ${theme.border}`,
                       background: "#fff",
-                      color: theme.text,
-                      fontWeight: 600,
                       cursor: quotePdfBusy ? "wait" : "pointer",
+                      fontWeight: 700,
+                      color: "#0f172a",
                     }}
                   >
-                    {quotePdfBusy ? "Working…" : "Print"}
+                    {quotePdfBusy ? "Working…" : "Preview Estimate"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setSaveToDeviceFormatModal(true)}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: `1px solid ${theme.border}`,
-                      background: "#fff",
-                      color: theme.text,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Save to Device
-                  </button>
-                  {showQuotesCustomerPayment ? (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                      <button
-                        type="button"
-                        disabled={!selectedQuote?.customer_id || !estimateEligibleForCustomerPayShare}
-                        title={
-                          !selectedQuote?.customer_id
-                            ? "Link a customer first"
-                            : !estimateEligibleForCustomerPayShare
-                              ? "Portal setting: send or share this estimate before offering payment links."
-                              : undefined
-                        }
-                        onClick={() => {
-                          if (!selectedQuote?.customer_id) {
-                            alert("Link a customer first.")
-                            return
-                          }
-                          if (!estimateEligibleForCustomerPayShare) {
-                            alert("This portal is configured to offer customer payment only after the estimate is sent or shared.")
-                            return
-                          }
-                          const requireReview = customerPaymentProfile.customer_pay_require_review_before_send !== false
-                          if (requireReview && selectedQuoteItems.length === 0) {
-                            alert("Review the estimate first: add at least one line item before sending payment requests.")
-                            return
-                          }
-                          setCustomerPaymentRequestOpen(true)
-                        }}
+                  <div ref={estimateSaveMenuRef} style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      onClick={() => setEstimateSaveMenuOpen((open) => !open)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${theme.border}`,
+                        background: estimateSaveMenuOpen ? "#f8fafc" : "#fff",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        color: theme.text,
+                      }}
+                    >
+                      Save Options ▾
+                    </button>
+                    {estimateSaveMenuOpen ? (
+                      <div
                         style={{
-                          padding: "10px 14px",
+                          position: "absolute",
+                          bottom: "100%",
+                          left: 0,
+                          marginBottom: 6,
+                          minWidth: 240,
+                          background: "#fff",
+                          border: `1px solid ${theme.border}`,
                           borderRadius: 8,
-                          border: `2px solid ${theme.primary}`,
-                          background: "#fff7ed",
-                          color: theme.text,
-                          fontWeight: 800,
-                          cursor:
-                            !selectedQuote?.customer_id || !estimateEligibleForCustomerPayShare ? "not-allowed" : "pointer",
+                          boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
+                          zIndex: 30,
+                          padding: 4,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
                         }}
                       >
-                        Customer payment
-                      </button>
-                      {selectedQuote?.customer_id ? (
-                        <span style={{ fontSize: 11, color: quotePayWorkflowAging ? "#b45309" : "#64748b", fontWeight: 600 }}>
-                          {customerPayWorkflowLabel(quotePayWorkflowUi)}
-                          {quotePayWorkflowAging ? ` · ${quotePayWorkflowAging}` : ""}
-                        </span>
-                      ) : null}
-                    </div>
+                        <button
+                          type="button"
+                          disabled={!selectedQuote?.customer_id}
+                          title={!selectedQuote?.customer_id ? "Link a customer first" : undefined}
+                          onClick={() => {
+                            setEstimateSaveMenuOpen(false)
+                            if (!selectedQuote?.customer_id) {
+                              alert("Select a customer on this estimate before saving to them.")
+                              return
+                            }
+                            alert("Estimate is linked to this customer. Changes save automatically as you edit.")
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: !selectedQuote?.customer_id ? "#94a3b8" : theme.text,
+                            cursor: !selectedQuote?.customer_id ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          Save to Customer Profile
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSaveMenuOpen(false)
+                            void saveCurrentEstimateAsQuickAccessTemplate()
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Save as a template
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSaveMenuOpen(false)
+                            setSaveToDeviceFormatModal(true)
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Save to Device
+                        </button>
+                        <button
+                          type="button"
+                          disabled={quotePdfBusy}
+                          title="Print the estimate PDF preview (not this screen)"
+                          onClick={() => {
+                            setEstimateSaveMenuOpen(false)
+                            void printEstimateDocument()
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: quotePdfBusy ? "wait" : "pointer",
+                          }}
+                        >
+                          {quotePdfBusy ? "Working…" : "Print"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div ref={estimateSendMenuRef} style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      disabled={
+                        !selectedQuote?.customer_id ||
+                        selectedQuoteItems.length === 0 ||
+                        estimatePrimaryDelivery.mode !== "customer_email" ||
+                        !estimatePrimaryDelivery.customerSendAllowed
+                      }
+                      title={
+                        !selectedQuote?.customer_id
+                          ? "Select a customer first"
+                          : selectedQuoteItems.length === 0
+                            ? "Add quote items first"
+                            : estimatePrimaryDelivery.mode !== "customer_email"
+                              ? estimatePrimaryDelivery.detail || "Complete workflow steps before sending to the customer."
+                              : estimatePrimaryDelivery.customerBlockReason ?? undefined
+                      }
+                      onClick={() => {
+                        if (
+                          !selectedQuote?.customer_id ||
+                          selectedQuoteItems.length === 0 ||
+                          estimatePrimaryDelivery.mode !== "customer_email" ||
+                          !estimatePrimaryDelivery.customerSendAllowed
+                        ) {
+                          if (estimatePrimaryDelivery.customerBlockReason) {
+                            alert(estimatePrimaryDelivery.customerBlockReason)
+                          }
+                          return
+                        }
+                        setEstimateSendMenuOpen((open) => !open)
+                      }}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: "none",
+                        background:
+                          !selectedQuote?.customer_id ||
+                          selectedQuoteItems.length === 0 ||
+                          estimatePrimaryDelivery.mode !== "customer_email" ||
+                          !estimatePrimaryDelivery.customerSendAllowed
+                            ? "#94a3b8"
+                            : theme.primary,
+                        color: "#fff",
+                        fontWeight: 700,
+                        cursor:
+                          !selectedQuote?.customer_id ||
+                          selectedQuoteItems.length === 0 ||
+                          estimatePrimaryDelivery.mode !== "customer_email" ||
+                          !estimatePrimaryDelivery.customerSendAllowed
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      Send to Customer ▾
+                    </button>
+                    {estimateSendMenuOpen ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: "100%",
+                          left: 0,
+                          marginBottom: 6,
+                          minWidth: 260,
+                          background: "#fff",
+                          border: `1px solid ${theme.border}`,
+                          borderRadius: 8,
+                          boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
+                          zIndex: 30,
+                          padding: 4,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSendMenuOpen(false)
+                            setCustomerDeliveryPanel("email")
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Send to Customer Email
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSendMenuOpen(false)
+                            setCustomerDeliveryPanel("sms")
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Send to Customer SMS
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSendMenuOpen(false)
+                            setCustomerDeliveryPanel("both")
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Send to both
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEstimateSendMenuOpen(false)
+                            setQuoteEmailSeparateTo("")
+                            setCustomerDeliveryPanel("separate_email")
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "transparent",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: theme.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Send to Separate Email
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  {showQuotesAddToCalendar ? (
+                    <button
+                      type="button"
+                      disabled={!selectedQuote?.customer_id || addToCalendarLoading}
+                      title={
+                        selectedQuote?.customer_id
+                          ? "Schedule this estimate on the calendar"
+                          : "Link a customer on this estimate before scheduling"
+                      }
+                      onClick={() => openAddToCalendarFromEstimate()}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `2px solid ${theme.primary}`,
+                        background: "#fff7ed",
+                        cursor: !selectedQuote?.customer_id || addToCalendarLoading ? "not-allowed" : "pointer",
+                        fontWeight: 800,
+                        color: theme.primary,
+                        opacity: !selectedQuote?.customer_id ? 0.55 : 1,
+                      }}
+                    >
+                      {addToCalendarLoading ? "Scheduling…" : "Add to Calendar"}
+                    </button>
                   ) : null}
-                  <button
-                    type="button"
-                    disabled={
-                      !selectedQuote?.customer_id ||
-                      selectedQuoteItems.length === 0 ||
-                      (!estimatePrimaryDelivery.customerSendAllowed &&
-                        estimatePrimaryDelivery.mode !== "workflow_approval" &&
-                        estimatePrimaryDelivery.mode !== "workflow_review")
-                    }
-                    title={
-                      !selectedQuote?.customer_id
-                        ? "Select a customer first"
-                        : selectedQuoteItems.length === 0
-                          ? "Add quote items first"
-                          : estimatePrimaryDelivery.customerBlockReason ??
-                            estimatePrimaryDelivery.detail ??
-                            undefined
-                    }
-                    onClick={() => {
-                      if (
-                        estimatePrimaryDelivery.mode === "workflow_approval" ||
-                        estimatePrimaryDelivery.mode === "workflow_review"
-                      ) {
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                  {estimatePrimaryDelivery.mode === "workflow_approval" ||
+                  estimatePrimaryDelivery.mode === "workflow_review" ? (
+                    <button
+                      type="button"
+                      disabled={!selectedQuote?.customer_id || selectedQuoteItems.length === 0}
+                      title={
+                        !selectedQuote?.customer_id
+                          ? "Select a customer first"
+                          : selectedQuoteItems.length === 0
+                            ? "Add quote items first"
+                            : estimatePrimaryDelivery.detail ?? undefined
+                      }
+                      onClick={() => {
                         if (
                           estimatePrimaryDelivery.mode === "workflow_approval" &&
                           estimatePrimaryDelivery.batchSendActions.length > 1
@@ -7842,85 +8023,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         }
                         const action = estimatePrimaryDelivery.workflowAction
                         if (action) void handleEstimateWorkflowAction(action)
-                        return
-                      }
-                      if (!estimatePrimaryDelivery.customerSendAllowed) {
-                        alert(
-                          estimatePrimaryDelivery.customerBlockReason ??
-                            "Complete internal workflow approvals first.",
-                        )
-                        return
-                      }
-                      setCustomerDeliveryPanel((v) => (v === "email" ? null : "email"))
-                    }}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: "none",
-                      background:
-                        !selectedQuote?.customer_id ||
-                        selectedQuoteItems.length === 0 ||
-                        (estimatePrimaryDelivery.mode === "blocked")
-                          ? "#94a3b8"
-                          : estimatePrimaryDelivery.mode === "workflow_approval" ||
-                              estimatePrimaryDelivery.mode === "workflow_review"
-                            ? "#0ea5e9"
-                            : theme.primary,
-                      color: "#fff",
-                      fontWeight: 600,
-                      cursor:
-                        !selectedQuote?.customer_id ||
-                        selectedQuoteItems.length === 0 ||
-                        estimatePrimaryDelivery.mode === "blocked"
-                          ? "not-allowed"
-                          : "pointer",
-                    }}
-                  >
-                    {estimatePrimaryDelivery.mode === "customer_email" && customerDeliveryPanel === "email"
-                      ? "Hide email to customer"
-                      : estimatePrimaryDelivery.buttonLabel}
-                  </button>
-                  {estimatePrimaryDelivery.mode === "customer_email" ? (
-                    <button
-                      type="button"
-                      disabled={
-                        !selectedQuote?.customer_id ||
-                        selectedQuoteItems.length === 0 ||
-                        !estimatePrimaryDelivery.customerSendAllowed
-                      }
-                      title={
-                        !selectedQuote?.customer_id
-                          ? "Select a customer first"
-                          : selectedQuoteItems.length === 0
-                            ? "Add quote items first"
-                            : estimatePrimaryDelivery.customerBlockReason ?? undefined
-                      }
-                      onClick={() => {
-                        if (!estimatePrimaryDelivery.customerSendAllowed) {
-                          alert(
-                            estimatePrimaryDelivery.customerBlockReason ??
-                              "Complete internal workflow approvals first.",
-                          )
-                          return
-                        }
-                        setCustomerDeliveryPanel((v) => (v === "sms" ? null : "sms"))
                       }}
                       style={{
                         padding: "10px 14px",
                         borderRadius: 8,
-                        border: `2px solid ${theme.primary}`,
-                        background: customerDeliveryPanel === "sms" ? theme.primary : "#fff7ed",
-                        color: customerDeliveryPanel === "sms" ? "#fff" : theme.text,
-                        fontWeight: 700,
-                        cursor:
-                          !selectedQuote?.customer_id ||
-                          selectedQuoteItems.length === 0 ||
-                          !estimatePrimaryDelivery.customerSendAllowed
-                            ? "not-allowed"
-                            : "pointer",
+                        border: "none",
+                        background: "#0ea5e9",
+                        color: "#fff",
+                        fontWeight: 600,
+                        cursor: workflowActionBusy ? "wait" : "pointer",
                       }}
                     >
-                      {customerDeliveryPanel === "sms" ? "Hide text to customer" : "Text to customer"}
+                      {estimatePrimaryDelivery.buttonLabel}
                     </button>
                   ) : null}
                   {estimateParallelHandoffs.map((action) => (
@@ -7990,7 +8104,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     </span>
                   ) : null}
                 </div>
-                {customerDeliveryPanel === "email" ? (
+                {(customerDeliveryPanel === "email" ||
+                  customerDeliveryPanel === "separate_email" ||
+                  customerDeliveryPanel === "both") ? (
                   <div
                     style={{
                       padding: 12,
@@ -8001,26 +8117,40 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       gap: 10,
                     }}
                   >
-                    {(() => {
-                      const contact = resolveCustomerContactByTarget(
-                        selectedQuote?.customers?.customer_identifiers ?? [],
-                        quoteContactTarget,
-                      )
-                      const toEmail = contact.email?.trim() ?? ""
-                      return toEmail ? (
-                        <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
-                          <strong style={{ color: theme.text }}>To:</strong> {toEmail}{" "}
-                          <span style={{ color: "#94a3b8" }}>({contactTargetLabel(quoteContactTarget)})</span>
-                        </p>
-                      ) : null
-                    })()}
-                    <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Additional recipients (To)</label>
-                    <input
-                      value={quoteEmailAdditionalTo}
-                      onChange={(e) => setQuoteEmailAdditionalTo(e.target.value)}
-                      placeholder="Comma-separated extra To addresses"
-                      style={theme.formInput}
-                    />
+                    {customerDeliveryPanel === "separate_email" ? (
+                      <>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>To</label>
+                        <input
+                          value={quoteEmailSeparateTo}
+                          onChange={(e) => setQuoteEmailSeparateTo(e.target.value)}
+                          placeholder="Enter recipient email address"
+                          style={theme.formInput}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        {(() => {
+                          const contact = resolveCustomerContactByTarget(
+                            selectedQuote?.customers?.customer_identifiers ?? [],
+                            quoteContactTarget,
+                          )
+                          const toEmail = contact.email?.trim() ?? ""
+                          return toEmail ? (
+                            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+                              <strong style={{ color: theme.text }}>To:</strong> {toEmail}{" "}
+                              <span style={{ color: "#94a3b8" }}>({contactTargetLabel(quoteContactTarget)})</span>
+                            </p>
+                          ) : null
+                        })()}
+                        <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Additional recipients (To)</label>
+                        <input
+                          value={quoteEmailAdditionalTo}
+                          onChange={(e) => setQuoteEmailAdditionalTo(e.target.value)}
+                          placeholder="Comma-separated extra To addresses"
+                          style={theme.formInput}
+                        />
+                      </>
+                    )}
                     <label style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>CC</label>
                     <input
                       value={quoteEmailCc}
@@ -8089,7 +8219,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     </label>
                     <button
                       type="button"
-                      onClick={() => void sendQuoteCustomerEmail()}
+                      onClick={() =>
+                        void sendQuoteCustomerEmail({
+                          separateToOnly: customerDeliveryPanel === "separate_email",
+                        })
+                      }
                       disabled={quoteEmailSending || !customerSendWorkflowGate.allowed}
                       title={!customerSendWorkflowGate.allowed ? customerSendWorkflowGate.reason : undefined}
                       style={{
@@ -8101,13 +8235,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         fontWeight: 600,
                         cursor: quoteEmailSending || !customerSendWorkflowGate.allowed ? "not-allowed" : "pointer",
                         justifySelf: "start",
+                        display: customerDeliveryPanel === "both" ? "none" : undefined,
                       }}
                     >
                       {quoteEmailSending ? "Sending…" : "Send email"}
                     </button>
                   </div>
                 ) : null}
-                {customerDeliveryPanel === "sms" ? (
+                {(customerDeliveryPanel === "sms" || customerDeliveryPanel === "both") ? (
                   <div
                     style={{
                       padding: 12,
@@ -8174,11 +8309,39 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         fontWeight: 600,
                         cursor: quoteSmsSending || !customerSendWorkflowGate.allowed ? "not-allowed" : "pointer",
                         justifySelf: "start",
+                        display: customerDeliveryPanel === "both" ? "none" : undefined,
                       }}
                     >
                       {quoteSmsSending ? "Sending…" : "Send text"}
                     </button>
                   </div>
+                ) : null}
+                {customerDeliveryPanel === "both" ? (
+                  <button
+                    type="button"
+                    onClick={() => void sendQuoteCustomerBoth()}
+                    disabled={
+                      quoteEmailSending ||
+                      quoteSmsSending ||
+                      !customerSendWorkflowGate.allowed
+                    }
+                    title={!customerSendWorkflowGate.allowed ? customerSendWorkflowGate.reason : undefined}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: !customerSendWorkflowGate.allowed ? "#94a3b8" : theme.primary,
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor:
+                        quoteEmailSending || quoteSmsSending || !customerSendWorkflowGate.allowed
+                          ? "not-allowed"
+                          : "pointer",
+                      justifySelf: "start",
+                    }}
+                  >
+                    {quoteEmailSending || quoteSmsSending ? "Sending…" : "Send email & text"}
+                  </button>
                 ) : null}
                 {saveToDeviceFormatModal ? (
                   <div style={{ padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
