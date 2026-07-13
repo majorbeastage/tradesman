@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
 import { parseLeadFilterPreferences } from "./_leadFitClassification.js"
 import type { ScreeningAnswer } from "./_voiceAutoAttendant.js"
-import { formatBusinessAiVocabularyForLlm, loadBusinessAiVocabulary } from "../src/lib/businessAiVocabulary.js"
+import { formatBusinessAiVocabularyForLlm, loadBusinessAiVocabulary } from "./_businessAiVocabulary.js"
 
 export type ScreeningVerdict = "good_lead" | "spam" | "cold_call" | "uncertain"
 

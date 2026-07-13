@@ -4,7 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv } from "./_communications.js"
-import { loadBusinessAiVocabulary, mergedAcceptedJobTypeTokenList } from "../src/lib/businessAiVocabulary.js"
+import { loadBusinessAiVocabulary, mergedAcceptedJobTypeTokenList } from "./_businessAiVocabulary.js"
 import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
 
 async function resolveAcceptedJobTypeTokens(supabase: SupabaseClient, userId: string): Promise<string[]> {

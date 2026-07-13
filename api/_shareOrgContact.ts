@@ -1,16 +1,18 @@
 /**
  * POST /api/platform-tools?__route=share-org-contact
  * Share a customer + calendar event snapshot with another org member.
+ * Self-contained for Vercel (no ../src imports).
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { createServiceSupabase } from "./_communications.js"
 import {
   appendOrgSharedInboxEntry,
   formatOrgSharedContactBody,
+  resolveInternalMemberLabel,
   type OrgSharedContactPayload,
   type OrgSharedInboxEntry,
   usersShareSameOrganization,
-} from "../src/lib/organizationPeers.js"
-import { resolveInternalMemberLabel } from "../src/lib/profileContactMeta.js"
+} from "./_organizationPeers.js"
 
 function bodyAsRecord(req: VercelRequest): Record<string, unknown> {
   const b = req.body

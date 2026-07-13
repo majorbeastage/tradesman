@@ -49,12 +49,10 @@ import {
   handlePlatformEmailDomainStatus,
   handlePlatformEmailDomainVerify,
 } from "./_platformEmailDomain.js"
-import { evaluateAndPersistCustomerFit, evaluateAndPersistLeadFit } from "./_leadFitClassification.js"
 import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js"
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
 import { handlePlatformAssistantVocabularyTrain } from "./_platformAssistantVocabularyTrain.js"
 import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
-import { handleShareOrgContact } from "./_shareOrgContact.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
@@ -444,7 +442,7 @@ async function handleEstimateScopeLines(req: VercelRequest, res: VercelResponse)
     if (service) {
       try {
         const { loadBusinessAiVocabulary, formatBusinessAiVocabularyForLlm } = await import(
-          "../src/lib/businessAiVocabulary.js"
+          "./_businessAiVocabulary.js"
         )
         const vocab = await loadBusinessAiVocabulary(service, auth.userId)
         tenantVocabularyBlock = formatBusinessAiVocabularyForLlm(vocab)
@@ -577,7 +575,7 @@ async function handleEstimateWizardBullets(req: VercelRequest, res: VercelRespon
     try {
       const service = createServiceSupabase()
       const { loadBusinessAiVocabulary, formatBusinessAiVocabularyForLlm } = await import(
-        "../src/lib/businessAiVocabulary.js"
+        "./_businessAiVocabulary.js"
       )
       const vocab = await loadBusinessAiVocabulary(service, auth.userId)
       tenantVocabularyBlock = formatBusinessAiVocabularyForLlm(vocab)
@@ -809,6 +807,7 @@ async function handleLeadEvaluateFit(req: VercelRequest, res: VercelResponse): P
     res.status(404).json({ error: "Lead not found" })
     return
   }
+  const { evaluateAndPersistLeadFit } = await import("./_leadFitClassification.js")
   const result = await evaluateAndPersistLeadFit(service, leadId, { force })
   if (result == null) {
     res.status(200).json({
@@ -858,6 +857,7 @@ async function handleCustomerEvaluateFit(req: VercelRequest, res: VercelResponse
     res.status(404).json({ error: "Customer not found" })
     return
   }
+  const { evaluateAndPersistCustomerFit } = await import("./_leadFitClassification.js")
   const result = await evaluateAndPersistCustomerFit(service, customerId, { force })
   if (result == null) {
     res.status(200).json({
@@ -2061,6 +2061,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     if (route === "share-org-contact") {
       const auth = await getUserIdFromBearer(req, res)
       if (!auth) return
+      const { handleShareOrgContact } = await import("./_shareOrgContact.js")
       await handleShareOrgContact(req, res, auth.userId)
       return
     }

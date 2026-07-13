@@ -273,7 +273,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
 
   let speechHints = ""
   try {
-    const { loadBusinessAiVocabulary, twilioSpeechHintsCsv } = await import("../src/lib/businessAiVocabulary.js")
+    const { loadBusinessAiVocabulary, twilioSpeechHintsCsv } = await import("./_businessAiVocabulary.js")
     const vocab = await loadBusinessAiVocabulary(supabase, channel.user_id)
     speechHints = twilioSpeechHintsCsv(vocab)
   } catch {
