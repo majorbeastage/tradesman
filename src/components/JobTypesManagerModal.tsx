@@ -34,6 +34,8 @@ export type JobTypesManagerModalProps = {
   initialPresetChecks?: Record<string, boolean>
   onChanged?: () => void
   onCreated?: (jobTypeId: string) => void
+  /** When set, “Create new job type” opens the guided wizard instead of the manual form. */
+  onRequestCreateWizard?: () => void
 }
 
 export default function JobTypesManagerModal({
@@ -49,6 +51,7 @@ export default function JobTypesManagerModal({
   initialPresetChecks,
   onChanged,
   onCreated,
+  onRequestCreateWizard,
 }: JobTypesManagerModalProps) {
   const [jobTypes, setJobTypes] = useState<JobTypeRow[]>([])
   const [loadError, setLoadError] = useState("")
@@ -303,7 +306,7 @@ export default function JobTypesManagerModal({
             background: "#f8fafc",
           }}
         >
-          {!editingId ? (
+          {!onRequestCreateWizard && !editingId ? (
             <button
               type="button"
               onClick={() => setEditorOpen((prev) => !prev)}
@@ -323,7 +326,27 @@ export default function JobTypesManagerModal({
             </button>
           ) : null}
 
-          {editingId || editorOpen ? (
+          {onRequestCreateWizard && !editingId ? (
+            <button
+              type="button"
+              onClick={() => onRequestCreateWizard()}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: theme.text,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Create new job type
+            </button>
+          ) : null}
+
+          {editingId || (!onRequestCreateWizard && editorOpen) ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
               <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: theme.text }}>
                 {editingId ? "Edit job type" : "New job type"}

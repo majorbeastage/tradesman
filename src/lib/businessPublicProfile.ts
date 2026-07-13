@@ -56,6 +56,10 @@ export type BusinessPublicProfileSettings = {
   servicesOfferedText: string
   showServicesOffered: boolean
   showContactForm: boolean
+  /** Optional social links — mirrored with Growth presencePages. */
+  facebookUrl: string
+  instagramUrl: string
+  showSocialLinks: boolean
 }
 
 export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSettings {
@@ -80,6 +84,9 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     servicesOfferedText: "",
     showServicesOffered: false,
     showContactForm: false,
+    facebookUrl: "",
+    instagramUrl: "",
+    showSocialLinks: true,
   }
 }
 
@@ -182,6 +189,9 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     servicesOfferedText: readNestedProfileString(o, "servicesOfferedText", "services_offered_text").slice(0, 2000),
     showServicesOffered: o.showServicesOffered === true,
     showContactForm: o.showContactForm === true,
+    facebookUrl: readNestedProfileString(o, "facebookUrl", "facebook_url").slice(0, 500),
+    instagramUrl: readNestedProfileString(o, "instagramUrl", "instagram_url").slice(0, 500),
+    showSocialLinks: o.showSocialLinks !== false,
   }
 }
 
@@ -209,6 +219,9 @@ export function mergeBusinessPublicProfileMetadata(
       servicesOfferedText: settings.servicesOfferedText.trim().slice(0, 2000),
       showServicesOffered: settings.showServicesOffered === true,
       showContactForm: settings.showContactForm === true,
+      facebookUrl: settings.facebookUrl.trim().slice(0, 500),
+      instagramUrl: settings.instagramUrl.trim().slice(0, 500),
+      showSocialLinks: settings.showSocialLinks !== false,
     },
   }
 }

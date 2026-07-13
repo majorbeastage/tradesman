@@ -50,10 +50,13 @@ type Props = {
   /** False when job context for AI is empty — button stays disabled with tooltip via note */
   hasJobDetailsForAiLines?: boolean
   quoteItemsBusy: boolean
-  onPreviewOnly: () => void
-  onPreviewOpenSection: () => void
-  onPreviewSaveProfile: () => void
-  onPreviewSaveAndSend: () => void
+  /** Step 7: save to profile + close wizard (view estimate tool). */
+  onDoneReviewEstimate: () => void
+  /** Jump to first skipped optional step, if any. */
+  onGoBackToSkippedSteps: () => void
+  /** Return to step 1 without deleting estimate content. */
+  onStartOver: () => void
+  hasSkippedSteps: boolean
   previewBusy: boolean
   onWizardBack: () => void
   conversationScopeBullets: string
@@ -106,10 +109,10 @@ export default function EstimateStartGuideModal({
   quoteItemsAiBusy = false,
   hasJobDetailsForAiLines = false,
   quoteItemsBusy,
-  onPreviewOnly,
-  onPreviewOpenSection,
-  onPreviewSaveProfile,
-  onPreviewSaveAndSend,
+  onDoneReviewEstimate,
+  onGoBackToSkippedSteps,
+  onStartOver,
+  hasSkippedSteps,
   previewBusy,
   onWizardBack,
   conversationScopeBullets,
@@ -212,7 +215,7 @@ export default function EstimateStartGuideModal({
                         ? "Job details"
                         : step === 6
                           ? "Quick add quote items"
-                          : "Review & send"}
+                          : "Done — Review Estimate"}
             </h2>
             <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
               {step === 1
@@ -227,7 +230,7 @@ export default function EstimateStartGuideModal({
                         ? "Write a short scope (what, where, materials). This drives AI line suggestions in the next step."
                         : step === 6
                           ? "Add labor, materials, travel, or misc lines. Use AI suggestions or type your own — at least one line before sending."
-                          : "Preview, save to the customer profile, or send by email."}
+                          : "Your estimate is ready. Closing saves it to the customer profile so you can review and send from the Estimates tool."}
             </p>
           </div>
           <button
@@ -685,18 +688,21 @@ export default function EstimateStartGuideModal({
           </div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            <button type="button" disabled={previewBusy} onClick={onPreviewOnly} style={secondaryBtnStyle}>
-              Preview estimate
+            <button type="button" disabled={previewBusy} onClick={onDoneReviewEstimate} style={primaryBtnStyle}>
+              Done — Review Estimate
             </button>
-            <button type="button" disabled={previewBusy} onClick={onPreviewOpenSection} style={secondaryBtnStyle}>
-              Make further changes
+            {hasSkippedSteps ? (
+              <button type="button" disabled={previewBusy} onClick={onGoBackToSkippedSteps} style={secondaryBtnStyle}>
+                Go back to skipped steps
+              </button>
+            ) : null}
+            <button type="button" disabled={previewBusy} onClick={onStartOver} style={secondaryBtnStyle}>
+              Start over
             </button>
-            <button type="button" disabled={previewBusy} onClick={onPreviewSaveProfile} style={secondaryBtnStyle}>
-              Save estimate to customer profile
-            </button>
-            <button type="button" disabled={previewBusy} onClick={onPreviewSaveAndSend} style={primaryBtnStyle}>
-              Save and send to customer
-            </button>
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              Start over returns to step 1 and does not delete your estimate, lines, or customer link. Use Estimate Tool menus
+              to preview, email, or SMS.
+            </p>
           </div>
         )}
 

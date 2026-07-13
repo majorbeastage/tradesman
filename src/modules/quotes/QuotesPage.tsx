@@ -2158,10 +2158,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
 
   useEffect(() => {
-    if (!consumeEstimatesLibraryOpen()) return
+    const target = consumeEstimatesLibraryOpen()
+    if (!target) return
     setPastLibSearch("")
     setPastLibStatus("")
-    setLibrarySection("previous_estimates")
+    if (target.section === "job_types_line_items") {
+      setLibrarySection("job_types_line_items")
+      if (target.tab === "job_types" || target.tab === "line_items") {
+        setLibraryJobsTab(target.tab)
+      }
+    } else {
+      setLibrarySection("previous_estimates")
+    }
     setEstimateSuite("library")
   }, [userId])
 
@@ -6025,35 +6033,44 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               quoteItemsAiBusy={guideQuoteItemsAiBusy}
                               hasJobDetailsForAiLines={mergedScopeForAi.trim().length > 0}
                               quoteItemsBusy={estimateGuideBusy || guideQuoteItemsAiBusy}
-                              onPreviewOnly={() => {
-                                void previewEstimateDocument()
+                              hasSkippedSteps={Boolean(
+                                estimateGuideFlags.customerSkipped ||
+                                  estimateGuideFlags.templateSkipped ||
+                                  estimateGuideFlags.conversationSkipped ||
+                                  estimateGuideFlags.mediaSkipped ||
+                                  estimateGuideFlags.jobDetailsSkipped ||
+                                  estimateGuideFlags.quoteItemsSkipped,
+                              )}
+                              onDoneReviewEstimate={() => {
                                 if (selectedQuote?.id) {
                                   saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
                                   setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
                                 }
-                              }}
-                              onPreviewOpenSection={() => {
-                                closeGuideWizard()
-                                openGuideSection(quoteItemsSectionRef)
-                              }}
-                              onPreviewSaveProfile={() => {
                                 if (!selectedQuote?.customer_id) {
-                                  alert("Select a customer first.")
-                                  return
-                                }
-                                alert("Estimate is linked to this customer profile. Edits are saved automatically.")
-                                if (selectedQuote?.id) {
-                                  saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
-                                  setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
-                                }
-                              }}
-                              onPreviewSaveAndSend={() => {
-                                setCustomerDeliveryPanel("email")
-                                if (selectedQuote?.id) {
-                                  saveEstimateGuideFlags(selectedQuote.id, { previewReviewed: true })
-                                  setEstimateGuideFlags((f) => ({ ...f, previewReviewed: true }))
+                                  alert("Link a customer on this estimate so it can save to their profile.")
+                                } else {
+                                  alert("Estimate saved to the customer profile. You can review and send from the Estimates tool.")
                                 }
                                 closeGuideWizard()
+                              }}
+                              onGoBackToSkippedSteps={() => {
+                                const flags = estimateGuideFlags
+                                const jump: 1 | 2 | 3 | 4 | 5 | 6 =
+                                  flags.customerSkipped
+                                    ? 1
+                                    : flags.templateSkipped
+                                      ? 2
+                                      : flags.conversationSkipped
+                                        ? 3
+                                        : flags.mediaSkipped
+                                          ? 4
+                                          : flags.jobDetailsSkipped
+                                            ? 5
+                                            : 6
+                                setEstimateStartGuideStep(jump)
+                              }}
+                              onStartOver={() => {
+                                setEstimateStartGuideStep(1)
                               }}
                               previewBusy={quotePdfBusy}
                             />

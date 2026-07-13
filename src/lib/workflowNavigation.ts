@@ -349,27 +349,37 @@ export function queueQuotesOpenQuote(quoteId: string): void {
 }
 
 /** Open Estimates page with the Estimates Library suite active (e.g. from Operations). */
-export function queueEstimatesLibraryOpen(): void {
+export type EstimatesLibraryOpenTarget = {
+  section?: "previous_estimates" | "job_types_line_items"
+  tab?: "line_items" | "job_types"
+}
+
+export function queueEstimatesLibraryOpen(target?: EstimatesLibraryOpenTarget): void {
   if (typeof window === "undefined") return
   try {
-    sessionStorage.setItem(QUOTES_OPEN_LIBRARY, "1")
+    const payload = target?.section || target?.tab ? JSON.stringify(target) : "1"
+    sessionStorage.setItem(QUOTES_OPEN_LIBRARY, payload)
   } catch {
     /* ignore */
   }
 }
 
-export function consumeEstimatesLibraryOpen(): boolean {
-  if (typeof window === "undefined") return false
+export function consumeEstimatesLibraryOpen(): EstimatesLibraryOpenTarget | null {
+  if (typeof window === "undefined") return null
   try {
     const v = sessionStorage.getItem(QUOTES_OPEN_LIBRARY)
-    if (v) {
-      sessionStorage.removeItem(QUOTES_OPEN_LIBRARY)
-      return true
+    if (!v) return null
+    sessionStorage.removeItem(QUOTES_OPEN_LIBRARY)
+    if (v === "1") return { section: "previous_estimates" }
+    try {
+      const parsed = JSON.parse(v) as EstimatesLibraryOpenTarget
+      return parsed && typeof parsed === "object" ? parsed : { section: "previous_estimates" }
+    } catch {
+      return { section: "previous_estimates" }
     }
   } catch {
-    /* ignore */
+    return null
   }
-  return false
 }
 
 export function queueWorkOrdersHighlightQuote(quoteId: string): void {

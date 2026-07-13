@@ -49,6 +49,9 @@ type BusinessPublicProfileSettings = {
   servicesOfferedText: string
   showServicesOffered: boolean
   showContactForm: boolean
+  facebookUrl: string
+  instagramUrl: string
+  showSocialLinks: boolean
 }
 
 const DEFAULT_THEME = {
@@ -146,15 +149,39 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     profilePhotoUrl: null,
     workPhotoUrls: [],
     publishedSlug: "",
+    templateId: "classic",
+    theme: { ...DEFAULT_THEME },
+    serviceAreasText: "",
+    showServiceAreasList: false,
+    servicesOfferedText: "",
+    showServicesOffered: false,
+    showContactForm: false,
+    facebookUrl: "",
+    instagramUrl: "",
+    showSocialLinks: true,
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
-  const raw = (metadata as Record<string, unknown>)[BUSINESS_PUBLIC_PROFILE_META_KEY]
+  const meta = metadata as Record<string, unknown>
+  const raw = meta[BUSINESS_PUBLIC_PROFILE_META_KEY]
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
   const o = raw as Record<string, unknown>
   if (o.v !== 1 && o.v != null) return base
   const workPhotoUrls = Array.isArray(o.workPhotoUrls)
     ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 5)
     : []
+  const growth = meta.growth_module_v1
+  const pages =
+    growth && typeof growth === "object" && !Array.isArray(growth)
+      ? ((growth as { presencePages?: Record<string, string> }).presencePages ?? {})
+      : {}
+  const fb =
+    (typeof o.facebookUrl === "string" && o.facebookUrl.trim()) ||
+    (typeof pages.facebook === "string" && pages.facebook.trim()) ||
+    ""
+  const ig =
+    (typeof o.instagramUrl === "string" && o.instagramUrl.trim()) ||
+    (typeof pages.instagram === "string" && pages.instagram.trim()) ||
+    ""
   return {
     enabled: o.enabled === true,
     tagline: readNestedProfileString(o, "tagline", "short_description", "shortDescription").slice(0, 120),
@@ -175,6 +202,9 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     servicesOfferedText: readNestedProfileString(o, "servicesOfferedText", "services_offered_text").slice(0, 2000),
     showServicesOffered: o.showServicesOffered === true,
     showContactForm: o.showContactForm === true,
+    facebookUrl: fb.slice(0, 500),
+    instagramUrl: ig.slice(0, 500),
+    showSocialLinks: o.showSocialLinks !== false,
   }
 }
 
@@ -457,6 +487,8 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       templateId: settings.templateId,
       theme: settings.theme,
       showContactForm: settings.showContactForm === true,
+      facebookUrl: settings.showSocialLinks && settings.facebookUrl ? settings.facebookUrl : undefined,
+      instagramUrl: settings.showSocialLinks && settings.instagramUrl ? settings.instagramUrl : undefined,
     })
   } catch (e) {
     console.error("[public-business-profile]", e)

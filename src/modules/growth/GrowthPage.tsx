@@ -23,6 +23,7 @@ import {
   type GrowthProfileGrade,
   type GrowthProfilePlatformId,
 } from "../../lib/growthModule"
+import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import { GROWTH_PROFILE_PLATFORM_DEFS, gradeGrowthProfiles, gradesToRecord } from "../../lib/growthProfileGrading"
 
 type Props = {
@@ -84,6 +85,12 @@ export default function GrowthPage({ setPage }: Props) {
           if (typeof data?.website_url === "string" && data.website_url.trim() && !loaded.websiteUrl) {
             loaded.websiteUrl = data.website_url.trim()
           }
+          const social = readSocialPresenceFromMetadata(data?.metadata)
+          loaded.presencePages = {
+            ...(loaded.presencePages ?? {}),
+            facebook: loaded.presencePages?.facebook || social.facebook || undefined,
+            instagram: loaded.presencePages?.instagram || social.instagram || undefined,
+          }
           setDoc(loaded)
           if (typeof data?.embed_lead_slug === "string" && data.embed_lead_slug.trim()) {
             setLeadCaptureSlug(data.embed_lead_slug.trim())
@@ -107,7 +114,11 @@ export default function GrowthPage({ setPage }: Props) {
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
               : {}
-          const merged = mergeGrowthModuleMetadata(prevMeta, next)
+          const mergedGrowth = mergeGrowthModuleMetadata(prevMeta, next)
+          const merged = mergeSocialPresenceIntoMetadata(mergedGrowth, {
+            facebook: next.presencePages?.facebook ?? "",
+            instagram: next.presencePages?.instagram ?? "",
+          })
           const { error } = await supabase.from("profiles").update({ metadata: merged }).eq("id", userId)
           if (error) throw error
           if (next.websiteUrl?.trim()) {
@@ -361,8 +372,7 @@ function ProfilesSection({
     <div style={panelStyle}>
       <h2 style={h2}>Business profiles</h2>
       <p style={p}>
-        URLs your marketing partner (or our future crawl service) uses to monitor website and social presence. Changes are
-        logged automatically.
+        Shared with <strong>MyT → Business profile / web address</strong>. Update Facebook or Instagram here or there — they stay in sync.
       </p>
       <label style={labelStyle}>
         Business name (public)

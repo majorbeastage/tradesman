@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { theme } from "../styles/theme"
-import EstimatesJobSetupWizardPanel from "./EstimatesJobSetupWizardPanel"
 import EstimateLineItemsLibraryPanel from "./EstimateLineItemsLibraryPanel"
 import JobTypesManagerModal from "./JobTypesManagerModal"
+import JobTypesSetupWizardModal from "./JobTypesSetupWizardModal"
 import type { AssistantHandoffPayload } from "../lib/assistantHandoff"
 import type { EstimateLinePresetRow } from "../lib/estimateLinePresets"
 
@@ -20,6 +20,8 @@ type Props = {
   onJobTypeFollowUp?: (jobTypeName: string, presetIds: string[]) => void
   onDataChanged?: () => void
   onLineItemsSaved?: (rows: EstimateLinePresetRow[]) => void
+  /** Open the setup wizard immediately when hub mounts. */
+  autoOpenWizard?: boolean
 }
 
 export default function JobTypesLineItemsLibraryHub({
@@ -34,16 +36,22 @@ export default function JobTypesLineItemsLibraryHub({
   onJobTypeFollowUp,
   onDataChanged,
   onLineItemsSaved,
+  autoOpenWizard = false,
 }: Props) {
   const [tab, setTab] = useState<JobTypesLineItemsLibraryTab>(
     showLineItems ? initialTab : showJobTypes ? "job_types" : "line_items",
   )
   const [jobTypesKey, setJobTypesKey] = useState(0)
+  const [wizardOpen, setWizardOpen] = useState(autoOpenWizard)
 
   useEffect(() => {
     if (!showLineItems && showJobTypes) setTab("job_types")
     else if (showLineItems) setTab(initialTab)
   }, [initialTab, showLineItems, showJobTypes])
+
+  useEffect(() => {
+    if (autoOpenWizard) setWizardOpen(true)
+  }, [autoOpenWizard])
 
   function handleWizardApplied() {
     onDataChanged?.()
@@ -71,14 +79,30 @@ export default function JobTypesLineItemsLibraryHub({
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <EstimatesJobSetupWizardPanel userId={userId} onApplied={handleWizardApplied} />
-
-      {showLineItems && showJobTypes ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          {tabBtn("line_items", lineItemsButtonLabel)}
-          {tabBtn("job_types", jobTypesButtonLabel)}
-        </div>
-      ) : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={() => setWizardOpen(true)}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 8,
+            border: "none",
+            background: theme.primary,
+            color: "#fff",
+            fontWeight: 800,
+            fontSize: 13,
+            cursor: "pointer",
+          }}
+        >
+          Job types & line items wizard
+        </button>
+        {showLineItems && showJobTypes ? (
+          <>
+            {tabBtn("line_items", lineItemsButtonLabel)}
+            {tabBtn("job_types", jobTypesButtonLabel)}
+          </>
+        ) : null}
+      </div>
 
       {tab === "line_items" && showLineItems ? (
         <EstimateLineItemsLibraryPanel
@@ -104,8 +128,16 @@ export default function JobTypesLineItemsLibraryHub({
           estimateLineItemsLabel={lineItemsButtonLabel}
           showSetupWizard={false}
           onChanged={onDataChanged}
+          onRequestCreateWizard={() => setWizardOpen(true)}
         />
       ) : null}
+
+      <JobTypesSetupWizardModal
+        open={wizardOpen}
+        userId={userId}
+        onClose={() => setWizardOpen(false)}
+        onApplied={handleWizardApplied}
+      />
     </div>
   )
 }

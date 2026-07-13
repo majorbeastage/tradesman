@@ -220,8 +220,14 @@ export default function EstimateLineItemsLibraryPanel({
                     onClick={() => setExpandedById((p) => ({ ...p, [row.id]: !expanded }))}
                     style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit" }}
                   >
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>
-                      {row.description.trim() || "Line"} · {row.quantity} {eliUnitSuffix(row.unit_basis)} @ ${Number(row.unit_price).toFixed(2)}
+                    <span style={{ fontWeight: 800, fontSize: 15, color: "#0f172a", lineHeight: 1.35 }}>
+                      {row.description.trim() || "Line"}
+                    </span>
+                    <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#1e293b", marginTop: 4 }}>
+                      {row.quantity} {eliUnitSuffix(row.unit_basis)} @ ${Number(row.unit_price).toFixed(2)}
+                      {row.minimum_line_total != null && row.minimum_line_total > 0
+                        ? ` · min $${Number(row.minimum_line_total).toFixed(2)}`
+                        : ""}
                     </span>
                     {linkedLabels.length > 0 ? (
                       <span style={{ display: "block", fontSize: 11, color: "#64748b", marginTop: 4 }}>Job types: {linkedLabels.join(", ")}</span>
@@ -242,14 +248,14 @@ export default function EstimateLineItemsLibraryPanel({
                       onChange={(e) => setDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r)))}
                       style={theme.formInput}
                     />
-                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "90px 90px 120px", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "90px 90px 120px 120px", gap: 8 }}>
                       <input
                         value={row.quantity === 0 ? "" : String(row.quantity)}
                         onChange={(e) => {
                           const q = Number.parseFloat(e.target.value) || 0
                           setDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, quantity: q } : r)))
                         }}
-                        style={theme.formInput}
+                        style={{ ...theme.formInput, color: "#0f172a", fontWeight: 600 }}
                         placeholder="Qty"
                       />
                       <input
@@ -258,7 +264,7 @@ export default function EstimateLineItemsLibraryPanel({
                           const p = Number.parseFloat(e.target.value.replace(/[^0-9.]/g, "")) || 0
                           setDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, unit_price: p } : r)))
                         }}
-                        style={theme.formInput}
+                        style={{ ...theme.formInput, color: "#0f172a", fontWeight: 600 }}
                         placeholder="$/unit"
                       />
                       <select
@@ -268,7 +274,7 @@ export default function EstimateLineItemsLibraryPanel({
                             prev.map((r, i) => (i === idx ? { ...r, line_kind: e.target.value as EstimateLinePresetRow["line_kind"] } : r)),
                           )
                         }
-                        style={theme.formInput}
+                        style={{ ...theme.formInput, color: "#0f172a", fontWeight: 600 }}
                       >
                         {ELI_LINE_KINDS.map((k) => (
                           <option key={k} value={k}>
@@ -276,6 +282,25 @@ export default function EstimateLineItemsLibraryPanel({
                           </option>
                         ))}
                       </select>
+                      <label style={{ display: "grid", gap: 2, fontSize: 11, fontWeight: 700, color: "#334155" }}>
+                        Min charge (opt.)
+                        <input
+                          value={row.minimum_line_total == null || row.minimum_line_total <= 0 ? "" : String(row.minimum_line_total)}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9.]/g, "")
+                            const p = Number.parseFloat(raw)
+                            setDraft((prev) =>
+                              prev.map((r, i) =>
+                                i === idx
+                                  ? { ...r, minimum_line_total: Number.isFinite(p) && p > 0 ? p : undefined }
+                                  : r,
+                              ),
+                            )
+                          }}
+                          style={{ ...theme.formInput, color: "#0f172a", fontWeight: 600 }}
+                          placeholder="—"
+                        />
+                      </label>
                     </div>
                     {jobTypes.length > 0 ? (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>

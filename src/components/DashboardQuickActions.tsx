@@ -3,6 +3,7 @@ import type { UserRole } from "../contexts/AuthContext"
 import { theme } from "../styles/theme"
 import {
   queueCalendarSuiteNavigation,
+  queueEstimatesLibraryOpen,
   queueOpenCustomReceiptModal,
   type QueuedCalendarSuite,
 } from "../lib/workflowNavigation"
@@ -46,7 +47,6 @@ import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { isOfficeManagerLikeRole } from "../lib/profileRoles"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
-import { useJobTypesModalOptional } from "../contexts/JobTypesModalContext"
 
 const LS_TILE_GRID = "tradesman_dashboard_tile_grid_v1"
 const LS_TILE_GRID_COLS = "tradesman_dashboard_tile_grid_cols_v1"
@@ -591,7 +591,6 @@ export default function DashboardQuickActions(props: Props) {
     },
     [portalConfig],
   )
-  const jobTypesModal = useJobTypesModalOptional()
   const fourth = resolveFourthCalendarState(props, labels)
   const fourthLinkId = fourth.linkId
   const tileScheme: DashboardTileScheme = "paper"
@@ -1231,7 +1230,11 @@ export default function DashboardQuickActions(props: Props) {
           removeChipLabel={labels.customizeRemove}
           onContextMenu={(e) => openStyleMenu(id, e)}
           tileStyle={tileStyle}
-          onClick={() => !customize && jobTypesModal?.openJobTypesModal()}
+          onClick={() => {
+            if (customize) return
+            queueEstimatesLibraryOpen({ section: "job_types_line_items", tab: "line_items" })
+            go("quotes")
+          }}
         />
       )
     }

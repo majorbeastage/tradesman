@@ -14,6 +14,7 @@ import {
   parseBusinessPublicProfileSettings,
   type BusinessPublicProfileSettings,
 } from "../lib/businessPublicProfile"
+import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../lib/socialPresenceSync"
 
 type Props = {
   profileUserId: string
@@ -55,7 +56,13 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           ? data.business_web_profile_slug.trim().toLowerCase()
           : businessWebProfileSlugFromName(savedName),
       )
-      setSettings(parseBusinessPublicProfileSettings(data?.metadata))
+      const parsed = parseBusinessPublicProfileSettings(data?.metadata)
+      const social = readSocialPresenceFromMetadata(data?.metadata)
+      setSettings({
+        ...parsed,
+        facebookUrl: parsed.facebookUrl || social.facebook,
+        instagramUrl: parsed.instagramUrl || social.instagram,
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -92,10 +99,16 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           ? { ...(metaRow.metadata as Record<string, unknown>) }
           : {}
 
+      const nextMetaRaw = mergeBusinessPublicProfileMetadata(prevMeta, next, nextSlug)
+      const nextMeta = mergeSocialPresenceIntoMetadata(nextMetaRaw, {
+        facebook: next.facebookUrl,
+        instagram: next.instagramUrl,
+      })
+
       const { error: upErr } = await supabase
         .from("profiles")
         .update({
-          metadata: mergeBusinessPublicProfileMetadata(prevMeta, next, nextSlug),
+          metadata: nextMeta,
           business_web_profile_slug: next.enabled ? nextSlug : null,
           updated_at: new Date().toISOString(),
         })
@@ -106,7 +119,7 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           const { error: metaOnlyErr } = await supabase
             .from("profiles")
             .update({
-              metadata: mergeBusinessPublicProfileMetadata(prevMeta, next, nextSlug),
+              metadata: nextMeta,
               updated_at: new Date().toISOString(),
             })
             .eq("id", profileUserId)
@@ -291,6 +304,51 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         />
         <span style={{ fontSize: 11, color: "#94a3b8" }}>{settings.tagline.length}/{BUSINESS_WEB_PROFILE_TAGLINE_MAX}</span>
       </label>
+
+      <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
+        <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Follow us (public)</legend>
+        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+          Shared with Growth → Business profiles. Update Instagram or Facebook here or in Growth — they stay in sync.
+        </p>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
+            Facebook page URL
+            <input
+              value={settings.facebookUrl}
+              onChange={(e) => setSettings((s) => ({ ...s, facebookUrl: e.target.value }))}
+              onBlur={(e) => {
+                const next = { ...settings, facebookUrl: e.target.value.trim() }
+                setSettings(next)
+                void persist(next)
+              }}
+              placeholder="https://www.facebook.com/…"
+              style={theme.formInput}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
+            Instagram profile URL
+            <input
+              value={settings.instagramUrl}
+              onChange={(e) => setSettings((s) => ({ ...s, instagramUrl: e.target.value }))}
+              onBlur={(e) => {
+                const next = { ...settings, instagramUrl: e.target.value.trim() }
+                setSettings(next)
+                void persist(next)
+              }}
+              placeholder="https://www.instagram.com/…"
+              style={theme.formInput}
+            />
+          </label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={settings.showSocialLinks}
+              onChange={(e) => setSettings((s) => ({ ...s, showSocialLinks: e.target.checked }))}
+            />
+            Show Follow us links at the bottom of the public page
+          </label>
+        </div>
+      </fieldset>
 
       <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
         <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Page design</legend>

@@ -28,7 +28,15 @@ const BTN = {
 } as const
 
 function emptyDetail(): JobSetupDraftDetail {
-  return { durationHours: "2", lineItemsText: "", materialsNotes: "" }
+  return {
+    durationHours: "2",
+    lineItemsText: "",
+    materialsNotes: "",
+    lines: [],
+    colorHex: "#0ea5e9",
+    iconId: "none",
+    assignUserId: null,
+  }
 }
 
 export default function EstimatesJobSetupWizardPanel({ userId, onApplied }: Props) {
@@ -115,7 +123,34 @@ export default function EstimatesJobSetupWizardPanel({ userId, onApplied }: Prop
     setBusy(true)
     setError("")
     try {
-      const msg = await applyEstimatesJobSetupWizard(supabase, userId, jobNames, detailsByName)
+      // Convert legacy free-text lines into structured drafts before batch save.
+      const enriched: Record<string, JobSetupDraftDetail> = {}
+      for (const name of jobNames) {
+        const d = detailsByName[name] ?? emptyDetail()
+        const lines =
+          d.lines.length > 0
+            ? d.lines
+            : d.lineItemsText
+                .split(/[,;\n]+/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((phrase) => {
+                  const parsed = parseSpokenLineItem(phrase)
+                  if (!parsed) return null
+                  return {
+                    id: crypto.randomUUID(),
+                    description: parsed.description || parsed.title,
+                    quantity: parsed.quantity,
+                    unit_price: parsed.unit_price,
+                    unit_basis: parsed.unit_basis,
+                    line_kind: parsed.line_kind === "materials" ? "material" : parsed.line_kind,
+                    minimum_line_total: parsed.minimum_line_total,
+                  }
+                })
+                .filter((x): x is NonNullable<typeof x> => x != null)
+        enriched[name] = { ...d, lines }
+      }
+      const msg = await applyEstimatesJobSetupWizard(supabase, userId, jobNames, enriched)
       setDoneMessage(msg)
       setPhase("done")
       onApplied?.()

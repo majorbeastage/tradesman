@@ -22,6 +22,8 @@ export type PublicBusinessProfileData = {
   templateId?: BusinessProfileTemplateId
   theme?: BusinessProfileTheme
   showContactForm?: boolean
+  facebookUrl?: string | null
+  instagramUrl?: string | null
 }
 
 type ContactFormProps = {
@@ -37,6 +39,27 @@ function themeVars(theme: BusinessProfileTheme): CSSProperties {
     ["--bp-field-bg" as string]: theme.fieldBackgroundColor,
     ["--bp-font" as string]: theme.fontColor,
   }
+}
+
+function SocialFollowBlock({ facebookUrl, instagramUrl }: { facebookUrl?: string | null; instagramUrl?: string | null }) {
+  if (!facebookUrl && !instagramUrl) return null
+  return (
+    <section style={{ padding: "20px 0 8px" }}>
+      <SectionHeading>Follow us</SectionHeading>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 15 }}>
+        {facebookUrl ? (
+          <a href={facebookUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+            Facebook
+          </a>
+        ) : null}
+        {instagramUrl ? (
+          <a href={instagramUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+            Instagram
+          </a>
+        ) : null}
+      </div>
+    </section>
+  )
 }
 
 function PoweredByFooter() {
@@ -687,6 +710,9 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
       ) : (
         <ClassicLayout {...layoutProps} />
       )}
+      <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto", padding: "8px clamp(16px, 3vw, 40px) 0" }}>
+        <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
+      </div>
       <PoweredByFooter />
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>

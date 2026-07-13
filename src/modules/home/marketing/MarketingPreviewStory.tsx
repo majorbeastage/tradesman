@@ -1138,6 +1138,28 @@ function MarketingStoryDockFooter({
       }}
     >
       <div className={`marketing-story-dock-footer-inner ${isMobile ? "marketing-story-dock-footer-inner-mobile" : ""}`}>
+        <div className="marketing-story-follow-us">
+          <span className="marketing-story-follow-us-label">Follow us</span>
+          <a
+            href="https://www.facebook.com/profile.php?id=61575488133241"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="marketing-story-follow-link"
+          >
+            Facebook
+          </a>
+          <span className="marketing-story-follow-sep" aria-hidden>
+            ·
+          </span>
+          <a
+            href="https://www.instagram.com/tradesmansystems/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="marketing-story-follow-link"
+          >
+            Instagram
+          </a>
+        </div>
         {onAdminLogin ? (
           <div style={{ textAlign: "center", marginBottom: 12 }}>
             <button type="button" onClick={onAdminLogin} className="marketing-story-admin-btn">
@@ -1215,6 +1237,32 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
         max-width: 1100px;
         margin: 0 auto;
         pointer-events: auto;
+        position: relative;
+      }
+      .marketing-story-follow-us {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 8px;
+        margin-bottom: 10px;
+        font-size: 12px;
+        color: #475569;
+      }
+      .marketing-story-follow-us-label {
+        font-weight: 800;
+        color: #0f172a;
+        margin-right: 4px;
+      }
+      .marketing-story-follow-link {
+        color: #0f766e;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .marketing-story-follow-link:hover {
+        text-decoration: underline;
+      }
+      .marketing-story-follow-sep {
+        color: #94a3b8;
       }
       .marketing-story-footer-runway {
         height: min(90vh, 760px);
