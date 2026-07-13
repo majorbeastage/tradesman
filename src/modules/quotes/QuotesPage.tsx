@@ -156,9 +156,14 @@ import {
   consumeEstimatesLibraryOpen,
   consumeQuotesCustomerPrefill,
   consumeQuotesCreateNewForCustomer,
+  consumeQuotesJobTypePrefill,
   consumeQuotesOpenQuote,
   notifyCustomersHubRefresh,
+  OPEN_ESTIMATES_LIBRARY_EVENT,
+  OPEN_QUOTES_JOB_TYPE_EVENT,
   OPEN_SPECIALTY_REPORT_WIZARD_EVENT,
+  queueQuotesJobTypePrefill,
+  queueSchedulingAddWizardPrefill,
   peekQuotesCustomerPrefill,
   peekQuotesOpenQuote,
   queueWorkOrdersHighlightQuote,
@@ -2158,19 +2163,45 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [globalAssistant, selectedQuote?.customer_id, selectedQuote?.customers?.display_name, selectedQuoteId])
 
   useEffect(() => {
-    const target = consumeEstimatesLibraryOpen()
-    if (!target) return
-    setPastLibSearch("")
-    setPastLibStatus("")
-    if (target.section === "job_types_line_items") {
-      setLibrarySection("job_types_line_items")
-      if (target.tab === "job_types" || target.tab === "line_items") {
-        setLibraryJobsTab(target.tab)
+    function openQueuedLibrary() {
+      const target = consumeEstimatesLibraryOpen()
+      if (!target) return
+      setPastLibSearch("")
+      setPastLibStatus("")
+      if (target.section === "job_types_line_items") {
+        setLibrarySection("job_types_line_items")
+        if (target.tab === "job_types" || target.tab === "line_items") {
+          setLibraryJobsTab(target.tab)
+        }
+      } else {
+        setLibrarySection("previous_estimates")
       }
-    } else {
-      setLibrarySection("previous_estimates")
+      setEstimateSuite("library")
     }
-    setEstimateSuite("library")
+    openQueuedLibrary()
+    window.addEventListener(OPEN_ESTIMATES_LIBRARY_EVENT, openQueuedLibrary)
+    return () => window.removeEventListener(OPEN_ESTIMATES_LIBRARY_EVENT, openQueuedLibrary)
+  }, [userId])
+
+  useEffect(() => {
+    function onQueuedJobType() {
+      const prefill = consumeQuotesJobTypePrefill()
+      if (!prefill) return
+      setEstimateSuite("home")
+      void (async () => {
+        if (!selectedQuoteId) {
+          alert(
+            `Opened Estimates for job type “${prefill.jobTypeName || "selected"}”. Create or open an estimate, then set Job type to apply its line items.`,
+          )
+          return
+        }
+        await persistQuoteJobType(prefill.jobTypeId)
+      })()
+    }
+    onQueuedJobType()
+    window.addEventListener(OPEN_QUOTES_JOB_TYPE_EVENT, onQueuedJobType)
+    return () => window.removeEventListener(OPEN_QUOTES_JOB_TYPE_EVENT, onQueuedJobType)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply when navigated from job types library
   }, [userId])
 
   useEffect(() => {
@@ -5783,6 +5814,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 onLineItemsSaved={(rows) => {
                   setEstimateLinePresets(rows)
                   notifyBusinessAiVocabularyChanged()
+                }}
+                onUseJobTypeForEstimate={(jt) => {
+                  queueQuotesJobTypePrefill({ jobTypeId: jt.id, jobTypeName: jt.name })
+                  setEstimateSuite("home")
+                }}
+                onUseJobTypeForCalendar={(jt) => {
+                  queueSchedulingAddWizardPrefill({
+                    jobTypeId: jt.id,
+                    title: jt.name,
+                    durationMinutes: jt.duration_minutes,
+                  })
+                  setPage?.("calendar")
                 }}
               />
             ) : null}

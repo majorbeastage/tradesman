@@ -1,15 +1,151 @@
 /**
- * Rules-first parse for voice/text line item creation (Estimates library wizard).
+ * Rules-first parse for voice/text line item creation (Estimates library + job-type wizard).
+ * Optimized for “wow that was simple” defaults — titles, qty, $/unit, and unit labels.
  */
+
+export type LineUnitBasis = string
 
 export type ParsedSpokenLineItem = {
   title: string
   description: string
   quantity: number
   unit_price: number
-  unit_basis: "hours" | "each" | "miles"
+  unit_basis: LineUnitBasis
   line_kind: string
   minimum_line_total?: number
+  minimum_quantity?: number
+}
+
+const KNOWN_UNITS: Array<{ re: RegExp; basis: string; singular: string; plural: string }> = [
+  { re: /\b(acres?|ac)\b/i, basis: "acres", singular: "Acre", plural: "Acres" },
+  { re: /\b(square\s*feet|sq\.?\s*ft\.?|sqft)\b/i, basis: "sqft", singular: "Sq Ft", plural: "Sq Ft" },
+  { re: /\b(square\s*yards?|sq\.?\s*yd\.?)\b/i, basis: "sqyd", singular: "Sq Yd", plural: "Sq Yd" },
+  { re: /\b(miles?|mi)\b/i, basis: "miles", singular: "Mile", plural: "Miles" },
+  { re: /\b(hours?|hrs?)\b/i, basis: "hours", singular: "Hour", plural: "Hours" },
+  { re: /\b(gallons?|gal)\b/i, basis: "gallons", singular: "Gallon", plural: "Gallons" },
+  { re: /\b(loads?)\b/i, basis: "loads", singular: "Load", plural: "Loads" },
+  { re: /\b(yards?|yds?)\b/i, basis: "yards", singular: "Yard", plural: "Yards" },
+  { re: /\b(tons?)\b/i, basis: "tons", singular: "Ton", plural: "Tons" },
+  { re: /\b(bags?)\b/i, basis: "bags", singular: "Bag", plural: "Bags" },
+  { re: /\b(trees?)\b/i, basis: "trees", singular: "Tree", plural: "Trees" },
+  { re: /\b(rooms?)\b/i, basis: "rooms", singular: "Room", plural: "Rooms" },
+  { re: /\b(each|ea|units?|pcs?|pieces?)\b/i, basis: "each", singular: "Each", plural: "Each" },
+]
+
+export const COMMON_LINE_UNITS: Array<{ id: string; label: string }> = [
+  { id: "hours", label: "Hours" },
+  { id: "miles", label: "Miles" },
+  { id: "each", label: "Each" },
+  { id: "acres", label: "Acres" },
+  { id: "sqft", label: "Sq Ft" },
+  { id: "sqyd", label: "Sq Yd" },
+  { id: "yards", label: "Yards" },
+  { id: "gallons", label: "Gallons" },
+  { id: "loads", label: "Loads" },
+  { id: "tons", label: "Tons" },
+  { id: "bags", label: "Bags" },
+  { id: "trees", label: "Trees" },
+  { id: "rooms", label: "Rooms" },
+]
+
+function titleCaseWords(s: string): string {
+  return s
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => (/^(of|to|per|and|or|a|an)$/i.test(w) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ")
+}
+
+function detectUnit(text: string): { basis: string; singular: string; plural: string } | null {
+  for (const u of KNOWN_UNITS) {
+    if (u.re.test(text)) return { basis: u.basis, singular: u.singular, plural: u.plural }
+  }
+  return null
+}
+
+function detectQuantity(text: string, unit: { basis: string } | null): number {
+  if (unit) {
+    const nearUnit =
+      text.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${unit.basis}|acre|acres|ac|mile|miles|mi|hour|hours|hrs?|gallon|gallons|gal|load|loads|yard|yards|yds?|ton|tons|bag|bags|tree|trees|room|rooms|sq\\.?\\s*ft|sqft|each|ea)`, "i")) ??
+      text.match(/(\d+(?:\.\d+)?)\s*(?:acres?|ac|miles?|mi|hours?|hrs?|gallons?|gal|loads?|yards?|yds?|tons?|bags?|trees?|rooms?|sq\.?\s*ft\.?|sqft|each|ea)\b/i)
+    if (nearUnit) return Number.parseFloat(nearUnit[1]) || 1
+  }
+  const generic = text.match(/\b(\d+(?:\.\d+)?)\b/)
+  if (generic) {
+    const n = Number.parseFloat(generic[1])
+    // Avoid treating the dollar amount as quantity when it's the only number beside price
+    if (Number.isFinite(n) && n > 0 && n < 10000) return n
+  }
+  return 1
+}
+
+function detectPrice(text: string): number {
+  const dollar = text.match(/\$\s*(\d+(?:\.\d{1,2})?)/)
+  if (dollar) return Number.parseFloat(dollar[1]) || 0
+
+  const dollarsWord = text.match(/(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?)\b/i)
+  if (dollarsWord) return Number.parseFloat(dollarsWord[1]) || 0
+
+  const centsPer = text.match(/(\d+(?:\.\d+)?)\s*(?:cents?)\s*(?:per|\/)/i)
+  if (centsPer) return (Number.parseFloat(centsPer[1]) || 0) / 100
+
+  const atRate = text.match(/(?:at|@)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i)
+  if (atRate) return Number.parseFloat(atRate[1]) || 0
+
+  // "15 dollar charge" / "15$ charge" style without $ first
+  const leadingAmt = text.match(/\b(\d+(?:\.\d{1,2})?)\s*(?:dollar|usd)?\s*(?:charge|fee|cost|price|rate)\b/i)
+  if (leadingAmt) return Number.parseFloat(leadingAmt[1]) || 0
+
+  return 0
+}
+
+function buildSmartTitle(text: string, unit: { singular: string; plural: string; basis: string } | null): string {
+  let working = text
+    .replace(/\$\s*\d+(?:\.\d{1,2})?/g, " ")
+    .replace(/\d+(?:\.\d+)?\s*(?:dollars?|bucks?|cents?)\b/gi, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:acres?|ac|miles?|mi|hours?|hrs?|gallons?|gal|loads?|yards?|yds?|tons?|bags?|trees?|rooms?|sq\.?\s*ft\.?|sqft|each|ea)\b/gi, " ")
+    .replace(/\b\d+(?:\.\d+)?\b/g, " ")
+    .replace(/\b(charge|fee|cost|price|rate|for|of|a|an|the|per|at|@)\b/gi, " ")
+    .replace(/[^\w\s-/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!working) {
+    if (unit) return `Per ${unit.singular} Charge`
+    return "Line Item"
+  }
+
+  // Prefer "Fuel and Equipment" style from remaining words
+  let core = titleCaseWords(working)
+
+  const isFuelEquip = /\b(fuel|equipment|gas|material|materials|labor|travel|mileage)\b/i.test(core)
+  if (unit && isFuelEquip) {
+    // "Fuel Equipment" → "Per Acre Fuel and Equipment Charge"
+    core = core.replace(/\bFuel\b/i, "Fuel").replace(/\bEquipment\b/i, "Equipment")
+    if (!/\band\b/i.test(core) && /\bfuel\b/i.test(core) && /\bequipment\b/i.test(core)) {
+      core = core.replace(/\bfuel\b/i, "Fuel and").replace(/\s+and\s+and\s+/i, " and ")
+    }
+    return `Per ${unit.singular} ${core} Charge`.replace(/\s+/g, " ").trim()
+  }
+
+  if (unit && !new RegExp(`\\b${unit.singular}\\b`, "i").test(core)) {
+    return `Per ${unit.singular} ${core}`.replace(/\s+/g, " ").trim()
+  }
+
+  // Flat / fee style
+  if (/\b(labor|travel|mileage|material|materials|misc|permit|disposal)\b/i.test(core)) {
+    return `${core} Charge`.replace(/\s+/g, " ").trim()
+  }
+
+  return core.slice(0, 120)
+}
+
+function detectLineKind(text: string): string {
+  if (/\b(material|materials|parts?|supply|supplies|equipment|fuel)\b/i.test(text)) return "material"
+  if (/\b(travel|mileage|gas|mile)\b/i.test(text)) return "travel"
+  if (/\b(misc|fee|permit|disposal|minimum)\b/i.test(text)) return "misc"
+  if (/\b(labor|hour|hrs?|man\s*hour)\b/i.test(text)) return "labor"
+  return "misc"
 }
 
 export function parseSpokenLineItem(raw: string, knownDescriptions: string[] = []): ParsedSpokenLineItem | null {
@@ -27,52 +163,38 @@ export function parseSpokenLineItem(raw: string, knownDescriptions: string[] = [
     }
   }
 
-  let unit_price = 0
-  const dollar = text.match(/\$\s*(\d+(?:\.\d{1,2})?)/) ?? text.match(/(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?)\b/i)
-  if (dollar) unit_price = Number.parseFloat(dollar[1]) || 0
-
-  const centsPer = text.match(/(\d+(?:\.\d+)?)\s*(?:cents?)\s*(?:per|\/)\s*(?:mile|mi|hour|hr|each)?/i)
-  if (centsPer && !unit_price) unit_price = (Number.parseFloat(centsPer[1]) || 0) / 100
-
-  const atRate = text.match(/(?:at|@)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i)
-  if (atRate && !unit_price) unit_price = Number.parseFloat(atRate[1]) || 0
-
-  let quantity = 1
-  const qtyHr = text.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i)
-  const qtyEa = text.match(/(\d+(?:\.\d+)?)\s*(?:each|ea|units?)\b/i)
-  const qtyMi = text.match(/(\d+(?:\.\d+)?)\s*(?:miles?|mi)\b/i)
-  if (qtyHr) quantity = Number.parseFloat(qtyHr[1]) || 1
-  else if (qtyEa) quantity = Number.parseFloat(qtyEa[1]) || 1
-  else if (qtyMi) quantity = Number.parseFloat(qtyMi[1]) || 1
-
-  let unit_basis: ParsedSpokenLineItem["unit_basis"] = "hours"
-  if (/\b(miles?|mi|travel|mileage|gas)\b/i.test(text)) unit_basis = "miles"
-  else if (/\b(each|ea|units?|flat|minimum)\b/i.test(text)) unit_basis = "each"
-
-  let line_kind = "labor"
-  if (/\b(material|materials|parts?|supply|supplies|equipment|fuel)\b/i.test(text)) line_kind = "material"
-  else if (/\b(travel|mileage|gas|mile)\b/i.test(text)) line_kind = "travel"
-  else if (/\b(misc|fee|permit|disposal|minimum)\b/i.test(text)) line_kind = "misc"
+  const unit = detectUnit(text)
+  const unit_price = detectPrice(text)
+  const quantity = detectQuantity(text, unit)
+  const unit_basis = unit?.basis ?? (/\b(flat|fixed)\b/i.test(text) ? "each" : "hours")
+  const line_kind = detectLineKind(text)
 
   let minimum_line_total: number | undefined
-  const minMatch =
+  let minimum_quantity: number | undefined
+  const minDollar =
     text.match(/(?:minimum|min\.?|min charge)\s*(?:of\s*)?\$?\s*(\d+(?:\.\d{1,2})?)/i) ??
     text.match(/\$\s*(\d+(?:\.\d{1,2})?)\s*(?:minimum|min\.?)/i)
-  if (minMatch) minimum_line_total = Number.parseFloat(minMatch[1]) || undefined
+  if (minDollar) minimum_line_total = Number.parseFloat(minDollar[1]) || undefined
+  const minQty = text.match(/(?:minimum|min\.?)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*(?:acres?|hours?|miles?|units?|each)?/i)
+  if (minQty && !minimum_line_total) {
+    // If they said "minimum 60 dollar" already caught; otherwise quantity min
+    if (!/\$|dollar/i.test(minQty[0])) minimum_quantity = Number.parseFloat(minQty[1]) || undefined
+  }
 
-  const cleaned = text
-    .replace(/\$\s*\d+(?:\.\d{1,2})?/g, "")
-    .replace(/\d+(?:\.\d+)?\s*(?:cents?)\b/gi, "")
-    .replace(/\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|each|ea|units?|miles?|mi)\b/gi, "")
-    .replace(/\b(at|@)\s*\d+(?:\.\d+)?/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-
-  const title = (matchedDescription ?? cleaned).slice(0, 120) || text.slice(0, 120)
-  const description = matchedDescription ?? (cleaned || title)
+  const title = matchedDescription ?? buildSmartTitle(text, unit)
+  const description = title
 
   if (!title) return null
-  return { title, description, quantity, unit_price, unit_basis, line_kind, minimum_line_total }
+  return {
+    title: title.slice(0, 120),
+    description: description.slice(0, 500),
+    quantity,
+    unit_price,
+    unit_basis,
+    line_kind,
+    minimum_line_total,
+    minimum_quantity,
+  }
 }
 
 /** Split a free-text products/services description into candidate job type names. */
@@ -104,13 +226,15 @@ export function extractJobTypeNamesFromServicesText(raw: string): string[] {
 
 /** Pull multiple pricing phrases into line drafts from a pricing description paragraph. */
 export function parsePricingPhrasesToLineItems(raw: string): ParsedSpokenLineItem[] {
+  // Prefer splitting on sentence / semicolon / newline; keep "and" inside phrases when it's "fuel and equipment"
   const parts = raw
-    .split(/[,;\n]+|(?:\band\b)/i)
+    .split(/[;\n]+|(?<=\d)\s*[,]\s+(?=[A-Za-z])|(?:\.\s+)(?=[A-Z])/)
     .map((s) => s.trim())
     .filter((s) => s.length >= 4)
+  const candidates = parts.length > 1 ? parts : raw.split(/[,;\n]+/).map((s) => s.trim()).filter((s) => s.length >= 4)
   const out: ParsedSpokenLineItem[] = []
   const seen = new Set<string>()
-  for (const part of parts.length ? parts : [raw]) {
+  for (const part of candidates.length ? candidates : [raw]) {
     const parsed = parseSpokenLineItem(part)
     if (!parsed) continue
     const key = `${parsed.title.toLowerCase()}|${parsed.line_kind}|${parsed.unit_basis}`
@@ -118,6 +242,18 @@ export function parsePricingPhrasesToLineItems(raw: string): ParsedSpokenLineIte
     seen.add(key)
     out.push(parsed)
     if (out.length >= 12) break
+  }
+  // If still one blob with multiple costs, try harder splits on "plus" / commas
+  if (out.length <= 1 && /(?:plus|,|\/)/i.test(raw)) {
+    for (const part of raw.split(/\bplus\b|\/|(?:,\s+)/i).map((s) => s.trim()).filter((s) => s.length >= 4)) {
+      const parsed = parseSpokenLineItem(part)
+      if (!parsed) continue
+      const key = `${parsed.title.toLowerCase()}|${parsed.unit_basis}|${parsed.unit_price}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(parsed)
+      if (out.length >= 12) break
+    }
   }
   return out
 }

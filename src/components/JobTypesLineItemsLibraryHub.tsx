@@ -5,6 +5,7 @@ import JobTypesManagerModal from "./JobTypesManagerModal"
 import JobTypesSetupWizardModal from "./JobTypesSetupWizardModal"
 import type { AssistantHandoffPayload } from "../lib/assistantHandoff"
 import type { EstimateLinePresetRow } from "../lib/estimateLinePresets"
+import type { JobTypeRow } from "../lib/jobTypesApi"
 
 export type JobTypesLineItemsLibraryTab = "line_items" | "job_types"
 
@@ -22,6 +23,8 @@ type Props = {
   onLineItemsSaved?: (rows: EstimateLinePresetRow[]) => void
   /** Open the setup wizard immediately when hub mounts. */
   autoOpenWizard?: boolean
+  onUseJobTypeForEstimate?: (jobType: JobTypeRow) => void
+  onUseJobTypeForCalendar?: (jobType: JobTypeRow) => void
 }
 
 export default function JobTypesLineItemsLibraryHub({
@@ -37,6 +40,8 @@ export default function JobTypesLineItemsLibraryHub({
   onDataChanged,
   onLineItemsSaved,
   autoOpenWizard = false,
+  onUseJobTypeForEstimate,
+  onUseJobTypeForCalendar,
 }: Props) {
   const [tab, setTab] = useState<JobTypesLineItemsLibraryTab>(
     showLineItems ? initialTab : showJobTypes ? "job_types" : "line_items",
@@ -129,6 +134,8 @@ export default function JobTypesLineItemsLibraryHub({
           showSetupWizard={false}
           onChanged={onDataChanged}
           onRequestCreateWizard={() => setWizardOpen(true)}
+          onUseForEstimate={onUseJobTypeForEstimate}
+          onUseForCalendar={onUseJobTypeForCalendar}
         />
       ) : null}
 

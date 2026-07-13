@@ -36,6 +36,8 @@ export type JobTypesManagerModalProps = {
   onCreated?: (jobTypeId: string) => void
   /** When set, “Create new job type” opens the guided wizard instead of the manual form. */
   onRequestCreateWizard?: () => void
+  onUseForEstimate?: (jobType: JobTypeRow) => void
+  onUseForCalendar?: (jobType: JobTypeRow) => void
 }
 
 export default function JobTypesManagerModal({
@@ -52,6 +54,8 @@ export default function JobTypesManagerModal({
   onChanged,
   onCreated,
   onRequestCreateWizard,
+  onUseForEstimate,
+  onUseForCalendar,
 }: JobTypesManagerModalProps) {
   const [jobTypes, setJobTypes] = useState<JobTypeRow[]>([])
   const [loadError, setLoadError] = useState("")
@@ -69,6 +73,7 @@ export default function JobTypesManagerModal({
   const [trackMileage, setTrackMileage] = useState(false)
   const [presetChecks, setPresetChecks] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
+  const [useMenuId, setUseMenuId] = useState<string | null>(null)
 
   const resetForm = useCallback(() => {
     setName("")
@@ -563,6 +568,85 @@ export default function JobTypesManagerModal({
                     {typeof jt.description === "string" && jt.description.trim() ? ` · ${jt.description.trim()}` : ""}
                   </div>
                 </div>
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    onClick={() => setUseMenuId((id) => (id === jt.id ? null : jt.id))}
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: 12,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: 6,
+                      background: "#0f172a",
+                      cursor: "pointer",
+                      color: "#fff",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Use this Job Type ▾
+                  </button>
+                  {useMenuId === jt.id ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "100%",
+                        marginTop: 4,
+                        zIndex: 20,
+                        minWidth: 190,
+                        background: "#fff",
+                        border: `1px solid ${theme.border}`,
+                        borderRadius: 8,
+                        boxShadow: "0 12px 28px rgba(15,23,42,0.18)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseMenuId(null)
+                          onUseForEstimate?.(jt)
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "#fff",
+                          color: "#0f172a",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Create an Estimate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseMenuId(null)
+                          onUseForCalendar?.(jt)
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 12px",
+                          border: "none",
+                          borderTop: `1px solid ${theme.border}`,
+                          background: "#fff",
+                          color: "#0f172a",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Create a Calendar Event
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   onClick={() => startEdit(jt)}
@@ -574,6 +658,7 @@ export default function JobTypesManagerModal({
                     background: "white",
                     cursor: "pointer",
                     color: theme.text,
+                    fontWeight: 700,
                   }}
                 >
                   Edit

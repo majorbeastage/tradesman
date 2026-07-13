@@ -95,6 +95,36 @@ export function consumeQuotesCreateNewForCustomer(): string | null {
   return null
 }
 
+const QUOTES_JOB_TYPE_PREFILL = "tradesman_quotes_job_type_prefill_v1"
+export const OPEN_QUOTES_JOB_TYPE_EVENT = "tradesman:open-quotes-job-type"
+
+export type QuotesJobTypePrefill = { jobTypeId: string; jobTypeName?: string }
+
+/** Open Estimates tool and apply this job type (lines + quote job_type_id) when an estimate is ready. */
+export function queueQuotesJobTypePrefill(prefill: QuotesJobTypePrefill): void {
+  if (!prefill.jobTypeId?.trim() || typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(QUOTES_JOB_TYPE_PREFILL, JSON.stringify(prefill))
+    window.dispatchEvent(new CustomEvent(OPEN_QUOTES_JOB_TYPE_EVENT))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeQuotesJobTypePrefill(): QuotesJobTypePrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(QUOTES_JOB_TYPE_PREFILL)
+    if (!raw) return null
+    sessionStorage.removeItem(QUOTES_JOB_TYPE_PREFILL)
+    const parsed = JSON.parse(raw) as QuotesJobTypePrefill
+    if (!parsed?.jobTypeId?.trim()) return null
+    return { jobTypeId: parsed.jobTypeId.trim(), jobTypeName: parsed.jobTypeName?.trim() || undefined }
+  } catch {
+    return null
+  }
+}
+
 export function peekQuotesOpenQuote(): string | null {
   if (typeof window === "undefined") return null
   try {
@@ -221,6 +251,7 @@ export function queueSchedulingAddWizardPrefill(prefill: SchedulingAddWizardPref
   if (typeof window === "undefined") return
   try {
     sessionStorage.setItem(SCHEDULING_ADD_WIZARD_PREFILL, JSON.stringify(prefill))
+    window.dispatchEvent(new CustomEvent(SCHEDULING_ADD_WIZARD_PREFILL_EVENT))
   } catch {
     /* ignore */
   }
@@ -359,10 +390,13 @@ export function queueEstimatesLibraryOpen(target?: EstimatesLibraryOpenTarget): 
   try {
     const payload = target?.section || target?.tab ? JSON.stringify(target) : "1"
     sessionStorage.setItem(QUOTES_OPEN_LIBRARY, payload)
+    window.dispatchEvent(new CustomEvent(OPEN_ESTIMATES_LIBRARY_EVENT))
   } catch {
     /* ignore */
   }
 }
+
+export const OPEN_ESTIMATES_LIBRARY_EVENT = "tradesman:open-estimates-library"
 
 export function consumeEstimatesLibraryOpen(): EstimatesLibraryOpenTarget | null {
   if (typeof window === "undefined") return null

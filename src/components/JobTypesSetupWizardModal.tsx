@@ -3,6 +3,7 @@ import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { useSpeechRecognitionInput } from "../lib/useSpeechRecognitionInput"
 import {
+  COMMON_LINE_UNITS,
   extractJobTypeNamesFromServicesText,
   parsePricingPhrasesToLineItems,
   type ParsedSpokenLineItem,
@@ -528,13 +529,18 @@ export default function JobTypesSetupWizardModal({ open, userId, onClose, onAppl
                       placeholder="$/unit"
                     />
                     <select
-                      value={line.unit_basis}
-                      onChange={(e) => updateLine(line.id, { unit_basis: e.target.value as JobSetupLineDraft["unit_basis"] })}
+                      value={COMMON_LINE_UNITS.some((u) => u.id === line.unit_basis) ? line.unit_basis : line.unit_basis || "hours"}
+                      onChange={(e) => updateLine(line.id, { unit_basis: e.target.value })}
                       style={{ ...theme.formInput, color: "#0f172a", fontWeight: 700 }}
                     >
-                      <option value="hours">Hours</option>
-                      <option value="miles">Miles</option>
-                      <option value="each">Each</option>
+                      {COMMON_LINE_UNITS.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.label}
+                        </option>
+                      ))}
+                      {!COMMON_LINE_UNITS.some((u) => u.id === line.unit_basis) && line.unit_basis ? (
+                        <option value={line.unit_basis}>{line.unit_basis}</option>
+                      ) : null}
                     </select>
                     <input
                       value={line.minimum_line_total && line.minimum_line_total > 0 ? String(line.minimum_line_total) : ""}

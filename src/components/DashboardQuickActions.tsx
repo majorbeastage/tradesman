@@ -1232,7 +1232,7 @@ export default function DashboardQuickActions(props: Props) {
           tileStyle={tileStyle}
           onClick={() => {
             if (customize) return
-            queueEstimatesLibraryOpen({ section: "job_types_line_items", tab: "line_items" })
+            queueEstimatesLibraryOpen({ section: "job_types_line_items", tab: "job_types" })
             go("quotes")
           }}
         />

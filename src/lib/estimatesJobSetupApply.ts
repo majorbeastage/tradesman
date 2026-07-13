@@ -16,7 +16,7 @@ export type JobSetupLineDraft = {
   description: string
   quantity: number
   unit_price: number
-  unit_basis: "hours" | "miles" | "each"
+  unit_basis: string
   line_kind: string
   minimum_line_total?: number
 }

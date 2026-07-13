@@ -21,6 +21,17 @@ import {
   mergeCalendarAssigneeMetadata,
   resolveCalendarAssigneeForSave,
 } from "../../lib/calendarAssignee"
+import {
+  formatCalendarEventLabel,
+  loadCalendarDisplayPrefs,
+  mergeCalendarEventDisplayMeta,
+  readCalendarEventDisplayMeta,
+  saveCalendarDisplayPrefs,
+  CALENDAR_TITLE_FIELD_OPTIONS,
+  type CalendarDisplayPrefs,
+  type CalendarTitleFieldId,
+} from "../../lib/calendarEventDisplayPrefs"
+import { JOB_TYPE_CALENDAR_COLORS, JOB_TYPE_ICON_OPTIONS, glyphForJobTypeIcon } from "../../lib/jobTypeIcons"
 import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
@@ -384,6 +395,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>("")
   const [view, setView] = useState<"day" | "week" | "month">("month")
+  const [displayPrefs, setDisplayPrefs] = useState<CalendarDisplayPrefs>(() => loadCalendarDisplayPrefs())
+  const [showDisplayPrefs, setShowDisplayPrefs] = useState(false)
+  const [eventCtxMenu, setEventCtxMenu] = useState<{ x: number; y: number; event: CalendarEvent } | null>(null)
+  const [jobTypeIconById, setJobTypeIconById] = useState<Record<string, string>>({})
   const [currentDate, setCurrentDate] = useState(new Date())
   const [expanded, setExpanded] = useState(false)
   const [showAddItem, setShowAddItem] = useState(false)
@@ -778,6 +793,49 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     isOfficeManagerOrAdmin && (teamMapUserIds.length > 0 || (sandboxTraining && teamMapMembers.some((m) => m.isDemo)))
 
   const canOpenUnifiedMap = canAccessCustomerMap || canAccessTeamMap
+
+  useEffect(() => {
+    if (!supabase || !calendarDbUserId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", calendarDbUserId).maybeSingle()
+      if (cancelled) return
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const raw = meta.job_type_ui_v1
+      const map: Record<string, string> = {}
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [jtId, val] of Object.entries(raw as Record<string, unknown>)) {
+          if (val && typeof val === "object" && !Array.isArray(val)) {
+            const iconId = (val as { iconId?: unknown }).iconId
+            if (typeof iconId === "string" && iconId && iconId !== "none") map[jtId] = iconId
+          }
+        }
+      }
+      setJobTypeIconById(map)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [calendarDbUserId])
+
+  useEffect(() => {
+    if (!eventCtxMenu) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setEventCtxMenu(null)
+    }
+    function onPointer() {
+      setEventCtxMenu(null)
+    }
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("pointerdown", onPointer)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("pointerdown", onPointer)
+    }
+  }, [eventCtxMenu])
 
   useEffect(() => {
     if (!sandboxTraining || !supabase || !calendarDbUserId) return
@@ -2195,8 +2253,65 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   function getEventColor(ev: CalendarEvent): string {
+    const override = readCalendarEventDisplayMeta(ev.metadata).color_hex?.trim()
+    if (override) return override
     const jt = ev.job_types ?? jobTypes.find((j) => j.id === ev.job_type_id)
     return (jt as JobType)?.color_hex ?? theme.primary
+  }
+
+  function getEventIconGlyph(ev: CalendarEvent): string {
+    const metaIcon = readCalendarEventDisplayMeta(ev.metadata).icon_id
+    if (metaIcon) return glyphForJobTypeIcon(metaIcon)
+    const jtId = ev.job_type_id
+    if (jtId && jobTypeIconById[jtId]) return glyphForJobTypeIcon(jobTypeIconById[jtId])
+    return ""
+  }
+
+  function formatEventChipLabel(ev: CalendarEvent): string {
+    const jt = (ev.job_types as JobType | null | undefined) ?? jobTypes.find((j) => j.id === ev.job_type_id)
+    return formatCalendarEventLabel(
+      {
+        title: ev.title,
+        startAt: ev.start_at,
+        customerName: ev.customers?.display_name,
+        jobTypeName: jt?.name,
+        assigneeLabel: calendarAssigneeLabel(ev, selectableUsers),
+        iconGlyph: getEventIconGlyph(ev),
+      },
+      displayPrefs,
+    )
+  }
+
+  async function persistEventDisplayPatch(ev: CalendarEvent, patch: { color_hex?: string; icon_id?: string }) {
+    if (!supabase) return
+    const nextMeta = mergeCalendarEventDisplayMeta(
+      ev.metadata && typeof ev.metadata === "object" && !Array.isArray(ev.metadata)
+        ? (ev.metadata as Record<string, unknown>)
+        : {},
+      patch,
+    )
+    const { error } = await supabase.from("calendar_events").update({ metadata: nextMeta }).eq("id", ev.id)
+    if (error) {
+      alert(error.message || "Could not update event display.")
+      return
+    }
+    const patched = { ...ev, metadata: nextMeta }
+    setEvents((prev) => prev.map((e) => (e.id === ev.id ? patched : e)))
+    setSelectedEvent((prev) => (prev && prev.id === ev.id ? patched : prev))
+    setEventCtxMenu((prev) => (prev && prev.event.id === ev.id ? { ...prev, event: patched } : prev))
+  }
+
+  function updateDisplayPrefs(next: CalendarDisplayPrefs) {
+    setDisplayPrefs(next)
+    saveCalendarDisplayPrefs(next)
+  }
+
+  function toggleTitleField(id: CalendarTitleFieldId) {
+    const has = displayPrefs.titleFields.includes(id)
+    const nextFields = has
+      ? displayPrefs.titleFields.filter((f) => f !== id)
+      : [...displayPrefs.titleFields, id]
+    updateDisplayPrefs({ titleFields: nextFields.length ? nextFields : ["title"] })
   }
 
   function getEventRibbonColor(): string {
@@ -3687,6 +3802,51 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           >
             {expanded ? "Collapse" : "Expand"}
           </button>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => setShowDisplayPrefs((v) => !v)}
+              style={{ padding: "6px 12px", border: `1px solid ${theme.border}`, borderRadius: "6px", background: showDisplayPrefs ? "#e2e8f0" : "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
+            >
+              Event titles
+            </button>
+            {showDisplayPrefs ? (
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: 6,
+                  zIndex: 40,
+                  width: 260,
+                  padding: 12,
+                  background: "#fff",
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 10,
+                  boxShadow: "0 16px 36px rgba(15,23,42,0.18)",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Show on calendar chips</div>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                  Pick what appears on each event. Order matches the list below.
+                </p>
+                {CALENDAR_TITLE_FIELD_OPTIONS.map((opt) => {
+                  const checked = displayPrefs.titleFields.includes(opt.id)
+                  return (
+                    <label
+                      key={opt.id}
+                      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f172a", cursor: "pointer" }}
+                    >
+                      <input type="checkbox" checked={checked} onChange={() => toggleTitleField(opt.id)} />
+                      {opt.label}
+                    </label>
+                  )
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div style={{ padding: isMobile ? "12px" : "16px" }}>
@@ -3734,22 +3894,29 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                                 e.stopPropagation()
                                 setSelectedEvent(ev)
                               }}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
+                              }}
                               style={{
                                 fontSize: "11px",
-                                padding: "2px 6px",
-                                marginBottom: "2px",
-                                borderRadius: "4px",
+                                padding: "3px 7px",
+                                marginBottom: "3px",
+                                borderRadius: "6px",
                                 background: getEventColor(ev),
-                                boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
+                                boxShadow: `inset 3px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                                 color: "#fff",
                                 cursor: "pointer",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
-                                whiteSpace: "nowrap"
+                                whiteSpace: "nowrap",
+                                fontWeight: 600,
+                                letterSpacing: "0.01em",
                               }}
-                              title={ev.title}
+                              title={formatEventChipLabel(ev)}
                             >
-                              {new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} {ev.title}
+                              {formatEventChipLabel(ev)}
                             </div>
                           ))}
                           {dayEvents.length > (expanded ? 10 : 3) && <div style={{ fontSize: "11px", color: "#6b7280" }}>+{dayEvents.length - (expanded ? 10 : 3)} more</div>}
@@ -3869,16 +4036,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               e.stopPropagation()
                               if (gridEventDrag?.moved) return
                             }}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
+                            }}
                             style={{
                               position: "absolute",
                               left: 2,
                               right: 2,
                               top: topPx,
                               height: heightPx,
-                              padding: "2px 4px",
-                              borderRadius: "4px",
+                              padding: "3px 6px",
+                              borderRadius: "6px",
                               background: getEventColor(ev),
-                              boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
+                              boxShadow: `inset 3px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                               color: "#fff",
                               cursor: gridEventDrag?.event.id === ev.id ? "grabbing" : "grab",
                               fontSize: "11px",
@@ -3887,10 +4059,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               opacity: dragging ? 0.35 : 1,
                               touchAction: "none",
                               zIndex: dragging ? 2 : 1,
+                              fontWeight: 600,
                             }}
-                            title={`${new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} ${ev.title}`}
+                            title={formatEventChipLabel(ev)}
                           >
-                            {new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} {ev.title}
+                            {formatEventChipLabel(ev)}
                           </div>
                         )
                       })}
@@ -3979,16 +4152,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             e.stopPropagation()
                             if (gridEventDrag?.moved) return
                           }}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
+                          }}
                           style={{
                             position: "absolute",
                             left: 4,
                             right: 4,
                             top: topPx,
                             height: heightPx,
-                            padding: "4px 6px",
-                            borderRadius: "4px",
+                            padding: "5px 8px",
+                            borderRadius: "8px",
                             background: getEventColor(ev),
-                            boxShadow: `inset 4px 0 0 ${getEventRibbonColorForEvent(ev)}`,
+                            boxShadow: `inset 3px 0 0 ${getEventRibbonColorForEvent(ev)}`,
                             color: "#fff",
                             cursor: gridEventDrag?.event.id === ev.id ? "grabbing" : "grab",
                             fontSize: "12px",
@@ -3997,10 +4175,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             opacity: dragging ? 0.35 : 1,
                             touchAction: "none",
                             zIndex: dragging ? 2 : 1,
+                            fontWeight: 600,
+                            lineHeight: 1.35,
                           }}
-                          title={ev.title}
+                          title={formatEventChipLabel(ev)}
                         >
-                          <strong>{new Date(ev.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</strong> {ev.title}
+                          {formatEventChipLabel(ev)}
                         </div>
                       )
                     })
@@ -4749,6 +4929,115 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       )}
 
 
+      {eventCtxMenu ? (
+        <div
+          role="menu"
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: Math.min(eventCtxMenu.x, typeof window !== "undefined" ? window.innerWidth - 280 : eventCtxMenu.x),
+            top: Math.min(eventCtxMenu.y, typeof window !== "undefined" ? window.innerHeight - 320 : eventCtxMenu.y),
+            zIndex: 10050,
+            width: 268,
+            background: "#fff",
+            border: `1px solid ${theme.border}`,
+            borderRadius: 12,
+            boxShadow: "0 18px 40px rgba(15,23,42,0.22)",
+            padding: 12,
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Event look</div>
+          <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {eventCtxMenu.event.title}
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Color</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {JOB_TYPE_CALENDAR_COLORS.map((c) => (
+              <button
+                key={c.hex}
+                type="button"
+                title={c.label}
+                onClick={() => void persistEventDisplayPatch(eventCtxMenu.event, { color_hex: c.hex })}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 999,
+                  border:
+                    readCalendarEventDisplayMeta(eventCtxMenu.event.metadata).color_hex === c.hex
+                      ? "2px solid #0f172a"
+                      : `1px solid ${theme.border}`,
+                  background: c.hex,
+                  cursor: "pointer",
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => void persistEventDisplayPatch(eventCtxMenu.event, { color_hex: "" })}
+              style={{
+                padding: "2px 8px",
+                fontSize: 11,
+                borderRadius: 6,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+                cursor: "pointer",
+                color: "#0f172a",
+                fontWeight: 700,
+              }}
+            >
+              Reset
+            </button>
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Icon</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxHeight: 120, overflow: "auto" }}>
+            {JOB_TYPE_ICON_OPTIONS.slice(0, 18).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                title={opt.label}
+                onClick={() => void persistEventDisplayPatch(eventCtxMenu.event, { icon_id: opt.id })}
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 8,
+                  border:
+                    readCalendarEventDisplayMeta(eventCtxMenu.event.metadata).icon_id === opt.id
+                      ? "2px solid #0f172a"
+                      : `1px solid ${theme.border}`,
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontSize: 14,
+                }}
+              >
+                {opt.glyph || "–"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedEvent(eventCtxMenu.event)
+              setEventCtxMenu(null)
+            }}
+            style={{
+              marginTop: 2,
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "none",
+              background: "#0f172a",
+              color: "#fff",
+              fontWeight: 800,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Open event
+          </button>
+        </div>
+      ) : null}
+
       {selectedEvent && (
         <>
           <div
@@ -4771,13 +5060,57 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               maxHeight: "90vh",
               overflow: "auto",
               background: "white",
-              borderRadius: "8px",
-              padding: isMobile ? "24px" : "20px 24px",
-              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+              borderRadius: "14px",
+              padding: 0,
+              boxShadow: "0 18px 50px rgba(15,23,42,0.28)",
               zIndex: 9999,
             }}
           >
-            <h3 style={{ margin: "0 0 16px", color: theme.text }}>{selectedEvent.title}</h3>
+            <div
+              style={{
+                padding: isMobile ? "18px 20px 14px" : "20px 24px 16px",
+                borderBottom: `1px solid ${theme.border}`,
+                background: `linear-gradient(135deg, ${getEventColor(selectedEvent)}22, #fff 55%)`,
+                borderRadius: "14px 14px 0 0",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                <div
+                  style={{
+                    width: 12,
+                    alignSelf: "stretch",
+                    minHeight: 40,
+                    borderRadius: 8,
+                    background: getEventColor(selectedEvent),
+                    boxShadow: `inset 0 0 0 1px rgba(0,0,0,0.06)`,
+                    flexShrink: 0,
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    {getEventIconGlyph(selectedEvent) ? (
+                      <span style={{ fontSize: 22, lineHeight: 1 }}>{getEventIconGlyph(selectedEvent)}</span>
+                    ) : null}
+                    <h3 style={{ margin: 0, color: theme.text, fontSize: isMobile ? 18 : 20, fontWeight: 800, lineHeight: 1.25 }}>
+                      {selectedEvent.title}
+                    </h3>
+                  </div>
+                  <p style={{ margin: "6px 0 0", fontSize: 13, color: "#475569", fontWeight: 600 }}>
+                    {new Date(selectedEvent.start_at).toLocaleString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                    {" – "}
+                    {new Date(selectedEvent.end_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                    {selectedEvent.job_types?.name ? ` · ${selectedEvent.job_types.name}` : ""}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: isMobile ? "16px 20px 24px" : "16px 24px 24px" }}>
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start", marginBottom: 14 }}>
               <div>
                 <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Customer</p>
@@ -6012,6 +6345,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   </button>
                 )}
               </div>
+            </div>
             </div>
           </div>
         </>
