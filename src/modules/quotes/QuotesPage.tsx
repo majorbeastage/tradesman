@@ -2202,7 +2202,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
           return
         }
         await persistQuoteJobType(prefill.jobTypeId, quoteId)
-        await applyJobTypeLinesToQuoteItems(prefill.jobTypeId, quoteId, { silentIfEmpty: true })
       })()
     }
     onQueuedJobType()
@@ -3841,65 +3840,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return true
   }
 
-  async function applyJobTypeLinesToQuoteItems(
-    jobTypeIdOverride?: string,
-    quoteIdOverride?: string,
-    opts?: { silentIfEmpty?: boolean },
-  ) {
-    const jtId =
-      (jobTypeIdOverride ?? "").trim() ||
-      (selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string"
-        ? String((selectedQuote as QuoteRow).job_type_id ?? "").trim()
-        : "")
-    if (!jtId) {
-      if (!opts?.silentIfEmpty) alert("Choose a quote job type first.")
-      return
-    }
-    const quoteId = quoteIdOverride ?? selectedQuoteId
-    if (!supabase || !quoteId) return
-    const presets = estimateLinePresets.filter((p) => (p.linked_job_type_ids ?? []).includes(jtId))
-    if (presets.length === 0) {
-      if (!opts?.silentIfEmpty) {
-        alert(
-          "No saved line templates are linked to this job type. Link them under Job types or Estimate line items (Add to job type), then try again.",
-        )
-      }
-      return
-    }
-    const existingIds = new Set<string>()
-    for (const item of selectedQuoteItems) {
-      const m = parseQuoteItemMetadata(item.metadata)
-      if (m.preset_id) existingIds.add(m.preset_id)
-    }
-    const toInsert = presets.filter((p) => !existingIds.has(p.id))
-    if (toInsert.length === 0) {
-      if (!opts?.silentIfEmpty) alert("Every template line linked to this job type is already on the quote.")
-      return
-    }
-    setApplyJtLinesBusy(true)
-    try {
-      for (let i = 0; i < toInsert.length; i++) {
-        const p = toInsert[i]
-        const skipRefresh = i < toInsert.length - 1
-        const ok = await insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
-          presetId: p.id,
-          metadata: {
-            minimum_line_total: p.minimum_line_total,
-            line_kind: p.line_kind,
-            ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-              ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
-              : {}),
-          },
-          skipRefresh,
-        })
-        if (!ok) return
-      }
-      void refreshQuoteItemsOnly()
-    } finally {
-      setApplyJtLinesBusy(false)
-    }
-  }
-
   async function persistQuoteItemUpdate(itemId: string, patch: { description?: string; quantity?: number; unit_price?: number; metadata?: Record<string, unknown> }) {
     if (!supabase || !selectedQuoteId) return
     const result = await updateQuoteItemRowSafe(supabase, itemId, patch)
@@ -3929,7 +3869,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   async function deleteQuoteItemRow(itemId: string) {
     if (!supabase || !selectedQuoteId) return
-    if (!confirm("Remove this line item?")) return
     const { error } = await supabase.from("quote_items").delete().eq("id", itemId)
     if (error) {
       alert(error.message)
@@ -3941,6 +3880,55 @@ export default function QuotesPage(_props: QuotesPageProps) {
       delete next[itemId]
       return next
     })
+  }
+
+  async function replaceQuoteLinesForJobType(jobTypeId: string | null, quoteId: string) {
+    if (!supabase) return
+    setApplyJtLinesBusy(true)
+    try {
+      const { data: existing, error: loadErr } = await supabase
+        .from("quote_items")
+        .select("id")
+        .eq("quote_id", quoteId)
+      if (loadErr) {
+        alert(loadErr.message)
+        return
+      }
+      for (const row of existing ?? []) {
+        const id = String((row as { id: string }).id)
+        const { error } = await supabase.from("quote_items").delete().eq("id", id)
+        if (error) {
+          alert(error.message)
+          return
+        }
+      }
+      setSelectedQuoteItems([])
+      setQuoteLineDrafts({})
+      if (!jobTypeId) {
+        void refreshQuoteItemsOnly()
+        return
+      }
+      const presets = estimateLinePresets.filter((p) => (p.linked_job_type_ids ?? []).includes(jobTypeId))
+      for (let i = 0; i < presets.length; i++) {
+        const p = presets[i]
+        const skipRefresh = i < presets.length - 1
+        const ok = await insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+          presetId: p.id,
+          metadata: {
+            minimum_line_total: p.minimum_line_total,
+            line_kind: p.line_kind,
+            ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+              ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+              : {}),
+          },
+          skipRefresh,
+        })
+        if (!ok) return
+      }
+      void refreshQuoteItemsOnly()
+    } finally {
+      setApplyJtLinesBusy(false)
+    }
   }
 
   async function persistQuoteJobType(jobTypeId: string, quoteIdOverride?: string) {
@@ -3965,6 +3953,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setSelectedQuote((prev: QuoteRow | null) =>
       prev && typeof prev === "object" && prev.id === quoteId ? { ...prev, job_type_id: v } : prev,
     )
+    await replaceQuoteLinesForJobType(v, quoteId)
   }
 
   async function saveEstimateLineItemsModal() {
@@ -6558,30 +6547,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       Apply to estimate
                                     </button>
                                   </div>
-                                  {showQuotesJobTypesPanel && estimateLinePresets.length > 0 ? (
-                                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                                      <button
-                                        type="button"
-                                        disabled={applyJtLinesBusy || !(selectedQuote as QuoteRow).job_type_id}
-                                        onClick={() => void applyJobTypeLinesToQuoteItems()}
-                                        style={{
-                                          padding: "6px 12px",
-                                          fontSize: 13,
-                                          fontWeight: 600,
-                                          borderRadius: 6,
-                                          border: "none",
-                                          background: theme.primary,
-                                          color: "#fff",
-                                          cursor: applyJtLinesBusy ? "wait" : "pointer",
-                                          opacity: (selectedQuote as QuoteRow).job_type_id ? 1 : 0.5,
-                                        }}
-                                      >
-                                        {applyJtLinesBusy ? "Adding…" : "Add job type lines to quote"}
-                                      </button>
-                                      <span style={{ fontSize: 12, color: "#64748b", maxWidth: 420 }}>
-                                        Inserts every saved line template linked to this job type (skips lines already on the quote).
-                                      </span>
-                                    </div>
+                                  {showQuotesJobTypesPanel && applyJtLinesBusy ? (
+                                    <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Updating line items for job type…</p>
                                   ) : null}
                                 </div>
                             </details>

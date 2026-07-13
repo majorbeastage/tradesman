@@ -239,3 +239,30 @@ export function mergeCalendarEventDisplayMeta(
   base.display = prevDisplay
   return base
 }
+
+export type CalendarCustomerNotifyPrefs = { email: boolean; sms: boolean }
+
+export function readCalendarCustomerNotifyPrefs(metadata: unknown): CalendarCustomerNotifyPrefs | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const o = metadata as Record<string, unknown>
+  const raw = o.customer_notify
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const n = raw as Record<string, unknown>
+  const email = n.email === true
+  const sms = n.sms === true
+  if (!email && !sms) return null
+  return { email, sms }
+}
+
+export function mergeCalendarCustomerNotifyPrefs(
+  prevMeta: Record<string, unknown> | null | undefined,
+  prefs: CalendarCustomerNotifyPrefs | null,
+): Record<string, unknown> {
+  const base = prevMeta && typeof prevMeta === "object" && !Array.isArray(prevMeta) ? { ...prevMeta } : {}
+  if (!prefs || (!prefs.email && !prefs.sms)) {
+    delete base.customer_notify
+    return base
+  }
+  base.customer_notify = { email: prefs.email === true, sms: prefs.sms === true }
+  return base
+}

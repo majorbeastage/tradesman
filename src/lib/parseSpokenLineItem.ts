@@ -22,6 +22,7 @@ const KNOWN_UNITS: Array<{ re: RegExp; basis: string; singular: string; plural: 
   { re: /\b(square\s*yards?|sq\.?\s*yd\.?)\b/i, basis: "sqyd", singular: "Sq Yd", plural: "Sq Yd" },
   { re: /\b(miles?|mi)\b/i, basis: "miles", singular: "Mile", plural: "Miles" },
   { re: /\b(hours?|hrs?)\b/i, basis: "hours", singular: "Hour", plural: "Hours" },
+  { re: /\b(months?|\/\s*mo(?:nth)?\.?|per\s*month|a\s*month|is\s+month)\b/i, basis: "months", singular: "Month", plural: "Months" },
   { re: /\b(gallons?|gal)\b/i, basis: "gallons", singular: "Gallon", plural: "Gallons" },
   { re: /\b(loads?)\b/i, basis: "loads", singular: "Load", plural: "Loads" },
   { re: /\b(yards?|yds?)\b/i, basis: "yards", singular: "Yard", plural: "Yards" },
@@ -29,6 +30,7 @@ const KNOWN_UNITS: Array<{ re: RegExp; basis: string; singular: string; plural: 
   { re: /\b(bags?)\b/i, basis: "bags", singular: "Bag", plural: "Bags" },
   { re: /\b(trees?)\b/i, basis: "trees", singular: "Tree", plural: "Trees" },
   { re: /\b(rooms?)\b/i, basis: "rooms", singular: "Room", plural: "Rooms" },
+  { re: /\b(users?|seats?)\b/i, basis: "each", singular: "Each", plural: "Each" },
   { re: /\b(each|ea|units?|pcs?|pieces?)\b/i, basis: "each", singular: "Each", plural: "Each" },
 ]
 
@@ -46,13 +48,14 @@ export const COMMON_LINE_UNITS: Array<{ id: string; label: string }> = [
   { id: "bags", label: "Bags" },
   { id: "trees", label: "Trees" },
   { id: "rooms", label: "Rooms" },
+  { id: "months", label: "Months" },
 ]
 
 function titleCaseWords(s: string): string {
   return s
     .split(/\s+/)
     .filter(Boolean)
-    .map((w) => (/^(of|to|per|and|or|a|an)$/i.test(w) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
+    .map((w) => (/^(of|to|per|and|or|a|an|with|for|the)$/i.test(w) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
     .join(" ")
 }
 
@@ -96,19 +99,39 @@ function detectPrice(text: string): number {
   const leadingAmt = text.match(/\b(\d+(?:\.\d{1,2})?)\s*(?:dollar|usd)?\s*(?:charge|fee|cost|price|rate)\b/i)
   if (leadingAmt) return Number.parseFloat(leadingAmt[1]) || 0
 
+  // "is 49 a month" / "is 49 month" voice phrasing
+  const isMonthAmt = text.match(/\bis\s+(\d+(?:\.\d{1,2})?)\s*(?:a\s+)?(?:months?|mo\.?)\b/i)
+  if (isMonthAmt) return Number.parseFloat(isMonthAmt[1]) || 0
+
   return 0
 }
 
+function stripSpeechFiller(text: string): string {
+  return text
+    .replace(/^(?:yes|yeah|yep|ok|okay|sure|please|so|um|uh)\b[\s,.-]*/i, "")
+    .replace(/\b(?:adding|add|include|includes|including)\b/gi, " ")
+    .replace(/\b(?:is\s+month|a\s+month|per\s+month|\/\s*mo(?:nth)?\.?)\b/gi, " ")
+    .replace(/\b(?:is|for|of|the|a|an|with|to|and)\b/gi, (m, offset) => (offset === 0 ? " " : m))
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function buildSmartTitle(text: string, unit: { singular: string; plural: string; basis: string } | null): string {
-  let working = text
+  let working = stripSpeechFiller(text)
     .replace(/\$\s*\d+(?:\.\d{1,2})?/g, " ")
     .replace(/\d+(?:\.\d+)?\s*(?:dollars?|bucks?|cents?)\b/gi, " ")
-    .replace(/\b\d+(?:\.\d+)?\s*(?:acres?|ac|miles?|mi|hours?|hrs?|gallons?|gal|loads?|yards?|yds?|tons?|bags?|trees?|rooms?|sq\.?\s*ft\.?|sqft|each|ea)\b/gi, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:acres?|ac|miles?|mi|hours?|hrs?|gallons?|gal|loads?|yards?|yds?|tons?|bags?|trees?|rooms?|months?|mo\.?|sq\.?\s*ft\.?|sqft|each|ea|users?)\b/gi, " ")
+    .replace(/\bis\s+\d+(?:\.\d{1,2})?\b/gi, " ")
     .replace(/\b\d+(?:\.\d+)?\b/g, " ")
-    .replace(/\b(charge|fee|cost|price|rate|for|of|a|an|the|per|at|@)\b/gi, " ")
+    .replace(/\b(charge|fee|cost|price|rate|for|of|a|an|the|per|at|@|yes|yeah|adding|add|month|months|single)\b/gi, (w) =>
+      /^(single)$/i.test(w) ? w : " ",
+    )
     .replace(/[^\w\s-/]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
+
+  // Prefer cleaner noun phrases: drop leading verbs leftover from ASR
+  working = working.replace(/^(?:is|are|be|with)\s+/i, "").trim()
 
   if (!working) {
     if (unit) return `Per ${unit.singular} Charge`
@@ -126,6 +149,11 @@ function buildSmartTitle(text: string, unit: { singular: string; plural: string;
       core = core.replace(/\bfuel\b/i, "Fuel and").replace(/\s+and\s+and\s+/i, " and ")
     }
     return `Per ${unit.singular} ${core} Charge`.replace(/\s+/g, " ").trim()
+  }
+
+  // Subscription / seat style: keep concise product name (no "Per Month … Charge" noise)
+  if (unit?.basis === "months" || /\b(user|users|phone|manager|office|seat|seats)\b/i.test(core)) {
+    return core.slice(0, 80)
   }
 
   if (unit && !new RegExp(`\\b${unit.singular}\\b`, "i").test(core)) {
@@ -165,8 +193,20 @@ export function parseSpokenLineItem(raw: string, knownDescriptions: string[] = [
 
   const unit = detectUnit(text)
   const unit_price = detectPrice(text)
-  const quantity = detectQuantity(text, unit)
-  const unit_basis = unit?.basis ?? (/\b(flat|fixed)\b/i.test(text) ? "each" : "hours")
+  let quantity = detectQuantity(text, unit)
+  // "single user" / "one office manager" style → qty 1
+  if (/\b(single|one|an|a)\b/i.test(text) && /\b(user|users|seat|seats|manager)\b/i.test(text)) {
+    quantity = 1
+  }
+  const unit_basis =
+    unit?.basis ??
+    (/\b(flat|fixed)\b/i.test(text)
+      ? "each"
+      : /\b(month|monthly|\/\s*mo)\b/i.test(text)
+        ? "months"
+        : /\b(user|users|seat|seats)\b/i.test(text)
+          ? "each"
+          : "hours")
   const line_kind = detectLineKind(text)
 
   let minimum_line_total: number | undefined
@@ -206,10 +246,11 @@ export function extractJobTypeNamesFromServicesText(raw: string): string[] {
     .replace(/\bi\s+(?:do|offer|provide|specialize in)\s+/gi, " ")
     .replace(/\band\b/gi, ",")
   for (const part of working.split(/[,;\n•·]+/)) {
-    let item = part.trim().replace(/^(?:also|plus|including)\s+/i, "").trim()
+    let item = part.trim().replace(/^(?:also|plus|including|yes|yeah)\s+/i, "").trim()
     if (item.length < 3) continue
     if (/\b(how|what|when|please|thank)\b/i.test(item) && item.split(/\s+/).length > 8) continue
-    item = item.replace(/^[a-z]/, (c) => c.toUpperCase()).slice(0, 80)
+    item = titleCaseWords(stripSpeechFiller(item)).slice(0, 80)
+    if (item.length < 3) continue
     chunks.push(item)
     if (chunks.length >= 16) break
   }
@@ -226,16 +267,25 @@ export function extractJobTypeNamesFromServicesText(raw: string): string[] {
 
 /** Pull multiple pricing phrases into line drafts from a pricing description paragraph. */
 export function parsePricingPhrasesToLineItems(raw: string): ParsedSpokenLineItem[] {
-  // Prefer splitting on sentence / semicolon / newline; keep "and" inside phrases when it's "fuel and equipment"
-  const parts = raw
+  // Voice often chains: "Adding X is month Adding Y is month"
+  const addingSplit = raw
+    .split(/\b(?:adding|plus|also|another|and then)\b/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 4)
+
+  const sentenceSplit = raw
     .split(/[;\n]+|(?<=\d)\s*[,]\s+(?=[A-Za-z])|(?:\.\s+)(?=[A-Z])/)
     .map((s) => s.trim())
     .filter((s) => s.length >= 4)
-  const candidates = parts.length > 1 ? parts : raw.split(/[,;\n]+/).map((s) => s.trim()).filter((s) => s.length >= 4)
+
+  const candidates =
+    addingSplit.length > 1 ? addingSplit : sentenceSplit.length > 1 ? sentenceSplit : raw.split(/[,;\n]+/).map((s) => s.trim()).filter((s) => s.length >= 4)
+
   const out: ParsedSpokenLineItem[] = []
   const seen = new Set<string>()
   for (const part of candidates.length ? candidates : [raw]) {
-    const parsed = parseSpokenLineItem(part)
+    const cleaned = part.replace(/^(?:yes|yeah|yep|ok|okay|sure)\b[\s,.-]*/i, "").trim()
+    const parsed = parseSpokenLineItem(cleaned.length >= 3 ? cleaned : part)
     if (!parsed) continue
     const key = `${parsed.title.toLowerCase()}|${parsed.line_kind}|${parsed.unit_basis}`
     if (seen.has(key)) continue

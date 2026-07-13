@@ -25,6 +25,8 @@ import {
   formatCalendarEventLabel,
   loadCalendarDisplayPrefs,
   mergeCalendarEventDisplayMeta,
+  mergeCalendarCustomerNotifyPrefs,
+  readCalendarCustomerNotifyPrefs,
   readCalendarEventDisplayMeta,
   saveCalendarDisplayPrefs,
   calendarChipSurfaceStyle,
@@ -411,6 +413,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [displayPrefs, setDisplayPrefs] = useState<CalendarDisplayPrefs>(() => loadCalendarDisplayPrefs())
   const [showDisplayPrefs, setShowDisplayPrefs] = useState(false)
   const [eventCtxMenu, setEventCtxMenu] = useState<{ x: number; y: number; event: CalendarEvent } | null>(null)
+  const ignoreEventCtxCloseUntilRef = useRef(0)
+  const [dragNotifyPrompt, setDragNotifyPrompt] = useState<{
+    event: CalendarEvent
+    newStart: Date
+    durationMs: number
+    notifyEmail: boolean
+    notifySms: boolean
+  } | null>(null)
+  const dragNotifyResolverRef = useRef<((choice: "yes" | "no" | "cancel") => void) | null>(null)
   const [jobTypeIconById, setJobTypeIconById] = useState<Record<string, string>>({})
   const [currentDate, setCurrentDate] = useState(new Date())
   const [expanded, setExpanded] = useState(false)
@@ -839,14 +850,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setEventCtxMenu(null)
     }
-    function onPointer() {
+    function onPointer(e: PointerEvent) {
+      if (Date.now() < ignoreEventCtxCloseUntilRef.current) return
+      if (eventCtxMenuRef.current?.contains(e.target as Node)) return
       setEventCtxMenu(null)
     }
     window.addEventListener("keydown", onKey)
-    window.addEventListener("pointerdown", onPointer)
+    window.addEventListener("pointerdown", onPointer, true)
     return () => {
       window.removeEventListener("keydown", onKey)
-      window.removeEventListener("pointerdown", onPointer)
+      window.removeEventListener("pointerdown", onPointer, true)
     }
   }, [eventCtxMenu])
 
@@ -857,8 +870,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     const pad = 8
     const el = eventCtxMenuRef.current
-    const w = el?.offsetWidth || 280
-    const h = el?.offsetHeight || 340
+    const w = el?.offsetWidth || 300
+    const h = el?.offsetHeight || 380
     const vw = window.innerWidth
     const vh = window.innerHeight
     let left = eventCtxMenu.x
@@ -866,6 +879,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (left + w > vw - pad) left = Math.max(pad, vw - w - pad)
     if (top + h > vh - pad) top = Math.max(pad, eventCtxMenu.y - h)
     if (top < pad) top = pad
+    if (left < pad) left = pad
     setEventCtxMenuPos({ left, top })
   }, [eventCtxMenu])
 
@@ -2050,6 +2064,31 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
     }
 
+    const notifyPrefs = readCalendarCustomerNotifyPrefs(ev.metadata)
+    let shouldNotifyEmail = false
+    let shouldNotifySms = false
+    if (ev.customer_id && notifyPrefs) {
+      const choice = await new Promise<"yes" | "no" | "cancel">((resolve) => {
+        dragNotifyResolverRef.current = resolve
+        setDragNotifyPrompt({
+          event: ev,
+          newStart,
+          durationMs,
+          notifyEmail: notifyPrefs.email,
+          notifySms: notifyPrefs.sms,
+        })
+      })
+      setDragNotifyPrompt(null)
+      dragNotifyResolverRef.current = null
+      if (choice === "cancel") {
+        return false
+      }
+      if (choice === "yes") {
+        shouldNotifyEmail = notifyPrefs.email
+        shouldNotifySms = notifyPrefs.sms
+      }
+    }
+
     const startIso = newStart.toISOString()
     const endIso = end.toISOString()
     const { data, error } = await supabase
@@ -2068,6 +2107,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (selectedEvent?.id === ev.id) {
       setSelectedEvent((prev) => (prev && prev.id === ev.id ? { ...prev, start_at: startIso, end_at: endIso } : prev))
     }
+    setEvents((prev) => prev.map((e) => (e.id === ev.id ? { ...e, start_at: startIso, end_at: endIso } : e)))
+
+    if (ev.customer_id && (shouldNotifyEmail || shouldNotifySms)) {
+      const notifyErrs = await sendCustomerAppointmentNotify({
+        customerId: ev.customer_id,
+        eventId: ev.id,
+        notifyEmail: shouldNotifyEmail,
+        notifySms: shouldNotifySms,
+        kind: "reschedule",
+        title: ev.title?.trim() || "Your appointment",
+        startIso,
+        ownerUserId: eventOwnerUserId,
+      })
+      if (notifyErrs.length > 0) {
+        alert(`Schedule saved, but could not notify the customer:\n${notifyErrs.join("\n")}`)
+      }
+    }
+
     loadEvents()
     return true
   }
@@ -2835,9 +2892,17 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           start_at: s.toISOString(),
           end_at: e.toISOString(),
         }
+        let meta: Record<string, unknown> = {}
         if (addAssignToSelectedUser && (assignee.assignedDemoUserId || assignee.assignedUserId)) {
-          row.metadata = mergeCalendarAssigneeMetadata(null, assignee)
+          meta = mergeCalendarAssigneeMetadata(null, assignee) as Record<string, unknown>
         }
+        if (addNotifyEmail || addNotifySms) {
+          meta = mergeCalendarCustomerNotifyPrefs(meta, {
+            email: addNotifyEmail,
+            sms: addNotifySms,
+          })
+        }
+        if (Object.keys(meta).length > 0) row.metadata = meta
         if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
         return row
@@ -3205,7 +3270,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   function beginMonthEventPointerDown(e: React.PointerEvent, ev: CalendarEvent) {
     if (e.button === 2) return
+    e.preventDefault()
     e.stopPropagation()
+    try {
+      document.body.style.userSelect = "none"
+    } catch {
+      /* ignore */
+    }
     const start = new Date(ev.start_at)
     setMonthEventDrag({
       event: ev,
@@ -3291,6 +3362,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       if (e.pointerId !== monthEventDrag.pointerId) return
       const drag = monthEventDrag
       setMonthEventDrag(null)
+      try {
+        document.body.style.userSelect = ""
+      } catch {
+        /* ignore */
+      }
       if (!drag.moved) return
       const day = resolveMonthDayFromPointer(e.clientX, e.clientY)
       if (!day) return
@@ -4025,7 +4101,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                         <td
                           key={di}
                           data-cal-month-day={calDayIsoLocal(cell)}
-                          onClick={() => openAddItemForDate(cell)}
+                          onDoubleClick={(e) => {
+                            if ((e.target as HTMLElement).closest("[data-cal-event]")) return
+                            openAddItemForDate(cell)
+                          }}
                           style={{
                             padding: "4px",
                             border: `1px solid ${theme.border}`,
@@ -4039,6 +4118,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                                   : "#f9fafb",
                             color: inMonth ? theme.text : "#9ca3af",
                             cursor: "pointer",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
                           }}
                         >
                           <div style={{ fontWeight: isToday(cell) ? 700 : 400, fontSize: "13px", marginBottom: "4px" }}>{cell.getDate()}</div>
@@ -4054,12 +4135,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               onContextMenu={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
+                                ignoreEventCtxCloseUntilRef.current = Date.now() + 400
                                 setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
                               }}
                               style={{
                                 ...eventChipStyle(ev),
                                 opacity: monthEventDrag?.event.id === ev.id && monthEventDrag.moved ? 0.35 : 1,
                                 cursor: monthEventDrag?.event.id === ev.id ? "grabbing" : "grab",
+                                userSelect: "none",
+                                WebkitUserSelect: "none",
                               }}
                               title={`${formatEventChipLabel(ev)} · Double-click to open · Drag to move day`}
                             >
@@ -4186,6 +4270,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             onContextMenu={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
+                              ignoreEventCtxCloseUntilRef.current = Date.now() + 400
                               setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
                             }}
                             style={{
@@ -4207,6 +4292,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               touchAction: "none",
                               zIndex: dragging ? 2 : 1,
                               fontWeight: 600,
+                              userSelect: "none",
                             }}
                             title={`${formatEventChipLabel(ev)} · Double-click to open`}
                           >
@@ -4302,6 +4388,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           onContextMenu={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
+                            ignoreEventCtxCloseUntilRef.current = Date.now() + 400
                             setEventCtxMenu({ x: e.clientX, y: e.clientY, event: ev })
                           }}
                           style={{
@@ -4324,6 +4411,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                             zIndex: dragging ? 2 : 1,
                             fontWeight: 600,
                             lineHeight: 1.35,
+                            userSelect: "none",
                           }}
                           title={`${formatEventChipLabel(ev)} · Double-click to open`}
                         >
@@ -5081,13 +5169,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           ref={eventCtxMenuRef}
           role="menu"
           onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
           style={{
             position: "fixed",
-            left: eventCtxMenuPos?.left ?? eventCtxMenu.x,
-            top: eventCtxMenuPos?.top ?? eventCtxMenu.y,
+            left: eventCtxMenuPos?.left ?? Math.min(eventCtxMenu.x, window.innerWidth - 308),
+            top: eventCtxMenuPos?.top ?? Math.max(8, Math.min(eventCtxMenu.y, window.innerHeight - 400)),
             zIndex: 10050,
-            width: 268,
-            maxHeight: "min(70vh, 420px)",
+            width: 300,
+            maxHeight: "min(78vh, 480px)",
             overflow: "auto",
             background: "#fff",
             border: `1px solid ${theme.border}`,
@@ -5096,7 +5185,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             padding: 12,
             display: "grid",
             gap: 10,
-            visibility: eventCtxMenuPos ? "visible" : "hidden",
           }}
         >
           <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Event look</div>
@@ -5166,6 +5254,32 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </button>
             ))}
           </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Chip style (calendar view)</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            {CALENDAR_CHIP_STYLE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  setChipStyle(opt.id)
+                }}
+                style={{
+                  textAlign: "left",
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                  border:
+                    displayPrefs.chipStyle === opt.id ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                  background: displayPrefs.chipStyle === opt.id ? "#fff7ed" : "#fff",
+                  cursor: "pointer",
+                  color: "#0f172a",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -5187,6 +5301,89 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             Open event
           </button>
         </div>
+      ) : null}
+
+      {dragNotifyPrompt ? (
+        <>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.35)", zIndex: 10060 }} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{
+              position: "fixed",
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              zIndex: 10061,
+              width: "min(420px, calc(100vw - 24px))",
+              background: "#fff",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              boxShadow: "0 20px 50px rgba(15,23,42,0.28)",
+              padding: 18,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>Send an update to the customer?</div>
+            <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.45 }}>
+              This appointment was shared with the customer
+              {dragNotifyPrompt.notifyEmail && dragNotifyPrompt.notifySms
+                ? " by email and text"
+                : dragNotifyPrompt.notifyEmail
+                  ? " by email"
+                  : " by text"}
+              . Do you want to send a reschedule update?
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => dragNotifyResolverRef.current?.("cancel")}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  color: "#0f172a",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => dragNotifyResolverRef.current?.("no")}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                  color: "#0f172a",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={() => dragNotifyResolverRef.current?.("yes")}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: theme.primary,
+                  color: "#fff",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Yes
+              </button>
+            </div>
+          </div>
+        </>
       ) : null}
 
       {selectedEvent && (
