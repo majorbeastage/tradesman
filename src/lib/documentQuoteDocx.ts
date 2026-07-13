@@ -12,6 +12,7 @@ import {
   WidthType,
 } from "docx"
 import { fetchImageBytesForQuotePdf, type QuotePdfCustomerCopyAttachment, type QuotePdfLineItem } from "./documentPdf"
+import { SANDBOX_PDF_WATERMARK_TEXT } from "./sandboxPdfWatermark"
 
 function money(n: number): string {
   return `$${n.toFixed(2)}`
@@ -95,10 +96,27 @@ export async function buildQuoteDocxBlob(params: {
     showSignatures: boolean
   } | null
   customerCopyAttachments?: QuotePdfCustomerCopyAttachment[]
+  sandboxWatermark?: boolean
 }): Promise<Blob> {
   const includeDate = params.includePreparedDate !== false
   const showNums = params.showLineNumbers === true
   const children: (Paragraph | Table)[] = []
+
+  if (params.sandboxWatermark) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 200 },
+        children: [
+          new TextRun({
+            text: SANDBOX_PDF_WATERMARK_TEXT,
+            bold: true,
+            size: 28,
+            color: "999999",
+          }),
+        ],
+      }),
+    )
+  }
 
   if (params.logo?.bytes?.length) {
     const docxType = params.logo.kind === "png" ? "png" : "jpg"

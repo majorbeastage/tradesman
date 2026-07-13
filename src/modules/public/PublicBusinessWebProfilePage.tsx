@@ -1,40 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
-import logo from "../../assets/logo.png"
-import { theme } from "../../styles/theme"
+import { useEffect, useMemo, useState } from "react"
+import { BusinessProfilePublicSite, type PublicBusinessProfileData } from "./BusinessProfilePublicSite"
 
 type Props = { slug: string }
 
-type PublicBusinessProfilePayload = {
-  ok?: boolean
-  error?: string
-  businessName?: string
-  tagline?: string
-  aboutUs?: string
-  profilePhotoUrl?: string | null
-  workPhotoUrls?: string[]
-  phone?: string | null
-  email?: string | null
-  address?: string | null
-  serviceArea?: string | null
-  businessHours?: Array<{ day: string; hours: string }>
-}
-
-const shell: CSSProperties = {
-  minHeight: "100vh",
-  background: "linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%)",
-  fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-  color: "#0f172a",
-}
-
-const card: CSSProperties = {
-  maxWidth: 720,
-  margin: "0 auto",
-  background: "#fff",
-  borderRadius: 16,
-  border: `1px solid ${theme.border}`,
-  boxShadow: "0 16px 48px rgba(15, 23, 42, 0.08)",
-  overflow: "hidden",
-}
+type PublicBusinessProfilePayload = PublicBusinessProfileData | { ok?: false; error?: string }
 
 export default function PublicBusinessWebProfilePage({ slug }: Props) {
   const [data, setData] = useState<PublicBusinessProfilePayload | null>(null)
@@ -69,9 +38,9 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
         }
         if (!cancelled) {
           setData(
-            json.ok
+            json && "ok" in json && json.ok
               ? json
-              : { ok: false, error: json.error ?? (res.status === 404 ? "Profile not found." : `Could not load profile (${res.status}).`) },
+              : { ok: false, error: (json as { error?: string }).error ?? (res.status === 404 ? "Profile not found." : `Could not load profile (${res.status}).`) },
           )
         }
       } catch {
@@ -87,159 +56,34 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
 
   if (loading) {
     return (
-      <div style={{ ...shell, display: "grid", placeItems: "center", padding: 24 }}>
+      <div style={{ minHeight: "100vh", width: "100%", display: "grid", placeItems: "center", background: "#f8fafc" }}>
         <p style={{ color: "#64748b" }}>Loading…</p>
       </div>
     )
   }
 
-  if (!data?.ok) {
+  if (!data || !("ok" in data) || !data.ok) {
     return (
-      <div style={{ ...shell, padding: "48px 16px" }}>
-        <div style={{ ...card, padding: 32, textAlign: "center" }}>
+      <div style={{ minHeight: "100vh", width: "100%", padding: "48px 16px", background: "#f8fafc", boxSizing: "border-box" }}>
+        <div
+          style={{
+            maxWidth: 560,
+            margin: "0 auto",
+            background: "#fff",
+            borderRadius: 16,
+            padding: 32,
+            textAlign: "center",
+            border: "1px solid #e2e8f0",
+          }}
+        >
           <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>Profile not available</h1>
-          <p style={{ margin: 0, color: "#64748b" }}>{data?.error ?? "This business profile is not published."}</p>
-          <PoweredByFooter />
+          <p style={{ margin: 0, color: "#64748b", lineHeight: 1.5 }}>
+            {(data as { error?: string } | null)?.error ?? "This business profile is not published."}
+          </p>
         </div>
       </div>
     )
   }
 
-  return (
-    <div style={{ ...shell, padding: "32px 16px 48px" }}>
-      <article style={card}>
-        <header style={{ padding: "28px 24px 20px", textAlign: "center", borderBottom: `1px solid ${theme.border}` }}>
-          {data.profilePhotoUrl ? (
-            <img
-              src={data.profilePhotoUrl}
-              alt=""
-              style={{
-                width: 112,
-                height: 112,
-                borderRadius: "50%",
-                objectFit: "cover",
-                border: `3px solid ${theme.border}`,
-                marginBottom: 16,
-              }}
-            />
-          ) : null}
-          <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 900, lineHeight: 1.2 }}>{data.businessName}</h1>
-          {data.tagline ? (
-            <p style={{ margin: 0, fontSize: 16, color: "#475569", lineHeight: 1.45, maxWidth: 520, marginInline: "auto" }}>
-              {data.tagline}
-            </p>
-          ) : null}
-        </header>
-
-        {data.aboutUs ? (
-          <section style={{ padding: "20px 24px", borderBottom: `1px solid ${theme.border}` }}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
-              About us
-            </h2>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: "#334155", whiteSpace: "pre-wrap" }}>{data.aboutUs}</p>
-          </section>
-        ) : null}
-
-        {(data.phone || data.email || data.address || data.serviceArea) && (
-          <section style={{ padding: "20px 24px", borderBottom: `1px solid ${theme.border}` }}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
-              Contact us
-            </h2>
-            <div style={{ display: "grid", gap: 10, fontSize: 15, lineHeight: 1.5 }}>
-              {data.phone ? (
-                <div>
-                  <strong>Phone:</strong>{" "}
-                  <a href={`tel:${data.phone.replace(/\D/g, "")}`} style={{ color: theme.primary, fontWeight: 700 }}>
-                    {data.phone}
-                  </a>
-                </div>
-              ) : null}
-              {data.email ? (
-                <div>
-                  <strong>Email:</strong>{" "}
-                  <a href={`mailto:${data.email}`} style={{ color: theme.primary, fontWeight: 700 }}>
-                    {data.email}
-                  </a>
-                </div>
-              ) : null}
-              {data.address ? (
-                <div>
-                  <strong>Address:</strong> {data.address}
-                </div>
-              ) : null}
-              {data.serviceArea ? (
-                <div>
-                  <strong>Service area:</strong> {data.serviceArea}
-                </div>
-              ) : null}
-            </div>
-          </section>
-        )}
-
-        {data.businessHours && data.businessHours.length > 0 ? (
-          <section style={{ padding: "20px 24px", borderBottom: `1px solid ${theme.border}` }}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
-              Business hours
-            </h2>
-            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6, fontSize: 15 }}>
-              {data.businessHours.map((row) => (
-                <li key={row.day} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <span style={{ fontWeight: 600 }}>{row.day}</span>
-                  <span style={{ color: "#475569" }}>{row.hours}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {data.workPhotoUrls && data.workPhotoUrls.length > 0 ? (
-          <section style={{ padding: "20px 24px" }}>
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b" }}>
-              Our work
-            </h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
-              {data.workPhotoUrls.map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt=""
-                  style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", borderRadius: 10, border: `1px solid ${theme.border}` }}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        <PoweredByFooter />
-      </article>
-    </div>
-  )
-}
-
-function PoweredByFooter() {
-  return (
-    <footer
-      style={{
-        padding: "20px 24px 24px",
-        borderTop: `1px solid ${theme.border}`,
-        background: "#f8fafc",
-        textAlign: "center",
-      }}
-    >
-      <a
-        href="/"
-        style={{
-          display: "inline-flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 8,
-          textDecoration: "none",
-          color: "#475569",
-        }}
-      >
-        <img src={logo} alt="Tradesman" style={{ height: 40, width: "auto", objectFit: "contain" }} />
-        <span style={{ fontSize: 12, fontWeight: 700 }}>Powered by Tradesman Systems LLC</span>
-      </a>
-    </footer>
-  )
+  return <BusinessProfilePublicSite data={data} />
 }

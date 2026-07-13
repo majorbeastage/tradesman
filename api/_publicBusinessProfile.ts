@@ -37,6 +37,64 @@ type BusinessPublicProfileSettings = {
   profilePhotoUrl: string | null
   workPhotoUrls: string[]
   publishedSlug: string
+  templateId: "classic" | "hero" | "split" | "gallery"
+  theme: {
+    primaryColor: string
+    secondaryColor: string
+    fieldBackgroundColor: string
+    fontColor: string
+  }
+  serviceAreasText: string
+  showServiceAreasList: boolean
+  servicesOfferedText: string
+  showServicesOffered: boolean
+  showContactForm: boolean
+}
+
+const DEFAULT_THEME = {
+  primaryColor: "#0f766e",
+  secondaryColor: "#0f172a",
+  fieldBackgroundColor: "#f8fafc",
+  fontColor: "#0f172a",
+}
+
+function normalizeHexColor(raw: string, fallback: string): string {
+  const t = raw.trim()
+  return /^#[0-9a-fA-F]{6}$/.test(t) ? t.toLowerCase() : fallback
+}
+
+function parseTheme(raw: unknown): BusinessPublicProfileSettings["theme"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_THEME }
+  const o = raw as Record<string, unknown>
+  return {
+    primaryColor: normalizeHexColor(typeof o.primaryColor === "string" ? o.primaryColor : "", DEFAULT_THEME.primaryColor),
+    secondaryColor: normalizeHexColor(typeof o.secondaryColor === "string" ? o.secondaryColor : "", DEFAULT_THEME.secondaryColor),
+    fieldBackgroundColor: normalizeHexColor(
+      typeof o.fieldBackgroundColor === "string" ? o.fieldBackgroundColor : "",
+      DEFAULT_THEME.fieldBackgroundColor,
+    ),
+    fontColor: normalizeHexColor(typeof o.fontColor === "string" ? o.fontColor : "", DEFAULT_THEME.fontColor),
+  }
+}
+
+function parseTemplateId(raw: unknown): BusinessPublicProfileSettings["templateId"] {
+  if (raw === "hero" || raw === "split" || raw === "gallery" || raw === "classic") return raw
+  return "classic"
+}
+
+function parseListField(raw: string, maxItems = 40): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(/[,;\n]+/)) {
+    const item = part.trim()
+    if (!item) continue
+    const key = item.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+    if (out.length >= maxItems) break
+  }
+  return out
 }
 
 type ProfileRow = {
@@ -110,7 +168,25 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     profilePhotoUrl: typeof o.profilePhotoUrl === "string" && o.profilePhotoUrl.trim() ? o.profilePhotoUrl.trim() : null,
     workPhotoUrls,
     publishedSlug: typeof o.publishedSlug === "string" ? normalizeSlug(o.publishedSlug) : "",
+    templateId: parseTemplateId(o.templateId),
+    theme: parseTheme(o.theme),
+    serviceAreasText: readNestedProfileString(o, "serviceAreasText", "service_areas_text").slice(0, 2000),
+    showServiceAreasList: o.showServiceAreasList === true,
+    servicesOfferedText: readNestedProfileString(o, "servicesOfferedText", "services_offered_text").slice(0, 2000),
+    showServicesOffered: o.showServicesOffered === true,
+    showContactForm: o.showContactForm === true,
   }
+}
+
+function profileMatchesSlug(row: ProfileRow, slug: string): boolean {
+  const settings = parseSettings(row.metadata)
+  const published = settings.publishedSlug || slugFromDisplayName(row.display_name ?? "")
+  const colSlug = typeof row.business_web_profile_slug === "string" ? normalizeSlug(row.business_web_profile_slug) : ""
+  return published === slug || colSlug === slug
+}
+
+function isPublishedProfile(row: ProfileRow): boolean {
+  return parseSettings(row.metadata).enabled === true
 }
 
 function resolvePublicImageUrl(settings: BusinessPublicProfileSettings, metadata: unknown): string | null {
@@ -126,35 +202,84 @@ function isMissingSlugColumnError(message: string): boolean {
 }
 
 async function findPublishedProfileBySlug(supabase: SupabaseClient, slug: string): Promise<ProfileRow | null> {
-  const { data, error } = await supabase.from("profiles").select(PROFILE_SELECT).eq("business_web_profile_slug", slug).maybeSingle()
-
-  if (!error && data?.id) return data as ProfileRow
-
-  if (error && !isMissingSlugColumnError(error.message ?? "")) {
-    console.warn("[public-business-profile] slug column lookup", error.message)
-  }
-
-  const { data: publishedRows, error: pubErr } = await supabase
+  const { data: byCol, error: colErr } = await supabase
     .from("profiles")
     .select(PROFILE_SELECT)
-    .filter("metadata->business_public_profile_v1->>enabled", "eq", "true")
-    .limit(200)
+    .eq("business_web_profile_slug", slug)
+    .maybeSingle()
 
-  if (pubErr) {
-    console.warn("[public-business-profile] metadata enabled lookup", pubErr.message)
-    return null
+  if (!colErr && byCol?.id) {
+    const row = byCol as ProfileRow
+    if (isPublishedProfile(row) && profileMatchesSlug(row, slug)) return row
   }
 
-  for (const row of (publishedRows ?? []) as ProfileRow[]) {
-    const settings = parseSettings(row.metadata)
-    if (!settings.enabled) continue
-    const published = settings.publishedSlug || slugFromDisplayName(row.display_name ?? "")
-    const colSlug =
-      typeof row.business_web_profile_slug === "string" ? normalizeSlug(row.business_web_profile_slug) : ""
-    if (published === slug || colSlug === slug) return row
+  if (colErr && !isMissingSlugColumnError(colErr.message ?? "")) {
+    console.warn("[public-business-profile] slug column lookup", colErr.message)
+  }
+
+  const { data: byPublishedSlug, error: pubSlugErr } = await supabase
+    .from("profiles")
+    .select(PROFILE_SELECT)
+    .filter("metadata->business_public_profile_v1->>publishedSlug", "eq", slug)
+    .limit(8)
+
+  if (!pubSlugErr) {
+    for (const row of (byPublishedSlug ?? []) as ProfileRow[]) {
+      if (isPublishedProfile(row)) return row
+    }
+  }
+
+  let offset = 0
+  const pageSize = 100
+  for (let page = 0; page < 20; page++) {
+    const { data: publishedRows, error: pubErr } = await supabase
+      .from("profiles")
+      .select(PROFILE_SELECT)
+      .or("metadata->business_public_profile_v1->>enabled.eq.true,metadata->business_public_profile_v1->>enabled.eq.1")
+      .range(offset, offset + pageSize - 1)
+
+    if (pubErr) {
+      const { data: fallbackRows, error: fallbackErr } = await supabase
+        .from("profiles")
+        .select(PROFILE_SELECT)
+        .filter("metadata->business_public_profile_v1->>enabled", "eq", "true")
+        .range(offset, offset + pageSize - 1)
+      if (fallbackErr) {
+        console.warn("[public-business-profile] metadata enabled lookup", fallbackErr.message)
+        break
+      }
+      const rows = (fallbackRows ?? []) as ProfileRow[]
+      for (const row of rows) {
+        if (!isPublishedProfile(row)) continue
+        if (profileMatchesSlug(row, slug)) return row
+      }
+      if (rows.length < pageSize) break
+      offset += pageSize
+      continue
+    }
+
+    const rows = (publishedRows ?? []) as ProfileRow[]
+    for (const row of rows) {
+      if (!isPublishedProfile(row)) continue
+      if (profileMatchesSlug(row, slug)) return row
+    }
+    if (rows.length < pageSize) break
+    offset += pageSize
   }
 
   return null
+}
+
+/** Exported for business profile contact submissions. */
+export async function findBusinessProfileOwnerBySlug(
+  supabase: SupabaseClient,
+  slug: string,
+): Promise<{ profile: ProfileRow; settings: BusinessPublicProfileSettings } | null> {
+  const profile = await findPublishedProfileBySlug(supabase, slug)
+  if (!profile?.id) return null
+  const settings = parseSettings(profile.metadata)
+  if (!settings.enabled) return null
+  return { profile, settings }
 }
 
 function formatUsPhoneDisplay(raw: string): string {
@@ -326,7 +451,12 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       email: email || null,
       address: address || null,
       serviceArea: serviceArea || null,
+      serviceAreas: settings.showServiceAreasList ? parseListField(settings.serviceAreasText) : [],
+      servicesOffered: settings.showServicesOffered ? parseListField(settings.servicesOfferedText) : [],
       businessHours,
+      templateId: settings.templateId,
+      theme: settings.theme,
+      showContactForm: settings.showContactForm === true,
     })
   } catch (e) {
     console.error("[public-business-profile]", e)

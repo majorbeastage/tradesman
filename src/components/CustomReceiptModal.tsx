@@ -16,6 +16,7 @@ import {
   type CustomerReceiptPickerRow,
 } from "../lib/customReceipt"
 import { downloadPdfBlob } from "../lib/documentPdf"
+import { useSandboxTrainingMode } from "../lib/sandboxTrainingUi"
 
 export type CustomReceiptModalProps = {
   open: boolean
@@ -34,6 +35,7 @@ export default function CustomReceiptModal({
   userId,
   initialCustomerId,
 }: CustomReceiptModalProps) {
+  const sandboxTraining = useSandboxTrainingMode()
   const [form, setForm] = useState<CustomReceiptFormState>(() => defaultCustomReceiptFormState())
   const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
   const [savedReceipts, setSavedReceipts] = useState<CustomReceiptDraft[]>([])
@@ -107,7 +109,7 @@ export default function CustomReceiptModal({
     setNotice(null)
     try {
       const template = await loadReceiptTemplateSettings(supabase, userId)
-      const bytes = await buildCustomReceiptPdfBytes(form, template)
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
       const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
       downloadPdfBlob(bytes, `receipt-${slug}.pdf`)
       setNotice("PDF downloaded.")

@@ -16,6 +16,7 @@ import type { WorkOrderRecord } from "./workOrders"
 import { isTemplateChecked } from "./jobDocumentTemplate"
 import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "./workOrderDocumentTemplate"
 import { buildJobDocumentPdfBytes, fetchImageBytesForQuotePdf, type JobDocumentPdfSection } from "./documentPdf"
+import { isSandboxProfile } from "./sandboxEnvironment"
 
 function scopeFromEventMetadata(metadata: unknown): string {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return ""
@@ -295,6 +296,7 @@ export async function buildWorkOrderDocumentPdf(
     footer: templateForm.work_order_template_footer?.trim() || null,
     logo,
     sections,
+    sandboxWatermark: isSandboxProfile(null, meta),
   })
 }
 

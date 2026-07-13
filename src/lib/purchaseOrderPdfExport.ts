@@ -5,6 +5,7 @@ import type { PurchaseOrderRecord } from "./purchaseOrders"
 import { isTemplateChecked } from "./jobDocumentTemplate"
 import { PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "./purchaseOrderDocumentTemplate"
 import { buildJobDocumentPdfBytes, fetchImageBytesForQuotePdf, type JobDocumentPdfSection } from "./documentPdf"
+import { isSandboxProfile } from "./sandboxEnvironment"
 
 async function fetchLogoForTemplate(metadata: Record<string, unknown>, showLogo: boolean) {
   if (!showLogo) return null
@@ -151,6 +152,7 @@ export async function buildPurchaseOrderDocumentPdf(
     footer: templateForm.purchase_order_template_footer?.trim() || null,
     logo,
     sections,
+    sandboxWatermark: isSandboxProfile(null, meta),
   })
 }
 

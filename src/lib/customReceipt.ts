@@ -262,6 +262,7 @@ function buildAmountLabel(form: CustomReceiptFormState, subtotal: number): strin
 export async function buildCustomReceiptPdfBytes(
   form: CustomReceiptFormState,
   template: CustomReceiptTemplateSettings,
+  opts?: { sandboxWatermark?: boolean },
 ): Promise<Uint8Array> {
   const { quoteLines, subtotal } = formatCustomReceiptLineItems(form.lineItems)
   const customerName = form.customerName.trim() || "Customer"
@@ -297,6 +298,7 @@ export async function buildCustomReceiptPdfBytes(
     documentTitle: "Receipt",
     jobLabel: "Description",
     completedLabel: "Date",
+    sandboxWatermark: opts?.sandboxWatermark,
   })
 }
 

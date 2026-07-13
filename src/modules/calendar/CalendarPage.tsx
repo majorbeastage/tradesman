@@ -1472,6 +1472,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             : null,
         mileageLabel,
         receiptItemizeMode: itemize,
+        sandboxWatermark: sandboxTraining,
       })
       if (pdfBytes.length > 0 && pdfBytes.length <= 2_500_000) {
         receiptPdfInline = {
@@ -1705,6 +1706,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             : null,
         mileageLabel,
         receiptItemizeMode: itemize,
+        sandboxWatermark: sandboxTraining,
       })
       downloadPdfBlob(bytes, `receipt-${ev.id.slice(0, 8)}.pdf`)
     } catch (e) {

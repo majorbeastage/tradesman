@@ -44,6 +44,7 @@ import {
 } from "../../lib/customerQuickViewPrefs"
 import { calendarEventDisplayStatus } from "../../lib/calendarEventProfile"
 import { queueSchedulingCustomerPrefill, queueSchedulingEventView } from "../../lib/workflowNavigation"
+import { useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 
 type CustomerRowLite = {
   id: string
@@ -108,6 +109,7 @@ export function CustomerQuickViewSidePane({
   onRequestCustomerPayment,
   showCustomerPayments,
 }: Props) {
+  const sandboxTraining = useSandboxTrainingMode()
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -573,7 +575,7 @@ export function CustomerQuickViewSidePane({
     try {
       const template = await loadReceiptTemplateSettings(supabase, userId)
       const form = customReceiptDraftToFormState(draft)
-      const bytes = await buildCustomReceiptPdfBytes(form, template)
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
       downloadPdfBlob(bytes, `receipt-${receiptId.slice(0, 8)}.pdf`)
     } catch (e) {
       alert(formatAppError(e))

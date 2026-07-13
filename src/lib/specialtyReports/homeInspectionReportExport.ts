@@ -10,11 +10,13 @@ import {
   HOME_INSPECTION_MAJOR_SECTIONS,
   type HomeInspectionReportV1,
 } from "./homeInspectionTemplate"
+import { SANDBOX_PDF_WATERMARK_TEXT } from "../sandboxPdfWatermark"
 
 export type HomeInspectionExportMeta = {
   title?: string
   customerLabel?: string
   quoteId?: string
+  sandboxWatermark?: boolean
 }
 
 function escapeHtml(s: string): string {
@@ -146,6 +148,13 @@ export function buildHomeInspectionReportHtml(
     ? `<section style="margin-top:18px"><h2 style="font-size:15px">Executive summary</h2><p style="white-space:pre-wrap">${escapeHtml(home.summaryFindings.trim())}</p></section>`
     : ""
 
+  const watermarkCss = meta.sandboxWatermark
+    ? `.sandbox-wm{position:fixed;inset:0;pointer-events:none;z-index:9999;display:flex;align-items:center;justify-content:center;opacity:0.22;font-size:42px;font-weight:800;color:#64748b;transform:rotate(-32deg);}`
+    : ""
+  const watermarkHtml = meta.sandboxWatermark
+    ? `<div class="sandbox-wm" aria-hidden="true">${escapeHtml(SANDBOX_PDF_WATERMARK_TEXT)}</div>`
+    : ""
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -156,9 +165,11 @@ export function buildHomeInspectionReportHtml(
   body { font-family: system-ui, Segoe UI, sans-serif; color: #0f172a; font-size: 13px; line-height: 1.45; max-width: 820px; margin: 24px auto; }
   h1 { font-size: 22px; margin: 0 0 6px; }
   table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  ${watermarkCss}
 </style>
 </head>
 <body>
+${watermarkHtml}
 <h1>${title}</h1>
 ${subtitle ? `<p style="color:#64748b;margin:0 0 16px">${subtitle}</p>` : ""}
 <table>${headerTable}</table>
@@ -195,6 +206,14 @@ export async function buildHomeInspectionReportDocxBlob(
   meta: HomeInspectionExportMeta = {},
 ): Promise<Blob> {
   const children: Paragraph[] = []
+  if (meta.sandboxWatermark) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 200 },
+        children: [new TextRun({ text: SANDBOX_PDF_WATERMARK_TEXT, bold: true, size: 28, color: "999999" })],
+      }),
+    )
+  }
   const title = meta.title?.trim() || "Structure & property inspection report"
   children.push(new Paragraph({ text: title, heading: HeadingLevel.HEADING_1 }))
   if (meta.customerLabel?.trim()) {

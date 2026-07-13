@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildQuotePdfBytes } from "./documentPdf"
+import { isSandboxProfile } from "./sandboxEnvironment"
 import { fetchQuoteLogoForExport } from "./quoteLogoImage"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
 import { DEFAULT_ESTIMATE_CANCELLATION_TEMPLATE, DEFAULT_ESTIMATE_LEGAL_TEMPLATE } from "./defaultEstimateLegal"
@@ -124,6 +125,7 @@ async function buildEstimatePdfBytesForQuote(
     logo,
     legal: includeLegal || showSignatures ? { body: legalText, cancellation: cancelText, showSignatures } : null,
     customerCopyAttachments: [],
+    sandboxWatermark: isSandboxProfile(null, meta),
   })
 }
 

@@ -4028,6 +4028,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
       legal,
       customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
+      sandboxWatermark: sandboxTraining,
     }
   }
 
@@ -4040,7 +4041,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const shortId = selectedQuote.id.slice(0, 8)
       if (quoteExportFormat === "docx") {
         const { buildQuoteDocxBlob, downloadDocxBlob } = await import("../../lib/documentQuoteDocx")
-        const blob = await buildQuoteDocxBlob(base)
+        const blob = await buildQuoteDocxBlob({ ...base, sandboxWatermark: sandboxTraining })
         downloadDocxBlob(blob, `quote-${shortId}.docx`)
       } else {
         const bytes = await buildQuotePdfBytes(base)

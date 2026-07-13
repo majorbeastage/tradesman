@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "rea
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import {
+  BUSINESS_PROFILE_TEMPLATE_OPTIONS,
   BUSINESS_WEB_PROFILE_TAGLINE_MAX,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
+  DEFAULT_BUSINESS_PROFILE_THEME,
   businessWebProfilePublicUrl,
   businessWebProfileSlugFromName,
   emptyBusinessPublicProfileSettings,
@@ -187,6 +189,15 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         />
         Publish public business profile
       </label>
+      {settings.enabled ? (
+        <p style={{ margin: 0, fontSize: 12, color: "#166534", fontWeight: 600 }}>
+          Published profiles are live at your public URL after you click Save business web profile below.
+        </p>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12, color: "#b45309", fontWeight: 600 }}>
+          Not published — visitors will see “profile not found” until you enable publish and save.
+        </p>
+      )}
 
       <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>Your public web address</div>
@@ -272,6 +283,113 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
       </label>
 
       <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
+        <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Page design</legend>
+        <div style={{ display: "grid", gap: 12 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>Layout template</span>
+            <select
+              value={settings.templateId}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  templateId: e.target.value as BusinessPublicProfileSettings["templateId"],
+                }))
+              }
+              style={theme.formInput}
+            >
+              {BUSINESS_PROFILE_TEMPLATE_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+              {BUSINESS_PROFILE_TEMPLATE_OPTIONS.find((o) => o.id === settings.templateId)?.hint}
+            </span>
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+            {(
+              [
+                ["primaryColor", "Primary color"],
+                ["secondaryColor", "Secondary color"],
+                ["fieldBackgroundColor", "Field background"],
+                ["fontColor", "Font color"],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
+                {label}
+                <input
+                  type="color"
+                  value={settings.theme[key]}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      theme: { ...s.theme, [key]: e.target.value },
+                    }))
+                  }
+                  style={{ width: "100%", height: 40, padding: 2, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                />
+              </label>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSettings((s) => ({ ...s, theme: { ...DEFAULT_BUSINESS_PROFILE_THEME } }))}
+            style={{
+              justifySelf: "start",
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Reset colors to default
+          </button>
+        </div>
+      </fieldset>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Services offered (comma-separated)</span>
+        <textarea
+          value={settings.servicesOfferedText}
+          rows={3}
+          onChange={(e) => setSettings((s) => ({ ...s, servicesOfferedText: e.target.value }))}
+          placeholder="e.g. Lawn care, Mulching, Hardscaping, Irrigation repair"
+          style={{ ...theme.formInput, resize: "vertical" }}
+        />
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={settings.showServicesOffered}
+            onChange={(e) => setSettings((s) => ({ ...s, showServicesOffered: e.target.checked }))}
+          />
+          Show services offered on public page (each item on its own line)
+        </label>
+      </label>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Service areas (cities, counties, states — comma-separated)</span>
+        <textarea
+          value={settings.serviceAreasText}
+          rows={3}
+          onChange={(e) => setSettings((s) => ({ ...s, serviceAreasText: e.target.value }))}
+          placeholder="e.g. Franklin TN, Williamson County, Nashville, Brentwood"
+          style={{ ...theme.formInput, resize: "vertical" }}
+        />
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={settings.showServiceAreasList}
+            onChange={(e) => setSettings((s) => ({ ...s, showServiceAreasList: e.target.checked }))}
+          />
+          Show service areas list on public page
+        </label>
+      </label>
+
+      <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
         <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Contact us (public)</legend>
         <div style={{ display: "grid", gap: 8 }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
@@ -305,6 +423,18 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
           </label>
         </div>
       </fieldset>
+
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          style={{ marginTop: 3 }}
+          checked={settings.showContactForm}
+          onChange={(e) => setSettings((s) => ({ ...s, showContactForm: e.target.checked }))}
+        />
+        <span>
+          Show <strong>Contact us</strong> form on public page (name + email required; SMS opt-in when visitor prefers text)
+        </span>
+      </label>
 
       <div>
         <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
@@ -365,6 +495,12 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
 
       {error ? <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p> : null}
       {message ? <p style={{ margin: 0, color: "#166534", fontSize: 13 }}>{message}</p> : null}
+
+      {publicUrl && settings.enabled ? (
+        <a href={publicUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: theme.primary }}>
+          Preview public page ↗
+        </a>
+      ) : null}
 
       <button
         type="button"

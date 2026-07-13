@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib"
+import { finalizePdfBytes } from "./sandboxPdfWatermark"
 
 export type QuotePdfLineItem = { description: string; quantity: number; unitPrice: number; total: number }
 
@@ -99,6 +100,7 @@ export async function buildQuotePdfBytes(params: {
   } | null
   /** Photos/files marked for customer copy (shown after footer, before legal). */
   customerCopyAttachments?: QuotePdfCustomerCopyAttachment[]
+  sandboxWatermark?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   let page = doc.addPage([612, 792])
@@ -299,7 +301,7 @@ export async function buildQuotePdfBytes(params: {
     }
   }
 
-  return doc.save()
+  return finalizePdfBytes(await doc.save(), { sandboxWatermark: params.sandboxWatermark })
 }
 
 export async function buildReceiptPdfBytes(params: {
@@ -333,6 +335,7 @@ export async function buildReceiptPdfBytes(params: {
   mileageLabel?: string | null
   /** When true, first block is titled "Itemized charges"; checklist block is "Supplies checklist". */
   receiptItemizeMode?: boolean
+  sandboxWatermark?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792])
@@ -451,7 +454,7 @@ export async function buildReceiptPdfBytes(params: {
     y -= 4
   }
 
-  return doc.save()
+  return finalizePdfBytes(await doc.save(), { sandboxWatermark: params.sandboxWatermark })
 }
 
 export type JobDocumentPdfSection = {
@@ -469,6 +472,7 @@ export async function buildJobDocumentPdfBytes(params: {
   footer?: string | null
   logo?: { bytes: Uint8Array; kind: "png" | "jpeg" } | null
   sections: JobDocumentPdfSection[]
+  sandboxWatermark?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   const pageWidth = 612
@@ -568,7 +572,7 @@ export async function buildJobDocumentPdfBytes(params: {
     drawWrapped(params.footer.trim(), 9, 0.45)
   }
 
-  return doc.save()
+  return finalizePdfBytes(await doc.save(), { sandboxWatermark: params.sandboxWatermark })
 }
 
 /** Base64-encode PDF bytes for Resend email attachments (browser-safe). */

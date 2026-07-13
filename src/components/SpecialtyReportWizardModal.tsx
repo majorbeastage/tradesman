@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useIsMobile } from "../hooks/useIsMobile"
+import { useSandboxTrainingMode } from "../lib/sandboxTrainingUi"
 import { useAuth } from "../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { theme } from "../styles/theme"
@@ -239,6 +240,7 @@ export default function SpecialtyReportWizardModal({
   varianceAssigneeOptions = [],
 }: Props) {
   const isMobile = useIsMobile()
+  const sandboxTraining = useSandboxTrainingMode()
   const { user, session } = useAuth()
   const globalAssistant = useGlobalAssistantOptional()
   const accountDisplayName = useMemo(() => {
@@ -605,8 +607,9 @@ export default function SpecialtyReportWizardModal({
       title,
       customerLabel: customerLabel?.trim() || undefined,
       quoteId: quoteId ?? undefined,
+      sandboxWatermark: sandboxTraining,
     }
-  }, [reportTitle, picked, customerLabel, quoteId])
+  }, [reportTitle, picked, customerLabel, quoteId, sandboxTraining])
 
   const close = () => {
     reset()

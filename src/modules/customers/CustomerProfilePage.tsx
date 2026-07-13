@@ -32,6 +32,7 @@ import { deleteCustomerFile } from "../../lib/customerContactOperations"
 import { isCustomerArchivedForHub } from "../../lib/customerContactKind"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
+import { useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { estimateDisplayStatus, formatUsdAmount, receiptDisplayStatus } from "../../lib/customerDocumentStatus"
 import { calendarEventDisplayStatus, exportCalendarEventDetailPdf, openCalendarEventSummaryPdf, type CalendarEventProfileRow } from "../../lib/calendarEventProfile"
 import { openEstimatePdfForProfile } from "../../lib/estimatePdfExport"
@@ -344,6 +345,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const userId = useScopedUserId() ?? user?.id ?? null
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const isMobile = useIsMobile()
+  const sandboxTraining = useSandboxTrainingMode()
   const [customerId] = useState<string | null>(() => consumeQueuedCustomerProfile())
   const [bundle, setBundle] = useState<CustomerProfileBundle | null>(null)
   const [loading, setLoading] = useState(false)
@@ -830,7 +832,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
     try {
       const template = await loadReceiptTemplateSettings(supabase, userId)
       const form = customReceiptDraftToFormState(draft)
-      const bytes = await buildCustomReceiptPdfBytes(form, template)
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
       const slug = receiptId.slice(0, 8)
       downloadPdfBlob(bytes, `receipt-${slug}.pdf`)
     } catch (e: unknown) {

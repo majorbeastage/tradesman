@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { parseCalendarEventReceiptMeta } from "./calendarReceiptMetadata"
 import { buildCalendarReceiptPdfSections } from "./receiptItemizedLines"
 import { buildReceiptPdfBytes } from "./documentPdf"
+import { isSandboxProfile } from "./sandboxEnvironment"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
 
 export type CalendarEventDisplayStatus = "Recurring" | "Upcoming" | "Complete" | "Cancelled" | "Past — no status"
@@ -201,6 +202,7 @@ export async function openCalendarEventSummaryPdf(
         : null
 
   const completedLabel = new Date(ev.completed_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+  const sandboxWatermark = isSandboxProfile(null, meta)
 
   const bytes = await buildReceiptPdfBytes({
     businessLabel: receiptBusinessLabel,
@@ -226,6 +228,7 @@ export async function openCalendarEventSummaryPdf(
     documentTitle: "Job summary",
     jobLabel: "Job",
     completedLabel: "Completed",
+    sandboxWatermark,
   })
 
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
@@ -266,9 +269,14 @@ export async function exportCalendarEventDetailPdf(
     extras?.linkedSummary?.trim() ? `Linked paperwork:\n${extras.linkedSummary.trim()}` : null,
   ].filter(Boolean)
 
-  const { data: prof } = await supabase.from("profiles").select("display_name").eq("id", userId).maybeSingle()
+  const { data: prof } = await supabase.from("profiles").select("display_name, metadata").eq("id", userId).maybeSingle()
   const businessLabel =
     typeof prof?.display_name === "string" && prof.display_name.trim() ? prof.display_name.trim() : "Job summary"
+  const meta =
+    prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+      ? (prof.metadata as Record<string, unknown>)
+      : {}
+  const sandboxWatermark = isSandboxProfile(null, meta)
 
   const bytes = await buildReceiptPdfBytes({
     businessLabel,
@@ -280,6 +288,7 @@ export async function exportCalendarEventDetailPdf(
     documentTitle: "Calendar event summary",
     jobLabel: "Job",
     completedLabel: "Status",
+    sandboxWatermark,
   })
 
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })

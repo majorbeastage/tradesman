@@ -1846,6 +1846,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return
   }
 
+  if (req.method === "POST" && route === "public-business-profile-contact") {
+    const { handlePublicBusinessProfileContact } = await import("./_publicBusinessProfileContact.js")
+    await handlePublicBusinessProfileContact(req, res)
+    return
+  }
+
   if (req.method === "GET" && route === "platform-email-domain-status") {
     await handlePlatformEmailDomainStatus(req, res)
     return
@@ -1859,6 +1865,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       getJson: ["public-lead-config", "public-business-profile", "platform-email-domain-status"],
       post: [
         "public-lead",
+        "public-business-profile-contact",
         "ai-summarize",
         "ai-lead-assist",
         "ai-regenerate-lead-consumer-reply",
