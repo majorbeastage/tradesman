@@ -71,11 +71,7 @@ export default function EstimateWorkflowActionsPanel({
         </div>
       </div>
 
-      {grouped.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-          Add line items to activate internal routing, or configure approval steps in My Business Workflow.
-        </p>
-      ) : (
+      {grouped.length === 0 ? null : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {grouped.map((group) => {
             if (group.kind === "send_all") {

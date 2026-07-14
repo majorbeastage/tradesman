@@ -136,7 +136,7 @@ export function inferCustomerWorkflowStep(
         currentNodeLabel: active.label,
         completedNodeIds: quoteSnapshot.completedNodeIds,
         summary: `Currently at: ${active.label}`,
-        reason: "Based on estimate workflow approvals and sign-offs on file.",
+        reason: "",
       }
     }
   }

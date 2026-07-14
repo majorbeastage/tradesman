@@ -115,7 +115,6 @@ export function CustomerQuickViewNextSteps({
 
   const [stepLabel, setStepLabel] = useState<string | null>(null)
   const [owner, setOwner] = useState("Unassigned")
-  const [reason, setReason] = useState("")
   const [actionLabel, setActionLabel] = useState("Open workflow")
   const [targetTab, setTargetTab] = useState<CustomerQuickViewTabId>("workflow")
   const [quoteId, setQuoteId] = useState<string | null>(null)
@@ -138,7 +137,6 @@ export function CustomerQuickViewNextSteps({
       if (!workflowBundle) {
         setStepLabel(null)
         setOwner("—")
-        setReason("Configure a business workflow to track next steps.")
         setActionLabel("Open settings")
         setTargetTab("workflow")
         setQuoteId(null)
@@ -162,7 +160,6 @@ export function CustomerQuickViewNextSteps({
         : null
 
       setStepLabel(inferred.currentNodeLabel)
-      setReason(inferred.reason)
       setQuoteId(quoteForWorkflow?.id ?? null)
       setCurrentNodeId(inferred.currentNodeId)
       setCompletedNodeIds(inferred.completedNodeIds)
@@ -341,9 +338,6 @@ export function CustomerQuickViewNextSteps({
             <div style={{ fontSize: 13, fontWeight: 700, color: "#334155", maxWidth: 140 }}>{owner}</div>
           </div>
         </div>
-        {reason ? (
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{reason}</p>
-        ) : null}
         <button
           type="button"
           disabled={completeBusy}

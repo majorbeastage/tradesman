@@ -6509,9 +6509,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                           </option>
                                         ))}
                                       </select>
-                                      <span style={{ fontSize: 12, color: "#64748b", fontWeight: 400 }}>
-                                        New lines inherit this unless the line already has a job type.
-                                      </span>
                                     </label>
                                   ) : null}
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
@@ -7021,9 +7018,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   >
                                     {jobPackBulletsBusy ? "Generating…" : "Refresh AI scope bullets"}
                                   </button>
-                                  <span style={{ fontSize: 12, color: "#64748b", maxWidth: 420, lineHeight: 1.45 }}>
-                                    Pulls from job type, conversation summary, thread text, attachments, and your notes — used for line-item suggestions.
-                                  </span>
                                 </div>
                                 {(estimateGuideFlags.jobScopePackBullets ?? "").trim() ? (
                                   <div
@@ -7055,11 +7049,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         ))}
                                     </ul>
                                   </div>
-                                ) : (
-                                  <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                                    Generate bullets after intake, or use step 5 in the wizard. Manual notes below are always included in AI analysis when unlocked.
-                                  </p>
-                                )}
+                                ) : null}
                                 <div style={{ display: "grid", gap: 6 }}>
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                                     <div style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>Notes &amp; manual scope</div>

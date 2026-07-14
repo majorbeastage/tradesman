@@ -62,7 +62,6 @@ export function CustomerWorkflowStatusPanel({
           <div style={{ fontSize: 18, fontWeight: 800, color: theme.text, marginTop: 6, lineHeight: 1.3 }}>
             {inferred.currentNodeLabel ?? "Status pending"}
           </div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>{inferred.reason}</div>
         </div>
         {onOpenWorkflowChart ? (
           <button type="button" onClick={onOpenWorkflowChart} style={linkBtnStyle}>
@@ -135,12 +134,6 @@ export function CustomerWorkflowStatusPanel({
         <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
           {calendarContext.upcoming.length} upcoming job{calendarContext.upcoming.length === 1 ? "" : "s"} on the calendar
           {canMoveBack ? " — moving workflow back can remove them." : "."}
-        </div>
-      ) : null}
-
-      {inferred.completedNodeIds.length > 0 ? (
-        <div style={{ fontSize: 11, color: "#64748b" }}>
-          {inferred.completedNodeIds.length} earlier step{inferred.completedNodeIds.length === 1 ? "" : "s"} completed
         </div>
       ) : null}
 

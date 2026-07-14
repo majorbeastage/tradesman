@@ -16,7 +16,6 @@ type Props = {
   compact?: boolean
   labels: {
     title: string
-    subtitle: string
     viewAllReports: string
     loading: string
     noUser: string
@@ -114,7 +113,6 @@ export default function DashboardTodayWorkPreview({
           <h2 style={{ margin: 0, fontSize: isMobile ? 15 : 16, fontWeight: 800, color: "#0f172a", letterSpacing: -0.02 }}>
             {labels.title}
           </h2>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4, maxWidth: 640 }}>{labels.subtitle}</p>
         </div>
         {reportingAllowed && onOpenReporting ? (
           <button

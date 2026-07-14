@@ -191,9 +191,6 @@ export function CustomerQuickViewSidePane({
   if (tab === "contact") {
     return (
       <div style={{ display: "grid", gap: 12 }}>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Contact and job fields for this customer. Save updates the record used across Tradesman.
-        </p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
           <Field label="Customer name" value={contactForm.customerName} onChange={(v) => setContactForm((f) => ({ ...f, customerName: v }))} />
           <Field label="Phone" value={contactForm.phone} onChange={(v) => setContactForm((f) => ({ ...f, phone: v }))} />
@@ -228,9 +225,6 @@ export function CustomerQuickViewSidePane({
     const c = bundle?.customer
     return (
       <div style={{ display: "grid", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Summary for this customer. Open the full profile for calendar events, reports, lead history, and advanced workflow tools.
-        </p>
         <button
           type="button"
           onClick={onOpenFullProfile}
@@ -292,9 +286,6 @@ export function CustomerQuickViewSidePane({
     const events = bundle?.calendarEvents ?? []
     return (
       <div style={{ display: "grid", gap: 10 }}>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Calendar events linked to this customer. Use Schedule in the tab menu to add a new appointment.
-        </p>
         {events.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>No calendar events linked yet.</p>
         ) : (
@@ -678,9 +669,6 @@ export function CustomerQuickViewSidePane({
     return (
       <>
         <div style={{ display: "grid", gap: 10 }}>
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            Payment requests and invoice links sent to this customer.
-          </p>
           {showCustomerPayments && onRequestCustomerPayment ? (
             <button
               type="button"

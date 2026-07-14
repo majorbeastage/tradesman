@@ -631,7 +631,6 @@ function OfficeManagerAppContent() {
             onOpenCalendar={() => setPage("calendar")}
             labels={{
               title: t("dashboard.todayWorkTitle"),
-              subtitle: t("dashboard.todayWorkSubtitle"),
               viewAllReports: t("dashboard.todayWorkViewReports"),
               loading: t("dashboard.todayWorkLoading"),
               noUser: t("dashboard.todayWorkNoUser"),
@@ -657,7 +656,6 @@ function OfficeManagerAppContent() {
             onOpenReporting={() => setPage("reporting")}
             labels={{
               title: t("dashboard.reportsPreviewTitle"),
-              subtitle: t("dashboard.reportsPreviewSubtitle"),
               viewAll: t("dashboard.reportsPreviewViewAll"),
               loading: t("dashboard.reportsPreviewLoading"),
               noUser: t("dashboard.reportsPreviewNoUser"),

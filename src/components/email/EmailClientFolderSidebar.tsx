@@ -143,9 +143,6 @@ export default function EmailClientFolderSidebar({
         Folders
       </p>
       {tree.map((node) => renderNode(node))}
-      <p style={{ margin: "12px 0 0", fontSize: 11, color: theme.textMuted, lineHeight: 1.4 }}>
-        Right-click for folder options · drag conversations into folders
-      </p>
       {menu ? (
         <EmailClientContextMenu
           x={menu.x}

@@ -80,7 +80,7 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { requiresManualSmsOptInRecord, resolveSmsFirstComplianceVariant, inboundContactGrantsSmsConsent } from "../../lib/smsFirstOutboundCompliance"
-import { customerEmailFromIdentifiers, customerEmailsFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
+import { customerEmailFromIdentifiers, formatCustomerContactLine } from "../../lib/customerIdentifiers"
 import { listCustomerEmailValues, listCustomerPhoneValues, pickDefaultContactValue } from "../../lib/customerContactList"
 import CustomerContactChannelPicker from "../../components/CustomerContactChannelPicker"
 import EmailComposeRich from "../../components/EmailComposeRich"
@@ -3343,24 +3343,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     </button>
                                   </div>
                                   {(() => {
-                                    const groupedEmails = customerEmailsFromIdentifiers(c.customer_identifiers ?? null)
                                     const orgLabel = orgGroupSummaryLabel(
                                       parseCustomerOrgGroupKey(c.metadata),
                                       parseCustomerHubKind(c.metadata),
                                     )
-                                    if (!orgLabel && groupedEmails.length <= 1) return null
+                                    if (!orgLabel) return null
                                     return (
                                       <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                        {orgLabel ? (
-                                          <>
-                                            <strong>{orgLabel}</strong>
-                                            {groupedEmails.length > 1
-                                              ? ` — activity from ${groupedEmails.length} addresses on this domain (${groupedEmails.join(", ")})`
-                                              : ""}
-                                          </>
-                                        ) : groupedEmails.length > 1 ? (
-                                          <>Combined activity from {groupedEmails.join(", ")}</>
-                                        ) : null}
+                                        <strong>{orgLabel}</strong>
                                       </p>
                                     )
                                   })()}

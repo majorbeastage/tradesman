@@ -9,7 +9,6 @@ type Props = {
   onOpenReporting?: () => void
   labels: {
     title: string
-    subtitle: string
     viewAll: string
     loading: string
     noUser: string
@@ -64,7 +63,6 @@ export default function DashboardReportsPreview({ dataUserId, isMobile, onOpenRe
           <h2 style={{ margin: 0, fontSize: isMobile ? 14 : 15, fontWeight: 800, color: "#0f172a", letterSpacing: -0.02 }}>
             {labels.title}
           </h2>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4, maxWidth: 560 }}>{labels.subtitle}</p>
         </div>
         {onOpenReporting ? (
           <button

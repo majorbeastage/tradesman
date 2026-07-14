@@ -291,11 +291,11 @@ export default function EstimateScopeAssistantPanel({
           <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>
             {isLinkedScope ? "AI line suggestions" : "Job details"}
           </div>
-          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
-            {isLinkedScope
-              ? "Suggests labor, materials, travel, and misc lines only when your scope supports them. Review each row — approve to add; leave pricing at $0 when unsure."
-              : "Describe the job in plain language (or tap Voice). Analyze scope for focused line suggestions — approve each row you want on the estimate."}
-          </p>
+          {!isLinkedScope ? (
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
+              Describe the job in plain language (or tap Voice). Analyze scope for focused line suggestions — approve each row you want on the estimate.
+            </p>
+          ) : null}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
           <button
@@ -343,12 +343,7 @@ export default function EstimateScopeAssistantPanel({
           together.
         </p>
       ) : null}
-      {isLinkedScope ? (
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Scope text is edited in <strong style={{ color: "#334155" }}>Job Details</strong> above; voice adds to that field.
-          {mergedScopeForAnalysis.trim() ? " Analyze scope sends your full saved context (not only this box) to the assistant." : null}
-        </p>
-      ) : (
+      {isLinkedScope ? null : (
         <textarea
           value={scopeDraft}
           onChange={(e) => persistDraft(e.target.value)}

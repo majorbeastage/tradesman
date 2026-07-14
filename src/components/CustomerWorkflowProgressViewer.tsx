@@ -48,9 +48,6 @@ export default function CustomerWorkflowProgressViewer({
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: variant === "inline" ? 16 : 18, color: theme.text }}>Workflow progress</h3>
-          <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            {workflow.title || "Company workflow"} — mark steps complete as you work the job. The active step drives Job status on the Customers list.
-          </p>
         </div>
         {variant === "modal" ? (
           <button type="button" onClick={onClose} style={closeBtnStyle}>

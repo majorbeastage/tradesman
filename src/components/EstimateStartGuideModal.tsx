@@ -217,21 +217,6 @@ export default function EstimateStartGuideModal({
                           ? "Quick add quote items"
                           : "Done — Review Estimate"}
             </h2>
-            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-              {step === 1
-                ? "Link a customer now, or skip and add one later."
-                : step === 2
-                  ? "Optional: load a saved template for starter lines. You can skip and build from scratch."
-                  : step === 3
-                    ? "Optional: pull facts from the message thread. Skip if there is no conversation yet."
-                    : step === 4
-                      ? "Optional: attach photos or files. Skip if you will add them later."
-                      : step === 5
-                        ? "Write a short scope (what, where, materials). This drives AI line suggestions in the next step."
-                        : step === 6
-                          ? "Add labor, materials, travel, or misc lines. Use AI suggestions or type your own — at least one line before sending."
-                          : "Your estimate is ready. Closing saves it to the customer profile so you can review and send from the Estimates tool."}
-            </p>
           </div>
           <button
             type="button"
@@ -458,11 +443,7 @@ export default function EstimateStartGuideModal({
                   ))}
                 </ul>
               </div>
-            ) : (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                Pulls only what was actually discussed — scope, materials, dates, access. Skip if there is no thread yet.
-              </p>
-            )}
+            ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
               <button type="button" onClick={onConversationsSkip} style={secondaryBtnStyle}>
                 Skip for now
@@ -477,9 +458,6 @@ export default function EstimateStartGuideModal({
           </div>
         ) : step === 4 ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
-              The upload area below is opened for you. Add files from this device, or skip and attach later.
-            </p>
             <button type="button" onClick={onMediaPickFiles} disabled={mediaBusy} style={secondaryBtnStyle}>
               {mediaBusy ? "Working…" : "Add photos or files"}
             </button>
@@ -521,10 +499,7 @@ export default function EstimateStartGuideModal({
                 gap: 8,
               }}
             >
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Scope notes (same field as the estimate page)</div>
-              <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-                Keep it short: what work, where, key materials, access or timing. Suggest scope bullets reads these notes plus customer notes and communications.
-              </p>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>Scope notes</div>
               <textarea
                 rows={4}
                 value={jobDetailsNotes}
@@ -583,11 +558,7 @@ export default function EstimateStartGuideModal({
                   ))}
                 </ul>
               </div>
-            ) : (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                Optional helper from your notes and earlier steps. Edit or skip — you can always refine on the estimate page.
-              </p>
-            )}
+            ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
               <button type="button" disabled={jobDetailsBusy} onClick={onJobDetailsSkip} style={secondaryBtnStyle}>
                 Skip for now
@@ -661,18 +632,10 @@ export default function EstimateStartGuideModal({
               </div>
               {liteNote ? (
                 <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{liteNote}</p>
-              ) : (
-                <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                  Tip: If qty or price is omitted, we default to qty <strong>1</strong> and price <strong>0</strong>.
-                </p>
-              )}
+              ) : null}
               {aiLinesNote ? (
                 <p style={{ margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>{aiLinesNote}</p>
-              ) : (
-                <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                  AI suggests only labor, materials, travel, and misc tied to your scope. Pricing may be $0 when unknown — edit on the estimate page.
-                </p>
-              )}
+              ) : null}
             </div>
             <button type="button" onClick={onQuoteItemsOpen} style={secondaryBtnStyle}>
               Open quote items section
@@ -699,10 +662,6 @@ export default function EstimateStartGuideModal({
             <button type="button" disabled={previewBusy} onClick={onStartOver} style={secondaryBtnStyle}>
               Start over
             </button>
-            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Start over returns to step 1 and does not delete your estimate, lines, or customer link. Use Estimate Tool menus
-              to preview, email, or SMS.
-            </p>
           </div>
         )}
 
