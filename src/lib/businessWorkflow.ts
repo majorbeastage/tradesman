@@ -397,10 +397,6 @@ export type WorkflowProgressDisplayStep = {
 
 const PARALLEL_LETTERS = "abcdefghijklmnopqrstuvwxyz"
 
-function workflowIncomingEdges(doc: BusinessWorkflowDoc, nodeId: string): WorkflowEdge[] {
-  return doc.edges.filter((e) => e.toId === nodeId)
-}
-
 function workflowOutgoingEdges(doc: BusinessWorkflowDoc, nodeId: string): WorkflowEdge[] {
   return doc.edges.filter((e) => e.fromId === nodeId)
 }
@@ -408,6 +404,11 @@ function workflowOutgoingEdges(doc: BusinessWorkflowDoc, nodeId: string): Workfl
 /**
  * Order workflow steps by following arrows (topological layers).
  * Parallel steps at the same layer get sub-labels: 2.a, 2.b, etc.
+ *
+ * Important: orphan nodes (no inbound *and* no outbound arrows) are NOT dumped into
+ * level 1 beside the real start — that produced incorrect labels like
+ * "1.a Customer Intake" / "1.b Customer Payment Received". Orphans are appended
+ * after the arrow-connected chain, ordered by chart order / vertical position.
  */
 export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): WorkflowProgressDisplayStep[] {
   const nodes = doc.nodes
@@ -415,21 +416,39 @@ export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): Workflow
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const inDegree = new Map<string, number>()
-  for (const n of nodes) inDegree.set(n.id, workflowIncomingEdges(doc, n.id).length)
-
-  let frontier = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0)
-  if (!frontier.length) {
-    frontier = [...nodes].sort((a, b) => a.order - b.order)
-  } else {
-    frontier.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+  const outDegree = new Map<string, number>()
+  for (const n of nodes) {
+    inDegree.set(n.id, 0)
+    outDegree.set(n.id, 0)
   }
+  for (const e of doc.edges) {
+    if (!nodeById.has(e.fromId) || !nodeById.has(e.toId)) continue
+    inDegree.set(e.toId, (inDegree.get(e.toId) ?? 0) + 1)
+    outDegree.set(e.fromId, (outDegree.get(e.fromId) ?? 0) + 1)
+  }
+
+  const sortNodes = (a: WorkflowNode, b: WorkflowNode) =>
+    a.order - b.order || a.y - b.y || a.label.localeCompare(b.label)
+
+  const sources = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0)
+  const connectedSources = sources.filter((n) => (outDegree.get(n.id) ?? 0) > 0)
+
+  // Prefer real starts (have arrows out). Never pull disconnected orphans into the first layer.
+  let frontier =
+    connectedSources.length > 0
+      ? [...connectedSources]
+      : sources.length > 0
+        ? [[...sources].sort(sortNodes)[0]!]
+        : [[...nodes].sort(sortNodes)[0]!]
+
+  frontier.sort(sortNodes)
 
   const out: WorkflowProgressDisplayStep[] = []
   const visited = new Set<string>()
   let level = 0
 
   while (frontier.length) {
-    const layer = [...frontier].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+    const layer = [...frontier].sort(sortNodes)
     frontier = []
     level += 1
 
@@ -453,15 +472,18 @@ export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): Workflow
       }
     }
 
-    frontier.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+    frontier = frontier.filter((n) => !visited.has(n.id))
+    frontier.sort(sortNodes)
   }
 
-  for (const n of [...nodes].sort((a, b) => a.order - b.order)) {
-    if (!visited.has(n.id)) {
-      level += 1
-      out.push({ node: n, stepLabel: String(level), level })
-      visited.add(n.id)
-    }
+  // Remaining (orphans / disconnected): sequential steps after the arrow chain — not parallel 1.a/1.b.
+  const remaining = [...nodes]
+    .filter((n) => !visited.has(n.id))
+    .sort(sortNodes)
+  for (const n of remaining) {
+    level += 1
+    out.push({ node: n, stepLabel: String(level), level })
+    visited.add(n.id)
   }
 
   return out

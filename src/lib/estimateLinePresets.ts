@@ -10,7 +10,7 @@ export type EstimateLinePresetRow = {
   /** Minimum quantity before the line applies (optional). */
   minimum_quantity?: number
   /** Whether minimum applies to cost or quantity. */
-  minimum_basis?: "cost" | "quantity"
+  minimum_basis?: "cost" | "quantity" | "hours"
   linked_job_type_ids?: string[]
   line_kind?: string
   /** Unit label: hours, miles, each, acres, sqft, custom strings, etc. */
@@ -40,7 +40,9 @@ export function formatEstimatePresetCostSummary(p: EstimateLinePresetRow): strin
   const sub = q * u
   const su = eliUnitSuffix(p.unit_basis)
   let extra = ""
-  if (p.minimum_basis === "quantity" && p.minimum_quantity != null && p.minimum_quantity > 0) {
+  if (p.minimum_basis === "hours" && p.minimum_quantity != null && p.minimum_quantity > 0) {
+    extra = ` · min ${p.minimum_quantity} hr`
+  } else if (p.minimum_basis === "quantity" && p.minimum_quantity != null && p.minimum_quantity > 0) {
     extra = ` · min qty ${p.minimum_quantity}`
   } else if (p.minimum_line_total != null && p.minimum_line_total > 0) {
     extra = ` · min $${p.minimum_line_total.toFixed(2)}`
@@ -67,7 +69,9 @@ export function serializePresetForProfile(row: EstimateLinePresetRow): Record<st
     unit_price: row.unit_price,
     ...(row.minimum_line_total != null && row.minimum_line_total >= 0 ? { minimum_line_total: row.minimum_line_total } : {}),
     ...(row.minimum_quantity != null && row.minimum_quantity > 0 ? { minimum_quantity: row.minimum_quantity } : {}),
-    ...(row.minimum_basis === "cost" || row.minimum_basis === "quantity" ? { minimum_basis: row.minimum_basis } : {}),
+    ...(row.minimum_basis === "cost" || row.minimum_basis === "quantity" || row.minimum_basis === "hours"
+      ? { minimum_basis: row.minimum_basis }
+      : {}),
     ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
     ...(unit ? { unit_basis: unit } : {}),
     ...(row.linked_job_type_ids?.length ? { linked_job_type_ids: row.linked_job_type_ids } : {}),
@@ -90,8 +94,14 @@ export function parseEstimateLinePresetsFromMetadata(meta: Record<string, unknow
       const minQtyRaw = o.minimum_quantity
       const minQtyNum = typeof minQtyRaw === "number" ? minQtyRaw : Number.parseFloat(String(minQtyRaw ?? ""))
       const minimum_quantity = Number.isFinite(minQtyNum) && minQtyNum > 0 ? minQtyNum : undefined
-      const minimum_basis: "cost" | "quantity" | undefined =
-        o.minimum_basis === "quantity" ? "quantity" : o.minimum_basis === "cost" || minimum_line_total != null ? "cost" : undefined
+      const minimum_basis: "cost" | "quantity" | "hours" | undefined =
+        o.minimum_basis === "hours"
+          ? "hours"
+          : o.minimum_basis === "quantity"
+            ? "quantity"
+            : o.minimum_basis === "cost" || minimum_line_total != null
+              ? "cost"
+              : undefined
       const linked_job_type_ids = normalizePresetLinkedJobTypes(o)
       const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
       const ub = o.unit_basis
