@@ -324,6 +324,7 @@ export function normalizeCustomizeGrid(
   isMobile: boolean,
   fallbackOrder: DashboardQuickLinkId[],
   fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+  options?: { fillEmptyFromFallback?: boolean },
 ): DashboardTileGridSlot[] {
   const minRows = dashboardCustomizeMinRows(isMobile)
   const rows =
@@ -334,6 +335,8 @@ export function normalizeCustomizeGrid(
         : minRows
   const grid = emptyCustomizeGrid(cols, rows)
   const seen = new Set<DashboardQuickLinkId>()
+  const hasSavedTiles = Array.isArray(saved) && saved.some((x) => x != null)
+  const shouldFillEmpty = options?.fillEmptyFromFallback ?? !hasSavedTiles
 
   if (Array.isArray(saved) && saved.length > 0) {
     const inferredOldCols =
@@ -349,12 +352,14 @@ export function normalizeCustomizeGrid(
     }
   }
 
-  for (const id of fallbackOrder) {
-    if (seen.has(id)) continue
-    const idx = grid.findIndex((x) => x === null)
-    if (idx < 0) break
-    const ok = filterRowId(id, seen, fourthCalendar)
-    if (ok) grid[idx] = ok
+  if (shouldFillEmpty) {
+    for (const id of fallbackOrder) {
+      if (seen.has(id)) continue
+      const idx = grid.findIndex((x) => x === null)
+      if (idx < 0) break
+      const ok = filterRowId(id, seen, fourthCalendar)
+      if (ok) grid[idx] = ok
+    }
   }
   return grid
 }
@@ -400,9 +405,12 @@ export function normalizeDashboardTileGrid(
   saved: DashboardTileGridSlot[] | undefined,
   fallbackOrder: DashboardQuickLinkId[],
   fourthCalendar: DashboardCoreQuickLinkId = "team_management",
+  options?: { fillEmptyFromFallback?: boolean },
 ): DashboardTileGridSlot[] {
   const grid = emptyDashboardTileGrid()
   const seen = new Set<DashboardQuickLinkId>()
+  const hasSavedTiles = Array.isArray(saved) && saved.some((x) => x != null)
+  const shouldFillEmpty = options?.fillEmptyFromFallback ?? !hasSavedTiles
 
   if (Array.isArray(saved) && saved.length === DASHBOARD_GRID_SLOT_COUNT) {
     for (let i = 0; i < DASHBOARD_GRID_SLOT_COUNT; i++) {
@@ -411,12 +419,14 @@ export function normalizeDashboardTileGrid(
     }
   }
 
-  for (const id of fallbackOrder) {
-    if (seen.has(id)) continue
-    const idx = grid.findIndex((x) => x === null)
-    if (idx < 0) break
-    grid[idx] = id
-    seen.add(id)
+  if (shouldFillEmpty) {
+    for (const id of fallbackOrder) {
+      if (seen.has(id)) continue
+      const idx = grid.findIndex((x) => x === null)
+      if (idx < 0) break
+      grid[idx] = id
+      seen.add(id)
+    }
   }
   return grid
 }
@@ -840,7 +850,9 @@ export function migrateStoredTileOrder(
     const grid =
       parsed?.tile_grid_cols != null || (Array.isArray(parsed?.tile_grid) && parsed.tile_grid.length !== DASHBOARD_GRID_SLOT_COUNT)
         ? legacyGrid
-        : normalizeDashboardTileGrid(legacyGrid, order, fourthCalendar)
+        : normalizeDashboardTileGrid(legacyGrid, order, fourthCalendar, {
+            fillEmptyFromFallback: !(Array.isArray(legacyGrid) && legacyGrid.some((x) => x != null)),
+          })
     return {
       order: tileGridToOrder(grid),
       rows,

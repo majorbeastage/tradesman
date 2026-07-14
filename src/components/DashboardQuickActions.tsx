@@ -54,10 +54,16 @@ const LS_TILE_GRID_ROWS = "tradesman_dashboard_tile_grid_rows_v1"
 const LS_TILE_GRID_UPDATED_AT = "tradesman_dashboard_tile_grid_updated_at_v1"
 const DASHBOARD_LAYOUT_SAVE_DEBOUNCE_MS = 400
 
-function readLocalDashboardLayoutUpdatedAt(): number {
+function scopedLsKey(base: string, profileUserId: string | null | undefined): string {
+  const id = typeof profileUserId === "string" ? profileUserId.trim() : ""
+  return id ? `${base}:${id}` : base
+}
+
+function readLocalDashboardLayoutUpdatedAt(profileUserId: string | null | undefined): number {
   if (typeof window === "undefined") return 0
   try {
-    const raw = localStorage.getItem(LS_TILE_GRID_UPDATED_AT)
+    const scoped = localStorage.getItem(scopedLsKey(LS_TILE_GRID_UPDATED_AT, profileUserId))
+    const raw = scoped ?? (!profileUserId ? null : localStorage.getItem(LS_TILE_GRID_UPDATED_AT))
     if (!raw) return 0
     const ts = Date.parse(raw)
     return Number.isFinite(ts) ? ts : 0
@@ -66,13 +72,21 @@ function readLocalDashboardLayoutUpdatedAt(): number {
   }
 }
 
-function writeLocalDashboardLayoutUpdatedAt(iso: string) {
+function writeLocalDashboardLayoutUpdatedAt(iso: string, profileUserId: string | null | undefined) {
   if (typeof window === "undefined") return
   try {
-    localStorage.setItem(LS_TILE_GRID_UPDATED_AT, iso)
+    localStorage.setItem(scopedLsKey(LS_TILE_GRID_UPDATED_AT, profileUserId), iso)
   } catch {
     /* ignore */
   }
+}
+
+function tileGridsEqual(a: DashboardTileGridSlot[], b: DashboardTileGridSlot[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
 }
 
 export type OptionalQuickLinkId = DashboardQuickLinkId
@@ -608,10 +622,23 @@ export default function DashboardQuickActions(props: Props) {
   )
 
   const buildCustomizeGrid = useCallback(
-    (raw: DashboardTileGridSlot[] | undefined, savedCols: number | undefined, savedRows: number | undefined, cols: number) =>
-      normalizeCustomizeGrid(raw, savedCols, savedRows, cols, isMobile, fallbackOrder, fourthLinkId),
+    (
+      raw: DashboardTileGridSlot[] | undefined,
+      savedCols: number | undefined,
+      savedRows: number | undefined,
+      cols: number,
+      fillEmptyFromFallback?: boolean,
+    ) =>
+      normalizeCustomizeGrid(raw, savedCols, savedRows, cols, isMobile, fallbackOrder, fourthLinkId, {
+        fillEmptyFromFallback,
+      }),
     [isMobile, fallbackOrder, fourthLinkId],
   )
+
+  const gridColsRef = useRef(gridCols)
+  useEffect(() => {
+    gridColsRef.current = gridCols
+  }, [gridCols])
 
   useLayoutEffect(() => {
     const el = gridRef.current
@@ -633,29 +660,36 @@ export default function DashboardQuickActions(props: Props) {
 
   const [tileGrid, setTileGrid] = useState<DashboardTileGridSlot[]>(() => {
     const cols = dashboardColsFromWidth(isMobile ? 360 : 1400, isMobile)
-    if (typeof window === "undefined") return buildCustomizeGrid(undefined, undefined, undefined, cols)
+    if (typeof window === "undefined") return buildCustomizeGrid(undefined, undefined, undefined, cols, true)
     try {
-      const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
+      const uid = profileUserId ?? null
+      const rawCols =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID_COLS, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID_COLS) : null)
       const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
-      const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
+      const rawRows =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID_ROWS, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID_ROWS) : null)
       const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
-      const raw = localStorage.getItem(LS_TILE_GRID)
+      const raw =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID) : null)
       if (raw) {
         const parsed = JSON.parse(raw) as unknown
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, cols)
+          return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, cols, false)
         }
       }
     } catch {
       /* ignore */
     }
     const v5 = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_order_v5"), fourthLinkId)
-    if (v5?.length) return buildCustomizeGrid(orderToTileGrid(v5), 5, undefined, cols)
+    if (v5?.length) return buildCustomizeGrid(orderToTileGrid(v5), 5, undefined, cols, false)
     const localRows = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_rows_v4"), fourthLinkId)
-    if (localRows?.length) return buildCustomizeGrid(orderToTileGrid(localRows), 5, undefined, cols)
+    if (localRows?.length) return buildCustomizeGrid(orderToTileGrid(localRows), 5, undefined, cols, false)
     const legacyOrder = parseLegacyLocalOrder(localStorage.getItem("tradesman_dashboard_tile_order_v3"), fourthLinkId)
-    if (legacyOrder?.length) return buildCustomizeGrid(orderToTileGrid(legacyOrder), 5, undefined, cols)
-    return buildCustomizeGrid(undefined, undefined, undefined, cols)
+    if (legacyOrder?.length) return buildCustomizeGrid(orderToTileGrid(legacyOrder), 5, undefined, cols, false)
+    return buildCustomizeGrid(undefined, undefined, undefined, cols, true)
   })
   const gridRows = useMemo(
     () => customizeGridRowsFromLength(tileGrid, gridCols, dashboardCustomizeMinRows(isMobile)),
@@ -699,33 +733,40 @@ export default function DashboardQuickActions(props: Props) {
   const readLocalTileGrid = useCallback(() => {
     if (typeof window === "undefined") return null
     try {
-      const rawCols = localStorage.getItem(LS_TILE_GRID_COLS)
+      const uid = profileUserId ?? null
+      const rawCols =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID_COLS, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID_COLS) : null)
       const savedCols = rawCols ? Number.parseInt(rawCols, 10) : undefined
-      const rawRows = localStorage.getItem(LS_TILE_GRID_ROWS)
+      const rawRows =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID_ROWS, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID_ROWS) : null)
       const savedRows = rawRows ? Number.parseInt(rawRows, 10) : undefined
-      const raw = localStorage.getItem(LS_TILE_GRID)
+      const raw =
+        localStorage.getItem(scopedLsKey(LS_TILE_GRID, uid)) ??
+        (uid ? localStorage.getItem(LS_TILE_GRID) : null)
       if (!raw) return null
       const parsed = JSON.parse(raw) as unknown
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, gridCols)
+        return buildCustomizeGrid(parsed as DashboardTileGridSlot[], savedCols, savedRows, gridColsRef.current, false)
       }
     } catch {
       /* ignore */
     }
     return null
-  }, [buildCustomizeGrid, gridCols])
+  }, [buildCustomizeGrid, profileUserId])
 
+  /** Mirror layout to device cache — do not bump updated_at (that would beat cloud on every remount). */
   useEffect(() => {
-    const updatedAt = new Date().toISOString()
+    const uid = profileUserId ?? null
     try {
-      localStorage.setItem(LS_TILE_GRID, JSON.stringify(tileGrid))
-      localStorage.setItem(LS_TILE_GRID_COLS, String(gridCols))
-      localStorage.setItem(LS_TILE_GRID_ROWS, String(gridRows))
-      writeLocalDashboardLayoutUpdatedAt(updatedAt)
+      localStorage.setItem(scopedLsKey(LS_TILE_GRID, uid), JSON.stringify(tileGrid))
+      localStorage.setItem(scopedLsKey(LS_TILE_GRID_COLS, uid), String(gridCols))
+      localStorage.setItem(scopedLsKey(LS_TILE_GRID_ROWS, uid), String(gridRows))
     } catch {
       /* ignore */
     }
-  }, [tileGrid, gridCols, gridRows])
+  }, [tileGrid, gridCols, gridRows, profileUserId])
 
   useEffect(() => {
     if (!prefsHydrated) return
@@ -738,7 +779,8 @@ export default function DashboardQuickActions(props: Props) {
     const oldCols = savedColsRef.current ?? prevColsRef.current
     setTileGrid((prev) => {
       const rows = customizeGridRowsFromLength(prev, oldCols, dashboardCustomizeMinRows(isMobile))
-      return buildCustomizeGrid(resizeCustomizeGrid(prev, oldCols, gridCols, isMobile, rows), oldCols, rows, gridCols)
+      const resized = resizeCustomizeGrid(prev, oldCols, gridCols, isMobile, rows)
+      return buildCustomizeGrid(resized, oldCols, rows, gridCols, false)
     })
     prevColsRef.current = gridCols
     savedColsRef.current = gridCols
@@ -755,6 +797,7 @@ export default function DashboardQuickActions(props: Props) {
     }
     setPrefsHydrated(false)
     let cancelled = false
+    const colsAtFetch = gridColsRef.current
     void supabase
       .from("profiles")
       .select("metadata")
@@ -773,32 +816,44 @@ export default function DashboardQuickActions(props: Props) {
         const parsed = parseDashboardQuickLinks(raw)
         const migrated = migrateStoredTileOrder(raw, fourthLinkId, quickLinksRole)
         const cloudTs = migrated.updatedAt ? Date.parse(migrated.updatedAt) : 0
-        const localTs = readLocalDashboardLayoutUpdatedAt()
+        const localTs = readLocalDashboardLayoutUpdatedAt(profileUserId)
         const localGrid = readLocalTileGrid()
-        const hasCloudSaved = Boolean(parsed?.tile_grid?.length)
+        const hasCloudSaved = Boolean(parsed?.tile_grid?.length || parsed?.tile_order?.length)
+        const cloudGrid = hasCloudSaved
+          ? buildCustomizeGrid(migrated.grid, migrated.gridCols, migrated.gridRows, colsAtFetch, false)
+          : null
 
-        if (localGrid && localTs > cloudTs) {
-          savedColsRef.current = Number.parseInt(localStorage.getItem(LS_TILE_GRID_COLS) ?? "", 10) || migrated.gridCols
+        // Prefer cloud whenever a saved profile layout exists, unless this device has a newer
+        // explicit edit (updated_at only advances on user edits / successful cloud save).
+        if (localGrid && localTs > cloudTs && (!cloudGrid || !tileGridsEqual(localGrid, cloudGrid))) {
+          savedColsRef.current =
+            Number.parseInt(
+              localStorage.getItem(scopedLsKey(LS_TILE_GRID_COLS, profileUserId)) ??
+                localStorage.getItem(LS_TILE_GRID_COLS) ??
+                "",
+              10,
+            ) || migrated.gridCols
           setTileGrid(localGrid)
           setPersistNote("local")
+          // Sync the newer local layout up so cloud matches the user's last device edit.
           userModifiedRef.current = true
-        } else if (hasCloudSaved && migrated.grid.length) {
+        } else if (cloudGrid) {
           savedColsRef.current = migrated.gridCols
-          setTileGrid(buildCustomizeGrid(migrated.grid, migrated.gridCols, migrated.gridRows, gridCols))
+          setTileGrid(cloudGrid)
           setTileStyles(migrated.styles)
-          if (migrated.updatedAt) writeLocalDashboardLayoutUpdatedAt(migrated.updatedAt)
+          if (migrated.updatedAt) writeLocalDashboardLayoutUpdatedAt(migrated.updatedAt, profileUserId)
           setPersistNote("cloud")
         } else if (localGrid?.length) {
           setTileGrid(localGrid)
           setPersistNote("local")
         }
         setPrefsHydrated(true)
-        prevColsRef.current = gridCols
+        prevColsRef.current = colsAtFetch
       })
     return () => {
       cancelled = true
     }
-  }, [profileUserId, fourthLinkId, quickLinksRole, buildCustomizeGrid, gridCols, readLocalTileGrid])
+  }, [profileUserId, fourthLinkId, quickLinksRole, buildCustomizeGrid, readLocalTileGrid])
 
   const flushCloudPersist = useCallback(async () => {
     const snapshot = latestPersistRef.current
@@ -832,7 +887,7 @@ export default function DashboardQuickActions(props: Props) {
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", snapshot.profileUserId)
       if (upErr) throw upErr
       if (generation !== saveGenerationRef.current) return
-      writeLocalDashboardLayoutUpdatedAt(updatedAt)
+      writeLocalDashboardLayoutUpdatedAt(updatedAt, snapshot.profileUserId)
       setPersistNote("cloud")
     } catch {
       if (generation === saveGenerationRef.current) setPersistNote("local")
@@ -860,9 +915,15 @@ export default function DashboardQuickActions(props: Props) {
         clearTimeout(persistTimerRef.current)
         persistTimerRef.current = null
       }
-      void flushCloudPersist()
     }
   }, [tileGrid, tileStyles, gridCols, gridRows, profileUserId, prefsHydrated, fourthLinkId, flushCloudPersist])
+
+  // Flush pending edits once when leaving the dashboard (not on every deps change).
+  useEffect(() => {
+    return () => {
+      if (userModifiedRef.current) void flushCloudPersist()
+    }
+  }, [flushCloudPersist])
 
   const linkAvailable = useCallback(
     (id: DashboardQuickLinkId): boolean => {
@@ -908,16 +969,18 @@ export default function DashboardQuickActions(props: Props) {
   const onGridChange = useCallback(
     (grid: DashboardTileGridSlot[]) => {
       userModifiedRef.current = true
+      writeLocalDashboardLayoutUpdatedAt(new Date().toISOString(), profileUserId ?? null)
       setTileGrid(grid)
       savedColsRef.current = gridCols
     },
-    [gridCols],
+    [gridCols, profileUserId],
   )
 
   const restartTileOrder = useCallback(() => {
     userModifiedRef.current = true
-    setTileGrid(buildCustomizeGrid(undefined, undefined, undefined, gridCols))
-  }, [buildCustomizeGrid, gridCols])
+    writeLocalDashboardLayoutUpdatedAt(new Date().toISOString(), profileUserId ?? null)
+    setTileGrid(buildCustomizeGrid(undefined, undefined, undefined, gridCols, true))
+  }, [buildCustomizeGrid, gridCols, profileUserId])
 
   const removeFromBar = useCallback(
     (id: DashboardQuickLinkId) => {
@@ -926,10 +989,14 @@ export default function DashboardQuickActions(props: Props) {
     [onGridChange, tileGrid],
   )
 
-  const patchTileStyle = useCallback((id: DashboardQuickLinkId, patch: Partial<DashboardTileStyle>) => {
-    userModifiedRef.current = true
-    setTileStyles((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...patch } }))
-  }, [])
+  const patchTileStyle = useCallback(
+    (id: DashboardQuickLinkId, patch: Partial<DashboardTileStyle>) => {
+      userModifiedRef.current = true
+      writeLocalDashboardLayoutUpdatedAt(new Date().toISOString(), profileUserId ?? null)
+      setTileStyles((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...patch } }))
+    },
+    [profileUserId],
+  )
 
   const openStyleMenu = useCallback((id: DashboardQuickLinkId, e: React.MouseEvent) => {
     e.preventDefault()
