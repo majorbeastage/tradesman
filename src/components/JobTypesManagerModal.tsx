@@ -18,6 +18,13 @@ import {
   type JobTypeRow,
 } from "../lib/jobTypesApi"
 import { formatEstimatePresetCostSummary, type EstimateLinePresetRow } from "../lib/estimateLinePresets"
+import LibraryCategoryEditor from "./LibraryCategoryEditor"
+import {
+  loadLibraryCategorySettings,
+  persistLibraryCategorySettings,
+  type LibraryCategory,
+} from "../lib/libraryCategories"
+import { glyphForJobTypeIcon } from "../lib/jobTypeIcons"
 
 export type JobTypesManagerModalProps = {
   open: boolean
@@ -74,6 +81,10 @@ export default function JobTypesManagerModal({
   const [presetChecks, setPresetChecks] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [useMenuId, setUseMenuId] = useState<string | null>(null)
+  const [categories, setCategories] = useState<LibraryCategory[]>([])
+  const [categoryAssignments, setCategoryAssignments] = useState<Record<string, string>>({})
+  const [jobTypeCategoryId, setJobTypeCategoryId] = useState("job-general")
+  const [categoryEditor, setCategoryEditor] = useState<LibraryCategory | "new" | null>(null)
 
   const resetForm = useCallback(() => {
     setName("")
@@ -83,6 +94,7 @@ export default function JobTypesManagerModal({
     setColor("#F97316")
     setMaterials("")
     setTrackMileage(false)
+    setJobTypeCategoryId("job-general")
     setPresetChecks({})
     setEditingId(null)
     setEditorOpen(false)
@@ -90,13 +102,16 @@ export default function JobTypesManagerModal({
 
   const reload = useCallback(async () => {
     if (!open || !supabase || !userId) return
-    const [{ rows, error }, presets] = await Promise.all([
+    const [{ rows, error }, presets, categorySettings] = await Promise.all([
       loadJobTypesForUser(supabase, userId),
       loadEstimateLinePresetsForUser(supabase, userId),
+      loadLibraryCategorySettings(supabase, userId, "job_types"),
     ])
     setJobTypes(sortJobTypesByName(rows))
     setLoadError(error ?? "")
     setEstimateLinePresets(presets)
+    setCategories(categorySettings.categories)
+    setCategoryAssignments(categorySettings.assignments)
   }, [open, userId])
 
   useEffect(() => {
@@ -123,6 +138,7 @@ export default function JobTypesManagerModal({
     setColor("#F97316")
     setMaterials("")
     setTrackMileage(false)
+    setJobTypeCategoryId("job-general")
 
     setLoadError("")
     void reload()
@@ -149,6 +165,7 @@ export default function JobTypesManagerModal({
     setColor(jt.color_hex ?? "#F97316")
     setMaterials(typeof jt.materials_list === "string" ? jt.materials_list : "")
     setTrackMileage(jt.track_mileage === true)
+    setJobTypeCategoryId(categoryAssignments[jt.id] ?? categories[0]?.id ?? "job-general")
 
     setEditingId(jt.id)
     setEditorOpen(true)
@@ -165,6 +182,7 @@ export default function JobTypesManagerModal({
     setColor("#F97316")
     setMaterials("")
     setTrackMileage(false)
+    setJobTypeCategoryId("job-general")
   }
 
   async function handleSave() {
@@ -219,6 +237,17 @@ export default function JobTypesManagerModal({
         return
       }
       setEstimateLinePresets(linkResult.rows)
+      const nextAssignments = { ...categoryAssignments, [id]: jobTypeCategoryId || categories[0]?.id || "job-general" }
+      const categoryError = await persistLibraryCategorySettings(supabase, userId, "job_types", {
+        categories,
+        assignments: nextAssignments,
+      })
+      if (categoryError) {
+        setSaving(false)
+        alert(categoryError)
+        return
+      }
+      setCategoryAssignments(nextAssignments)
     }
 
     setSaving(false)
@@ -248,8 +277,34 @@ export default function JobTypesManagerModal({
     else setEstimateLinePresets(stripped.rows)
 
     if (editingId === jt.id) cancelEdit()
+    const nextAssignments = { ...categoryAssignments }
+    delete nextAssignments[jt.id]
+    const categoryError = await persistLibraryCategorySettings(supabase, userId, "job_types", {
+      categories,
+      assignments: nextAssignments,
+    })
+    if (categoryError) alert(categoryError)
+    else setCategoryAssignments(nextAssignments)
     await reload()
     onChanged?.()
+  }
+
+  async function saveCategory(category: LibraryCategory) {
+    if (!supabase || !userId) return
+    const next = categories.some((item) => item.id === category.id)
+      ? categories.map((item) => (item.id === category.id ? category : item))
+      : [...categories, category]
+    const error = await persistLibraryCategorySettings(supabase, userId, "job_types", {
+      categories: next,
+      assignments: categoryAssignments,
+    })
+    if (error) {
+      alert(error)
+      return
+    }
+    setCategories(next)
+    if (categoryEditor === "new") setJobTypeCategoryId(category.id)
+    setCategoryEditor(null)
   }
 
   if (!open) return null
@@ -394,6 +449,20 @@ export default function JobTypesManagerModal({
                     style={{ display: "block", marginTop: 4, width: 48, height: 32, padding: 0, border: "none" }}
                   />
                 </label>
+                <label style={{ fontSize: 12, color: theme.text, minWidth: 150 }}>
+                  Category
+                  <select
+                    value={jobTypeCategoryId}
+                    onChange={(e) => setJobTypeCategoryId(e.target.value)}
+                    style={{ ...theme.formInput, display: "block", marginTop: 4, width: "100%" }}
+                  >
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {glyphForJobTypeIcon(category.icon_id)} {category.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <input
@@ -528,17 +597,43 @@ export default function JobTypesManagerModal({
           ) : null}
         </div>
 
-        {sorted.length === 0 && !loadError ? (
-          <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No job types yet. Add one above.</p>
-        ) : sorted.length > 0 ? (
-          <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
-            <h4 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: theme.text }}>Your job types</h4>
-            {sorted.map((jt) => (
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: theme.text }}>Your job types</h4>
+            <button
+              type="button"
+              onClick={() => setCategoryEditor("new")}
+              style={{ padding: "7px 11px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", color: "#0f172a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+            >
+              + Add category
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: variant === "inline" ? `repeat(${Math.min(Math.max(categories.length, 1), 4)}, minmax(0, 1fr))` : "1fr", gap: 12, alignItems: "start" }}>
+          {categories.map((category) => (
+            <div key={category.id} style={{ display: "grid", gap: 8, minWidth: 0 }}>
+              <div
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setCategoryEditor(category)
+                }}
+                title="Right-click to edit category"
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: `${category.color}14`, border: `1px solid ${category.color}33`, cursor: "context-menu" }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
+                  {glyphForJobTypeIcon(category.icon_id) ? `${glyphForJobTypeIcon(category.icon_id)} ` : ""}
+                  {category.title}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 800, color: category.color, background: "#fff", borderRadius: 999, padding: "1px 7px" }}>
+                  {sorted.filter((jt) => (categoryAssignments[jt.id] ?? categories[0]?.id) === category.id).length}
+                </span>
+              </div>
+            {sorted.filter((jt) => (categoryAssignments[jt.id] ?? categories[0]?.id) === category.id).map((jt) => (
               <div
                 key={jt.id}
                 style={{
                   display: "flex",
                   alignItems: "center",
+                  flexWrap: "wrap",
                   gap: 8,
                   marginBottom: 8,
                   padding: 10,
@@ -675,8 +770,19 @@ export default function JobTypesManagerModal({
                 </button>
               </div>
             ))}
+            {sorted.filter((jt) => (categoryAssignments[jt.id] ?? categories[0]?.id) === category.id).length === 0 ? (
+              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", padding: "0 2px" }}>None yet</p>
+            ) : null}
+            </div>
+          ))}
           </div>
-        ) : null}
+        </div>
+        <LibraryCategoryEditor
+          open={categoryEditor != null}
+          category={categoryEditor === "new" ? null : categoryEditor}
+          onClose={() => setCategoryEditor(null)}
+          onSave={(category) => void saveCategory(category)}
+        />
     </>
   )
 

@@ -7027,18 +7027,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
               <div
                 style={{
                   marginTop: 16,
-                  paddingTop: 16,
-                  borderTop: `1px solid ${theme.border}`,
+                  padding: 14,
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 8,
+                  background: "#f8fafc",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 8,
-                  maxWidth: 480,
+                  gap: 10,
                 }}
               >
-                <label style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>New line — description (filters saved lines as you type)</label>
+                <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Add a line item</div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Line item title</label>
                 <div style={{ position: "relative" }}>
                   <input
-                    placeholder="Description (type to filter saved lines)"
+                    placeholder="Line item title"
                     value={newItemDescription}
                     onChange={(e) => {
                       setNewItemDescription(e.target.value)
@@ -7130,15 +7132,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     ...(isMobile ? { flexDirection: "column", alignItems: "stretch" } : {}),
                   }}
                 >
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="Qty"
-                    value={newItemQuantity}
-                    onChange={(e) => setNewItemQuantity(e.target.value)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "80px", boxSizing: "border-box" }}
-                  />
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", display: "flex", flexDirection: "column", gap: 4 }}>
+                    Qty
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newItemQuantity}
+                      onChange={(e) => setNewItemQuantity(e.target.value)}
+                      style={{ ...theme.formInput, padding: "8px 10px", width: isMobile ? "100%" : "80px", boxSizing: "border-box" }}
+                    />
+                  </label>
                   {estimateLineTemplateOffered("eli_show_manpower") ? (
                     <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
                       Crew
@@ -7173,14 +7177,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "88px", boxSizing: "border-box" }}
                     />
                   </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="Unit price"
-                    value={newItemUnitPrice}
-                    onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "100px", boxSizing: "border-box" }}
-                  />
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", display: "flex", flexDirection: "column", gap: 4 }}>
+                    $ / unit
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={newItemUnitPrice}
+                      onChange={(e) => setNewItemUnitPrice(e.target.value)}
+                      style={{ ...theme.formInput, padding: "8px 10px", width: isMobile ? "100%" : "100px", boxSizing: "border-box" }}
+                    />
+                  </label>
                   <button
                     type="button"
                     onClick={() => void addQuoteItem()}
@@ -8556,11 +8563,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </button>
                 </div>
               </div>
-              <p style={{ margin: "0 0 16px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-                Build <strong>saved lines</strong> here, then use them from <strong>Quote items → Saved lines</strong> on any open quote.
-                The same list appears under <strong>{quoteJobTypesButtonLabel}</strong> so you can insert a line while managing job types.
-                Click <strong>Save &amp; close</strong> to store your list.
-              </p>
               {lineItemsHandoff ? (
                 <EstimateLineItemsHandoffPanel
                   handoff={lineItemsHandoff}

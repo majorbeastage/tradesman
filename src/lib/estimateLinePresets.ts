@@ -5,6 +5,8 @@ export type EstimateLinePresetRow = {
   description: string
   quantity: number
   unit_price: number
+  /** Optional user-defined library category. Built-in line kinds remain the fallback. */
+  category_id?: string
   /** Dollar minimum for the line total (optional). */
   minimum_line_total?: number
   /** Minimum quantity before the line applies (optional). */
@@ -73,6 +75,7 @@ export function serializePresetForProfile(row: EstimateLinePresetRow): Record<st
       ? { minimum_basis: row.minimum_basis }
       : {}),
     ...(row.line_kind?.trim() ? { line_kind: row.line_kind.trim() } : {}),
+    ...(row.category_id?.trim() ? { category_id: row.category_id.trim() } : {}),
     ...(unit ? { unit_basis: unit } : {}),
     ...(row.linked_job_type_ids?.length ? { linked_job_type_ids: row.linked_job_type_ids } : {}),
   }
@@ -104,6 +107,8 @@ export function parseEstimateLinePresetsFromMetadata(meta: Record<string, unknow
               : undefined
       const linked_job_type_ids = normalizePresetLinkedJobTypes(o)
       const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
+      const category_id =
+        typeof o.category_id === "string" && o.category_id.trim() ? o.category_id.trim().slice(0, 80) : undefined
       const ub = o.unit_basis
       const unit_basis = typeof ub === "string" && ub.trim() ? ub.trim().slice(0, 32) : undefined
       return {
@@ -116,6 +121,7 @@ export function parseEstimateLinePresetsFromMetadata(meta: Record<string, unknow
         minimum_basis,
         linked_job_type_ids,
         line_kind,
+        category_id,
         unit_basis,
       }
     })

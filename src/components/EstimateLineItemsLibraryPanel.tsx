@@ -11,6 +11,14 @@ import type { AssistantHandoffPayload } from "../lib/assistantHandoff"
 import EstimateLineItemsHandoffPanel from "./EstimateLineItemsHandoffPanel"
 import { eliUnitSuffix, type EstimateLinePresetRow } from "../lib/estimateLinePresets"
 import { COMMON_LINE_UNITS } from "../lib/parseSpokenLineItem"
+import LibraryCategoryEditor from "./LibraryCategoryEditor"
+import {
+  loadLibraryCategorySettings,
+  persistLibraryCategorySettings,
+  savedLineCategoryIdFromKind,
+  type LibraryCategory,
+} from "../lib/libraryCategories"
+import { glyphForJobTypeIcon } from "../lib/jobTypeIcons"
 
 const ELI_LINE_KINDS = ["labor", "material", "travel", "misc"] as const
 type EliLineKind = (typeof ELI_LINE_KINDS)[number]
@@ -81,16 +89,21 @@ export default function EstimateLineItemsLibraryPanel({
   const [eliMinValue, setEliMinValue] = useState("")
   const [expandedById, setExpandedById] = useState<Record<string, boolean>>({})
   const [linkPick, setLinkPick] = useState<Record<string, string>>({})
+  const [categories, setCategories] = useState<LibraryCategory[]>([])
+  const [categoryEditor, setCategoryEditor] = useState<LibraryCategory | "new" | null>(null)
+  const [newLineCategoryId, setNewLineCategoryId] = useState("line-labor")
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
     setLoading(true)
-    const [presets, jt] = await Promise.all([
+    const [presets, jt, categorySettings] = await Promise.all([
       loadEstimateLinePresetsForUser(supabase, userId),
       loadJobTypesForUser(supabase, userId),
+      loadLibraryCategorySettings(supabase, userId, "saved_lines"),
     ])
     setDraft(presets.map((r) => ({ ...r })))
     setJobTypes(jt.rows.map((r) => ({ id: r.id, name: r.name })))
+    setCategories(categorySettings.categories)
     setLoading(false)
   }, [userId])
 
@@ -99,17 +112,16 @@ export default function EstimateLineItemsLibraryPanel({
   }, [reload])
 
   const columns = useMemo(() => {
-    const buckets: Record<EliLineKind, Array<{ row: EstimateLinePresetRow; idx: number }>> = {
-      labor: [],
-      material: [],
-      travel: [],
-      misc: [],
-    }
+    const buckets = new Map<string, Array<{ row: EstimateLinePresetRow; idx: number }>>()
+    categories.forEach((category) => buckets.set(category.id, []))
     draft.forEach((row, idx) => {
-      buckets[kindOf(row)].push({ row, idx })
+      const categoryId = row.category_id ?? savedLineCategoryIdFromKind(row.line_kind)
+      const fallbackId = categories[0]?.id
+      const bucket = buckets.get(categoryId) ?? (fallbackId ? buckets.get(fallbackId) : undefined)
+      bucket?.push({ row, idx })
     })
     return buckets
-  }, [draft])
+  }, [categories, draft])
 
   function appendSimpleLine() {
     const qty = Number.parseFloat(String(eliSimpleQty).replace(/[^0-9.]/g, "")) || 0
@@ -143,6 +155,7 @@ export default function EstimateLineItemsLibraryPanel({
         unit_price: price,
         linked_job_type_ids: [],
         line_kind,
+        category_id: newLineCategoryId,
         unit_basis: unit,
         ...(minOk && eliMinBasis === "cost" ? { minimum_line_total: minVal, minimum_basis: "cost" as const } : {}),
         ...(minOk && eliMinBasis === "quantity"
@@ -173,6 +186,24 @@ export default function EstimateLineItemsLibraryPanel({
     setDraft(rows)
     setMessage("Saved line items.")
     onSaved?.(rows)
+  }
+
+  async function saveCategory(category: LibraryCategory) {
+    if (!supabase) return
+    const next = categories.some((item) => item.id === category.id)
+      ? categories.map((item) => (item.id === category.id ? category : item))
+      : [...categories, category]
+    const error = await persistLibraryCategorySettings(supabase, userId, "saved_lines", {
+      categories: next,
+      assignments: {},
+    })
+    if (error) {
+      alert(error)
+      return
+    }
+    setCategories(next)
+    if (categoryEditor === "new") setNewLineCategoryId(category.id)
+    setCategoryEditor(null)
   }
 
   function renderTile(row: EstimateLinePresetRow, idx: number) {
@@ -287,6 +318,22 @@ export default function EstimateLineItemsLibraryPanel({
                   </option>
                 ))}
               </select>
+              <select
+                value={row.category_id ?? savedLineCategoryIdFromKind(row.line_kind)}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev.map((r, i) => (i === idx ? { ...r, category_id: e.target.value } : r)),
+                  )
+                }
+                style={{ ...inputDark, fontSize: 12, padding: "6px 8px", gridColumn: "1 / -1" }}
+                aria-label="Saved line category"
+              >
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {glyphForJobTypeIcon(category.icon_id)} {category.title}
+                  </option>
+                ))}
+              </select>
             </div>
             {jobTypes.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
@@ -369,11 +416,6 @@ export default function EstimateLineItemsLibraryPanel({
           onJobTypeFollowUp={onJobTypeFollowUp}
         />
       ) : null}
-      <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
-        Build <strong>saved lines</strong> here, then use them from <strong>Quote items → Saved lines</strong> on any open estimate.
-        Link lines to job types so they apply automatically when you pick a job type.
-      </p>
-
       <div style={{ padding: 14, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc", display: "grid", gap: 10 }}>
         <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Add a saved line</div>
         <div
@@ -381,7 +423,7 @@ export default function EstimateLineItemsLibraryPanel({
             display: "grid",
             gridTemplateColumns: isMobile
               ? "1fr"
-              : "minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(90px, 0.7fr) minmax(64px, 0.45fr) minmax(72px, 0.55fr)",
+              : "minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(90px, 0.7fr) minmax(64px, 0.45fr) minmax(72px, 0.55fr)",
             gap: 8,
             alignItems: "end",
           }}
@@ -394,6 +436,16 @@ export default function EstimateLineItemsLibraryPanel({
               placeholder="Per Acre Fuel Charge"
               style={{ ...inputDark, padding: "8px 10px" }}
             />
+          </label>
+          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
+            Category
+            <select value={newLineCategoryId} onChange={(e) => setNewLineCategoryId(e.target.value)} style={{ ...inputDark, padding: "8px 10px" }}>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {glyphForJobTypeIcon(category.icon_id)} {category.title}
+                </option>
+              ))}
+            </select>
           </label>
           <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
             Line type
@@ -497,23 +549,34 @@ export default function EstimateLineItemsLibraryPanel({
         </div>
       </div>
 
-      <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Your saved lines</div>
-      {draft.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No saved lines yet.</p>
-      ) : (
-        <div
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Your saved lines</div>
+        <button
+          type="button"
+          onClick={() => setCategoryEditor("new")}
+          style={{ padding: "7px 11px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", color: "#0f172a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+        >
+          + Add category
+        </button>
+      </div>
+      <div
           style={{
             display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))",
+            gridTemplateColumns: isMobile ? "1fr" : `repeat(${Math.min(Math.max(categories.length, 1), 4)}, minmax(0, 1fr))`,
             gap: 12,
             alignItems: "start",
           }}
         >
-          {ELI_LINE_KINDS.map((kind) => {
-            const items = columns[kind]
+          {categories.map((category) => {
+            const items = columns.get(category.id) ?? []
             return (
-              <div key={kind} style={{ display: "grid", gap: 8, minWidth: 0 }}>
+              <div key={category.id} style={{ display: "grid", gap: 8, minWidth: 0 }}>
                 <div
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    setCategoryEditor(category)
+                  }}
+                  title="Right-click to edit category"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -521,16 +584,20 @@ export default function EstimateLineItemsLibraryPanel({
                     gap: 8,
                     padding: "6px 8px",
                     borderRadius: 8,
-                    background: `${ELI_KIND_ACCENT[kind]}14`,
-                    border: `1px solid ${ELI_KIND_ACCENT[kind]}33`,
+                    background: `${category.color}14`,
+                    border: `1px solid ${category.color}33`,
+                    cursor: "context-menu",
                   }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>{ELI_KIND_LABEL[kind]}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
+                    {glyphForJobTypeIcon(category.icon_id) ? `${glyphForJobTypeIcon(category.icon_id)} ` : ""}
+                    {category.title}
+                  </span>
                   <span
                     style={{
                       fontSize: 11,
                       fontWeight: 800,
-                      color: ELI_KIND_ACCENT[kind],
+                      color: category.color,
                       background: "#fff",
                       borderRadius: 999,
                       padding: "1px 7px",
@@ -548,7 +615,6 @@ export default function EstimateLineItemsLibraryPanel({
             )
           })}
         </div>
-      )}
 
       {message ? <p style={{ margin: 0, fontSize: 13, color: "#166534" }}>{message}</p> : null}
       <button
@@ -568,6 +634,12 @@ export default function EstimateLineItemsLibraryPanel({
       >
         {saving ? "Saving…" : "Save line items"}
       </button>
+      <LibraryCategoryEditor
+        open={categoryEditor != null}
+        category={categoryEditor === "new" ? null : categoryEditor}
+        onClose={() => setCategoryEditor(null)}
+        onSave={(category) => void saveCategory(category)}
+      />
     </div>
   )
 }
