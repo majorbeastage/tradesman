@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type FormEvent } from "react"
+import { useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
 import type { BusinessProfileTemplateId, BusinessProfileTheme } from "../../lib/businessPublicProfile"
@@ -41,23 +41,31 @@ function themeVars(theme: BusinessProfileTheme): CSSProperties {
   }
 }
 
-function SocialFollowBlock({ facebookUrl, instagramUrl }: { facebookUrl?: string | null; instagramUrl?: string | null }) {
+function SocialFollowBlock({
+  facebookUrl,
+  instagramUrl,
+}: {
+  facebookUrl?: string | null
+  instagramUrl?: string | null
+}) {
   if (!facebookUrl && !instagramUrl) return null
   return (
-    <section style={{ padding: "20px 0 8px" }}>
-      <SectionHeading>Follow us</SectionHeading>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 15 }}>
-        {facebookUrl ? (
-          <a href={facebookUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-            Facebook
-          </a>
-        ) : null}
-        {instagramUrl ? (
-          <a href={instagramUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-            Instagram
-          </a>
-        ) : null}
-      </div>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>Follow us</SectionHeading>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 15 }}>
+          {facebookUrl ? (
+            <a href={facebookUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+              Facebook
+            </a>
+          ) : null}
+          {instagramUrl ? (
+            <a href={instagramUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+              Instagram
+            </a>
+          ) : null}
+        </div>
+      </SectionFrame>
     </section>
   )
 }
@@ -102,39 +110,60 @@ function SectionHeading({ children }: { children: string }) {
   )
 }
 
+function SectionFrame({ children, dense }: { children: ReactNode; dense?: boolean }) {
+  return (
+    <div
+      className="bp-section-frame"
+      style={{
+        margin: dense ? "10px 0" : "14px 0",
+        padding: dense ? "14px 16px" : "18px 18px",
+        borderRadius: 14,
+        border: "1px solid rgba(15,23,42,0.12)",
+        background: "rgba(255,255,255,0.92)",
+        boxShadow: "0 1px 0 rgba(15,23,42,0.03)",
+        boxSizing: "border-box",
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function ContactBlock({ data }: { data: PublicBusinessProfileData }) {
   if (!data.phone && !data.email && !data.address && !data.serviceArea) return null
   return (
-    <section style={{ padding: "24px 0" }}>
-      <SectionHeading>Contact us</SectionHeading>
-      <div style={{ display: "grid", gap: 10, fontSize: 16, lineHeight: 1.55, color: "var(--bp-font)" }}>
-        {data.phone ? (
-          <div>
-            <strong>Phone:</strong>{" "}
-            <a href={`tel:${data.phone.replace(/\D/g, "")}`} style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-              {data.phone}
-            </a>
-          </div>
-        ) : null}
-        {data.email ? (
-          <div>
-            <strong>Email:</strong>{" "}
-            <a href={`mailto:${data.email}`} style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-              {data.email}
-            </a>
-          </div>
-        ) : null}
-        {data.address ? (
-          <div>
-            <strong>Address:</strong> <span style={{ whiteSpace: "pre-wrap" }}>{data.address}</span>
-          </div>
-        ) : null}
-        {data.serviceArea ? (
-          <div>
-            <strong>Service radius:</strong> {data.serviceArea}
-          </div>
-        ) : null}
-      </div>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>Contact us</SectionHeading>
+        <div style={{ display: "grid", gap: 10, fontSize: 16, lineHeight: 1.55, color: "var(--bp-font)" }}>
+          {data.phone ? (
+            <div>
+              <strong>Phone:</strong>{" "}
+              <a href={`tel:${data.phone.replace(/\D/g, "")}`} style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+                {data.phone}
+              </a>
+            </div>
+          ) : null}
+          {data.email ? (
+            <div>
+              <strong>Email:</strong>{" "}
+              <a href={`mailto:${data.email}`} style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
+                {data.email}
+              </a>
+            </div>
+          ) : null}
+          {data.address ? (
+            <div>
+              <strong>Address:</strong> <span style={{ whiteSpace: "pre-wrap" }}>{data.address}</span>
+            </div>
+          ) : null}
+          {data.serviceArea ? (
+            <div>
+              <strong>Service radius:</strong> {data.serviceArea}
+            </div>
+          ) : null}
+        </div>
+      </SectionFrame>
     </section>
   )
 }
@@ -142,13 +171,15 @@ function ContactBlock({ data }: { data: PublicBusinessProfileData }) {
 function ServiceAreasBlock({ items }: { items: string[] }) {
   if (!items.length) return null
   return (
-    <section style={{ padding: "24px 0" }}>
-      <SectionHeading>Service areas</SectionHeading>
-      <ul style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, fontSize: 16, color: "var(--bp-font)" }}>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>Service areas</SectionHeading>
+        <ul style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, fontSize: 16, color: "var(--bp-font)" }}>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </SectionFrame>
     </section>
   )
 }
@@ -156,13 +187,15 @@ function ServiceAreasBlock({ items }: { items: string[] }) {
 function ServicesBlock({ items }: { items: string[] }) {
   if (!items.length) return null
   return (
-    <section style={{ padding: "24px 0" }}>
-      <SectionHeading>Services offered</SectionHeading>
-      <ul style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, fontSize: 16, color: "var(--bp-font)" }}>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>Services offered</SectionHeading>
+        <ul style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, fontSize: 16, color: "var(--bp-font)" }}>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </SectionFrame>
     </section>
   )
 }
@@ -170,16 +203,18 @@ function ServicesBlock({ items }: { items: string[] }) {
 function HoursBlock({ hours }: { hours: Array<{ day: string; hours: string }> }) {
   if (!hours.length) return null
   return (
-    <section style={{ padding: "24px 0" }}>
-      <SectionHeading>Business hours</SectionHeading>
-      <div style={{ display: "grid", gap: 6, fontSize: 15, color: "var(--bp-font)" }}>
-        {hours.map((row) => (
-          <div key={row.day} style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 700 }}>{row.day}</span>
-            <span>{row.hours}</span>
-          </div>
-        ))}
-      </div>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>Business hours</SectionHeading>
+        <div style={{ display: "grid", gap: 6, fontSize: 15, color: "var(--bp-font)" }}>
+          {hours.map((row) => (
+            <div key={row.day} style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700 }}>{row.day}</span>
+              <span>{row.hours}</span>
+            </div>
+          ))}
+        </div>
+      </SectionFrame>
     </section>
   )
 }
@@ -195,15 +230,16 @@ function WorkPhotosBlock({
 }) {
   if (!urls.length) return null
   return (
-    <section style={{ padding: dense ? "12px 0 24px" : "24px 0" }}>
-      {!dense ? <SectionHeading>Our work</SectionHeading> : null}
-      <div
-        className={dense ? "bp-work-photos bp-work-photos-dense" : "bp-work-photos"}
-        style={{
-          display: "grid",
-          gap: 12,
-        }}
-      >
+    <section style={{ padding: dense ? "4px 0 8px" : "8px 0" }}>
+      <SectionFrame dense={dense}>
+        {!dense ? <SectionHeading>Our work</SectionHeading> : null}
+        <div
+          className={dense ? "bp-work-photos bp-work-photos-dense" : "bp-work-photos"}
+          style={{
+            display: "grid",
+            gap: 12,
+          }}
+        >
         {urls.map((url, index) => (
           <button
             key={url}
@@ -236,6 +272,7 @@ function WorkPhotosBlock({
           </button>
         ))}
       </div>
+      </SectionFrame>
     </section>
   )
 }
@@ -327,7 +364,8 @@ function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormPr
   }
 
   return (
-    <section style={{ padding: "24px 0" }}>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
       <SectionHeading>Contact us</SectionHeading>
       <form onSubmit={(e) => void onSubmit(e)} style={{ display: "grid", gap: 12, maxWidth: 720 }}>
         <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--bp-font)" }}>
@@ -387,6 +425,7 @@ function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormPr
           {busy ? "Sending…" : "Send message"}
         </button>
       </form>
+      </SectionFrame>
     </section>
   )
 }
@@ -472,9 +511,11 @@ function ProfileHeader({
 function AboutBlock({ aboutUs }: { aboutUs?: string }) {
   if (!aboutUs?.trim()) return null
   return (
-    <section style={{ padding: "24px 0" }}>
-      <SectionHeading>About us</SectionHeading>
-      <p style={{ margin: 0, fontSize: 16, lineHeight: 1.7, color: "var(--bp-font)", whiteSpace: "pre-wrap" }}>{aboutUs}</p>
+    <section style={{ padding: "8px 0" }}>
+      <SectionFrame>
+        <SectionHeading>About us</SectionHeading>
+        <p style={{ margin: 0, fontSize: 16, lineHeight: 1.7, color: "var(--bp-font)", whiteSpace: "pre-wrap" }}>{aboutUs}</p>
+      </SectionFrame>
     </section>
   )
 }

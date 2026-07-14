@@ -397,54 +397,70 @@ export type WorkflowProgressDisplayStep = {
 
 const PARALLEL_LETTERS = "abcdefghijklmnopqrstuvwxyz"
 
-function workflowOutgoingEdges(doc: BusinessWorkflowDoc, nodeId: string): WorkflowEdge[] {
-  return doc.edges.filter((e) => e.fromId === nodeId)
+function isCustomerIntakeLabel(label: string): boolean {
+  return /^\s*customer\s+intake\s*$/i.test(label.trim())
 }
 
 /**
- * Order workflow steps by following arrows (topological layers).
- * Parallel steps at the same layer get sub-labels: 2.a, 2.b, etc.
+ * Order workflow steps strictly by following arrows from a single start.
  *
- * Important: orphan nodes (no inbound *and* no outbound arrows) are NOT dumped into
- * level 1 beside the real start — that produced incorrect labels like
- * "1.a Customer Intake" / "1.b Customer Payment Received". Orphans are appended
- * after the arrow-connected chain, ordered by chart order / vertical position.
+ * Rules (product):
+ * - Start at Customer Intake when present (else the sole real source with outbound arrows).
+ * - Follow arrows: A → B → C becomes 1, 2, 3.
+ * - Letters (.a / .b) only when one step fans out to multiple next steps at the same time
+ *   (or multiple nodes unlock together after shared predecessors).
+ * - Never treat an orphan mid/end step that lacks inbound arrows as parallel with Intake (that
+ *   caused "1.a Customer Intake" / "1.b Customer Payment Received").
  */
 export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): WorkflowProgressDisplayStep[] {
   const nodes = doc.nodes
   if (!nodes.length) return []
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
+  const validEdges = doc.edges.filter((e) => nodeById.has(e.fromId) && nodeById.has(e.toId) && e.fromId !== e.toId)
+
   const inDegree = new Map<string, number>()
   const outDegree = new Map<string, number>()
   for (const n of nodes) {
     inDegree.set(n.id, 0)
     outDegree.set(n.id, 0)
   }
-  for (const e of doc.edges) {
-    if (!nodeById.has(e.fromId) || !nodeById.has(e.toId)) continue
+  for (const e of validEdges) {
     inDegree.set(e.toId, (inDegree.get(e.toId) ?? 0) + 1)
     outDegree.set(e.fromId, (outDegree.get(e.fromId) ?? 0) + 1)
   }
 
+  const workingIn = new Map(inDegree)
+  const outgoing = new Map<string, string[]>()
+  for (const n of nodes) outgoing.set(n.id, [])
+  for (const e of validEdges) {
+    outgoing.get(e.fromId)!.push(e.toId)
+  }
+
   const sortNodes = (a: WorkflowNode, b: WorkflowNode) =>
-    a.order - b.order || a.y - b.y || a.label.localeCompare(b.label)
+    a.y - b.y || a.order - b.order || a.label.localeCompare(b.label)
 
   const sources = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0)
-  const connectedSources = sources.filter((n) => (outDegree.get(n.id) ?? 0) > 0)
+  const connectedSources = sources.filter((n) => (outDegree.get(n.id) ?? 0) > 0).sort(sortNodes)
 
-  // Prefer real starts (have arrows out). Never pull disconnected orphans into the first layer.
-  let frontier =
-    connectedSources.length > 0
-      ? [...connectedSources]
-      : sources.length > 0
-        ? [[...sources].sort(sortNodes)[0]!]
-        : [[...nodes].sort(sortNodes)[0]!]
+  // Exactly one primary start — prefer Customer Intake so stray mid-chain tiles never become 1.b.
+  const intake = connectedSources.find((n) => isCustomerIntakeLabel(n.label))
+    ?? nodes.find((n) => isCustomerIntakeLabel(n.label) && (outDegree.get(n.id) ?? 0) > 0)
+    ?? nodes.find((n) => isCustomerIntakeLabel(n.label))
 
-  frontier.sort(sortNodes)
+  let start: WorkflowNode | null =
+    intake ??
+    (connectedSources.length === 1
+      ? connectedSources[0]!
+      : connectedSources.length > 1
+        ? connectedSources[0]!
+        : sources.sort(sortNodes)[0] ?? nodes.slice().sort(sortNodes)[0] ?? null)
+
+  if (!start) return []
 
   const out: WorkflowProgressDisplayStep[] = []
   const visited = new Set<string>()
+  let frontier: WorkflowNode[] = [start]
   let level = 0
 
   while (frontier.length) {
@@ -452,34 +468,41 @@ export function workflowProgressDisplaySteps(doc: BusinessWorkflowDoc): Workflow
     frontier = []
     level += 1
 
-    layer.forEach((node, idx) => {
-      if (visited.has(node.id)) return
+    for (let idx = 0; idx < layer.length; idx++) {
+      const node = layer[idx]!
+      if (visited.has(node.id)) continue
       visited.add(node.id)
       const stepLabel =
         layer.length === 1
           ? String(level)
           : `${level}.${PARALLEL_LETTERS[idx] ?? String(idx + 1)}`
       out.push({ node, stepLabel, level })
-    })
+    }
 
+    // Collect unlocks from this layer only (arrow followers).
+    const unlocked: WorkflowNode[] = []
     for (const node of layer) {
-      for (const edge of workflowOutgoingEdges(doc, node.id)) {
-        const next = nodeById.get(edge.toId)
+      for (const toId of outgoing.get(node.id) ?? []) {
+        const next = nodeById.get(toId)
         if (!next || visited.has(next.id)) continue
-        const nextIn = (inDegree.get(next.id) ?? 1) - 1
-        inDegree.set(next.id, nextIn)
-        if (nextIn <= 0) frontier.push(next)
+        const nextIn = (workingIn.get(next.id) ?? 1) - 1
+        workingIn.set(next.id, nextIn)
+        if (nextIn <= 0) unlocked.push(next)
       }
     }
 
-    frontier = frontier.filter((n) => !visited.has(n.id))
-    frontier.sort(sortNodes)
+    // Deduplicate while preserving sort order later
+    const seen = new Set<string>()
+    for (const n of unlocked.sort(sortNodes)) {
+      if (seen.has(n.id) || visited.has(n.id)) continue
+      seen.add(n.id)
+      frontier.push(n)
+    }
   }
 
-  // Remaining (orphans / disconnected): sequential steps after the arrow chain — not parallel 1.a/1.b.
-  const remaining = [...nodes]
-    .filter((n) => !visited.has(n.id))
-    .sort(sortNodes)
+  // Unreachable / disconnected steps (including extra roots like Payment with no inbound arrow):
+  // number them after the walked chain — never as 1.a/1.b beside Intake.
+  const remaining = nodes.filter((n) => !visited.has(n.id)).sort(sortNodes)
   for (const n of remaining) {
     level += 1
     out.push({ node: n, stepLabel: String(level), level })
