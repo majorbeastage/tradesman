@@ -166,6 +166,8 @@
     { "source": "/pricing", "destination": "/" },
     { "source": "/trial", "destination": "/" },
     { "source": "/signup", "destination": "/" },
+    { "source": "/accept-invite", "destination": "/" },
+    { "source": "/accept-invite/", "destination": "/" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" },
     { "source": "/:slug", "destination": "/index.html" }
   ]

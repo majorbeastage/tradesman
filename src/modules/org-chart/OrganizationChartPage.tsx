@@ -47,8 +47,8 @@ type Props = {
   setPage: (page: string) => void
 }
 
-const NODE_W = 240
-const NODE_H = 72
+const NODE_W = 190
+const NODE_H = 56
 
 const TILE_LABEL_STYLE: CSSProperties = {
   width: "100%",
@@ -60,8 +60,8 @@ const TILE_LABEL_STYLE: CSSProperties = {
   wordBreak: "break-word",
   overflowWrap: "anywhere",
   lineHeight: 1.35,
-  minHeight: 28,
-  maxHeight: 56,
+  minHeight: 20,
+  maxHeight: 36,
   overflow: "auto",
 }
 
@@ -69,8 +69,8 @@ const TILE_SUBLABEL_STYLE: CSSProperties = {
   ...TILE_LABEL_STYLE,
   fontSize: 11,
   color: "#64748b",
-  minHeight: 22,
-  maxHeight: 40,
+  minHeight: 18,
+  maxHeight: 30,
   marginTop: 2,
 }
 
@@ -691,7 +691,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
             onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
-              minHeight: 640,
+              minHeight: 520,
               borderRadius: 12,
               border: `1px solid ${theme.border}`,
               background: "#f8fafc",
@@ -991,7 +991,7 @@ function OrgEdgeEditor({
     <div
       style={{
         padding: compact ? "10px 10px" : "12px 12px",
-        borderRadius: 10,
+        borderRadius: 8,
         border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
         background: "#fff",
       }}
@@ -1090,7 +1090,7 @@ function OrgNodeCard({
                 : `1px solid ${theme.border}`,
         background: wireDropTarget ? "#ecfdf5" : linkSource ? "#fefce8" : wireEligible ? "#f0fdf4" : "#fff",
         boxShadow: wireDropTarget || selected || linkSource ? "0 6px 20px rgba(22,163,74,0.22)" : "0 2px 8px rgba(15,23,42,0.06)",
-        padding: "8px 10px",
+        padding: "6px 8px",
         cursor: wireDragActive ? "copy" : linkMode ? "crosshair" : "grab",
         touchAction: "none",
         zIndex: wireDropTarget || selected || linkSource ? 3 : wireEligible ? 2 : 1,
@@ -1130,15 +1130,15 @@ function OrgNodeCard({
         onChange={(e) => onPatch({ label: e.target.value })}
         onClick={(e) => e.stopPropagation()}
         placeholder="Role / department"
-        rows={2}
-        style={{ ...TILE_LABEL_STYLE, fontSize: 13, fontWeight: 700, color: theme.text }}
+        rows={1}
+        style={{ ...TILE_LABEL_STYLE, fontSize: 12, fontWeight: 700, color: theme.text }}
       />
       <textarea
         value={node.jobTitle}
         onChange={(e) => onPatch({ jobTitle: e.target.value })}
         onClick={(e) => e.stopPropagation()}
         placeholder="Job title"
-        rows={2}
+        rows={1}
         style={TILE_SUBLABEL_STYLE}
       />
       <select
@@ -1152,7 +1152,7 @@ function OrgNodeCard({
           })
         }}
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", marginTop: 4, fontSize: 11, borderRadius: 6, border: `1px solid ${theme.border}`, padding: "3px 6px" }}
+        style={{ width: "100%", marginTop: 2, fontSize: 10, borderRadius: 5, border: `1px solid ${theme.border}`, padding: "2px 5px" }}
       >
         <option value="">Link Tradesman user…</option>
         <LinkableOrgUserOptions members={members} />

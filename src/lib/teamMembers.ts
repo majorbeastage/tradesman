@@ -6,6 +6,24 @@ import {
 import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { type ProductPackageId, PRODUCT_PACKAGE_IDS } from "./productPackages"
 
+export type TeamMemberRole = "user" | "office_manager" | "corporate_internal" | "corporate_external"
+
+export function isTeamMemberRole(value: unknown): value is TeamMemberRole {
+  return (
+    value === "user" ||
+    value === "office_manager" ||
+    value === "corporate_internal" ||
+    value === "corporate_external"
+  )
+}
+
+export function teamMemberRoleLabel(role: string): string {
+  if (role === "office_manager") return "Office manager"
+  if (role === "corporate_internal") return "Internal user"
+  if (role === "corporate_external") return "External user"
+  return "User"
+}
+
 export type TeamInviteRow = {
   id: string
   invite_email: string | null
@@ -21,7 +39,7 @@ export type ActiveTeamMember = {
   profileId: string
   email: string | null
   displayName: string
-  role: "user" | "office_manager"
+  role: TeamMemberRole
   inviteId: string | null
   status: "active"
 }
@@ -141,7 +159,8 @@ export async function loadActiveTeamMembers(client: SupabaseClient, ownerUserId:
     const r = row as { id: string; email?: string | null; display_name?: string | null; role?: string | null; metadata?: unknown }
     if (r.id === ownerUserId) continue
     const inv = inviteByProfile.get(r.id)
-    const role = inv?.invite_role === "office_manager" || r.role === "office_manager" ? "office_manager" : "user"
+    const rawRole = inv?.invite_role ?? r.role
+    const role: TeamMemberRole = isTeamMemberRole(rawRole) ? rawRole : "user"
     out.push({
       profileId: r.id,
       email: r.email ?? inv?.invite_email ?? null,

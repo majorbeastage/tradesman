@@ -65,7 +65,12 @@ Deno.serve(async (req) => {
     })
   }
 
-  const inviteRole = body.invite_role === "office_manager" ? "office_manager" : "user"
+  const inviteRole =
+    body.invite_role === "office_manager" ||
+    body.invite_role === "corporate_internal" ||
+    body.invite_role === "corporate_external"
+      ? body.invite_role
+      : "user"
 
   const { data: ownerProf, error: ownerProfErr } = await admin
     .from("profiles")
@@ -137,7 +142,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
-  if (inviteRole === "user" && usersUsed >= ent.userInviteLimit) {
+  if (inviteRole !== "office_manager" && usersUsed >= ent.userInviteLimit) {
     return new Response(JSON.stringify({ error: "User seat limit reached for your subscription." }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -173,16 +178,39 @@ Deno.serve(async (req) => {
   const resendFrom = Deno.env.get("RESEND_FROM_EMAIL")?.trim()
   if (resendKey && resendFrom) {
     const ownerName = ownerProf?.display_name?.trim() || "Your team admin"
+    const roleLabel =
+      inviteRole === "office_manager"
+        ? "Office manager"
+        : inviteRole === "corporate_internal"
+          ? "Internal user"
+          : inviteRole === "corporate_external"
+            ? "External user"
+            : "User"
     const text = [
       `${ownerName} invited you to Tradesman Systems.`,
       "",
-      "Create your password and join the workspace:",
+      `Role: ${roleLabel}`,
+      "",
+      "Use this link to set up your user information, create a password, and agree to Terms, Privacy, and SMS policy:",
       acceptUrl,
       "",
       "This link expires in 7 days.",
+      "After setup, Tradesman sends an email verification link before sign-in.",
       "",
       "— Tradesman Systems",
     ].join("\n")
+    const html = `
+<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f8fafc;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:26px;text-align:center;">
+    <div style="font-size:22px;font-weight:900;color:#F97316;margin-bottom:18px;">Tradesman Systems</div>
+    <h1 style="margin:0 0 12px;font-size:20px;">You're invited to join the team</h1>
+    <p style="margin:0 0 8px;color:#475569;line-height:1.55;"><strong>${ownerName}</strong> invited you to Tradesman as <strong>${roleLabel}</strong>.</p>
+    <p style="margin:0 0 20px;color:#475569;line-height:1.55;">Set up your user information, create a password, and review the Terms, Privacy Policy, and SMS policy.</p>
+    <a href="${acceptUrl}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#F97316;color:#fff;font-weight:800;text-decoration:none;">Accept invitation</a>
+    <p style="margin:20px 0 0;font-size:12px;color:#64748b;">This link expires in 7 days. After setup, Tradesman sends an email-verification link before sign-in.</p>
+  </div>
+</body></html>`
     await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
@@ -191,6 +219,7 @@ Deno.serve(async (req) => {
         to: [inviteEmail],
         subject: `${ownerName} invited you to Tradesman`,
         text,
+        html,
       }),
     })
   }

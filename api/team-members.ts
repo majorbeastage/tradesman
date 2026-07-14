@@ -7,6 +7,18 @@ import {
 } from "./_communications.js"
 
 type Json = Record<string, unknown>
+type TeamMemberRole = "user" | "office_manager" | "corporate_internal" | "corporate_external"
+
+function parseTeamMemberRole(value: unknown): TeamMemberRole {
+  if (
+    value === "office_manager" ||
+    value === "corporate_internal" ||
+    value === "corporate_external"
+  ) {
+    return value
+  }
+  return "user"
+}
 
 function cors(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -96,13 +108,12 @@ async function handleUpdateRole(req: VercelRequest, res: VercelResponse) {
   const { sb, userId: ownerId } = await resolveSupabase(req, body)
   await assertAccountOwner(sb, ownerId)
   const memberProfileId = String(body.memberProfileId ?? "").trim()
-  const inviteRole = body.inviteRole === "office_manager" ? "office_manager" : "user"
+  const inviteRole = parseTeamMemberRole(body.inviteRole)
   if (!memberProfileId) {
     res.status(400).json({ error: "memberProfileId required." })
     return
   }
-  const profileRole = inviteRole === "office_manager" ? "office_manager" : "user"
-  await sb.from("profiles").update({ role: profileRole }).eq("id", memberProfileId)
+  await sb.from("profiles").update({ role: inviteRole }).eq("id", memberProfileId)
   const { data: invites } = await sb
     .from("team_member_invites")
     .select("id")

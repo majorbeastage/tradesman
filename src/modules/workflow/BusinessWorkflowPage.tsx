@@ -67,8 +67,8 @@ type Props = {
   setPage: (page: string) => void
 }
 
-const NODE_W = 240
-const NODE_H = 72
+const NODE_W = 190
+const NODE_H = 56
 
 const TILE_LABEL_STYLE: CSSProperties = {
   width: "100%",
@@ -80,8 +80,8 @@ const TILE_LABEL_STYLE: CSSProperties = {
   wordBreak: "break-word",
   overflowWrap: "anywhere",
   lineHeight: 1.35,
-  minHeight: 36,
-  maxHeight: 72,
+  minHeight: 26,
+  maxHeight: 52,
   overflow: "auto",
 }
 
@@ -748,7 +748,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
             onContextMenu={(e) => openContextMenu(e, "canvas")}
             style={{
               position: "relative",
-              minHeight: Math.max(640, nodes.length * 88 + 80),
+              minHeight: Math.max(520, nodes.length * 70 + 64),
               borderRadius: 12,
               border: `1px solid ${theme.border}`,
               background: "#f8fafc",
@@ -1194,7 +1194,7 @@ function EdgeEditor({
     <div
       style={{
         padding: compact ? "10px 10px" : "12px 12px",
-        borderRadius: 10,
+        borderRadius: 8,
         border: active ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
         background: "#fff",
       }}
@@ -1335,7 +1335,7 @@ function WorkflowNodeCard({
           wireDropTarget || selected || linkSource
             ? "0 6px 20px rgba(22,163,74,0.22)"
             : "0 2px 8px rgba(15,23,42,0.06)",
-        padding: "8px 10px",
+        padding: "6px 8px",
         cursor: wireDragActive ? "copy" : linkMode ? "crosshair" : "grab",
         touchAction: "none",
         zIndex: wireDropTarget || selected || linkSource ? 3 : wireEligible ? 2 : 1,
@@ -1406,7 +1406,7 @@ function WorkflowNodeCard({
         rows={2}
         style={{
           ...TILE_LABEL_STYLE,
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 600,
           color: pres.text,
         }}

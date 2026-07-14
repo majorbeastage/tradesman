@@ -23,6 +23,7 @@ import DemoPage from "./modules/demo/DemoPage"
 import TrainingPage from "./modules/training/TrainingPage"
 import SignupPage from "./modules/auth/SignupPage"
 import ResetPasswordPage from "./modules/auth/ResetPasswordPage"
+import AcceptTeamInvitePage from "./modules/auth/AcceptTeamInvitePage"
 import AboutUsPage from "./modules/public/AboutUsPage"
 import PricingPage from "./modules/public/PricingPage"
 import OfficeManagerApp from "./modules/office-manager/OfficeManagerApp"
@@ -817,6 +818,10 @@ function App() {
 
   if (pathname === "/reset-password") {
     return <ResetPasswordPage onDone={() => { window.history.replaceState(null, "", "/"); window.location.assign("/") }} />
+  }
+
+  if (pathname === "/accept-invite") {
+    return <AcceptTeamInvitePage />
   }
 
   if (pathname === "/privacy") {

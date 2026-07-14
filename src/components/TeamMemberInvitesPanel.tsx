@@ -5,10 +5,13 @@ import { useAuth } from "../contexts/AuthContext"
 import {
   loadActiveTeamMembers,
   loadTeamInvites,
+  isTeamMemberRole,
+  teamMemberRoleLabel,
   teamMembersApiFetch,
   teamSeatSummaryFromMetadata,
   type ActiveTeamMember,
   type TeamInviteRow,
+  type TeamMemberRole,
 } from "../lib/teamMembers"
 import type { AccountSettingsCategory } from "../modules/account/accountSettingsLayout"
 import { accountSettingsCategoryStyle, accountSettingsFoldButtonStyle } from "../modules/account/accountSettingsLayout"
@@ -34,8 +37,10 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
   const [invites, setInvites] = useState<TeamInviteRow[]>([])
   const [activeMembers, setActiveMembers] = useState<ActiveTeamMember[]>([])
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
+  const [ownerDisplayName, setOwnerDisplayName] = useState("Your team admin")
   const [email, setEmail] = useState("")
-  const [role, setRole] = useState<"user" | "office_manager">("user")
+  const [role, setRole] = useState<TeamMemberRole>("user")
+  const [previewOpen, setPreviewOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [message, setMessage] = useState("")
@@ -46,7 +51,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     const [inv, active, prof] = await Promise.all([
       loadTeamInvites(supabase, ownerUserId),
       loadActiveTeamMembers(supabase, ownerUserId),
-      supabase.from("profiles").select("metadata").eq("id", ownerUserId).maybeSingle(),
+      supabase.from("profiles").select("metadata, display_name").eq("id", ownerUserId).maybeSingle(),
     ])
     setInvites(inv)
     setActiveMembers(active)
@@ -55,6 +60,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
         ? (prof.data.metadata as Record<string, unknown>)
         : {}
     setProfileMetadata(meta)
+    setOwnerDisplayName(prof.data?.display_name?.trim() || "Your team admin")
   }, [ownerUserId])
 
   useEffect(() => {
@@ -78,7 +84,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
       setError("Office manager seat limit reached for your plan.")
       return
     }
-    if (role === "user" && !seats.canInviteUser) {
+    if (role !== "office_manager" && !seats.canInviteUser) {
       setError("User seat limit reached for your plan.")
       return
     }
@@ -131,7 +137,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     }
   }
 
-  async function updateMemberRole(member: ActiveTeamMember, nextRole: "user" | "office_manager") {
+  async function updateMemberRole(member: ActiveTeamMember, nextRole: TeamMemberRole) {
     setRowBusy(member.profileId)
     setError("")
     try {
@@ -221,10 +227,15 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
                     <select
                       value={m.role}
                       disabled={rowBusy === m.profileId}
-                      onChange={(e) => void updateMemberRole(m, e.target.value === "office_manager" ? "office_manager" : "user")}
+                      onChange={(e) => {
+                        const nextRole = e.target.value
+                        if (isTeamMemberRole(nextRole)) void updateMemberRole(m, nextRole)
+                      }}
                       style={{ ...theme.formInput, padding: "6px 8px", fontSize: 12, width: "auto" }}
                     >
                       <option value="user">User</option>
+                      <option value="corporate_internal">Internal user</option>
+                      <option value="corporate_external">External user</option>
                       <option value="office_manager">Office manager</option>
                     </select>
                     <button
@@ -270,7 +281,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
                   }}
                 >
                   <span>
-                    {i.invite_email} · {i.invite_role === "office_manager" ? "Office manager" : "User"} ·{" "}
+                    {i.invite_email} · {teamMemberRoleLabel(i.invite_role)} ·{" "}
                     {statusLabel(i.status, i.accepted_at)}
                   </span>
                   <button
@@ -303,12 +314,20 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
             />
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value === "office_manager" ? "office_manager" : "user")}
+              onChange={(e) => {
+                if (isTeamMemberRole(e.target.value)) setRole(e.target.value)
+              }}
               style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.border}` }}
               disabled={seats.totalSeats <= 0}
             >
               <option value="user" disabled={!seats.canInviteUser && seats.availableSeats <= 0}>
                 User
+              </option>
+              <option value="corporate_internal" disabled={!seats.canInviteUser && seats.availableSeats <= 0}>
+                Internal user
+              </option>
+              <option value="corporate_external" disabled={!seats.canInviteUser && seats.availableSeats <= 0}>
+                External user
               </option>
               <option value="office_manager" disabled={!seats.canInviteOfficeManager}>
                 Office manager
@@ -330,11 +349,97 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
             >
               {busy ? "Sending…" : "Send invite"}
             </button>
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(true)}
+              style={{
+                padding: "8px 14px",
+                background: "#fff",
+                color: theme.text,
+                border: `1px solid ${theme.border}`,
+                borderRadius: 6,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Preview invite email
+            </button>
           </form>
           {error ? <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p> : null}
           {message ? <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p> : null}
+          {previewOpen ? (
+            <InviteEmailPreview
+              ownerName={ownerDisplayName}
+              recipient={email.trim() || "new.user@example.com"}
+              role={role}
+              onClose={() => setPreviewOpen(false)}
+            />
+          ) : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function InviteEmailPreview({
+  ownerName,
+  recipient,
+  role,
+  onClose,
+}: {
+  ownerName: string
+  recipient: string
+  role: TeamMemberRole
+  onClose: () => void
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Team invitation email preview"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+        background: "rgba(15,23,42,0.55)",
+      }}
+    >
+      <div style={{ width: "min(640px, 100%)", maxHeight: "90vh", overflow: "auto", borderRadius: 14, background: "#fff", boxShadow: "0 24px 64px rgba(15,23,42,0.3)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${theme.border}` }}>
+          <strong>Invite email preview</strong>
+          <button type="button" onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "#475569" }} aria-label="Close preview">
+            ×
+          </button>
+        </div>
+        <div style={{ padding: "14px 18px", display: "grid", gap: 4, fontSize: 13, color: "#475569", borderBottom: `1px solid ${theme.border}` }}>
+          <span><strong>To:</strong> {recipient}</span>
+          <span><strong>Subject:</strong> {ownerName} invited you to Tradesman</span>
+        </div>
+        <div style={{ padding: "28px 22px", background: "#f8fafc" }}>
+          <div style={{ width: "min(520px, 100%)", margin: "0 auto", padding: 26, borderRadius: 12, border: `1px solid ${theme.border}`, background: "#fff", textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 900, color: theme.primary, marginBottom: 18 }}>Tradesman Systems</div>
+            <h2 style={{ margin: "0 0 12px", fontSize: 20, color: theme.text }}>You’re invited to join the team</h2>
+            <p style={{ margin: "0 0 8px", color: "#475569", lineHeight: 1.55 }}>
+              <strong>{ownerName}</strong> invited you to Tradesman as <strong>{teamMemberRoleLabel(role)}</strong>.
+            </p>
+            <p style={{ margin: "0 0 20px", color: "#475569", lineHeight: 1.55 }}>
+              Set up your user information, create a password, and review the Terms, Privacy Policy, and SMS policy.
+            </p>
+            <span style={{ display: "inline-block", padding: "11px 20px", borderRadius: 8, background: theme.primary, color: "#fff", fontWeight: 800 }}>
+              Accept invitation
+            </span>
+            <p style={{ margin: "20px 0 0", fontSize: 12, color: "#64748b" }}>
+              This link expires in 7 days. After setup, Tradesman sends an email-verification link before sign-in.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

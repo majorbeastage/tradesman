@@ -113,8 +113,8 @@ export const WORKFLOW_EDGE_META: Record<
   },
 }
 
-const NODE_W = 240
-const NODE_H = 72
+const NODE_W = 190
+const NODE_H = 56
 
 const SVG_PAD = 28
 const SVG_HEADER_H = 44

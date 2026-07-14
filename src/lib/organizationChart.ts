@@ -231,8 +231,8 @@ export function newOrgChartNode(
   }
 }
 
-const NODE_W = 240
-const NODE_H = 72
+const NODE_W = 190
+const NODE_H = 56
 
 export function orgChartToSvg(doc: OrganizationChartDoc, width = 760, height = 900): string {
   const byId = new Map(doc.nodes.map((n) => [n.id, n]))
