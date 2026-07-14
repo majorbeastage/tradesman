@@ -270,8 +270,8 @@ export function createDefaultBusinessWorkflow(): BusinessWorkflowDoc {
   const nodes: WorkflowNode[] = DEFAULT_SIGNUP_WORKFLOW_LABELS.map((label, i) => ({
     id: `default-step-${i + 1}`,
     label,
-    x: 40 + (i % 2) * 280,
-    y: 24 + i * 88,
+    x: 40 + (i % 2) * 190,
+    y: 24 + i * 72,
     order: i,
     boxColor: defaultNodeColor(label, i, DEFAULT_SIGNUP_WORKFLOW_LABELS.length),
   }))

@@ -16,7 +16,6 @@ import {
   WORKFLOW_NODE_COLORS,
   WORKFLOW_REQUIREMENT_SUGGESTIONS,
   createDefaultBusinessWorkflow,
-  createExampleBusinessWorkflow,
   downloadWorkflowSvg,
   loadBusinessWorkflowFromMetadata,
   mergeBusinessWorkflowMetadata,
@@ -513,8 +512,8 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
   }
 
   function resetExample() {
-    if (!window.confirm("Replace your workflow with the example customer-intake → billing flow?")) return
-    updateDoc(createExampleBusinessWorkflow())
+    if (!window.confirm("Replace your workflow with the default 7-step customer job lifecycle?")) return
+    updateDoc(createDefaultBusinessWorkflow())
     setLinkFromId(null)
     setSelectedEdgeId(null)
   }
@@ -692,7 +691,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         </button>
         {canEditStructure ? (
           <button type="button" onClick={resetExample} style={secondaryBtn}>
-            Load example
+            Load default
           </button>
         ) : null}
         {selectedId ? (

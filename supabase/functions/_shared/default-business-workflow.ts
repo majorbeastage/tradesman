@@ -48,8 +48,8 @@ export function createDefaultBusinessWorkflowDoc(nowIso: string): BusinessWorkfl
   const nodes: WorkflowNode[] = DEFAULT_LABELS.map((label, i) => ({
     id: `default-step-${i + 1}`,
     label,
-    x: 40 + (i % 2) * 280,
-    y: 24 + i * 88,
+    x: 40 + (i % 2) * 190,
+    y: 24 + i * 72,
     order: i,
     boxColor: nodeColor(label, i, DEFAULT_LABELS.length),
   }))

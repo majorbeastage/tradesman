@@ -1,4 +1,5 @@
 import {
+  createDefaultBusinessWorkflow,
   createExampleBusinessWorkflow,
   newWorkflowEdge,
   newWorkflowNode,
@@ -16,7 +17,7 @@ export type WorkflowTemplateDef = {
 }
 
 function deptWorkflow(title: string, steps: string[]): BusinessWorkflowDoc {
-  const nodes = steps.map((label, i) => newWorkflowNode(label, i, 40 + (i % 2) * 280, 24 + i * 88))
+  const nodes = steps.map((label, i) => newWorkflowNode(label, i, 40 + (i % 2) * 190, 24 + i * 72))
   const edges = []
   for (let i = 0; i < nodes.length - 1; i++) {
     edges.push(newWorkflowEdge(nodes[i].id, nodes[i + 1].id, i === 1 ? "needs_approval" : "approved"))
@@ -26,9 +27,16 @@ function deptWorkflow(title: string, steps: string[]): BusinessWorkflowDoc {
 
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDef[] = [
   {
+    id: "template-default-lifecycle",
+    label: "Customer job lifecycle (default)",
+    description: "Standard 7-step flow: intake → estimate → approve → schedule → complete → payment → receipt.",
+    scopeKind: "template",
+    build: createDefaultBusinessWorkflow,
+  },
+  {
     id: "template-full-intake",
-    label: "Full customer intake → billing",
-    description: "Default Tradesman example with estimate approvals and billing.",
+    label: "Full customer intake → billing (advanced)",
+    description: "Larger multi-approval example with parts, accounting, and shop manager routes.",
     scopeKind: "template",
     build: createExampleBusinessWorkflow,
   },
