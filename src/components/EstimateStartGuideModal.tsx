@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { theme } from "../styles/theme"
 
 type CustomerOpt = { id: string; display_name?: string | null }
-type TemplateOpt = { id: string; title: string }
+type JobTypeOpt = { id: string; name: string }
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7
 
@@ -16,12 +16,12 @@ type Props = {
   onCustomerContinue: () => void
   onCustomerSkip: () => void
   customerBusy: boolean
-  templates: TemplateOpt[]
-  templatePick: string
-  onTemplatePick: (id: string) => void
-  onTemplateContinue: () => void
-  onTemplateSkip: () => void
-  templateBusy: boolean
+  jobTypes: JobTypeOpt[]
+  jobTypePick: string
+  onJobTypePick: (id: string) => void
+  onJobTypeContinue: () => void
+  onJobTypeSkip: () => void
+  jobTypeBusy: boolean
   onConversationsNeedInfo: () => void
   onConversationsReady: () => void
   onConversationsSkip: () => void
@@ -78,12 +78,12 @@ export default function EstimateStartGuideModal({
   onCustomerContinue,
   onCustomerSkip,
   customerBusy,
-  templates,
-  templatePick,
-  onTemplatePick,
-  onTemplateContinue,
-  onTemplateSkip,
-  templateBusy,
+  jobTypes,
+  jobTypePick,
+  onJobTypePick,
+  onJobTypeContinue,
+  onJobTypeSkip,
+  jobTypeBusy,
   onConversationsNeedInfo,
   onConversationsReady,
   onConversationsSkip,
@@ -206,7 +206,7 @@ export default function EstimateStartGuideModal({
               {step === 1
                 ? "Who is this estimate for?"
                 : step === 2
-                  ? "Use a saved template?"
+                  ? "Select a job type"
                   : step === 3
                     ? "Conversations"
                     : step === 4
@@ -348,30 +348,30 @@ export default function EstimateStartGuideModal({
         ) : step === 2 ? (
           <div style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-              Quick access template
+              Job type
               <select
-                value={templatePick}
-                onChange={(e) => onTemplatePick(e.target.value)}
+                value={jobTypePick}
+                onChange={(e) => onJobTypePick(e.target.value)}
                 style={{ ...theme.formInput, padding: "10px 12px", fontSize: 14 }}
               >
-                <option value="">Select a template…</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title}
+                <option value="">Select a job type…</option>
+                {jobTypes.map((jt) => (
+                  <option key={jt.id} value={jt.id}>
+                    {jt.name}
                   </option>
                 ))}
               </select>
             </label>
-            {templates.length === 0 ? (
+            {jobTypes.length === 0 ? (
               <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-                No templates saved yet. You can skip and save one later from the estimate tools.
+                No job types yet. You can skip and set one later on the estimate page.
               </p>
             ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
               <button
                 type="button"
-                disabled={templateBusy}
-                onClick={onTemplateSkip}
+                disabled={jobTypeBusy}
+                onClick={onJobTypeSkip}
                 style={{
                   padding: "10px 16px",
                   borderRadius: 8,
@@ -379,7 +379,7 @@ export default function EstimateStartGuideModal({
                   background: "#fff",
                   fontWeight: 700,
                   fontSize: 14,
-                  cursor: templateBusy ? "wait" : "pointer",
+                  cursor: jobTypeBusy ? "wait" : "pointer",
                   color: "#475569",
                 }}
               >
@@ -387,20 +387,20 @@ export default function EstimateStartGuideModal({
               </button>
               <button
                 type="button"
-                disabled={templateBusy || !templatePick.trim() || templates.length === 0}
-                onClick={onTemplateContinue}
+                disabled={jobTypeBusy || !jobTypePick.trim() || jobTypes.length === 0}
+                onClick={onJobTypeContinue}
                 style={{
                   padding: "10px 18px",
                   borderRadius: 8,
                   border: "none",
-                  background: templatePick.trim() && templates.length > 0 ? theme.primary : "#cbd5e1",
+                  background: jobTypePick.trim() && jobTypes.length > 0 ? theme.primary : "#cbd5e1",
                   color: "#fff",
                   fontWeight: 800,
                   fontSize: 14,
-                  cursor: templateBusy || !templatePick.trim() || templates.length === 0 ? "not-allowed" : "pointer",
+                  cursor: jobTypeBusy || !jobTypePick.trim() || jobTypes.length === 0 ? "not-allowed" : "pointer",
                 }}
               >
-                {templateBusy ? "Applying…" : "Apply & continue"}
+                {jobTypeBusy ? "Applying…" : "Apply & continue"}
               </button>
             </div>
           </div>

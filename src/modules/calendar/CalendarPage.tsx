@@ -1167,11 +1167,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         (includeMileageExplicit !== false && itemize && Number.isFinite(rateNum) && rateNum > 0)
       const notes = String((data as { document_template_receipt?: string | null })?.document_template_receipt ?? "")
       const intro = typeof meta.receipt_template_intro === "string" ? meta.receipt_template_intro : ""
-      const showRecLogo = meta.receipt_template_show_logo === true
-      const recLogoUrl = typeof meta.receipt_template_logo_url === "string" ? meta.receipt_template_logo_url : ""
-      const estLogoUrl = typeof meta.estimate_template_logo_url === "string" ? meta.estimate_template_logo_url : ""
-      const receiptLogoFieldUrl = (recLogoUrl.trim() || estLogoUrl.trim()).trim()
-      const carryEst = meta.receipt_template_carry_from_estimate === true
+      const carryEst = meta.receipt_template_carry_from_estimate === true || meta.receipt_template_show_logo === true
       const next: Record<string, string> = {}
       const items = receiptTemplateItems.length > 0 ? receiptTemplateItems : [...DEFAULT_RECEIPT_TEMPLATE_ITEMS]
       for (const item of items) {
@@ -1180,8 +1176,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         else if (item.id === "receipt_template_include_mileage") next[item.id] = includeMileage ? "checked" : "unchecked"
         else if (item.id === "receipt_template_mileage_rate") next[item.id] = rateStr
         else if (item.id === "receipt_template_intro") next[item.id] = intro
-        else if (item.id === "receipt_template_show_logo") next[item.id] = showRecLogo ? "checked" : "unchecked"
-        else if (item.id === "receipt_template_logo_url") next[item.id] = receiptLogoFieldUrl
         else if (item.id === "receipt_template_carry_from_estimate") next[item.id] = carryEst ? "checked" : "unchecked"
         else if (item.type === "checkbox") next[item.id] = item.defaultChecked ? "checked" : "unchecked"
         else if (item.type === "dropdown" && item.options?.length) next[item.id] = item.options[0]
@@ -1220,19 +1214,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const carry = receiptTemplateFormValues.receipt_template_carry_from_estimate === "checked"
     prevMeta.receipt_template_carry_from_estimate = carry
     if (carry) {
-      if (prevMeta.estimate_template_show_logo === true) prevMeta.receipt_template_show_logo = true
+      prevMeta.receipt_template_show_logo = true
       const estUrl = typeof prevMeta.estimate_template_logo_url === "string" ? prevMeta.estimate_template_logo_url.trim() : ""
       if (estUrl) prevMeta.receipt_template_logo_url = estUrl
+    } else {
+      delete prevMeta.receipt_template_show_logo
+      delete prevMeta.receipt_template_logo_url
     }
     const introTrim = (receiptTemplateFormValues.receipt_template_intro ?? "").trim()
     if (introTrim) prevMeta.receipt_template_intro = introTrim
     else delete prevMeta.receipt_template_intro
-    prevMeta.receipt_template_show_logo = receiptTemplateFormValues.receipt_template_show_logo === "checked"
-    const logoTrim = (receiptTemplateFormValues.receipt_template_logo_url ?? "").trim()
-    const estUrlForLogo =
-      typeof prevMeta.estimate_template_logo_url === "string" ? prevMeta.estimate_template_logo_url.trim() : ""
-    if (logoTrim && logoTrim !== estUrlForLogo) prevMeta.receipt_template_logo_url = logoTrim
-    else delete prevMeta.receipt_template_logo_url
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1529,7 +1520,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             : {}
         const introRaw = meta.receipt_template_intro
         templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
-        if (meta.receipt_template_show_logo === true) {
+        if (meta.receipt_template_carry_from_estimate === true || meta.receipt_template_show_logo === true) {
           const u = resolveReceiptTemplateLogoUrl(meta)
           if (u) logo = await fetchQuoteLogoForExport(u)
         }
@@ -1761,7 +1752,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           (includeMileageExplicit !== false && itemize && mileageRatePerMile > 0)
         const introRaw = meta.receipt_template_intro
         templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
-        if (meta.receipt_template_show_logo === true) {
+        if (meta.receipt_template_carry_from_estimate === true || meta.receipt_template_show_logo === true) {
           const u = resolveReceiptTemplateLogoUrl(meta)
           if (u) logo = await fetchQuoteLogoForExport(u)
         }

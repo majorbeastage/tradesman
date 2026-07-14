@@ -237,7 +237,7 @@ export default function AppLayout({
                 : "20px",
             minWidth: 0,
             maxWidth: "100%",
-            overflowX: isMobile ? "hidden" : undefined,
+            overflowX: isMobile ? "hidden" : "auto",
             background: "transparent",
           }}
         >

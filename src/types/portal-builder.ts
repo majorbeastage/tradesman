@@ -1556,19 +1556,6 @@ export const DEFAULT_RECEIPT_TEMPLATE_ITEMS: PortalSettingItem[] = [
     defaultChecked: false,
   },
   {
-    id: "receipt_template_show_logo",
-    type: "checkbox",
-    label: "Upload new photo for receipt",
-    defaultChecked: false,
-  },
-  {
-    id: "receipt_template_logo_url",
-    type: "custom_field",
-    label: "Photo URL (HTTPS)",
-    customFieldSubtype: "text",
-    dependency: { dependsOnItemId: "receipt_template_show_logo", showWhenValue: "checked" },
-  },
-  {
     id: "receipt_template_intro",
     type: "custom_field",
     label: "Intro / header on receipt PDF",

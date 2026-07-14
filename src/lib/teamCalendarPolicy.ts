@@ -26,6 +26,10 @@ export type OmCalendarPolicyV1 = {
   department_label?: string | null
   /** When true, user may bypass workflow approval steps from the customer profile. */
   allow_bypass_workflow_approval?: boolean
+  /** When true, user may edit the account Organization Chart (shared owner document). */
+  allow_edit_organization_chart?: boolean
+  /** When true, user may edit the account Business Workflow (shared owner document). */
+  allow_edit_business_workflow?: boolean
   backup_user_id?: string | null
   teammate_user_id?: string | null
   /**
@@ -60,6 +64,8 @@ const DEFAULT_POLICY: OmCalendarPolicyV1 = {
   workflow_only_customers: false,
   department_label: null,
   allow_bypass_workflow_approval: false,
+  allow_edit_organization_chart: false,
+  allow_edit_business_workflow: false,
   backup_user_id: null,
   teammate_user_id: null,
   job_qualifications: {},
@@ -106,6 +112,8 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     department_label:
       typeof o.department_label === "string" && o.department_label.trim() ? o.department_label.trim() : null,
     allow_bypass_workflow_approval: o.allow_bypass_workflow_approval === true,
+    allow_edit_organization_chart: o.allow_edit_organization_chart === true,
+    allow_edit_business_workflow: o.allow_edit_business_workflow === true,
     backup_user_id: backupUserId,
     teammate_user_id: teammateUserId,
     job_qualifications: quals,

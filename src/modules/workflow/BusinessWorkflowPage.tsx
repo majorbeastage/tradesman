@@ -9,12 +9,12 @@ import { DiagramContextMenu, type DiagramMenuAction } from "../../components/dia
 import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import WireEndpointHandle from "../../components/diagram/WireEndpointHandle"
 import DiagramWireDragBanner from "../../components/diagram/DiagramWireDragBanner"
+import { canEditAccountStructure, resolveAccountStructureOwnerId } from "../../lib/accountStructureOwner"
 import {
   WORKFLOW_EDGE_META,
   WORKFLOW_NODE_COLOR_META,
   WORKFLOW_NODE_COLORS,
   WORKFLOW_REQUIREMENT_SUGGESTIONS,
-  buildShareWithAdminMailto,
   createDefaultBusinessWorkflow,
   createExampleBusinessWorkflow,
   downloadWorkflowSvg,
@@ -88,8 +88,10 @@ const TILE_LABEL_STYLE: CSSProperties = {
 const APPROVAL_OPTIONS: WorkflowEdgeApproval[] = ["approved", "needs_approval", "needs_multiple_approvals"]
 
 export default function BusinessWorkflowPage({ setPage }: Props) {
-  const { user } = useAuth()
+  const { user, role } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
+  const [structureOwnerId, setStructureOwnerId] = useState<string | null>(null)
+  const [canEditStructure, setCanEditStructure] = useState(false)
   const [doc, setDoc] = useState<BusinessWorkflowDoc>(() => createDefaultBusinessWorkflow())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -120,12 +122,24 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       return
     }
     let cancelled = false
-    void supabase
-      .from("profiles")
-      .select("metadata, display_name")
-      .eq("id", userId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    void (async () => {
+      try {
+        const ownerId = await resolveAccountStructureOwnerId(supabase, userId)
+        if (cancelled) return
+        setStructureOwnerId(ownerId)
+        const editable = await canEditAccountStructure(supabase, {
+          actorUserId: userId,
+          actorRole: role,
+          actorEmail: user?.email ?? null,
+          kind: "business_workflow",
+        })
+        if (cancelled) return
+        setCanEditStructure(editable)
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("metadata, display_name")
+          .eq("id", ownerId)
+          .maybeSingle()
         if (cancelled) return
         if (error) setErr(error.message)
         else {
@@ -134,24 +148,27 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           setExternalContacts(loadExternalContactsFromMetadata(data?.metadata))
           setSavedLibrary(loadSavedWorkflowsFromMetadata(data?.metadata))
         }
-        setLoading(false)
-      })
-    void loadLinkableOrgUsers(supabase, userId).then((team) => {
-      if (!cancelled) setMembers(team)
-    })
+        const team = await loadLinkableOrgUsers(supabase, ownerId)
+        if (!cancelled) setMembers(team)
+      } catch (e: unknown) {
+        if (!cancelled) setErr(formatAppError(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, role, user?.email])
 
   const persist = useCallback(
     (next: BusinessWorkflowDoc): Promise<void> => {
-      if (!supabase || !userId) return Promise.resolve()
+      if (!supabase || !structureOwnerId || !canEditStructure) return Promise.resolve()
       setSaving(true)
       return (async () => {
         try {
           const synced = syncWorkflowNodeOrdersFromChart(next)
-          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", structureOwnerId).maybeSingle()
           const prevMeta =
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
@@ -160,9 +177,9 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           const { error } = await supabase
             .from("profiles")
             .update({ metadata: merged })
-            .eq("id", userId)
+            .eq("id", structureOwnerId)
           if (error) throw error
-          notifyProfileMetadataApplied(userId, merged)
+          notifyProfileMetadataApplied(structureOwnerId, merged)
         } catch (e: unknown) {
           setErr(formatAppError(e))
         } finally {
@@ -170,16 +187,16 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         }
       })()
     },
-    [userId],
+    [structureOwnerId, canEditStructure],
   )
 
   const persistSavedLibrary = useCallback(
     (library: SavedWorkflowsLibrary): Promise<void> => {
-      if (!supabase || !userId) return Promise.resolve()
+      if (!supabase || !structureOwnerId || !canEditStructure) return Promise.resolve()
       setSaving(true)
       return (async () => {
         try {
-          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", structureOwnerId).maybeSingle()
           const prevMeta =
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
@@ -187,7 +204,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
           const { error } = await supabase
             .from("profiles")
             .update({ metadata: mergeSavedWorkflowsMetadata(prevMeta, library) })
-            .eq("id", userId)
+            .eq("id", structureOwnerId)
           if (error) throw error
           setSavedLibrary(library)
         } catch (e: unknown) {
@@ -197,19 +214,21 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         }
       })()
     },
-    [userId],
+    [structureOwnerId, canEditStructure],
   )
 
   const saveNow = useCallback(() => {
+    if (!canEditStructure) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     void persist(doc).then(() => {
       setSaveFlash("Saved")
       window.setTimeout(() => setSaveFlash(""), 2200)
     })
-  }, [doc, persist])
+  }, [doc, persist, canEditStructure])
 
   const updateDoc = useCallback(
     (patch: Partial<BusinessWorkflowDoc> | ((prev: BusinessWorkflowDoc) => BusinessWorkflowDoc)) => {
+      if (!canEditStructure) return
       setDoc((prev) => {
         const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
         if (saveTimer.current) window.clearTimeout(saveTimer.current)
@@ -217,7 +236,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         return next
       })
     },
-    [persist],
+    [persist, canEditStructure],
   )
 
   const applyLiveWorkflowDoc = useCallback(
@@ -500,12 +519,6 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
     setSelectedEdgeId(null)
   }
 
-  function shareWithAdmin() {
-    const label = user?.email ?? userId ?? "Tradesman user"
-    updateDoc((prev) => ({ ...prev, shared_with_admin_at: new Date().toISOString() }))
-    window.location.href = buildShareWithAdminMailto(doc, label)
-  }
-
   function duplicateNode(source: WorkflowNode) {
     const node = newWorkflowNode(`${source.label} (copy)`, nodes.length, source.x + 28, source.y + 28)
     node.boxColor = source.boxColor
@@ -618,14 +631,22 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         <button type="button" onClick={() => setPage("organization-chart")} style={navCrossBtn}>
           Organization chart →
         </button>
-        <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
-          {saving ? "Saving…" : "Save"}
-        </button>
+        {canEditStructure ? (
+          <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        ) : null}
         {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
         {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
 
-      <WorkflowVoiceAttendant onApply={applyLiveWorkflowDoc} />
+      {!canEditStructure && !loading ? (
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", fontWeight: 600 }}>
+          View only — ask your account owner to grant Business Workflow edit in Team Management.
+        </p>
+      ) : null}
+
+      {canEditStructure ? <WorkflowVoiceAttendant onApply={applyLiveWorkflowDoc} /> : null}
 
       <WorkflowHubPanels
         userId={userId}
@@ -669,12 +690,11 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         <button type="button" onClick={() => downloadWorkflowSvg(doc, undefined, workflowSvgOptions)} style={secondaryBtn}>
           Download SVG
         </button>
-        <button type="button" onClick={shareWithAdmin} style={secondaryBtn}>
-          Share with Admin
-        </button>
-        <button type="button" onClick={resetExample} style={secondaryBtn}>
-          Load example
-        </button>
+        {canEditStructure ? (
+          <button type="button" onClick={resetExample} style={secondaryBtn}>
+            Load example
+          </button>
+        ) : null}
         {selectedId ? (
           <button type="button" onClick={removeSelected} style={{ ...secondaryBtn, borderColor: "#fecaca", color: "#b91c1c" }}>
             Remove step

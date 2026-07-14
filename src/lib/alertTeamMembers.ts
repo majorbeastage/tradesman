@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
+import { resolveAccountStructureOwnerId } from "./accountStructureOwner"
 import { loadOrganizationChartFromMetadata } from "./organizationChart"
 import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { isOfficeManagerLikeRole } from "./profileRoles"
+
+export { resolveAccountStructureOwnerId }
 
 export type AlertTeamMember = {
   userId: string
@@ -31,21 +34,7 @@ async function loadManagedUserIds(client: SupabaseClient, managerUserId: string)
 
 /** Profile that stores the account business workflow chart (OM for managed users). */
 export async function resolveWorkflowMetadataUserId(client: SupabaseClient, userId: string): Promise<string> {
-  const { data, error } = await client.from("profiles").select("role").eq("id", userId).maybeSingle()
-  if (error) throw error
-  if (isOfficeManagerLikeRole(typeof data?.role === "string" ? data.role : null)) return userId
-
-  const { data: link, error: linkErr } = await client
-    .from("office_manager_clients")
-    .select("office_manager_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle()
-  if (linkErr) throw linkErr
-  if (typeof link?.office_manager_id === "string" && link.office_manager_id.trim()) {
-    return link.office_manager_id.trim()
-  }
-  return userId
+  return resolveAccountStructureOwnerId(client, userId)
 }
 
 /** Users whose alert prefs a manager may view and edit (self + direct reports). */

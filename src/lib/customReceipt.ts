@@ -237,7 +237,7 @@ export async function loadReceiptTemplateSettings(
   const introRaw = meta.receipt_template_intro
   const templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
   let logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>> = null
-  if (meta.receipt_template_show_logo === true) {
+  if (meta.receipt_template_carry_from_estimate === true || meta.receipt_template_show_logo === true) {
     const u = resolveReceiptTemplateLogoUrl(meta)
     if (u) logo = await fetchQuoteLogoForExport(u)
   }

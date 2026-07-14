@@ -18,8 +18,8 @@ import { DiagramContextMenu, type DiagramMenuAction } from "../../components/dia
 import { DiagramEditorDock } from "../../components/diagram/DiagramEditorDock"
 import WireEndpointHandle from "../../components/diagram/WireEndpointHandle"
 import DiagramWireDragBanner from "../../components/diagram/DiagramWireDragBanner"
+import { canEditAccountStructure, resolveAccountStructureOwnerId } from "../../lib/accountStructureOwner"
 import {
-  buildOrgChartShareMailto,
   createExampleOrganizationChart,
   downloadOrgChartSvg,
   loadOrganizationChartFromMetadata,
@@ -75,8 +75,10 @@ const TILE_SUBLABEL_STYLE: CSSProperties = {
 }
 
 export default function OrganizationChartPage({ setPage }: Props) {
-  const { user } = useAuth()
+  const { user, role } = useAuth()
   const userId = useScopedUserId() ?? user?.id ?? null
+  const [structureOwnerId, setStructureOwnerId] = useState<string | null>(null)
+  const [canEditStructure, setCanEditStructure] = useState(false)
   const [doc, setDoc] = useState<OrganizationChartDoc>(() => createExampleOrganizationChart())
   const [externalContacts, setExternalContacts] = useState<ExternalContactsDoc>(() =>
     loadExternalContactsFromMetadata(null),
@@ -106,11 +108,23 @@ export default function OrganizationChartPage({ setPage }: Props) {
       return
     }
     let cancelled = false
-    void Promise.all([
-      supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
-      loadLinkableOrgUsers(supabase, userId),
-    ])
-      .then(([profileRes, team]) => {
+    void (async () => {
+      try {
+        const ownerId = await resolveAccountStructureOwnerId(supabase, userId)
+        if (cancelled) return
+        setStructureOwnerId(ownerId)
+        const editable = await canEditAccountStructure(supabase, {
+          actorUserId: userId,
+          actorRole: role,
+          actorEmail: user?.email ?? null,
+          kind: "organization_chart",
+        })
+        if (cancelled) return
+        setCanEditStructure(editable)
+        const [profileRes, team] = await Promise.all([
+          supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle(),
+          loadLinkableOrgUsers(supabase, ownerId),
+        ])
         if (cancelled) return
         if (profileRes.error) setErr(profileRes.error.message)
         else {
@@ -118,26 +132,24 @@ export default function OrganizationChartPage({ setPage }: Props) {
           setExternalContacts(loadExternalContactsFromMetadata(profileRes.data?.metadata))
         }
         setMembers(team)
-        setLoading(false)
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setErr(formatAppError(e))
-          setLoading(false)
-        }
-      })
+      } catch (e: unknown) {
+        if (!cancelled) setErr(formatAppError(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, role, user?.email])
 
   const persist = useCallback(
     (next: OrganizationChartDoc): Promise<void> => {
-      if (!supabase || !userId) return Promise.resolve()
+      if (!supabase || !structureOwnerId || !canEditStructure) return Promise.resolve()
       setSaving(true)
       return (async () => {
         try {
-          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", structureOwnerId).maybeSingle()
           const prevMeta =
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
@@ -145,7 +157,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
           const { error } = await supabase
             .from("profiles")
             .update({ metadata: mergeOrganizationChartMetadata(prevMeta, next) })
-            .eq("id", userId)
+            .eq("id", structureOwnerId)
           if (error) throw error
         } catch (e: unknown) {
           setErr(formatAppError(e))
@@ -154,16 +166,16 @@ export default function OrganizationChartPage({ setPage }: Props) {
         }
       })()
     },
-    [userId],
+    [structureOwnerId, canEditStructure],
   )
 
   const persistExternalContacts = useCallback(
     (next: ExternalContactsDoc): Promise<void> => {
-      if (!supabase || !userId) return Promise.resolve()
+      if (!supabase || !structureOwnerId || !canEditStructure) return Promise.resolve()
       setSaving(true)
       return (async () => {
         try {
-          const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+          const { data } = await supabase.from("profiles").select("metadata").eq("id", structureOwnerId).maybeSingle()
           const prevMeta =
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? { ...(data.metadata as Record<string, unknown>) }
@@ -171,7 +183,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
           const { error } = await supabase
             .from("profiles")
             .update({ metadata: mergeExternalContactsMetadata(prevMeta, next) })
-            .eq("id", userId)
+            .eq("id", structureOwnerId)
           if (error) throw error
         } catch (e: unknown) {
           setErr(formatAppError(e))
@@ -180,17 +192,17 @@ export default function OrganizationChartPage({ setPage }: Props) {
         }
       })()
     },
-    [userId],
+    [structureOwnerId, canEditStructure],
   )
 
   const saveNow = useCallback(() => {
-    if (!supabase || !userId) return
+    if (!supabase || !structureOwnerId || !canEditStructure) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     if (externalSaveTimer.current) window.clearTimeout(externalSaveTimer.current)
     setSaving(true)
     void (async () => {
       try {
-        const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+        const { data } = await supabase.from("profiles").select("metadata").eq("id", structureOwnerId).maybeSingle()
         let prevMeta =
           data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
             ? { ...(data.metadata as Record<string, unknown>) }
@@ -200,7 +212,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
         const { error } = await supabase
           .from("profiles")
           .update({ metadata: prevMeta, updated_at: new Date().toISOString() })
-          .eq("id", userId)
+          .eq("id", structureOwnerId)
         if (error) throw error
         setSaveFlash("Saved")
         window.setTimeout(() => setSaveFlash(""), 2200)
@@ -210,10 +222,11 @@ export default function OrganizationChartPage({ setPage }: Props) {
         setSaving(false)
       }
     })()
-  }, [doc, externalContacts, userId])
+  }, [doc, externalContacts, structureOwnerId, canEditStructure])
 
   const updateExternalContacts = useCallback(
     (patch: Partial<ExternalContactsDoc> | ((prev: ExternalContactsDoc) => ExternalContactsDoc)) => {
+      if (!canEditStructure) return
       setExternalContacts((prev) => {
         const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
         if (externalSaveTimer.current) window.clearTimeout(externalSaveTimer.current)
@@ -221,11 +234,12 @@ export default function OrganizationChartPage({ setPage }: Props) {
         return next
       })
     },
-    [persistExternalContacts],
+    [persistExternalContacts, canEditStructure],
   )
 
   const updateDoc = useCallback(
     (patch: Partial<OrganizationChartDoc> | ((prev: OrganizationChartDoc) => OrganizationChartDoc)) => {
+      if (!canEditStructure) return
       setDoc((prev) => {
         const raw = typeof patch === "function" ? patch(prev) : { ...prev, ...patch }
         const next: OrganizationChartDoc = {
@@ -238,7 +252,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
         return next
       })
     },
-    [persist],
+    [persist, canEditStructure],
   )
 
   const nodeById = useMemo(() => new Map(doc.nodes.map((n) => [n.id, n])), [doc.nodes])
@@ -475,12 +489,6 @@ export default function OrganizationChartPage({ setPage }: Props) {
     setSelectedEdgeId(null)
   }
 
-  function shareWithAdmin() {
-    const label = user?.email ?? userId ?? "Tradesman user"
-    updateDoc((prev) => ({ ...prev, shared_with_admin_at: new Date().toISOString() }))
-    window.location.href = buildOrgChartShareMailto(doc, label)
-  }
-
   async function saveMemberJobTitle(memberId: string, jobTitle: string) {
     if (!supabase) return
     try {
@@ -614,13 +622,20 @@ export default function OrganizationChartPage({ setPage }: Props) {
         <button type="button" onClick={() => setPage("business-workflow")} style={navCrossBtn}>
           Business workflow →
         </button>
-        <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
-          {saving ? "Saving…" : "Save"}
-        </button>
+        {canEditStructure ? (
+          <button type="button" onClick={() => void saveNow()} disabled={saving || loading} style={primaryBtn}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        ) : null}
         {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
         {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
 
+      {!canEditStructure && !loading ? (
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", fontWeight: 600 }}>
+          View only — ask your account owner to grant Organization Chart edit in Team Management.
+        </p>
+      ) : null}
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
@@ -652,12 +667,11 @@ export default function OrganizationChartPage({ setPage }: Props) {
         <button type="button" onClick={() => downloadOrgChartSvg(doc)} style={secondaryBtn}>
           Download SVG
         </button>
-        <button type="button" onClick={shareWithAdmin} style={secondaryBtn}>
-          Share with Admin
-        </button>
-        <button type="button" onClick={resetExample} style={secondaryBtn}>
-          Load example
-        </button>
+        {canEditStructure ? (
+          <button type="button" onClick={resetExample} style={secondaryBtn}>
+            Load example
+          </button>
+        ) : null}
         {selectedId ? (
           <button type="button" onClick={removeSelected} style={{ ...secondaryBtn, borderColor: "#fecaca", color: "#b91c1c" }}>
             Remove role

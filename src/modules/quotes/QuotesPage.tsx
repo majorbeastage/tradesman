@@ -512,7 +512,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     peekEstimatesLibraryOpen() ? "library" : "home",
   )
   const [librarySection, setLibrarySection] = useState<
-    "quick_access" | "previous_estimates" | "job_types_line_items" | "reports"
+    "previous_estimates" | "job_types_line_items" | "reports"
   >(() => (peekEstimatesLibraryOpen()?.section === "job_types_line_items" ? "job_types_line_items" : "previous_estimates"))
   const [libraryJobsTab, setLibraryJobsTab] = useState<"line_items" | "job_types">(() =>
     peekEstimatesLibraryOpen()?.tab === "job_types" ? "job_types" : "line_items",
@@ -521,17 +521,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [previousEstimatesBucket, setPreviousEstimatesBucket] = useState<"active" | "archived">("active")
   const [pastLibSearch, setPastLibSearch] = useState("")
   const [pastLibStatus, setPastLibStatus] = useState("")
-  const [quickAccessTemplates, setQuickAccessTemplates] = useState<
-    { id: string; title: string; savedAt: string; payload: Record<string, unknown> }[]
-  >([])
-  const [quickAccessApplyPick, setQuickAccessApplyPick] = useState("")
   const [customerPickerCustomerId, setCustomerPickerCustomerId] = useState("")
   const [customerSummaryExpanded, setCustomerSummaryExpanded] = useState(false)
   const [estimateGuideFlags, setEstimateGuideFlags] = useState<EstimateGuideFlags>({})
   const [estimateStartGuideOpen, setEstimateStartGuideOpen] = useState(false)
   const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1)
   const [estimateGuideCustomerPick, setEstimateGuideCustomerPick] = useState("")
-  const [estimateGuideTemplatePick, setEstimateGuideTemplatePick] = useState("")
+  const [estimateGuideJobTypePick, setEstimateGuideJobTypePick] = useState("")
   const [estimateGuideBusy, setEstimateGuideBusy] = useState(false)
   const [guideQuoteItemsAiBusy, setGuideQuoteItemsAiBusy] = useState(false)
   const [estimateCustomerFoldOpen, setEstimateCustomerFoldOpen] = useState(false)
@@ -2153,10 +2149,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [userId])
 
   useEffect(() => {
-    void loadQuickAccessTemplatesFromProfile()
-  }, [userId])
-
-  useEffect(() => {
     if (selectedQuoteId && !selectedQuote?.customer_id) void loadCustomerList()
   }, [selectedQuoteId, selectedQuote?.customer_id])
 
@@ -2571,119 +2563,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     await openQuote(selectedQuote.id as string)
   }
 
-  async function loadQuickAccessTemplatesFromProfile() {
-    if (!supabase || !userId) return
-    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    if (error || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
-    const meta = data.metadata as Record<string, unknown>
-    const raw = meta.quick_access_estimate_templates
-    if (!Array.isArray(raw)) return
-    const next: { id: string; title: string; savedAt: string; payload: Record<string, unknown> }[] = []
-    for (const row of raw) {
-      if (!row || typeof row !== "object") continue
-      const o = row as Record<string, unknown>
-      const id = typeof o.id === "string" ? o.id : crypto.randomUUID()
-      const title = typeof o.title === "string" ? o.title : "Template"
-      const savedAt = typeof o.savedAt === "string" ? o.savedAt : new Date().toISOString()
-      const payload = o.payload && typeof o.payload === "object" && !Array.isArray(o.payload) ? (o.payload as Record<string, unknown>) : {}
-      next.push({ id, title, savedAt, payload })
-    }
-    setQuickAccessTemplates(next)
-  }
-
-  async function persistQuickAccessTemplatesList(nextList: typeof quickAccessTemplates) {
-    if (!supabase || !userId) return
-    const { data, error: loadErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-    if (loadErr) {
-      alert(loadErr.message)
-      return
-    }
-    const prevMeta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? { ...(data.metadata as Record<string, unknown>) }
-        : {}
-    prevMeta.quick_access_estimate_templates = nextList
-    const { error } = await supabase.from("profiles").update({ metadata: prevMeta }).eq("id", userId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setQuickAccessTemplates(nextList)
-  }
-
-  async function saveCurrentEstimateAsQuickAccessTemplate() {
-    if (!selectedQuote?.id || !supabase) return
-    const title = window.prompt("Name this Quick Access template", `Template ${new Date().toLocaleDateString()}`)
-    if (title == null || !title.trim()) return
-    const lines = selectedQuoteItems.map((it: any) => ({
-      description: String(it.description ?? it.item_description ?? ""),
-      quantity: typeof it.quantity === "number" ? it.quantity : Number.parseFloat(String(it.quantity ?? 0)) || 0,
-      unit_price: typeof it.unit_price === "number" ? it.unit_price : Number.parseFloat(String(it.unit_price ?? 0)) || 0,
-      metadata: it.metadata && typeof it.metadata === "object" ? it.metadata : {},
-    }))
-    const payload: Record<string, unknown> = {
-      job_type_id: (selectedQuote as QuoteRow).job_type_id ?? null,
-      quote_lines: lines,
-      estimate_template_values: { ...estimateTemplateFormValues },
-      quote_legal_text: quoteLegalText,
-      quote_cancellation_text: quoteCancellationText,
-      quote_export_format: quoteExportFormat,
-      quote_include_legal: quoteIncludeLegal,
-      quote_include_prepared_date: quoteIncludePreparedDate,
-      quote_show_line_numbers: quoteShowLineNumbers,
-      quote_show_logo: quoteShowLogo,
-    }
-    const entry = {
-      id: crypto.randomUUID(),
-      title: title.trim(),
-      savedAt: new Date().toISOString(),
-      payload,
-    }
-    await persistQuickAccessTemplatesList([entry, ...quickAccessTemplates])
-    await loadQuickAccessTemplatesFromProfile()
-    alert("Saved to Quick Access templates.")
-  }
-
-  async function applyQuickAccessTemplate(templateId: string, opts?: { silent?: boolean }) {
-    const tpl = quickAccessTemplates.find((t) => t.id === templateId)
-    if (!tpl || !selectedQuote?.id || !supabase) return
-    const jobTypeId = typeof tpl.payload.job_type_id === "string" ? tpl.payload.job_type_id : ""
-    if (jobTypeId) await persistQuoteJobType(jobTypeId)
-    const lines = Array.isArray(tpl.payload.quote_lines) ? tpl.payload.quote_lines : []
-    for (const it of selectedQuoteItems) {
-      await deleteQuoteItemRow(String((it as { id: string }).id))
-    }
-    for (const raw of lines) {
-      if (!raw || typeof raw !== "object") continue
-      const o = raw as Record<string, unknown>
-      const desc = String(o.description ?? "").trim()
-      if (!desc) continue
-      const qty = typeof o.quantity === "number" ? o.quantity : Number.parseFloat(String(o.quantity ?? 0)) || 0
-      const up = typeof o.unit_price === "number" ? o.unit_price : Number.parseFloat(String(o.unit_price ?? 0)) || 0
-      const metaRaw = o.metadata
-      const parsedMeta =
-        metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)
-          ? parseQuoteItemMetadata(metaRaw as Record<string, unknown>)
-          : undefined
-      await insertQuoteLineRow(desc, qty, up, parsedMeta ? { metadata: parsedMeta } : undefined)
-    }
-    const etv = tpl.payload.estimate_template_values
-    if (etv && typeof etv === "object" && !Array.isArray(etv)) {
-      setEstimateTemplateFormValues(Object.fromEntries(Object.entries(etv as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])))
-    }
-    if (typeof tpl.payload.quote_legal_text === "string") setQuoteLegalText(tpl.payload.quote_legal_text)
-    if (typeof tpl.payload.quote_cancellation_text === "string") setQuoteCancellationText(tpl.payload.quote_cancellation_text)
-    if (tpl.payload.quote_export_format === "docx" || tpl.payload.quote_export_format === "pdf")
-      setQuoteExportFormat(tpl.payload.quote_export_format)
-    if (selectedQuote.id) {
-      saveEstimateGuideFlags(selectedQuote.id, { templateAppliedViaGuide: true, templateSkipped: false })
-      setEstimateGuideFlags((f) => ({ ...f, templateAppliedViaGuide: true, templateSkipped: false }))
-    }
-    setEstimateTemplatesFoldOpen(false)
-    setQuickAccessApplyPick("")
-    if (!opts?.silent) alert("Template applied to this estimate.")
-  }
-
   async function handleEstimateGuideCustomerContinue() {
     if (!estimateGuideCustomerPick.trim()) return
     setEstimateGuideBusy(true)
@@ -2708,18 +2587,23 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateStartGuideStep(2)
   }
 
-  async function handleEstimateGuideTemplateContinue() {
-    if (!estimateGuideTemplatePick.trim()) return
+  async function handleEstimateGuideJobTypeContinue() {
+    if (!estimateGuideJobTypePick.trim()) return
     setEstimateGuideBusy(true)
     try {
-      await applyQuickAccessTemplate(estimateGuideTemplatePick.trim(), { silent: true })
+      await persistQuoteJobType(estimateGuideJobTypePick.trim())
+      if (selectedQuote?.id) {
+        saveEstimateGuideFlags(selectedQuote.id, { templateAppliedViaGuide: true, templateSkipped: false })
+        setEstimateGuideFlags((f) => ({ ...f, templateAppliedViaGuide: true, templateSkipped: false }))
+      }
+      setEstimateTemplatesFoldOpen(false)
       setEstimateStartGuideStep(3)
     } finally {
       setEstimateGuideBusy(false)
     }
   }
 
-  function handleEstimateGuideTemplateSkip() {
+  function handleEstimateGuideJobTypeSkip() {
     if (selectedQuote?.id) {
       saveEstimateGuideFlags(selectedQuote.id, { templateSkipped: true })
       setEstimateGuideFlags((f) => ({ ...f, templateSkipped: true }))
@@ -3053,7 +2937,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     void loadCustomerList()
     setEstimateGuideCustomerPick(resolveEstimateWizardCustomerPick())
-    setEstimateGuideTemplatePick("")
+    setEstimateGuideJobTypePick("")
     setEstimateStartGuideStep(step)
     setEstimateStartGuideOpen(true)
   }
@@ -3061,7 +2945,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   function closeGuideWizard() {
     setEstimateStartGuideOpen(false)
     setEstimateStartGuideStep(1)
-    setEstimateGuideTemplatePick("")
+    setEstimateGuideJobTypePick("")
   }
 
   async function patchEntityAttachmentMetadataRow(row: EntityAttachmentRow, patch: Record<string, unknown>) {
@@ -5047,7 +4931,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     setLibrarySection("previous_estimates")
                     setEstimateSuite("library")
                   }}
-                  style={{ padding: "8px 14px", borderRadius: "6px", border: `2px solid ${theme.primary}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                  style={
+                    estimateSuite === "library"
+                      ? { padding: "8px 14px", borderRadius: "6px", border: `2px solid ${theme.primary}`, background: "#eff6ff", cursor: "pointer", color: theme.text, fontWeight: 700 }
+                      : { padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }
+                  }
                 >
                   Estimates Library
                 </button>
@@ -5591,22 +5479,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
               >
                 Previous Estimates
               </button>
-              <button
-                type="button"
-                onClick={() => setLibrarySection("quick_access")}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: librarySection === "quick_access" ? theme.primary : "#e5e7eb",
-                  color: librarySection === "quick_access" ? "#fff" : "#0f172a",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 13,
-                }}
-              >
-                Quick Access Templates
-              </button>
               {(showQuotesEstimateLineItems || showQuotesJobTypesPanel) ? (
                 <button
                   type="button"
@@ -5642,58 +5514,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                 Reports
               </button>
             </div>
-
-            {librarySection === "quick_access" ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <p style={{ margin: 0, fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
-                  Save reusable estimate layouts here from the Estimates tool (<strong>Save as a template</strong>). Apply a template when
-                  building an estimate using <strong>Quick Access Template</strong> on the estimate page.
-                </p>
-                {quickAccessTemplates.length === 0 ? (
-                  <p style={{ margin: 0, color: "#64748b", fontSize: 14 }}>No Quick Access templates yet.</p>
-                ) : (
-                  quickAccessTemplates.map((t) => (
-                    <div
-                      key={t.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 12,
-                        padding: 12,
-                        background: "#fff",
-                        borderRadius: 8,
-                        border: `1px solid ${theme.border}`,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 700 }}>{t.title}</div>
-                        <div style={{ fontSize: 12, color: "#64748b" }}>Saved {new Date(t.savedAt).toLocaleString()}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEstimateSuite("home")
-                          window.setTimeout(() => void applyQuickAccessTemplate(t.id), 0)
-                        }}
-                        style={{
-                          padding: "8px 14px",
-                          background: theme.primary,
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                          fontWeight: 600,
-                        }}
-                      >
-                        Apply in Estimates Tool
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : null}
 
             {librarySection === "previous_estimates" ? (
               <>
@@ -6059,12 +5879,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onCustomerContinue={() => void handleEstimateGuideCustomerContinue()}
                               onCustomerSkip={handleEstimateGuideCustomerSkip}
                               customerBusy={estimateGuideBusy}
-                              templates={quickAccessTemplates.map((t) => ({ id: t.id, title: t.title }))}
-                              templatePick={estimateGuideTemplatePick}
-                              onTemplatePick={setEstimateGuideTemplatePick}
-                              onTemplateContinue={() => void handleEstimateGuideTemplateContinue()}
-                              onTemplateSkip={handleEstimateGuideTemplateSkip}
-                              templateBusy={estimateGuideBusy}
+                              jobTypes={quoteDetailJobTypes}
+                              jobTypePick={estimateGuideJobTypePick}
+                              onJobTypePick={setEstimateGuideJobTypePick}
+                              onJobTypeContinue={() => void handleEstimateGuideJobTypeContinue()}
+                              onJobTypeSkip={handleEstimateGuideJobTypeSkip}
+                              jobTypeBusy={estimateGuideBusy}
                               onConversationsNeedInfo={handleGuideConversationNeedInfo}
                               onConversationsReady={handleGuideConversationReady}
                               onConversationsSkip={handleGuideConversationSkip}
@@ -6511,39 +6331,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       </select>
                                     </label>
                                   ) : null}
-                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                                    <strong style={{ fontSize: 14 }}>Quick access template:</strong>
-                                    <select
-                                      value={quickAccessApplyPick}
-                                      onChange={(e) => setQuickAccessApplyPick(e.target.value)}
-                                      style={{ ...theme.formInput, padding: "6px 10px", fontSize: 14, minWidth: 200 }}
-                                    >
-                                      <option value="">— Select saved template —</option>
-                                      {quickAccessTemplates.map((t) => (
-                                        <option key={t.id} value={t.id}>
-                                          {t.title}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={!quickAccessApplyPick}
-                                      onClick={() => void applyQuickAccessTemplate(quickAccessApplyPick)}
-                                      style={{
-                                        padding: "6px 12px",
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        borderRadius: 6,
-                                        border: "none",
-                                        background: theme.primary,
-                                        color: "#fff",
-                                        cursor: quickAccessApplyPick ? "pointer" : "not-allowed",
-                                        opacity: quickAccessApplyPick ? 1 : 0.5,
-                                      }}
-                                    >
-                                      Apply to estimate
-                                    </button>
-                                  </div>
                                   {showQuotesJobTypesPanel && applyJtLinesBusy ? (
                                     <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Updating line items for job type…</p>
                                   ) : null}
@@ -7429,6 +7216,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   estimateSubtotal={spreadsheetEstimateSubtotal}
                 />
               ) : (
+              <div style={{ width: "100%", maxWidth: "100%", overflowX: "auto" }}>
               <table
                 style={{
                   width: "100%",
@@ -7663,6 +7451,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   </tfoot>
                 ) : null}
               </table>
+              </div>
               )}
 
               <div ref={reviewSendSectionRef} style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}>
@@ -7804,26 +7593,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                           }}
                         >
                           Save to Customer Profile
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEstimateSaveMenuOpen(false)
-                            void saveCurrentEstimateAsQuickAccessTemplate()
-                          }}
-                          style={{
-                            padding: "10px 12px",
-                            borderRadius: 6,
-                            border: "none",
-                            background: "transparent",
-                            textAlign: "left",
-                            fontWeight: 600,
-                            fontSize: 13,
-                            color: theme.text,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Save as a template
                         </button>
                         <button
                           type="button"

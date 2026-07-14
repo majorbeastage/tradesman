@@ -429,6 +429,26 @@ function TeamUserCard({
               <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input
                   type="checkbox"
+                  checked={policy.allow_edit_organization_chart === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_edit_organization_chart: e.target.checked })}
+                />
+                Allow editing Organization Chart
+              </label>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={policy.allow_edit_business_workflow === true}
+                  disabled={savingUserId === member.userId}
+                  onChange={(e) => updatePermissionDraft(member.userId, { allow_edit_business_workflow: e.target.checked })}
+                />
+                Allow editing Business Workflow
+              </label>
+
+              <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
                   checked={policy.allow_operations_tab === true}
                   disabled={savingUserId === member.userId}
                   onChange={(e) =>
