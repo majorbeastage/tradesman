@@ -199,11 +199,6 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-        Publish a simple public page you can list on Google Business Profile, social media, and your marketing. The address
-        is always <strong>tradesman-us.com/your-business-name</strong> (from your saved business name — not editable here).
-      </p>
-
       <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600 }}>
         <input
           type="checkbox"
@@ -212,15 +207,11 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         />
         Publish public business profile
       </label>
-      {settings.enabled ? (
-        <p style={{ margin: 0, fontSize: 12, color: "#166534", fontWeight: 600 }}>
-          Published profiles are live at your public URL after you click Save business web profile below.
-        </p>
-      ) : (
+      {!settings.enabled ? (
         <p style={{ margin: 0, fontSize: 12, color: "#b45309", fontWeight: 600 }}>
           Not published — visitors will see “profile not found” until you enable publish and save.
         </p>
-      )}
+      ) : null}
 
       <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, marginBottom: 6 }}>Your public web address</div>
@@ -236,9 +227,6 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         >
           {publicUrl || "Save business name in Contact & profile (min. 3 characters)"}
         </div>
-        <p style={{ margin: "8px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-          Updates when you save Contact & profile — not while you are still typing.
-        </p>
         <button
           type="button"
           onClick={copyPublicUrl}
@@ -281,9 +269,6 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
         </div>
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Public profile image</div>
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45, maxWidth: 420 }}>
-            Uses your <strong>company logo</strong> from Contact & profile. Upload it there — not your personal profile photo.
-          </p>
         </div>
       </div>
 
@@ -307,9 +292,6 @@ export function BusinessWebProfilePanel({ profileUserId, businessNameForSlug, co
 
       <fieldset style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, margin: 0 }}>
         <legend style={{ fontSize: 12, fontWeight: 800, padding: "0 6px" }}>Follow us (public)</legend>
-        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Shared with Growth → Business profiles. Update Instagram or Facebook here or in Growth — they stay in sync.
-        </p>
         <div style={{ display: "grid", gap: 10 }}>
           <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700 }}>
             Facebook page URL

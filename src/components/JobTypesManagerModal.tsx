@@ -282,11 +282,6 @@ export default function JobTypesManagerModal({
           </div>
         </div>
 
-        <p style={{ margin: "0 0 12px", fontSize: 13, color: theme.text, lineHeight: 1.5 }}>
-          One shared list for <strong>Estimates</strong>, <strong>Scheduling</strong>, and the dashboard. Color and duration apply
-          to calendar events; types also appear on quote lines and saved templates.
-        </p>
-
         {loadError ? (
           <p
             style={{

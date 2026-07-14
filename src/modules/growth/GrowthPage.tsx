@@ -218,12 +218,7 @@ export default function GrowthPage({ setPage }: Props) {
   return (
     <div className="scheme-page" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800, color: portalTheme.text }}>Growth</h1>
-        <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6, color: portalTheme.textMuted, fontSize: 14 }}>
-          Add your website and social profiles, grade what AI can see, set a marketing budget, and track campaigns before and
-          after your partner runs ads. Lead capture still lives in <strong>Leads</strong> — Growth focuses on presence and
-          campaign measurement.
-        </p>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: portalTheme.text }}>Growth</h1>
         {saving ? <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>Saving…</div> : null}
         {err ? <div style={{ marginTop: 8, fontSize: 12, color: "#b91c1c" }}>{err}</div> : null}
       </header>
@@ -316,7 +311,6 @@ function OverviewSection({
 
       <div style={{ ...panelStyle, marginBottom: 14 }}>
         <h2 style={h2}>Lead capture link</h2>
-        <p style={p}>Campaign landing pages use your public Tradesman form. Configure the slug in Leads.</p>
         <input readOnly value={ctaUrl} style={inputStyle} onFocus={(e) => e.target.select()} />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
           <button type="button" style={primaryBtn} onClick={() => void navigator.clipboard?.writeText(ctaUrl)}>

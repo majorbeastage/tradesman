@@ -116,8 +116,6 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
         </button>
       </div>
 
-      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.menuHelp")}</p>
-
       <label style={{ display: "flex", gap: 10, fontSize: 13, color: theme.text }}>
         <input type="checkbox" checked={collectContactInfo} onChange={(e) => onCollectContactChange(e.target.checked)} />
         {t("account.callScreening.collectContact")}

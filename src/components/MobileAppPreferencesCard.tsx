@@ -79,12 +79,6 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
   return (
     <div style={{ ...CARD, ...(hideTitle ? { padding: 0, border: "none", background: "transparent", gap: 10 } : {}) }}>
       {!hideTitle ? <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>Mobile app</h2> : null}
-      <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
-        Tradesman on Android / iPhone uses your profile here. Enable push and GPS when you want dispatch, en-route messages, and (for office managers) live maps.
-        {isNativeApp()
-          ? " After you turn on “Allow push” or “Allow GPS” here, the app will ask the system for permission on this device (usually within a few seconds), same pattern as other apps."
-          : " Open this page inside the installed app to request system permissions."}
-      </p>
       {loading ? (
         <span style={{ color: theme.text }}>Loading…</span>
       ) : (

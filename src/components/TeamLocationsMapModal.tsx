@@ -532,11 +532,7 @@ export default function TeamLocationsMapModal({
             <strong>job site</strong> on a calendar event so the next job can appear on the map.
           </p>
         </>
-      ) : (
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Live team GPS and next job pins — tap <strong>Open full map</strong> for filters and legend.
-        </p>
-      )}
+      ) : null}
       {error && <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{error}</p>}
       {loading && <p style={{ margin: 0, fontSize: 13, color: theme.text }}>Loading map…</p>}
       <div

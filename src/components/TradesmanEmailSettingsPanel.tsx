@@ -219,8 +219,6 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>{t("account.tradesmanEmail.hubExplain")}</p>
-
       <div
         style={{
           padding: 14,
@@ -232,7 +230,6 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
         }}
       >
         <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{t("account.tradesmanEmail.optionA")}</div>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.optionADetail")}</p>
 
         <label style={{ display: "grid", gap: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{t("account.tradesmanEmail.slugLabel")}</span>
@@ -288,7 +285,6 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
             autoComplete="email"
             style={inputStyle}
           />
-          <span style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.4 }}>{t("account.tradesmanEmail.forwardHint")}</span>
         </label>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

@@ -79,7 +79,6 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>{t("account.callScreening.intro")}</p>
       <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, color: theme.text }}>
         <input
           type="checkbox"
@@ -176,7 +175,6 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
             />
             {t("account.callScreening.unknownCallerId")}
           </label>
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.liveNote")}</p>
         </>
       ) : null}
       {message ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 600 }}>{message}</p> : null}

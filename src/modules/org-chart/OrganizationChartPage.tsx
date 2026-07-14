@@ -602,7 +602,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
       ? "Link users, manage reporting lines, and add child roles."
       : linkFromId
         ? "Click a target role on the chart, or drag from a connector dot."
-        : "Click a role or line on the chart. Right-click for copy, paste, add line, and remove."
+        : undefined
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 20px 40px" }}>
@@ -620,11 +620,6 @@ export default function OrganizationChartPage({ setPage }: Props) {
         {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
         {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
-
-      <p style={{ margin: "0 0 16px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
-        Drag roles into your company structure. Drag from a role&apos;s connector dot to another role to draw a reporting
-        line, or select a line and drag its endpoints to reconnect. Link nodes to Tradesman users and set job titles.
-      </p>
 
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}
 
@@ -1367,9 +1362,6 @@ function ExternalContactsPanel({
           Add external contact
         </button>
       </div>
-      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-        Vendors and outsourced roles (parts, field techs, accounting) used by workflow routing and org chart links.
-      </p>
       {contacts.length === 0 ? (
         <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No external contacts yet.</p>
       ) : (

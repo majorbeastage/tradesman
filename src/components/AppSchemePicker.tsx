@@ -111,11 +111,7 @@ export default function AppSchemePicker({ profileUserId, canEdit }: Props) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-        Pick a visual scheme for your entire Tradesman portal — sidebar, pages, calendar, customers, and more.
-        Navigation and features stay the same; only colors, textures, and styling change.
-        {saving ? " Saving…" : ""}
-      </p>
+      {saving ? <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Saving…</p> : null}
       <div className="scheme-picker-grid">
         {APP_SCHEME_DEFINITIONS.map((def) => (
           <SchemeThumbnail

@@ -128,7 +128,6 @@ const ACCOUNT_FOLD_BTN: CSSProperties = {
 
 function AccountFold({
   title,
-  subtitle,
   open,
   onToggle,
   children,
@@ -136,7 +135,6 @@ function AccountFold({
   category,
 }: {
   title: string
-  subtitle?: string
   open: boolean
   onToggle: () => void
   children: ReactNode
@@ -157,14 +155,7 @@ function AccountFold({
       }}
     >
       <button type="button" onClick={onToggle} style={foldBtnStyle}>
-        <span style={{ minWidth: 0 }}>
-          {title}
-          {subtitle && !open ? (
-            <span style={{ display: "block", marginTop: 3, fontWeight: 400, fontSize: 11, color: "#94a3b8", lineHeight: 1.35 }}>
-              {subtitle}
-            </span>
-          ) : null}
-        </span>
+        <span style={{ minWidth: 0 }}>{title}</span>
         <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }} aria-hidden>
           {open ? "▲" : "▼"}
         </span>
@@ -795,7 +786,6 @@ export function AccountProfilePanel({
           <div style={{ display: "grid", gap: 16 }}>
             <div style={ACCOUNT_SECTION_CARD}>
               <h2 style={{ margin: 0, fontSize: 16, color: theme.text }}>{t("account.language")}</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>{t("account.languageHint")}</p>
               <label style={{ display: "grid", gap: 6, maxWidth: 280 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.chooseLanguage")}</span>
                 <select
@@ -833,7 +823,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.contactTitle")}
-              subtitle={t("account.section.contactSub")}
               open={foldOpen.profile}
               onToggle={toggleFold("profile")}
               category={cat}
@@ -907,9 +896,6 @@ export function AccountProfilePanel({
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
-                      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                        Your photo — shown next to My T in the app header.
-                      </span>
                       <label style={{ display: "inline-flex" }}>
                         <span
                           style={{
@@ -930,9 +916,6 @@ export function AccountProfilePanel({
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Company logo</span>
-                      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                        Used on your public business web profile (tradesman-us.com/your-business).
-                      </span>
                       <label style={{ display: "inline-flex" }}>
                         <span
                           style={{
@@ -997,7 +980,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.tradesmanEmailTitle")}
-              subtitle={t("account.section.tradesmanEmailSub")}
               open={foldOpen.tradesman_email}
               onToggle={toggleFold("tradesman_email")}
               category={cat}
@@ -1010,7 +992,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.businessWebProfileTitle")}
-              subtitle={t("account.section.businessWebProfileSub")}
               open={foldOpen.business_web_profile}
               onToggle={toggleFold("business_web_profile")}
               category={cat}
@@ -1064,7 +1045,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.serviceTitle")}
-              subtitle={t("account.section.serviceSub")}
               open={foldOpen.service_area}
               onToggle={toggleFold("service_area")}
               category={cat}
@@ -1104,7 +1084,6 @@ export function AccountProfilePanel({
                 <Fragment key={sectionId}>
                   <AccountFold
                     title={t("account.section.mobileTitle")}
-                    subtitle={t("account.section.mobileSub")}
                     open={foldOpen.mobile_app}
                     onToggle={toggleFold("mobile_app")}
                     category={cat}
@@ -1117,7 +1096,6 @@ export function AccountProfilePanel({
                 <Fragment key={sectionId}>
                   <AccountFold
                     title={t("account.section.schemeTitle")}
-                    subtitle={t("account.section.schemeSub")}
                     open={foldOpen.app_scheme}
                     onToggle={toggleFold("app_scheme")}
                     category={cat}
@@ -1130,7 +1108,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.hoursTitle")}
-              subtitle={t("account.fold.hoursSub")}
               open={foldOpen.business_hours}
               onToggle={toggleFold("business_hours")}
               category={cat}
@@ -1211,7 +1188,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.forwardTitle")}
-              subtitle={t("account.fold.forwardSub")}
               open={foldOpen.call_forwarding}
               onToggle={toggleFold("call_forwarding")}
               category={cat}
@@ -1225,7 +1201,6 @@ export function AccountProfilePanel({
                 />
                 {t("account.forward.enabled")}
               </label>
-              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>{t("account.forward.saveNote")}</p>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600, marginTop: 12 }}>
                 <input
                   type="checkbox"
@@ -1234,7 +1209,6 @@ export function AccountProfilePanel({
                 />
                 {t("account.forward.outsideHours")}
               </label>
-              <p style={{ margin: "8px 0 0", color: "#9a3412", fontSize: 13 }}>{t("account.forward.outsideHelp")}</p>
 
               <label style={{ display: "grid", gap: 6, marginTop: 14, color: theme.text }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>{t("account.forward.callerIdLabel")}</span>
@@ -1251,7 +1225,6 @@ export function AccountProfilePanel({
                   <option value="caller_number">{t("account.forward.callerIdInbound")}</option>
                   <option value="twilio_number">{t("account.forward.callerIdTwilio")}</option>
                 </select>
-                <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.callerIdHelp")}</span>
               </label>
 
               <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
@@ -1278,10 +1251,7 @@ export function AccountProfilePanel({
                       }))
                     }
                   />
-                  <span style={{ display: "grid", gap: 4 }}>
-                    <span style={{ fontWeight: 700 }}>{t("account.forward.announceTitle")}</span>
-                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.announceHelp")}</span>
-                  </span>
+                  <span style={{ fontWeight: 700 }}>{t("account.forward.announceTitle")}</span>
                 </label>
                 {form.forward_whisper_on_answer && (
                   <div style={{ display: "grid", gap: 12, marginTop: 4 }}>
@@ -1291,10 +1261,7 @@ export function AccountProfilePanel({
                         checked={form.forward_whisper_only_outside_business_hours}
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_only_outside_business_hours: e.target.checked }))}
                       />
-                      <span style={{ display: "grid", gap: 4 }}>
-                        <span style={{ fontWeight: 700 }}>{t("account.forward.whisperAfterHours")}</span>
-                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.whisperAfterHoursHelp")}</span>
-                      </span>
+                      <span style={{ fontWeight: 700 }}>{t("account.forward.whisperAfterHours")}</span>
                     </label>
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 10, color: theme.text, fontSize: 13 }}>
                       <input
@@ -1302,10 +1269,7 @@ export function AccountProfilePanel({
                         checked={form.forward_whisper_require_keypress}
                         onChange={(e) => setForm((prev) => ({ ...prev, forward_whisper_require_keypress: e.target.checked }))}
                       />
-                      <span style={{ display: "grid", gap: 4 }}>
-                        <span style={{ fontWeight: 700 }}>{t("account.forward.requireKeypress")}</span>
-                        <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.requireKeypressHelp")}</span>
-                      </span>
+                      <span style={{ fontWeight: 700 }}>{t("account.forward.requireKeypress")}</span>
                     </label>
                     <label style={{ display: "grid", gap: 6 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.forward.customAnnounce")}</span>
@@ -1315,9 +1279,7 @@ export function AccountProfilePanel({
                         style={{ ...theme.formInput, minHeight: 88, resize: "vertical" }}
                         placeholder={t("account.whisperTemplate.placeholder")}
                       />
-                      <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.forward.placeholdersHelp")}</span>
                     </label>
-                    <p style={{ margin: 0, color: "#9a3412", fontSize: 12, lineHeight: 1.45 }}>{t("account.forward.finePrint")}</p>
                   </div>
                 )}
               </div>
@@ -1329,7 +1291,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.fold.callScreeningTitle")}
-              subtitle={t("account.fold.callScreeningSub")}
               open={foldOpen.call_screening}
               onToggle={toggleFold("call_screening")}
               category={cat}
@@ -1342,11 +1303,6 @@ export function AccountProfilePanel({
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.fold.voicemailBundleTitle")}
-              subtitle={
-                foldOpen.voicemail_bundle
-                  ? undefined
-                  : `${form.voicemail_greeting_mode === "ai_text" ? t("account.voicemail.subAi") : t("account.voicemail.subRecorded")} · ${t("account.section.helpTitle")}`
-              }
               open={foldOpen.voicemail_bundle}
               onToggle={toggleFold("voicemail_bundle")}
               category={cat}
@@ -1369,9 +1325,7 @@ export function AccountProfilePanel({
                       <option value="summary">{t("account.voicemail.optSummary")}</option>
                       <option value="full_transcript">{t("account.voicemail.optTranscript")}</option>
                     </select>
-                    <span style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{t("account.voicemail.convHelp")}</span>
                   </label>
-                  <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>{t("account.voicemail.optionalNote")}</p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.text, fontWeight: 600 }}>
                       <input
@@ -1443,9 +1397,6 @@ export function AccountProfilePanel({
                           {t("account.voicemail.newPin")}
                         </button>
                       </div>
-                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>
-                        {t("account.voicemail.callInstructions").replace("{phone}", HELP_DESK_PHONE_DISPLAY)}
-                      </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                         <label style={{ padding: "10px 16px", background: "#fff", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: uploadingGreeting ? "wait" : "pointer" }}>
                           {uploadingGreeting ? t("account.voicemail.uploading") : t("account.voicemail.uploadAudio")}
@@ -1468,7 +1419,6 @@ export function AccountProfilePanel({
                           <audio controls src={recordingPreviewUrl || form.voicemail_greeting_recording_url} />
                         </div>
                       )}
-                      <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.45 }}>{t("account.voicemail.recordedFallbackHelp")}</p>
                     </>
                   )}
                 </div>
@@ -1492,7 +1442,6 @@ export function AccountProfilePanel({
                         {HELP_DESK_PHONE_DISPLAY}
                       </a>
                     </p>
-                    <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>{t("account.help.sameNumber")}</p>
                     {adminContext && (
                       <div style={{ marginTop: 4, padding: 12, borderRadius: 8, background: "#fff", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
                         <div style={{ fontWeight: 700, color: theme.text }}>{t("account.admin.twilioTitle")}</div>
@@ -1514,7 +1463,6 @@ export function AccountProfilePanel({
                     {HELP_DESK_PHONE_DISPLAY}
                   </a>
                 </p>
-                <p style={{ margin: 0, color: "#4b5563", fontSize: 14, lineHeight: 1.55 }}>{t("account.help.sameNumber")}</p>
                 {adminContext && (
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "#f9fafb", border: `1px solid ${theme.border}`, color: "#4b5563", fontSize: 12, display: "grid", gap: 6 }}>
                     <div style={{ fontWeight: 700, color: theme.text }}>{t("account.admin.twilioTitle")}</div>
@@ -1529,14 +1477,10 @@ export function AccountProfilePanel({
                   <Fragment key={sectionId}>
                     <AccountFold
                       title={t("account.ai.title")}
-                      subtitle={t("account.ai.shortHint")}
                       open={foldOpen.ai_automations}
                       onToggle={toggleFold("ai_automations")}
                       category={cat}
                     >
-                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
-                        {t("account.ai.body")}
-                      </p>
                       <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
                         <input
                           type="checkbox"
@@ -1556,7 +1500,6 @@ export function AccountProfilePanel({
                   <Fragment key={sectionId}>
                     <AccountFold
                       title={t("account.password.reset")}
-                      subtitle={t("account.password.shortHint")}
                       open={foldOpen.password_reset}
                       onToggle={toggleFold("password_reset")}
                       category={systemCat}
@@ -1622,8 +1565,7 @@ export default function AccountPage() {
   return (
     <div className="scheme-page" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div className="scheme-card" style={{ padding: 20, borderRadius: 12 }}>
-        <h1 style={{ margin: "0 0 8px", color: portalTheme.text }}>{t("account.pageTitle")}</h1>
-        <p style={{ margin: 0, color: portalTheme.textMuted }}>{t("account.pageSubtitle")}</p>
+        <h1 style={{ margin: 0, color: portalTheme.text }}>{t("account.pageTitle")}</h1>
       </div>
       <AccountProfilePanel profileUserId={user.id} loginEmail={user.email ?? undefined} showPasswordReset />
     </div>

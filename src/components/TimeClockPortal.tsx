@@ -667,9 +667,6 @@ export default function TimeClockPortal({
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <span style={{ fontSize: 14, fontWeight: 800, color: "#0f172a" }}>Time tracking</span>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-            Shift punches, job time, weekly hours, and exportable reports.
-          </p>
         </div>
         {clockLoading ? <span style={{ fontSize: 11, color: "#64748b" }}>Refreshing…</span> : null}
       </div>

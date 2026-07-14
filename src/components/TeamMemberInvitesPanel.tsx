@@ -163,18 +163,11 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     }
   }
 
-  const subtitle = `${activeMembers.length} active · ${pendingInvites.length} pending · ${seats.availableSeats} slot(s) available`
-
   return (
     <div style={{ padding: 0, gap: 0, overflow: "hidden", borderRadius: 10, ...shellStyle }}>
       <button type="button" onClick={() => setOpen((v) => !v)} style={foldStyle ?? { width: "100%", textAlign: "left", padding: "12px 14px", border: "none", borderRadius: 10, background: "#f1f5f9", cursor: "pointer", fontWeight: 700 }}>
         <span style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", width: "100%" }}>
-          <span style={{ minWidth: 0 }}>
-            Team members
-            {!open ? (
-              <span style={{ display: "block", marginTop: 3, fontWeight: 400, fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>{subtitle}</span>
-            ) : null}
-          </span>
+          <span style={{ minWidth: 0 }}>Team members</span>
           <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }} aria-hidden>
             {open ? "▲" : "▼"}
           </span>

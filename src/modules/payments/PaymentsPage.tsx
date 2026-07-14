@@ -369,21 +369,19 @@ export default function PaymentsPage() {
         </button>
       </div>
 
-      <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
-        {paymentsHubTab === "subscription" ? (
-          <>
-            <strong style={{ color: theme.text }}>Tradesman subscription</strong> — your office pays Tradesman. This is separate from collecting payments from your customers.
-          </>
-        ) : paymentsHubTab === "collect" ? (
-          <>
-            <strong style={{ color: theme.text }}>Customer collections</strong> — send hosted payment links to homeowners and GCs. Configure your processor under Provider settings in this tab.
-          </>
-        ) : (
-          <>
-            <strong style={{ color: theme.text }}>History</strong> — your subscription billing signals plus customer payment activity logged in Tradesman.
-          </>
-        )}
-      </p>
+      {paymentsHubTab === "collect" || paymentsHubTab === "history" ? (
+        <p style={{ color: "#475569", margin: "0 0 18px", lineHeight: 1.55, fontSize: 14 }}>
+          {paymentsHubTab === "collect" ? (
+            <>
+              <strong style={{ color: theme.text }}>Customer collections</strong> — send hosted payment links to homeowners and GCs. Configure your processor under Provider settings in this tab.
+            </>
+          ) : (
+            <>
+              <strong style={{ color: theme.text }}>History</strong> — your subscription billing signals plus customer payment activity logged in Tradesman.
+            </>
+          )}
+        </p>
+      ) : null}
 
       {paymentsHubTab === "subscription" ? (
       <>
@@ -393,9 +391,6 @@ export default function PaymentsPage() {
 
       {useHelcimJs ? (
         <>
-          <p style={{ color: theme.text, marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-            Pay securely with your card below. You&apos;ll see whether your payment was approved right on this page.
-          </p>
           {!helcimJsHttpsOk ? (
             <div
               style={{

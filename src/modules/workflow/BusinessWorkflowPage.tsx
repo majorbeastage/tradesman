@@ -605,7 +605,7 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
       ? "Assign an org user, set box color, and manage arrows for this step."
       : linkFromId
         ? "Click a target step on the chart, or cancel below."
-        : "Click a step or arrow on the chart to edit it here. Right-click for copy, paste, and remove."
+        : undefined
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 20px 40px" }}>
@@ -624,12 +624,6 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         {saveFlash ? <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>{saveFlash}</span> : null}
         {saving && !saveFlash ? <span style={{ fontSize: 12, color: "#64748b" }}>Saving…</span> : null}
       </div>
-
-      <p style={{ margin: "0 0 12px", fontSize: 14, color: "#64748b", lineHeight: 1.55, maxWidth: 820 }}>
-        Drag steps to move them. Use the <strong>green dot under a step</strong> to draw a new arrow, or{" "}
-        <strong>hover an arrow</strong> and drag its ends to another step. Drop anywhere on a step box — you don&apos;t
-        need to hit a tiny target.
-      </p>
 
       <WorkflowVoiceAttendant onApply={applyLiveWorkflowDoc} />
 
@@ -701,9 +695,6 @@ export default function BusinessWorkflowPage({ setPage }: Props) {
         }}
       >
         <div style={{ fontSize: 13, fontWeight: 800, color: theme.text }}>Process overseer</div>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Receptionist or office lead who can see and trigger workflow buttons on any step (estimates, operations handoffs, parallel routes).
-        </p>
         <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
           Overseer org users
           <select
