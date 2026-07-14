@@ -260,9 +260,6 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
 
       <section style={{ ...card, marginBottom: 20 }}>
         <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Create work order</h2>
-        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-          Create from an estimate on file, or bypass the estimate and open a customer-only work order when needed.
-        </p>
         <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, marginBottom: 12, maxWidth: 520 }}>
           Filter by customer
           <select
