@@ -288,7 +288,10 @@ export function removeTileFromCustomizeGrid(grid: DashboardTileGridSlot[], id: D
   return grid.map((x) => (x === id ? null : x))
 }
 
-/** Preserve tile positions when column count changes (resize). */
+/**
+ * Remap a layout between column counts without dropping tiles.
+ * Keeps (row, col) when the column still fits; otherwise packs overflow into the next free slots.
+ */
 export function resizeCustomizeGrid(
   grid: DashboardTileGridSlot[],
   oldCols: number,
@@ -297,22 +300,62 @@ export function resizeCustomizeGrid(
   savedRows?: number,
 ): DashboardTileGridSlot[] {
   const minRows = dashboardCustomizeMinRows(isMobile)
-  const rows = savedRows && savedRows >= minRows ? savedRows : customizeGridRowsFromLength(grid, oldCols, minRows)
-  const next = emptyCustomizeGrid(newCols, rows)
-  const seen = new Set<DashboardQuickLinkId>()
   const oldMax = Math.max(1, oldCols)
+  const newMax = Math.max(1, newCols)
+  if (oldMax === newMax) {
+    const rows = savedRows && savedRows >= minRows ? savedRows : customizeGridRowsFromLength(grid, oldMax, minRows)
+    return ensureCustomizeGridSize(grid, newMax, Math.max(minRows, rows))
+  }
+
+  const placed: { id: DashboardQuickLinkId; row: number; col: number }[] = []
+  const overflow: DashboardQuickLinkId[] = []
+  const seen = new Set<DashboardQuickLinkId>()
   for (let i = 0; i < grid.length; i++) {
     const id = grid[i]
     if (!id || seen.has(id)) continue
+    seen.add(id)
     const row = Math.floor(i / oldMax)
     const col = i % oldMax
-    if (row >= rows || col >= newCols) continue
-    const ni = row * newCols + col
-    if (ni < next.length) {
-      next[ni] = id
-      seen.add(id)
-    }
+    if (col < newMax) placed.push({ id, row, col })
+    else overflow.push(id)
   }
+
+  const maxPlacedRow = placed.reduce((m, p) => Math.max(m, p.row + 1), 0)
+  let rows = Math.max(
+    minRows,
+    savedRows && savedRows >= minRows ? savedRows : 0,
+    maxPlacedRow,
+    Math.ceil((placed.length + overflow.length) / newMax) || minRows,
+  )
+  const next = emptyCustomizeGrid(newMax, rows)
+  for (const p of placed) {
+    const ni = p.row * newMax + p.col
+    if (ni >= 0 && ni < next.length) next[ni] = p.id
+  }
+  for (const id of overflow) {
+    let idx = next.findIndex((x) => x === null)
+    if (idx < 0) {
+      for (let c = 0; c < newMax; c++) next.push(null)
+      idx = next.findIndex((x) => x === null)
+    }
+    if (idx >= 0) next[idx] = id
+  }
+  return next
+}
+
+/** Dense left-to-right reading-order layout — used when author cols are unknown. */
+export function reflowCustomizeGrid(
+  order: DashboardQuickLinkId[],
+  cols: number,
+  isMobile: boolean,
+  minRowsOverride?: number,
+): DashboardTileGridSlot[] {
+  const minRows = minRowsOverride ?? dashboardCustomizeMinRows(isMobile)
+  const rows = Math.max(minRows, Math.ceil(order.length / Math.max(1, cols)) || minRows)
+  const next = emptyCustomizeGrid(cols, rows)
+  order.forEach((id, i) => {
+    if (i < next.length) next[i] = id
+  })
   return next
 }
 

@@ -19,7 +19,7 @@ type Zone = "visible" | "hidden"
 type DragSession = { id: DashboardQuickLinkId; zone: Zone }
 type SelectedTile = { id: DashboardQuickLinkId; zone: Zone }
 
-const MOBILE_DRAG_THRESHOLD_PX = 12
+const MOBILE_DRAG_THRESHOLD_PX = 10
 
 type Props = {
   grid: DashboardTileGridSlot[]
@@ -45,6 +45,7 @@ export default function DashboardQuickLinkCustomizeZones({
   const [hoverSlot, setHoverSlot] = useState<number | "hidden" | null>(null)
   const [draggingId, setDraggingId] = useState<DashboardQuickLinkId | null>(null)
   const [selectedTile, setSelectedTile] = useState<SelectedTile | null>(null)
+  const [pressPending, setPressPending] = useState(false)
   const sessionRef = useRef<DragSession | null>(null)
   const pointerStartRef = useRef<{
     x: number
@@ -55,6 +56,7 @@ export default function DashboardQuickLinkCustomizeZones({
     target: HTMLElement
   } | null>(null)
   const dragActiveRef = useRef(false)
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const visibleZoneRef = useRef<HTMLDivElement>(null)
   const hiddenZoneRef = useRef<HTMLDivElement>(null)
@@ -79,7 +81,9 @@ export default function DashboardQuickLinkCustomizeZones({
       const rect = el.getBoundingClientRect()
       const x = clientX - rect.left
       const y = clientY - rect.top
-      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null
+      // Pad edges so dragging toward the top still lands on row 0.
+      if (x < -8 || x > rect.width + 8) return null
+      if (y < -12 || y > rect.height + 12) return null
       const cellW = isMobile
         ? (rect.width - gap * Math.max(0, gridCols - 1)) / gridCols
         : tileW
@@ -90,12 +94,24 @@ export default function DashboardQuickLinkCustomizeZones({
     [gridCols, displayRows, tileW, tileH, gap, isMobile],
   )
 
+  const unlockScroll = () => {
+    try {
+      document.body.style.overflow = ""
+      document.body.style.touchAction = ""
+    } catch {
+      /* ignore */
+    }
+  }
+
   const finishDrag = useCallback(() => {
     sessionRef.current = null
     pointerStartRef.current = null
     dragActiveRef.current = false
+    lastPointRef.current = null
     setDraggingId(null)
+    setPressPending(false)
     clearHover()
+    unlockScroll()
   }, [])
 
   const placeAtSlot = useCallback(
@@ -121,16 +137,14 @@ export default function DashboardQuickLinkCustomizeZones({
         setHoverSlot("hidden")
         return
       }
-      if (pointInRect(clientX, clientY, visibleZoneRef.current)) {
-        const slot = slotFromPoint(clientX, clientY)
-        if (slot != null) {
-          setHoverSlot(slot)
-          return
-        }
-        if (!grid.some((x) => x != null)) {
-          setHoverSlot(0)
-          return
-        }
+      const slot = slotFromPoint(clientX, clientY)
+      if (slot != null) {
+        setHoverSlot(slot)
+        return
+      }
+      if (pointInRect(clientX, clientY, visibleZoneRef.current) && !grid.some((x) => x != null)) {
+        setHoverSlot(0)
+        return
       }
       clearHover()
     },
@@ -152,22 +166,38 @@ export default function DashboardQuickLinkCustomizeZones({
         return
       }
 
-      if (pointInRect(clientX, clientY, visibleZoneRef.current)) {
-        const slot = slotFromPoint(clientX, clientY)
-        if (slot != null) {
-          placeAtSlot(session.id, slot)
-          return
-        }
-        if (!grid.some((x) => x != null)) {
-          placeAtSlot(session.id, 0)
-          return
-        }
+      const slot = slotFromPoint(clientX, clientY)
+      if (slot != null) {
+        placeAtSlot(session.id, slot)
+        return
+      }
+      if (!grid.some((x) => x != null) && pointInRect(clientX, clientY, visibleZoneRef.current)) {
+        placeAtSlot(session.id, 0)
+        return
       }
 
       finishDrag()
     },
     [grid, slotFromPoint, placeAtSlot, onGridChange, finishDrag],
   )
+
+  const activateDrag = useCallback((start: NonNullable<typeof pointerStartRef.current>) => {
+    dragActiveRef.current = true
+    sessionRef.current = { id: start.id, zone: start.zone }
+    setDraggingId(start.id)
+    setSelectedTile(null)
+    try {
+      start.target.setPointerCapture(start.pointerId)
+    } catch {
+      /* ignore */
+    }
+    try {
+      document.body.style.overflow = "hidden"
+      document.body.style.touchAction = "none"
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   const beginPointerDrag = (e: React.PointerEvent, id: DashboardQuickLinkId, zone: Zone) => {
     if (e.button !== 0) return
@@ -181,58 +211,57 @@ export default function DashboardQuickLinkCustomizeZones({
       target: e.currentTarget as HTMLElement,
     }
     dragActiveRef.current = false
-  }
-
-  const activateDrag = (start: NonNullable<typeof pointerStartRef.current>) => {
-    dragActiveRef.current = true
-    sessionRef.current = { id: start.id, zone: start.zone }
-    setDraggingId(start.id)
-    setSelectedTile(null)
-    try {
-      start.target.setPointerCapture(start.pointerId)
-    } catch {
-      /* ignore */
-    }
+    lastPointRef.current = { x: e.clientX, y: e.clientY }
+    setPressPending(true)
   }
 
   const handlePointerMove = useCallback(
-    (clientX: number, clientY: number) => {
+    (clientX: number, clientY: number, ev?: Event) => {
       const start = pointerStartRef.current
       if (!start) return
+      lastPointRef.current = { x: clientX, y: clientY }
       if (!dragActiveRef.current) {
         const dx = clientX - start.x
         const dy = clientY - start.y
         const threshold = isMobile ? MOBILE_DRAG_THRESHOLD_PX : 6
         if (Math.hypot(dx, dy) < threshold) return
         activateDrag(start)
+        if (ev && "cancelable" in ev && (ev as Event).cancelable) (ev as Event).preventDefault()
       }
       if (!sessionRef.current) return
+      if (ev && "cancelable" in ev && (ev as Event).cancelable) (ev as Event).preventDefault()
       updateHoverFromPoint(clientX, clientY)
     },
-    [isMobile, updateHoverFromPoint],
+    [isMobile, updateHoverFromPoint, activateDrag],
   )
 
   const handlePointerUp = useCallback(
     (clientX: number, clientY: number, pointerId: number) => {
       const start = pointerStartRef.current
+      const point = lastPointRef.current ?? { x: clientX, y: clientY }
       pointerStartRef.current = null
+      setPressPending(false)
       if (!start) return
 
       if (!dragActiveRef.current && isMobile) {
         setSelectedTile((prev) =>
           prev?.id === start.id && prev.zone === start.zone ? null : { id: start.id, zone: start.zone },
         )
+        unlockScroll()
         return
       }
 
-      if (!dragActiveRef.current) return
+      if (!dragActiveRef.current) {
+        unlockScroll()
+        return
+      }
 
       try {
         start.target.releasePointerCapture(pointerId)
       } catch {
         /* ignore */
       }
-      commitDropAtPoint(clientX, clientY)
+      commitDropAtPoint(point.x, point.y)
       dragActiveRef.current = false
     },
     [isMobile, commitDropAtPoint],
@@ -240,17 +269,7 @@ export default function DashboardQuickLinkCustomizeZones({
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!pointerStartRef.current) return
-    if (!dragActiveRef.current) {
-      const start = pointerStartRef.current
-      const dx = e.clientX - start.x
-      const dy = e.clientY - start.y
-      const threshold = isMobile ? MOBILE_DRAG_THRESHOLD_PX : 6
-      if (Math.hypot(dx, dy) >= threshold) {
-        activateDrag(start)
-        e.preventDefault()
-      }
-    }
-    handlePointerMove(e.clientX, e.clientY)
+    handlePointerMove(e.clientX, e.clientY, e.nativeEvent)
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -263,17 +282,18 @@ export default function DashboardQuickLinkCustomizeZones({
 
   const onDocCancel = useCallback(() => finishDrag(), [finishDrag])
 
+  // Document listeners while pressing/dragging so bottom→top moves aren't lost to scroll.
   useEffect(() => {
-    if (!isDragging) return
+    if (!pressPending && !isDragging) return
     const onDocMove = (e: PointerEvent) => {
-      if (!pointerStartRef.current) return
-      handlePointerMove(e.clientX, e.clientY)
+      if (!pointerStartRef.current && !dragActiveRef.current) return
+      handlePointerMove(e.clientX, e.clientY, e)
     }
     const onDocUp = (e: PointerEvent) => {
-      if (!pointerStartRef.current) return
+      if (!pointerStartRef.current && !dragActiveRef.current) return
       handlePointerUp(e.clientX, e.clientY, e.pointerId)
     }
-    document.addEventListener("pointermove", onDocMove)
+    document.addEventListener("pointermove", onDocMove, { passive: false })
     document.addEventListener("pointerup", onDocUp)
     document.addEventListener("pointercancel", onDocCancel)
     return () => {
@@ -281,7 +301,7 @@ export default function DashboardQuickLinkCustomizeZones({
       document.removeEventListener("pointerup", onDocUp)
       document.removeEventListener("pointercancel", onDocCancel)
     }
-  }, [isDragging, handlePointerMove, handlePointerUp, onDocCancel])
+  }, [pressPending, isDragging, handlePointerMove, handlePointerUp, onDocCancel])
 
   const placeSelectedAtSlot = useCallback(
     (slotIndex: number) => {
@@ -314,10 +334,12 @@ export default function DashboardQuickLinkCustomizeZones({
           flexShrink: 0,
           opacity: isSource ? 0.45 : 1,
           cursor: isSource ? "grabbing" : isMobile ? "pointer" : "grab",
-          touchAction: isDragging ? "none" : "pan-y",
+          touchAction: "none",
           outline: isSelected ? "2px solid rgba(14, 165, 233, 0.85)" : undefined,
           outlineOffset: 2,
           borderRadius: 8,
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
         className="tm-dash-customize-tile-wrap"
       >
@@ -375,10 +397,10 @@ export default function DashboardQuickLinkCustomizeZones({
           boxSizing: "border-box",
           padding: 0,
           cursor: slotTapActive ? "pointer" : "default",
-          touchAction: isDragging ? "none" : "pan-y",
+          touchAction: "none",
         }}
         aria-label={slotTapActive ? "Place selected shortcut here" : undefined}
-        disabled={!slotTapActive}
+        disabled={!slotTapActive && !isDragging}
       />
     )
   }
@@ -388,8 +410,8 @@ export default function DashboardQuickLinkCustomizeZones({
       {isMobile ? (
         <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
           {selectedTile
-            ? "Tap an open slot above to place the selected shortcut. Tap the hidden area below to remove it from the dashboard."
-            : "Tap a shortcut to select it, then tap where you want it on your dashboard."}
+            ? "Tap an open slot (or another shortcut) to place it — including slots above. You can also press and drag."
+            : "Tap a shortcut to select it, then tap where you want it — or press and drag (including bottom to top)."}
         </p>
       ) : null}
       <div ref={visibleZoneRef} style={zoneShell}>
@@ -431,7 +453,7 @@ export default function DashboardQuickLinkCustomizeZones({
               gridTemplateRows: `repeat(${displayRows}, ${tileH}px)`,
               gap,
               width: "100%",
-              touchAction: isDragging ? "none" : "pan-y",
+              touchAction: isDragging || pressPending ? "none" : "pan-y",
             }}
           >
             {Array.from({ length: slotCount }, (_, slotIndex) => {
