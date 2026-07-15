@@ -38,6 +38,10 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
   const normalizedSlug = useMemo(() => normalizePlatformEmailSlug(slug), [slug])
   const previewAddress = normalizedSlug ? platformEmailAddressFromSlug(normalizedSlug) : ""
   const shapeIssue = slug.trim() ? validatePlatformEmailSlugShape(slug) : null
+  const enabledDeptCount = useMemo(
+    () => PLATFORM_DEPARTMENT_KEYS.filter((dept) => deptEnabled[dept.key]).length,
+    [deptEnabled],
+  )
 
   const loadRoute = useCallback(async () => {
     if (!supabase || !profileUserId) return
@@ -275,8 +279,28 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
           ) : null}
         </label>
 
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{t("account.tradesmanEmail.forwardLabel")}</span>
+        <details style={{ display: "grid", gap: 6 }}>
+          <summary
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: theme.text,
+              cursor: "pointer",
+              listStyle: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ color: "#64748b", fontSize: 11 }}>▸</span>
+            <span>
+              {t("account.tradesmanEmail.forwardLabel")}
+              {forwardTo.trim() ? (
+                <span style={{ fontWeight: 500, color: "#64748b" }}> · {forwardTo.trim()}</span>
+              ) : null}
+            </span>
+          </summary>
+          <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.forwardHint")}</p>
           <input
             type="email"
             value={forwardTo}
@@ -285,7 +309,7 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
             autoComplete="email"
             style={inputStyle}
           />
-        </label>
+        </details>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <button
@@ -314,7 +338,7 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
       </div>
 
       {claimedSlug ? (
-        <div
+        <details
           style={{
             padding: 14,
             borderRadius: 10,
@@ -324,7 +348,26 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
             gap: 10,
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{t("account.tradesmanEmail.deptTitle")}</div>
+          <summary
+            style={{
+              fontWeight: 700,
+              fontSize: 13,
+              color: theme.text,
+              cursor: "pointer",
+              listStyle: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ color: "#64748b", fontSize: 11 }}>▸</span>
+            <span>
+              {t("account.tradesmanEmail.deptTitle")}
+              {enabledDeptCount > 0 ? (
+                <span style={{ fontWeight: 500, color: "#64748b" }}> · {enabledDeptCount} enabled</span>
+              ) : null}
+            </span>
+          </summary>
           <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.deptDetail")}</p>
           <div style={{ display: "grid", gap: 8 }}>
             {PLATFORM_DEPARTMENT_KEYS.map((dept) => {
@@ -370,7 +413,7 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
             {deptSaving ? t("common.saving") : t("account.tradesmanEmail.deptSave")}
           </button>
           {deptMessage ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 600 }}>{deptMessage}</p> : null}
-        </div>
+        </details>
       ) : null}
 
       <div

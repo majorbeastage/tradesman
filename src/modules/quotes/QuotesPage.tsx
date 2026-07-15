@@ -5399,6 +5399,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       borderRadius: 8,
                       border: `1px solid ${theme.border}`,
                       background: previousEstimatesBucket === "active" ? "#dbeafe" : "#fff",
+                      color: "#0f172a",
                       fontWeight: 700,
                       cursor: "pointer",
                     }}
@@ -5413,6 +5414,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       borderRadius: 8,
                       border: `1px solid ${theme.border}`,
                       background: previousEstimatesBucket === "archived" ? "#dbeafe" : "#fff",
+                      color: "#0f172a",
                       fontWeight: 700,
                       cursor: "pointer",
                     }}

@@ -936,9 +936,6 @@ export function AccountProfilePanel({
                       <div style={{ fontSize: 14, fontWeight: 700, color: publicBusinessLine ? "#0f766e" : "#64748b", marginTop: 6, lineHeight: 1.35 }}>
                         {publicBusinessLine ?? "Public business line not assigned yet"}
                       </div>
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, lineHeight: 1.35 }}>
-                        Shown on your Tradesman business line (Admin → Communications)
-                      </div>
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -1560,7 +1557,6 @@ export function AccountProfilePanel({
                           placeholder={t("account.voicemail.scriptPlaceholder")}
                         />
                       </label>
-                      <p style={{ margin: 0, color: "#6b7280", fontSize: 13, lineHeight: 1.5 }}>{t("account.voicemail.aiScriptHelp")}</p>
                     </>
                   )}
 
