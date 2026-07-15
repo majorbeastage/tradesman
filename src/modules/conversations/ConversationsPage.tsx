@@ -3,6 +3,8 @@ import { supabase } from "../../lib/supabase"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useViewingOtherProfile } from "../../contexts/PortalViewContext"
+import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { theme } from "../../styles/theme"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
@@ -359,7 +361,20 @@ function ExpandableTimelineRow({
   )
 }
 
-export default function ConversationsPage(_props: ConversationsPageProps) {
+export default function ConversationsPage(props: ConversationsPageProps) {
+  const viewingOtherProfile = useViewingOtherProfile()
+  if (viewingOtherProfile) {
+    return (
+      <div style={{ maxWidth: 720 }}>
+        <h1 style={{ marginTop: 0 }}>Conversations</h1>
+        <PortalViewCommsHiddenNotice label="conversations" />
+      </div>
+    )
+  }
+  return <ConversationsPageInner {...props} />
+}
+
+function ConversationsPageInner(_props: ConversationsPageProps) {
   void _props
   const userId = useScopedUserId()
   const emailSig = useEmailComposeSignature(userId)

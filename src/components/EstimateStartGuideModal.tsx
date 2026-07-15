@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { theme } from "../styles/theme"
+import SavedLineCategoryPicker from "./SavedLineCategoryPicker"
+import type { EstimateLinePresetRow } from "../lib/estimateLinePresets"
+import type { LibraryCategory } from "../lib/libraryCategories"
 
 type CustomerOpt = { id: string; display_name?: string | null }
 type JobTypeOpt = { id: string; name: string }
@@ -42,8 +45,9 @@ type Props = {
   onJobDetailsVoiceStop?: () => void
   onQuoteItemsContinue: () => void
   onQuoteItemsSkip: () => void
-  onQuoteItemsOpen: () => void
-  onQuoteItemsLiteAdd: (raw: string) => Promise<string>
+  estimateLinePresets?: EstimateLinePresetRow[]
+  savedLineCategories?: LibraryCategory[]
+  onAddExistingLineItem?: (preset: EstimateLinePresetRow) => void | Promise<void>
   /** AI-filled quote lines from merged job details / bullets (same API as scope assistant). */
   onQuoteItemsAiFromJobDetails?: () => Promise<string>
   quoteItemsAiBusy?: boolean
@@ -103,8 +107,9 @@ export default function EstimateStartGuideModal({
   onJobDetailsVoiceStop,
   onQuoteItemsContinue,
   onQuoteItemsSkip,
-  onQuoteItemsOpen,
-  onQuoteItemsLiteAdd,
+  estimateLinePresets = [],
+  savedLineCategories = [],
+  onAddExistingLineItem,
   onQuoteItemsAiFromJobDetails,
   quoteItemsAiBusy = false,
   hasJobDetailsForAiLines = false,
@@ -124,9 +129,6 @@ export default function EstimateStartGuideModal({
   onMediaPickFiles,
 }: Props) {
   const [customerQuery, setCustomerQuery] = useState("")
-  const [liteLinesText, setLiteLinesText] = useState("")
-  const [liteBusy, setLiteBusy] = useState(false)
-  const [liteNote, setLiteNote] = useState<string | null>(null)
   const [aiLinesNote, setAiLinesNote] = useState<string | null>(null)
 
   const conversationBulletLines = useMemo(
@@ -570,76 +572,45 @@ export default function EstimateStartGuideModal({
           </div>
         ) : step === 6 ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>
-                Lite quick-add (one line per item: Description | Qty | Unit price)
-              </label>
-              <textarea
-                rows={5}
-                value={liteLinesText}
-                onChange={(e) => setLiteLinesText(e.target.value)}
-                placeholder={"Install exhaust fan | 1 | 225\nReplace fascia board | 2 | 145"}
-                style={{ ...theme.formInput, resize: "vertical", width: "100%" }}
+            {estimateLinePresets.length > 0 && savedLineCategories.length > 0 && onAddExistingLineItem ? (
+              <SavedLineCategoryPicker
+                presets={estimateLinePresets}
+                categories={savedLineCategories}
+                variant="dropdown"
+                title="Add existing line items"
+                addButtonLabel="Add selected line"
+                onSelectPreset={(preset) => void onAddExistingLineItem(preset)}
               />
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+                No saved line items yet. You can add lines from the Estimates tool after finishing the wizard.
+              </p>
+            )}
+            {typeof onQuoteItemsAiFromJobDetails === "function" ? (
+              <div style={{ display: "grid", gap: 8 }}>
                 <button
                   type="button"
-                  disabled={liteBusy || !liteLinesText.trim()}
+                  disabled={
+                    quoteItemsBusy ||
+                    quoteItemsAiBusy ||
+                    !hasJobDetailsForAiLines
+                  }
                   onClick={() => {
                     void (async () => {
-                      setLiteBusy(true)
-                      setLiteNote(null)
-                      const msg = await onQuoteItemsLiteAdd(liteLinesText)
-                      setLiteBusy(false)
-                      setLiteNote(msg)
+                      setAiLinesNote(null)
+                      const msg = await onQuoteItemsAiFromJobDetails()
+                      setAiLinesNote(msg)
                     })()
                   }}
-                  style={secondaryBtnStyle}
+                  style={{ ...secondaryBtnStyle, fontWeight: 700, border: `2px solid ${theme.primary}` }}
                 >
-                  {liteBusy ? "Adding…" : "Add lite line items"}
+                  {quoteItemsAiBusy ? "Suggesting lines…" : "Suggest lines (labor · materials · travel · misc)"}
                 </button>
-                <button
-                  type="button"
-                  disabled={liteBusy || !liteLinesText.trim()}
-                  onClick={() => {
-                    setLiteLinesText("")
-                    setLiteNote(null)
-                  }}
-                  style={secondaryBtnStyle}
-                >
-                  Clear
-                </button>
-                {typeof onQuoteItemsAiFromJobDetails === "function" ? (
-                  <button
-                    type="button"
-                    disabled={
-                      quoteItemsBusy ||
-                      quoteItemsAiBusy ||
-                      !hasJobDetailsForAiLines
-                    }
-                    onClick={() => {
-                      void (async () => {
-                        setAiLinesNote(null)
-                        const msg = await onQuoteItemsAiFromJobDetails()
-                        setAiLinesNote(msg)
-                      })()
-                    }}
-                    style={{ ...secondaryBtnStyle, fontWeight: 700, border: `2px solid ${theme.primary}` }}
-                  >
-                    {quoteItemsAiBusy ? "Suggesting lines…" : "Suggest lines (labor · materials · travel · misc)"}
-                  </button>
+                {aiLinesNote ? (
+                  <p style={{ margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>{aiLinesNote}</p>
                 ) : null}
               </div>
-              {liteNote ? (
-                <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{liteNote}</p>
-              ) : null}
-              {aiLinesNote ? (
-                <p style={{ margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>{aiLinesNote}</p>
-              ) : null}
-            </div>
-            <button type="button" onClick={onQuoteItemsOpen} style={secondaryBtnStyle}>
-              Open quote items section
-            </button>
+            ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
               <button type="button" disabled={quoteItemsBusy} onClick={onQuoteItemsSkip} style={secondaryBtnStyle}>
                 Skip for now

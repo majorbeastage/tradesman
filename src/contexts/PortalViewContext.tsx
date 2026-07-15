@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react"
 import { useAuth, type UserRole } from "./AuthContext"
-import { supabase } from "../lib/supabase"
+import { supabase, setPortalViewWriteBlock } from "../lib/supabase"
 import type { PortalConfig } from "../types/portal-builder"
 import {
   canUsePortalViewBar,
@@ -51,6 +51,11 @@ type PortalViewValue = {
   refreshScopedPortalConfig: () => Promise<void>
   error: string
   showViewBar: boolean
+  /** True when previewing a real profile other than your own (not the role default or a sandbox persona). */
+  viewingOtherProfile: boolean
+  /** While viewing another profile: false = view only (default), true = writes allowed. */
+  editMode: boolean
+  setEditMode: (on: boolean) => void
 }
 
 const PortalViewContext = createContext<PortalViewValue | null>(null)
@@ -203,6 +208,27 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [loadingPortalConfig, setLoadingPortalConfig] = useState(false)
   const [error, setError] = useState("")
+  const [editMode, setEditMode] = useState(false)
+
+  const viewingOtherProfile = Boolean(
+    showViewBar &&
+      targetUserId &&
+      !isPortalViewDefaultTarget(targetUserId) &&
+      !isSandboxDemoUserId(targetUserId) &&
+      targetUserId !== authUserId,
+  )
+
+  // View-only is the default every time a different profile is selected.
+  useEffect(() => {
+    setEditMode(false)
+  }, [targetUserId])
+
+  // Enforce at the Supabase fetch layer: block writes while previewing another
+  // profile without Edit mode.
+  useEffect(() => {
+    setPortalViewWriteBlock(viewingOtherProfile && !editMode)
+    return () => setPortalViewWriteBlock(false)
+  }, [viewingOtherProfile, editMode])
 
   const viewRoleOptions = useMemo(() => viewRoleOptionsForAuthRole(authRole), [authRole])
 
@@ -411,6 +437,9 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       refreshScopedPortalConfig,
       error,
       showViewBar,
+      viewingOtherProfile,
+      editMode,
+      setEditMode,
     }),
     [
       authRole,
@@ -429,6 +458,8 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       refreshScopedPortalConfig,
       error,
       showViewBar,
+      viewingOtherProfile,
+      editMode,
     ],
   )
 
@@ -461,6 +492,22 @@ export function useEffectivePortalConfig(): PortalConfig | null {
   const ctx = useContext(PortalViewContext)
   if (ctx?.showViewBar) return ctx.effectivePortalConfig ?? portalConfig
   return portalConfig
+}
+
+/** True when an admin/manager is previewing a real profile other than their own. */
+export function useViewingOtherProfile(): boolean {
+  const ctx = useContext(PortalViewContext)
+  return ctx?.viewingOtherProfile ?? false
+}
+
+/**
+ * True while previewing another profile with Edit mode off. Use to hide/disable
+ * write actions in the UI; the Supabase fetch guard is the hard backstop.
+ */
+export function usePortalViewReadOnly(): boolean {
+  const ctx = useContext(PortalViewContext)
+  if (!ctx) return false
+  return ctx.viewingOtherProfile && !ctx.editMode
 }
 
 export function useEffectiveClientId(): string {

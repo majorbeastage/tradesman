@@ -24,6 +24,9 @@ export default function PortalViewBar() {
     loadingUsers,
     loadingPortalConfig,
     error,
+    viewingOtherProfile,
+    editMode,
+    setEditMode,
   } = pv
 
   const usingDefault = isPortalViewDefaultTarget(targetUserId)
@@ -101,6 +104,38 @@ export default function PortalViewBar() {
           ))
         )}
       </select>
+      {viewingOtherProfile ? (
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 12px",
+            borderRadius: 999,
+            border: `1px solid ${editMode ? "#f59e0b" : theme.border}`,
+            background: editMode ? "#fffbeb" : "#f1f5f9",
+            fontSize: 12,
+            fontWeight: 800,
+            color: editMode ? "#b45309" : "#334155",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            userSelect: "none",
+          }}
+          title={
+            editMode
+              ? "Edit mode is on — changes save to this user's account."
+              : "View only — turn on to change this user's settings and data."
+          }
+        >
+          <input
+            type="checkbox"
+            checked={editMode}
+            onChange={(e) => setEditMode(e.target.checked)}
+            style={{ accentColor: "#f59e0b" }}
+          />
+          {editMode ? "Edit mode on" : "View only — Edit mode"}
+        </label>
+      ) : null}
       {loadingUsers ? (
         <span style={{ fontSize: 12, opacity: 0.75 }}>Loading users…</span>
       ) : null}
@@ -115,7 +150,10 @@ export default function PortalViewBar() {
       ) : null}
       {!loadingPortalConfig && selectedUser && selectedUser.userId !== authUserId ? (
         <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
-          Previewing <strong>{selectedUser.label}</strong>&apos;s portal — tabs and permissions match their profile.
+          Previewing <strong>{selectedUser.label}</strong>&apos;s portal —{" "}
+          {editMode
+            ? "Edit mode: changes save to their account. Their emails, texts, and calls stay hidden."
+            : "view only. Their emails, texts, and calls stay hidden."}
         </span>
       ) : null}
     </div>

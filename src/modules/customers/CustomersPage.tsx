@@ -66,7 +66,8 @@ import {
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { formatAppError } from "../../lib/formatAppError"
 import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
-import { usePortalViewOptional } from "../../contexts/PortalViewContext"
+import { usePortalViewOptional, useViewingOtherProfile } from "../../contexts/PortalViewContext"
+import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
 import { customerMatchesWorkflowScope, parseCustomerWorkflowMeta } from "../../lib/customerWorkflowRouting"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
@@ -389,6 +390,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const globalAssistant = useGlobalAssistantOptional()
   const omCalendarPolicy = useManagedOmCalendarPolicy()
   const portalView = usePortalViewOptional()
+  const viewingOtherProfile = useViewingOtherProfile()
   const workflowScopeUserId = portalView?.showViewBar && portalView.targetUserId ? portalView.targetUserId : userId
   const [accountProfileMetadata, setAccountProfileMetadata] = useState<Record<string, unknown> | null>(null)
   const workflowBundle = useMemo(
@@ -3319,7 +3321,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   </>
                                   ) : null}
 
-                                  {quickViewTab === "communications" ? (
+                                  {quickViewTab === "communications" && viewingOtherProfile ? (
+                                    <div style={{ marginTop: 8 }}>
+                                      <PortalViewCommsHiddenNotice />
+                                    </div>
+                                  ) : null}
+
+                                  {quickViewTab === "communications" && !viewingOtherProfile ? (
                                   <>
                                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: CUSTOMER_LIST_COMPACT_DETAIL ? 0 : 8 }}>
                                     <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>Communications</div>

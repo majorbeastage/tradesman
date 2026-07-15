@@ -60,6 +60,14 @@ export function savedLineCategoryIdFromKind(kind: string | undefined): string {
   return "line-labor"
 }
 
+/** Map built-in category ids to line_kind; custom categories default to labor. */
+export function lineKindFromCategoryId(categoryId: string): string {
+  if (categoryId === "line-material") return "material"
+  if (categoryId === "line-travel") return "travel"
+  if (categoryId === "line-misc") return "misc"
+  return "labor"
+}
+
 export async function loadLibraryCategorySettings(
   supabase: SupabaseClient,
   userId: string,

@@ -93,7 +93,9 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
     <div style={{ display: "grid", gap: 16, padding: "8px 0 24px" }}>
       <div>
         <h1 style={{ margin: "0 0 6px", fontSize: 22, color: theme.text }}>{t("nav.operations")}</h1>
-        <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>{t("operations.intro")}</p>
+        {t("operations.intro") ? (
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>{t("operations.intro")}</p>
+        ) : null}
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

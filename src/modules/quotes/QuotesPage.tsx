@@ -36,6 +36,8 @@ import { resolveEstimatePrimaryDeliveryAction, inferWorkflowStepIntention, opera
 import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
+import { useViewingOtherProfile } from "../../contexts/PortalViewContext"
+import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional, type OpenJobTypesModalOptions } from "../../contexts/JobTypesModalContext"
@@ -101,6 +103,9 @@ import {
 } from "../../lib/estimateLinePresets"
 import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistantPanel"
 import EstimateLineItemsHandoffPanel from "../../components/EstimateLineItemsHandoffPanel"
+import AddLineItemQuickForm from "../../components/AddLineItemQuickForm"
+import SavedLineCategoryPicker from "../../components/SavedLineCategoryPicker"
+import { loadLibraryCategorySettings, SAVED_LINE_DEFAULT_CATEGORIES, type LibraryCategory } from "../../lib/libraryCategories"
 import JobTypesLineItemsLibraryHub from "../../components/JobTypesLineItemsLibraryHub"
 import { notifyBusinessAiVocabularyChanged } from "../../lib/businessAiVocabulary"
 import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
@@ -310,11 +315,6 @@ const ELI_KIND_LABEL: Record<EliLineKind, string> = {
 }
 const ELI_UNITS = ["hours", "miles", "each"] as const
 type EliUnit = (typeof ELI_UNITS)[number]
-const ELI_UNIT_LABEL: Record<EliUnit, string> = {
-  hours: "Hours",
-  miles: "Miles (mileage)",
-  each: "Flat / each",
-}
 
 /** Crew count when inserting labor lines from saved presets (table row still edits crew per line). */
 const DEFAULT_PRESET_LABOR_MANPOWER = 1
@@ -485,6 +485,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const sandboxTraining = useSandboxTrainingMode()
+  const viewingOtherProfile = useViewingOtherProfile()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [showEstimateTemplateModal, setShowEstimateTemplateModal] = useState(false)
@@ -598,6 +599,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [showEstimateLineItemsModal, setShowEstimateLineItemsModal] = useState(false)
   const [lineItemsHandoff, setLineItemsHandoff] = useState<AssistantHandoffPayload | null>(null)
   const [estimateLinePresets, setEstimateLinePresets] = useState<EstimateLinePresetRow[]>([])
+  const [savedLineCategories, setSavedLineCategories] = useState<LibraryCategory[]>([])
+  const savedLineCategoryOptions =
+    savedLineCategories.length > 0 ? savedLineCategories : SAVED_LINE_DEFAULT_CATEGORIES
   const [estimateDefaultLaborRate, setEstimateDefaultLaborRate] = useState("")
   const [estimateLineSaveBusy, setEstimateLineSaveBusy] = useState(false)
   const [estimateReview, setEstimateReview] = useState<{
@@ -607,11 +611,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }>({ subtotal: null, issues: [], agreesWithSubtotal: null })
   const [estimateLinePortalValues, setEstimateLinePortalValues] = useState<Record<string, string>>({})
   const [estimateLineDraft, setEstimateLineDraft] = useState<EstimateLinePresetRow[]>([])
-  /** Simple “add saved line” form inside Estimate line items modal */
-  const [eliSimpleKind, setEliSimpleKind] = useState<EliLineKind>("labor")
-  const [eliSimpleUnit, setEliSimpleUnit] = useState<EliUnit>("hours")
-  const [eliSimpleQty, setEliSimpleQty] = useState("1")
-  const [eliSimplePrice, setEliSimplePrice] = useState("")
   /** Saved-line row id → expanded (edit fields visible) */
   const [expandedEliById, setExpandedEliById] = useState<Record<string, boolean>>({})
   /** Per draft row: job type picked for “Add to job type” */
@@ -647,15 +646,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [addNewPhone, setAddNewPhone] = useState("")
   const [addNewEmail, setAddNewEmail] = useState("")
   const [addLoading, setAddLoading] = useState(false)
-  // Add line item (quote_items)
-  const [newItemDescription, setNewItemDescription] = useState("")
-  const [newItemQuantity, setNewItemQuantity] = useState("1")
-  const [newItemUnitPrice, setNewItemUnitPrice] = useState("")
-  const [newItemManpower, setNewItemManpower] = useState("1")
-  const [newItemMinimum, setNewItemMinimum] = useState("")
-  const [newItemPresetId, setNewItemPresetId] = useState<string | null>(null)
-  const [presetSuggestOpen, setPresetSuggestOpen] = useState(false)
-  const [addItemLoading, setAddItemLoading] = useState(false)
   const [applyJtLinesBusy, setApplyJtLinesBusy] = useState(false)
   // Add to Calendar (from quote detail)
   const [showAddToCalendar, setShowAddToCalendar] = useState(false)
@@ -1376,6 +1366,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setEstimateLinePresets(parseEstimateLinePresetsFromMetadata(meta))
       setSpecialtyInspectionWorkflowEnabled(meta.estimate_template_specialty_inspection === true)
       setSpecialtyReportTypesEnabled(specialtyReportTypesFromMetadata(meta))
+      if (supabase && userId) {
+        void loadLibraryCategorySettings(supabase, userId, "saved_lines").then((settings) => {
+          if (!cancelled) setSavedLineCategories(settings.categories)
+        })
+      }
     })()
     return () => {
       cancelled = true
@@ -2014,12 +2009,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!showEstimateLineItemsModal || !supabase || !userId) return
     void reloadQuoteJobTypesList()
   }, [showEstimateLineItemsModal, userId, reloadQuoteJobTypesList])
-
-  useEffect(() => {
-    if (eliSimpleKind === "travel") setEliSimpleUnit("miles")
-    else if (eliSimpleKind === "labor") setEliSimpleUnit("hours")
-    else setEliSimpleUnit("each")
-  }, [eliSimpleKind])
 
   async function loadQuotes() {
     if (!userId || !supabase) return
@@ -2719,37 +2708,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateStartGuideStep(7)
   }
 
-  async function handleGuideQuoteItemsLiteAdd(raw: string): Promise<string> {
-    if (!supabase || !selectedQuoteId) return "Open an estimate first."
-    const lines = raw
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean)
-    if (lines.length === 0) return "No lines found."
-    let added = 0
-    let skipped = 0
-    for (const line of lines) {
-      const parts = line.split("|").map((p) => p.trim())
-      const description = parts[0] ?? ""
-      if (!description) {
-        skipped += 1
-        continue
-      }
-      const qty = parts[1] ? Number.parseFloat(parts[1]) : 1
-      const price = parts[2] ? Number.parseFloat(parts[2].replace(/[^0-9.-]/g, "")) : 0
-      const result = await insertQuoteItemRowSafe(supabase, {
-        quote_id: selectedQuoteId,
-        description,
-        quantity: Number.isFinite(qty) ? qty : 1,
-        unit_price: Number.isFinite(price) ? price : 0,
-      })
-      if (result.ok) added += 1
-      else skipped += 1
-    }
-    if (added > 0) void refreshQuoteItemsOnly()
-    return `Added ${added} item${added === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped}.` : "."}`
-  }
-
   function openAddToCalendarFromEstimate() {
     if (!selectedQuote?.id) return
     const cust =
@@ -3299,55 +3257,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return prev
   }
 
-  async function addQuoteItem() {
-    if (!supabase || !selectedQuoteId) return
-    const qty = parseFloat(newItemQuantity) || 0
-    const price = parseFloat(newItemUnitPrice) || 0
-    if (!newItemDescription.trim()) {
-      alert("Enter a description for the line item.")
-      return
-    }
-    const mp = Math.max(1, Math.floor(Number.parseFloat(newItemManpower) || 1))
-    const minRaw = newItemMinimum.trim()
-    const minNum = minRaw ? Number.parseFloat(minRaw.replace(/[^0-9.]/g, "")) : Number.NaN
-    const meta: QuoteItemMetadata = {}
-    if (estimateLineTemplateOffered("eli_show_manpower")) meta.manpower = mp
-    if (Number.isFinite(minNum) && minNum >= 0) meta.minimum_line_total = minNum
-    const preset = newItemPresetId ? estimateLinePresets.find((p) => p.id === newItemPresetId) : null
-    if (preset) {
-      meta.preset_id = preset.id
-      if (preset.line_kind) meta.line_kind = preset.line_kind
-      if (preset.minimum_line_total != null && meta.minimum_line_total === undefined) meta.minimum_line_total = preset.minimum_line_total
-    }
-    const qJt =
-      selectedQuote && typeof (selectedQuote as QuoteRow).job_type_id === "string" && (selectedQuote as QuoteRow).job_type_id?.trim()
-        ? (selectedQuote as QuoteRow).job_type_id!.trim()
-        : ""
-    if (qJt) meta.job_type_id = qJt
-    setAddItemLoading(true)
-    const result = await insertQuoteItemRowSafe(supabase, {
-      quote_id: selectedQuoteId,
-      description: newItemDescription.trim(),
-      quantity: qty,
-      unit_price: price,
-      metadata: Object.keys(meta).length > 0 ? (meta as Record<string, unknown>) : undefined,
-    })
-    setAddItemLoading(false)
-    if (!result.ok) {
-      console.error(result.error)
-      alert(result.error)
-      return
-    }
-    setNewItemDescription("")
-    setNewItemQuantity("1")
-    setNewItemUnitPrice("")
-    setNewItemManpower("1")
-    setNewItemMinimum("")
-    setNewItemPresetId(null)
-    setPresetSuggestOpen(false)
-    void refreshQuoteItemsOnly()
-  }
-
   async function addQuoteLineFromSuggestion(
     description: string,
     quantity: number,
@@ -3363,7 +3272,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (qJt) meta.job_type_id = qJt
     if (lineKind) meta.line_kind = lineKind
     if (estimateLineTemplateOffered("eli_show_manpower") && (lineKind === "labor" || !lineKind)) meta.manpower = 1
-    setAddItemLoading(true)
     const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
       description: description.trim(),
@@ -3371,7 +3279,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       unit_price: unitPrice,
       metadata: Object.keys(meta).length > 0 ? (meta as Record<string, unknown>) : undefined,
     })
-    setAddItemLoading(false)
     if (!result.ok) {
       alert(result.error)
       return
@@ -3621,40 +3528,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       initialName: jobTypeName,
       initialPresetChecks: checks,
     })
-  }
-
-  function appendEliPresetFromSimpleForm() {
-    const qty = Number.parseFloat(String(eliSimpleQty).replace(/[^0-9.]/g, "")) || 0
-    const price = Number.parseFloat(String(eliSimplePrice).replace(/[^0-9.]/g, "")) || 0
-    if (qty <= 0) {
-      alert("Enter how many units (hours, miles, or quantity).")
-      return
-    }
-    if (price < 0) {
-      alert("Cost per unit cannot be negative.")
-      return
-    }
-    const line_kind: EstimateLinePresetRow["line_kind"] =
-      eliSimpleKind === "material"
-        ? "material"
-        : eliSimpleKind === "travel"
-          ? "travel"
-          : eliSimpleKind === "misc"
-            ? "misc"
-            : "labor"
-    setEstimateLineDraft((rows) => [
-      ...rows,
-      {
-        id: crypto.randomUUID(),
-        description: ELI_KIND_LABEL[eliSimpleKind],
-        quantity: qty,
-        unit_price: price,
-        minimum_line_total: undefined,
-        linked_job_type_ids: [],
-        line_kind,
-        unit_basis: eliSimpleUnit,
-      },
-    ])
   }
 
   function estimateLineTemplateOffered(itemId: string): boolean {
@@ -5912,8 +5785,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onJobDetailsVoiceStop={stopJobDetailsVoice}
                               onQuoteItemsContinue={handleGuideQuoteItemsContinue}
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
-                              onQuoteItemsOpen={() => openGuideSection(quoteItemsSectionRef)}
-                              onQuoteItemsLiteAdd={handleGuideQuoteItemsLiteAdd}
+                              estimateLinePresets={estimateLinePresets}
+                              savedLineCategories={savedLineCategoryOptions}
+                              onAddExistingLineItem={async (preset) => {
+                                await insertQuoteLineRow(preset.description, preset.quantity, preset.unit_price, {
+                                  presetId: preset.id,
+                                  metadata: {
+                                    minimum_line_total: preset.minimum_line_total,
+                                    line_kind: preset.line_kind,
+                                    ...(preset.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                                      ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+                                      : {}),
+                                  },
+                                })
+                              }}
                               onQuoteItemsAiFromJobDetails={handleGuideQuoteItemsAiFromJobDetails}
                               quoteItemsAiBusy={guideQuoteItemsAiBusy}
                               hasJobDetailsForAiLines={mergedScopeForAi.trim().length > 0}
@@ -6484,7 +6369,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 marginBottom: 4,
                               }}
                             >
-                              {quoteActivityFiltered.length === 0 ? (
+                              {viewingOtherProfile ? (
+                                <PortalViewCommsHiddenNotice label="customer messages" />
+                              ) : quoteActivityFiltered.length === 0 ? (
                                 <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                                   No messages or communication events for this customer yet. Voicemails and inbound messages appear here when logged for this contact.
                                 </p>
@@ -6952,43 +6839,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   />
                 </summary>
                 <div style={{ marginTop: 10 }}>
-              {estimateLinePresets.length > 0 ? (
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>Saved lines</span>
-                  {estimateLinePresets.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() =>
-                        void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
-                          presetId: p.id,
-                          metadata: {
-                            minimum_line_total: p.minimum_line_total,
-                            line_kind: p.line_kind,
-                            ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                              ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
-                              : {}),
-                          },
-                        })
-                      }
-                      style={{
-                        fontSize: 12,
-                        padding: "4px 10px",
-                        borderRadius: 6,
-                        border: "1px solid #94a3b8",
-                        background: "#f1f5f9",
-                        color: "#0f172a",
-                        cursor: "pointer",
-                        maxWidth: 220,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={p.description}
-                    >
-                      {p.description.length > 36 ? `${p.description.slice(0, 36)}…` : p.description}
-                    </button>
-                  ))}
+              {estimateLinePresets.length > 0 && savedLineCategoryOptions.length > 0 ? (
+                <div style={{ marginBottom: 12 }}>
+                  <SavedLineCategoryPicker
+                    presets={estimateLinePresets}
+                    categories={savedLineCategoryOptions}
+                    onSelectPreset={(p) =>
+                      void insertQuoteLineRow(p.description, p.quantity, p.unit_price, {
+                        presetId: p.id,
+                        metadata: {
+                          minimum_line_total: p.minimum_line_total,
+                          line_kind: p.line_kind,
+                          ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
+                            ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
+                            : {}),
+                        },
+                      })
+                    }
+                  />
                 </div>
               ) : null}
               {(estimateReview.subtotal != null || estimateReview.issues.length > 0) && (
@@ -7031,181 +6899,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   border: `1px solid ${theme.border}`,
                   borderRadius: 8,
                   background: "#f8fafc",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
                 }}
               >
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Add a line item</div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Line item title</label>
-                <div style={{ position: "relative" }}>
-                  <input
-                    placeholder="Line item title"
-                    value={newItemDescription}
-                    onChange={(e) => {
-                      setNewItemDescription(e.target.value)
-                      setNewItemPresetId(null)
-                      setPresetSuggestOpen(true)
-                    }}
-                    onFocus={() => setPresetSuggestOpen(true)}
-                    onBlur={() => window.setTimeout(() => setPresetSuggestOpen(false), 180)}
-                    style={{ ...theme.formInput, padding: "6px 10px", width: "100%", boxSizing: "border-box" }}
-                  />
-                  {presetSuggestOpen && estimateLinePresets.length > 0 ? (
-                    <ul
-                      style={{
-                        position: "absolute",
-                        zIndex: 20,
-                        left: 0,
-                        right: 0,
-                        top: "100%",
-                        margin: "4px 0 0",
-                        padding: 4,
-                        listStyle: "none",
-                        background: "#fff",
-                        border: "1px solid #cbd5e1",
-                        borderRadius: 6,
-                        maxHeight: 200,
-                        overflowY: "auto",
-                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                      }}
-                    >
-                      {estimateLinePresets
-                        .filter((p) =>
-                          !newItemDescription.trim()
-                            ? true
-                            : p.description.toLowerCase().includes(newItemDescription.toLowerCase().trim()),
-                        )
-                        .slice(0, 12)
-                        .map((p) => (
-                          <li key={p.id}>
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => {
-                                setNewItemDescription(p.description)
-                                setNewItemQuantity(String(p.quantity))
-                                setNewItemUnitPrice(String(p.unit_price))
-                                setNewItemMinimum(
-                                  p.minimum_line_total != null && Number.isFinite(p.minimum_line_total)
-                                    ? String(p.minimum_line_total)
-                                    : "",
-                                )
-                                setNewItemManpower(
-                                  p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
-                                    ? String(DEFAULT_PRESET_LABOR_MANPOWER)
-                                    : "1",
-                                )
-                                setNewItemPresetId(p.id)
-                                setPresetSuggestOpen(false)
-                              }}
-                              style={{
-                                display: "block",
-                                width: "100%",
-                                textAlign: "left",
-                                padding: "8px 10px",
-                                border: "none",
-                                background: "transparent",
-                                cursor: "pointer",
-                                fontSize: 13,
-                                color: "#0f172a",
-                                borderRadius: 4,
-                              }}
-                            >
-                              {p.description}
-                              <span style={{ opacity: 0.65, fontSize: 11 }}>
-                                {" "}
-                                · qty {p.quantity} @ ${p.unit_price.toFixed(2)}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                    </ul>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "8px",
-                    alignItems: "flex-end",
-                    ...(isMobile ? { flexDirection: "column", alignItems: "stretch" } : {}),
+                <AddLineItemQuickForm
+                  isMobile={isMobile}
+                  categories={savedLineCategoryOptions}
+                  submitLabel="Add line item"
+                  onSubmit={(values) => {
+                    const meta: QuoteItemMetadata = { line_kind: values.lineKind }
+                    if (values.minEnabled && values.minBasis === "cost") meta.minimum_line_total = values.minValue
+                    if (estimateLineTemplateOffered("eli_show_manpower") && values.lineKind === "labor") {
+                      meta.manpower = DEFAULT_PRESET_LABOR_MANPOWER
+                    }
+                    void insertQuoteLineRow(values.title, values.qty, values.unitPrice, { metadata: meta })
                   }}
-                >
-                  <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", display: "flex", flexDirection: "column", gap: 4 }}>
-                    Qty
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={newItemQuantity}
-                      onChange={(e) => setNewItemQuantity(e.target.value)}
-                      style={{ ...theme.formInput, padding: "8px 10px", width: isMobile ? "100%" : "80px", boxSizing: "border-box" }}
-                    />
-                  </label>
-                  {estimateLineTemplateOffered("eli_show_manpower") ? (
-                    <label style={{ fontSize: 12, color: theme.text, display: "flex", flexDirection: "column", gap: 4 }}>
-                      Crew
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={newItemManpower}
-                        onChange={(e) => setNewItemManpower(e.target.value)}
-                        style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "72px", boxSizing: "border-box" }}
-                      />
-                    </label>
-                  ) : null}
-                  <label
-                    style={{
-                      fontSize: 12,
-                      color: theme.text,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      ...(isMobile ? { width: "100%" } : {}),
-                    }}
-                  >
-                    Min $
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="optional"
-                      value={newItemMinimum}
-                      onChange={(e) => setNewItemMinimum(e.target.value)}
-                      style={{ ...theme.formInput, padding: "6px 10px", width: isMobile ? "100%" : "88px", boxSizing: "border-box" }}
-                    />
-                  </label>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", display: "flex", flexDirection: "column", gap: 4 }}>
-                    $ / unit
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={newItemUnitPrice}
-                      onChange={(e) => setNewItemUnitPrice(e.target.value)}
-                      style={{ ...theme.formInput, padding: "8px 10px", width: isMobile ? "100%" : "100px", boxSizing: "border-box" }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void addQuoteItem()}
-                    disabled={addItemLoading}
-                    style={{
-                      padding: "6px 12px",
-                      background: theme.primary,
-                      color: "white",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                      fontSize: "14px",
-                      width: isMobile ? "100%" : undefined,
-                    }}
-                  >
-                    {addItemLoading ? "Adding..." : "Add line item"}
-                  </button>
-                </div>
+                />
               </div>
                 </div>
               </details>
@@ -8609,82 +8317,34 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   background: "#f8fafc",
                 }}
               >
-                <div style={{ fontWeight: 700, fontSize: 13, color: theme.text, marginBottom: 10 }}>Add a saved line</div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 90px) minmax(0, 110px) auto",
-                    gap: 10,
-                    alignItems: "end",
+                <AddLineItemQuickForm
+                  isMobile={isMobile}
+                  categories={savedLineCategoryOptions}
+                  onSubmit={(values) => {
+                    setEstimateLineDraft((rows) => [
+                      ...rows,
+                      {
+                        id: crypto.randomUUID(),
+                        description: values.title,
+                        quantity: values.qty,
+                        unit_price: values.unitPrice,
+                        linked_job_type_ids: [],
+                        line_kind: values.lineKind as EstimateLinePresetRow["line_kind"],
+                        category_id: values.categoryId,
+                        unit_basis: values.unit,
+                        ...(values.minEnabled && values.minBasis === "cost"
+                          ? { minimum_line_total: values.minValue, minimum_basis: "cost" as const }
+                          : {}),
+                        ...(values.minEnabled && values.minBasis === "quantity"
+                          ? { minimum_quantity: values.minValue, minimum_basis: "quantity" as const }
+                          : {}),
+                        ...(values.minEnabled && values.minBasis === "hours"
+                          ? { minimum_quantity: values.minValue, minimum_basis: "hours" as const }
+                          : {}),
+                      },
+                    ])
                   }}
-                >
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
-                    Line type
-                    <select
-                      value={eliSimpleKind}
-                      onChange={(e) => setEliSimpleKind(e.target.value as EliLineKind)}
-                      style={theme.formInput}
-                    >
-                      {ELI_LINE_KINDS.map((k) => (
-                        <option key={k} value={k}>
-                          {ELI_KIND_LABEL[k]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
-                    Unit
-                    <select
-                      value={eliSimpleUnit}
-                      onChange={(e) => setEliSimpleUnit(e.target.value as EliUnit)}
-                      style={theme.formInput}
-                    >
-                      {ELI_UNITS.map((u) => (
-                        <option key={u} value={u}>
-                          {ELI_UNIT_LABEL[u]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
-                    Qty
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={eliSimpleQty}
-                      onChange={(e) => setEliSimpleQty(e.target.value)}
-                      style={theme.formInput}
-                    />
-                  </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: theme.text }}>
-                    $ / unit
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={eliSimplePrice}
-                      onChange={(e) => setEliSimplePrice(e.target.value)}
-                      placeholder="0"
-                      style={theme.formInput}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={appendEliPresetFromSimpleForm}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 6,
-                      border: "none",
-                      background: theme.primary,
-                      color: "#fff",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Add to list
-                  </button>
-                </div>
+                />
               </div>
 
               <details style={{ marginBottom: 16 }}>

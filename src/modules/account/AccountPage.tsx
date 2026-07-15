@@ -14,6 +14,11 @@ import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
+import {
+  useEffectiveUserId,
+  usePortalViewReadOnly,
+  useViewingOtherProfile,
+} from "../../contexts/PortalViewContext"
 import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext"
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
@@ -63,6 +68,12 @@ type ProfileForm = {
   address_zip: string
   service_radius_enabled: boolean
   service_radius_miles: string
+  /** metadata.service_area_v1 — zip-code list option. */
+  service_zip_enabled: boolean
+  service_zip_codes: string[]
+  /** metadata.service_area_v1 — "City, ST" list option. */
+  service_cities_enabled: boolean
+  service_cities: string[]
   timezone: string
   call_forwarding_enabled: boolean
   call_forwarding_outside_business_hours: boolean
@@ -231,6 +242,25 @@ function normalizePin(value: string): string {
   return value.replace(/\D/g, "").slice(0, 6)
 }
 
+/** profiles.metadata.service_area_v1 — zip / city-state service area lists. */
+function parseServiceAreaMeta(meta: Record<string, unknown>): {
+  zip_enabled: boolean
+  zip_codes: string[]
+  cities_enabled: boolean
+  cities: string[]
+} {
+  const raw = meta.service_area_v1
+  const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const list = (v: unknown) =>
+    Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean).slice(0, 200) : []
+  return {
+    zip_enabled: obj.zip_enabled === true,
+    zip_codes: list(obj.zip_codes),
+    cities_enabled: obj.cities_enabled === true,
+    cities: list(obj.cities),
+  }
+}
+
 function createGreetingPin(): string {
   return String(Math.floor(100000 + Math.random() * 900000))
 }
@@ -252,6 +282,7 @@ export function AccountProfilePanel({
   const { setLocale, t, refetchLocale } = useLocale()
   const isMobile = useIsMobile()
   const portalConfig = usePortalConfigForPage()
+  const portalReadOnly = usePortalViewReadOnly()
   const showAccountSection = (sectionId: string) => {
     if (sectionId === "team_members") return !adminContext
     return adminContext || getAccountSectionVisible(portalConfig, sectionId)
@@ -305,6 +336,8 @@ export function AccountProfilePanel({
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
+  const [serviceZipInput, setServiceZipInput] = useState("")
+  const [serviceCityInput, setServiceCityInput] = useState("")
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null)
   const [uploadingCompanyLogo, setUploadingCompanyLogo] = useState(false)
@@ -328,6 +361,10 @@ export function AccountProfilePanel({
     address_zip: "",
     service_radius_enabled: false,
     service_radius_miles: "",
+    service_zip_enabled: false,
+    service_zip_codes: [],
+    service_cities_enabled: false,
+    service_cities: [],
     timezone: "America/New_York",
     call_forwarding_enabled: true,
     call_forwarding_outside_business_hours: false,
@@ -391,6 +428,7 @@ export function AccountProfilePanel({
           milesRaw != null && milesRaw !== ""
             ? String(typeof milesRaw === "number" ? milesRaw : String(milesRaw).trim())
             : ""
+        const serviceArea = parseServiceAreaMeta(metaObj)
         setForm({
           display_name: data?.display_name ?? "",
           first_name: contactFields.firstName,
@@ -405,6 +443,10 @@ export function AccountProfilePanel({
           address_zip: data?.address_zip ?? "",
           service_radius_enabled: row.service_radius_enabled === true,
           service_radius_miles: milesStr,
+          service_zip_enabled: serviceArea.zip_enabled,
+          service_zip_codes: serviceArea.zip_codes,
+          service_cities_enabled: serviceArea.cities_enabled,
+          service_cities: serviceArea.cities,
           timezone: data?.timezone ?? "America/New_York",
           call_forwarding_enabled: data?.call_forwarding_enabled !== false,
           call_forwarding_outside_business_hours: data?.call_forwarding_outside_business_hours === true,
@@ -585,6 +627,12 @@ export function AccountProfilePanel({
           ? { ...(metaRow.metadata as Record<string, unknown>) }
           : {}
       prevMeta.ui_language = form.ui_language
+      prevMeta.service_area_v1 = {
+        zip_enabled: form.service_zip_enabled,
+        zip_codes: form.service_zip_codes,
+        cities_enabled: form.service_cities_enabled,
+        cities: form.service_cities,
+      }
       const nextMeta = mergeProfileContactMetadata(prevMeta, {
         firstName: form.first_name,
         lastName: form.last_name,
@@ -962,16 +1010,6 @@ export function AccountProfilePanel({
                 <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.primaryPhone")}</span>
                 <input value={form.primary_phone} onChange={(e) => setForm((prev) => ({ ...prev, primary_phone: e.target.value }))} onBlur={() => setForm((prev) => ({ ...prev, primary_phone: formatPhone(prev.primary_phone) }))} style={theme.formInput} placeholder="(555) 123-4567" />
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{t("account.field.bestPhone")}</span>
-                <input
-                  value={form.best_contact_phone}
-                  onChange={(e) => setForm((prev) => ({ ...prev, best_contact_phone: e.target.value }))}
-                  onBlur={() => setForm((prev) => ({ ...prev, best_contact_phone: formatPhone(prev.best_contact_phone) }))}
-                  style={theme.formInput}
-                  placeholder={t("account.placeholder.bestPhone")}
-                />
-              </label>
               </div>
             </AccountFold>
             </Fragment>
@@ -1041,7 +1079,53 @@ export function AccountProfilePanel({
             </AccountFold>
             </Fragment>
               )
-              if (sectionId === "service_area") return (
+              if (sectionId === "service_area") {
+                const addServiceZips = () => {
+                  const parts = serviceZipInput
+                    .split(/[,;\s]+/)
+                    .map((s) => s.trim())
+                    .filter((s) => /^\d{5}(-\d{4})?$/.test(s))
+                  if (parts.length === 0) return
+                  setForm((prev) => ({
+                    ...prev,
+                    service_zip_codes: Array.from(new Set([...prev.service_zip_codes, ...parts])),
+                  }))
+                  setServiceZipInput("")
+                }
+                const addServiceCities = () => {
+                  const parts = serviceCityInput
+                    .split(/[;\n]+/)
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                  if (parts.length === 0) return
+                  setForm((prev) => ({
+                    ...prev,
+                    service_cities: Array.from(new Set([...prev.service_cities, ...parts])),
+                  }))
+                  setServiceCityInput("")
+                }
+                const chipStyle: CSSProperties = {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#0f172a",
+                }
+                const chipRemoveStyle: CSSProperties = {
+                  border: "none",
+                  background: "none",
+                  color: "#b91c1c",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  padding: 0,
+                  lineHeight: 1,
+                }
+                return (
             <Fragment key={sectionId}>
             <AccountFold
               title={t("account.section.serviceTitle")}
@@ -1077,9 +1161,127 @@ export function AccountProfilePanel({
                   />
                 </label>
               )}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={form.service_zip_enabled}
+                  onChange={(e) => setForm((prev) => ({ ...prev, service_zip_enabled: e.target.checked }))}
+                />
+                Zip codes
+              </label>
+              {form.service_zip_enabled && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <input
+                      value={serviceZipInput}
+                      onChange={(e) => setServiceZipInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          addServiceZips()
+                        }
+                      }}
+                      style={{ ...theme.formInput, maxWidth: 260 }}
+                      placeholder="e.g. 37064, 37067"
+                      inputMode="numeric"
+                    />
+                    <button
+                      type="button"
+                      onClick={addServiceZips}
+                      style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                    >
+                      Add zip
+                    </button>
+                    <span style={{ fontSize: 11, color: "#64748b" }}>Add one or several, separated by commas.</span>
+                  </div>
+                  {form.service_zip_codes.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {form.service_zip_codes.map((zip) => (
+                        <span key={zip} style={chipStyle}>
+                          {zip}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${zip}`}
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                service_zip_codes: prev.service_zip_codes.filter((z) => z !== zip),
+                              }))
+                            }
+                            style={chipRemoveStyle}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No zip codes added yet.</p>
+                  )}
+                </div>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={form.service_cities_enabled}
+                  onChange={(e) => setForm((prev) => ({ ...prev, service_cities_enabled: e.target.checked }))}
+                />
+                Cities, State
+              </label>
+              {form.service_cities_enabled && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <input
+                      value={serviceCityInput}
+                      onChange={(e) => setServiceCityInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          addServiceCities()
+                        }
+                      }}
+                      style={{ ...theme.formInput, maxWidth: 260 }}
+                      placeholder="e.g. Franklin, TN"
+                    />
+                    <button
+                      type="button"
+                      onClick={addServiceCities}
+                      style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                    >
+                      Add city
+                    </button>
+                    <span style={{ fontSize: 11, color: "#64748b" }}>Add several at once with semicolons (Franklin, TN; Brentwood, TN).</span>
+                  </div>
+                  {form.service_cities.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {form.service_cities.map((city) => (
+                        <span key={city} style={chipStyle}>
+                          {city}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${city}`}
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                service_cities: prev.service_cities.filter((cty) => cty !== city),
+                              }))
+                            }
+                            style={chipRemoveStyle}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>No cities added yet.</p>
+                  )}
+                </div>
+              )}
             </AccountFold>
             </Fragment>
-              )
+                )
+              }
               if (sectionId === "mobile_app") return (
                 <Fragment key={sectionId}>
                   <AccountFold
@@ -1100,7 +1302,7 @@ export function AccountProfilePanel({
                     onToggle={toggleFold("app_scheme")}
                     category={cat}
                   >
-                    <AppSchemePicker profileUserId={profileUserId} canEdit={profileUserId === user?.id} />
+                    <AppSchemePicker profileUserId={profileUserId} canEdit={profileUserId === user?.id || !portalReadOnly} />
                   </AccountFold>
                 </Fragment>
               )
@@ -1544,10 +1746,28 @@ export function AccountProfilePanel({
             {message && <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p>}
             {error && <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p>}
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              <button type="button" onClick={() => void handleSave()} disabled={saving} style={{ padding: "10px 16px", background: theme.primary, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving || portalReadOnly}
+                style={{
+                  padding: "10px 16px",
+                  background: portalReadOnly ? "#94a3b8" : theme.primary,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontWeight: 700,
+                  cursor: saving ? "wait" : portalReadOnly ? "not-allowed" : "pointer",
+                }}
+              >
                 {saving ? t("account.save.saving") : adminContext ? t("account.saveUser") : t("account.save")}
               </button>
+              {portalReadOnly ? (
+                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>
+                  View only — turn on Edit mode in the Viewing as bar to save changes for this user.
+                </span>
+              ) : null}
             </div>
           </div>
         )}
@@ -1559,15 +1779,23 @@ export default function AccountPage() {
   const { user } = useAuth()
   const { t } = useLocale()
   const portalTheme = usePortalTheme()
+  const effectiveUserId = useEffectiveUserId()
+  const viewingOtherProfile = useViewingOtherProfile()
   if (!user?.id) {
     return <p style={{ padding: 24, color: portalTheme.text }}>{t("account.signInPrompt")}</p>
   }
+  const isSelf = !viewingOtherProfile || effectiveUserId === user.id
   return (
     <div className="scheme-page" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div className="scheme-card" style={{ padding: 20, borderRadius: 12 }}>
         <h1 style={{ margin: 0, color: portalTheme.text }}>{t("account.pageTitle")}</h1>
       </div>
-      <AccountProfilePanel profileUserId={user.id} loginEmail={user.email ?? undefined} showPasswordReset />
+      <AccountProfilePanel
+        key={effectiveUserId}
+        profileUserId={effectiveUserId}
+        loginEmail={isSelf ? (user.email ?? undefined) : undefined}
+        showPasswordReset={isSelf}
+      />
     </div>
   )
 }

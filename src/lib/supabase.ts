@@ -7,6 +7,46 @@ export const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ''
 const supabaseKey = supabaseAnonKey
 const nativeAuthStorage = authStorageForCurrentPlatform()
 
+export const PORTAL_VIEW_READ_ONLY_MESSAGE =
+  "View only — you are previewing another profile. Turn on Edit mode in the Viewing as bar to make changes."
+
+/**
+ * Global write block while an admin/manager previews another profile without
+ * Edit mode. Set from PortalViewProvider; enforced at the fetch layer so every
+ * insert/update/delete/RPC/storage/function write is stopped in one place.
+ */
+let portalViewWriteBlockActive = false
+export function setPortalViewWriteBlock(active: boolean) {
+  portalViewWriteBlockActive = active
+}
+export function isPortalViewWriteBlocked(): boolean {
+  return portalViewWriteBlockActive
+}
+
+const nativeFetch: typeof fetch = (...args) => globalThis.fetch(...args)
+
+const guardedFetch: typeof fetch = (input, init) => {
+  if (portalViewWriteBlockActive) {
+    const method = (
+      init?.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
+    ).toUpperCase()
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url
+    const isWrite = method !== "GET" && method !== "HEAD"
+    // Auth traffic (token refresh, sign-out) must always pass.
+    const isAuthEndpoint = url.includes("/auth/v1/")
+    if (isWrite && !isAuthEndpoint) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ message: PORTAL_VIEW_READ_ONLY_MESSAGE, code: "portal_view_read_only" }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    }
+  }
+  return nativeFetch(input, init)
+}
+
 export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseKey
     ? createClient(supabaseUrl, supabaseKey, {
@@ -16,5 +56,6 @@ export const supabase: SupabaseClient | null =
           autoRefreshToken: true,
           ...(nativeAuthStorage ? { storage: nativeAuthStorage } : {}),
         },
+        global: { fetch: guardedFetch },
       })
     : null

@@ -9,6 +9,7 @@ import {
 } from "../lib/jobTypesApi"
 import type { AssistantHandoffPayload } from "../lib/assistantHandoff"
 import EstimateLineItemsHandoffPanel from "./EstimateLineItemsHandoffPanel"
+import AddLineItemQuickForm from "./AddLineItemQuickForm"
 import { eliUnitSuffix, type EstimateLinePresetRow } from "../lib/estimateLinePresets"
 import { COMMON_LINE_UNITS } from "../lib/parseSpokenLineItem"
 import LibraryCategoryEditor from "./LibraryCategoryEditor"
@@ -78,15 +79,6 @@ export default function EstimateLineItemsLibraryPanel({
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
-  const [eliTitle, setEliTitle] = useState("")
-  const [eliSimpleKind, setEliSimpleKind] = useState<EliLineKind>("labor")
-  const [eliSimpleUnit, setEliSimpleUnit] = useState("hours")
-  const [eliCustomUnit, setEliCustomUnit] = useState("")
-  const [eliSimpleQty, setEliSimpleQty] = useState("1")
-  const [eliSimplePrice, setEliSimplePrice] = useState("")
-  const [eliMinEnabled, setEliMinEnabled] = useState(false)
-  const [eliMinBasis, setEliMinBasis] = useState<MinBasis>("cost")
-  const [eliMinValue, setEliMinValue] = useState("")
   const [expandedById, setExpandedById] = useState<Record<string, boolean>>({})
   const [linkPick, setLinkPick] = useState<Record<string, string>>({})
   const [categories, setCategories] = useState<LibraryCategory[]>([])
@@ -125,53 +117,38 @@ export default function EstimateLineItemsLibraryPanel({
     return buckets
   }, [categories, draft])
 
-  function appendSimpleLine() {
-    const qty = Number.parseFloat(String(eliSimpleQty).replace(/[^0-9.]/g, "")) || 0
-    const price = Number.parseFloat(String(eliSimplePrice).replace(/[^0-9.]/g, "")) || 0
-    if (!eliTitle.trim()) {
-      alert("Enter a line item title.")
-      return
-    }
-    if (qty <= 0) {
-      alert("Enter how many units.")
-      return
-    }
-    const unit =
-      eliSimpleUnit === "custom" ? eliCustomUnit.trim() || "each" : eliSimpleUnit.trim() || "hours"
-    const line_kind: EstimateLinePresetRow["line_kind"] =
-      eliSimpleKind === "material"
-        ? "material"
-        : eliSimpleKind === "travel"
-          ? "travel"
-          : eliSimpleKind === "misc"
-            ? "misc"
-            : "labor"
-    const minVal = Number.parseFloat(String(eliMinValue).replace(/[^0-9.]/g, ""))
-    const minOk = eliMinEnabled && Number.isFinite(minVal) && minVal > 0
+  function appendLineFromQuickForm(values: {
+    title: string
+    categoryId: string
+    unit: string
+    qty: number
+    unitPrice: number
+    lineKind: string
+    minEnabled: boolean
+    minBasis: MinBasis
+    minValue: number
+  }) {
+    const line_kind = values.lineKind as EstimateLinePresetRow["line_kind"]
     setDraft((rows) => [
       ...rows,
       {
         id: crypto.randomUUID(),
-        description: eliTitle.trim(),
-        quantity: qty,
-        unit_price: price,
+        description: values.title,
+        quantity: values.qty,
+        unit_price: values.unitPrice,
         linked_job_type_ids: [],
         line_kind,
-        category_id: newLineCategoryId,
-        unit_basis: unit,
-        ...(minOk && eliMinBasis === "cost" ? { minimum_line_total: minVal, minimum_basis: "cost" as const } : {}),
-        ...(minOk && eliMinBasis === "quantity"
-          ? { minimum_quantity: minVal, minimum_basis: "quantity" as const }
+        category_id: values.categoryId,
+        unit_basis: values.unit,
+        ...(values.minEnabled && values.minBasis === "cost" ? { minimum_line_total: values.minValue, minimum_basis: "cost" as const } : {}),
+        ...(values.minEnabled && values.minBasis === "quantity"
+          ? { minimum_quantity: values.minValue, minimum_basis: "quantity" as const }
           : {}),
-        ...(minOk && eliMinBasis === "hours"
-          ? { minimum_quantity: minVal, minimum_basis: "hours" as const }
+        ...(values.minEnabled && values.minBasis === "hours"
+          ? { minimum_quantity: values.minValue, minimum_basis: "hours" as const }
           : {}),
       },
     ])
-    setEliTitle("")
-    setEliSimplePrice("")
-    setEliMinEnabled(false)
-    setEliMinValue("")
   }
 
   async function saveDraft() {
@@ -449,137 +426,16 @@ export default function EstimateLineItemsLibraryPanel({
           onJobTypeFollowUp={onJobTypeFollowUp}
         />
       ) : null}
-      <div style={{ padding: 14, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc", display: "grid", gap: 10 }}>
-        <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Add a saved line</div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: isMobile
-              ? "1fr"
-              : "minmax(140px, 1.4fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(90px, 0.7fr) minmax(64px, 0.45fr) minmax(72px, 0.55fr)",
-            gap: 8,
-            alignItems: "end",
+      <div style={{ padding: 14, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+        <AddLineItemQuickForm
+          isMobile={isMobile}
+          categories={categories}
+          defaultCategoryId={newLineCategoryId}
+          onSubmit={(values) => {
+            setNewLineCategoryId(values.categoryId)
+            appendLineFromQuickForm(values)
           }}
-        >
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Line item title
-            <input
-              value={eliTitle}
-              onChange={(e) => setEliTitle(e.target.value)}
-              placeholder="Per Acre Fuel Charge"
-              style={{ ...inputDark, padding: "8px 10px" }}
-            />
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Category
-            <select value={newLineCategoryId} onChange={(e) => setNewLineCategoryId(e.target.value)} style={{ ...inputDark, padding: "8px 10px" }}>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {glyphForJobTypeIcon(category.icon_id)} {category.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Line type
-            <select value={eliSimpleKind} onChange={(e) => setEliSimpleKind(e.target.value as EliLineKind)} style={{ ...inputDark, padding: "8px 10px" }}>
-              {ELI_LINE_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {ELI_KIND_LABEL[k]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Unit
-            <select
-              value={COMMON_LINE_UNITS.some((u) => u.id === eliSimpleUnit) ? eliSimpleUnit : "custom"}
-              onChange={(e) => setEliSimpleUnit(e.target.value)}
-              style={{ ...inputDark, padding: "8px 10px" }}
-            >
-              {COMMON_LINE_UNITS.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.label}
-                </option>
-              ))}
-              <option value="custom">Custom…</option>
-            </select>
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Qty
-            <input value={eliSimpleQty} onChange={(e) => setEliSimpleQty(e.target.value)} style={{ ...inputDark, padding: "8px 10px" }} />
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            $ / unit
-            <input value={eliSimplePrice} onChange={(e) => setEliSimplePrice(e.target.value)} style={{ ...inputDark, padding: "8px 10px" }} placeholder="15.00" />
-          </label>
-        </div>
-        {eliSimpleUnit === "custom" || !COMMON_LINE_UNITS.some((u) => u.id === eliSimpleUnit) ? (
-          <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-            Custom unit label
-            <input
-              value={eliCustomUnit || eliSimpleUnit}
-              onChange={(e) => {
-                setEliSimpleUnit("custom")
-                setEliCustomUnit(e.target.value)
-              }}
-              style={inputDark}
-              placeholder="acres, panels, fixtures…"
-            />
-          </label>
-        ) : null}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "auto minmax(140px, 180px) minmax(100px, 140px) auto",
-            gap: 10,
-            alignItems: "end",
-          }}
-        >
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 700, color: "#0f172a", paddingBottom: 8 }}>
-            <input type="checkbox" checked={eliMinEnabled} onChange={(e) => setEliMinEnabled(e.target.checked)} />
-            Minimum charge
-          </label>
-          {eliMinEnabled ? (
-            <>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-                Min type
-                <select value={eliMinBasis} onChange={(e) => setEliMinBasis(e.target.value as MinBasis)} style={inputDark}>
-                  <option value="cost">Dollar amount</option>
-                  <option value="quantity">Quantity</option>
-                  <option value="hours">Hrs</option>
-                </select>
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700, color: "#0f172a" }}>
-                {eliMinBasis === "cost" ? "Dollar amount" : eliMinBasis === "hours" ? "Min hours" : "Min quantity"}
-                <input
-                  value={eliMinValue}
-                  onChange={(e) => setEliMinValue(e.target.value)}
-                  style={inputDark}
-                  placeholder={eliMinBasis === "cost" ? "60.00" : "1"}
-                />
-              </label>
-            </>
-          ) : (
-            <div />
-          )}
-          <button
-            type="button"
-            onClick={appendSimpleLine}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 6,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 800,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
-            Add to list
-          </button>
-        </div>
+        />
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
-import { usePortalViewOptional } from "../../contexts/PortalViewContext"
+import { usePortalViewOptional, useViewingOtherProfile } from "../../contexts/PortalViewContext"
+import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { supabase } from "../../lib/supabase"
@@ -344,6 +345,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const viewAsDemoId =
     portalView?.showViewBar && isSandboxDemoUserId(portalView.targetUserId) ? portalView.targetUserId : null
   const userId = useScopedUserId() ?? user?.id ?? null
+  const viewingOtherProfile = useViewingOtherProfile()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const isMobile = useIsMobile()
   const sandboxTraining = useSandboxTrainingMode()
@@ -1598,14 +1600,18 @@ export default function CustomerProfilePage({ setPage }: Props) {
             />
           </CollapsibleProfileSection>
 
-          <CollapsibleProfileSection title="Activity history" badge={bundle.commEvents.length || undefined}>
-            <ActivityHistoryTabs
-              events={bundle.commEvents}
-              userId={userId}
-              customerId={c?.id ?? null}
-              onSaved={() => void reload()}
-              workflowHistory={workflowEventLog}
-            />
+          <CollapsibleProfileSection title="Activity history" badge={viewingOtherProfile ? undefined : bundle.commEvents.length || undefined}>
+            {viewingOtherProfile ? (
+              <PortalViewCommsHiddenNotice label="activity history (calls, texts, emails)" />
+            ) : (
+              <ActivityHistoryTabs
+                events={bundle.commEvents}
+                userId={userId}
+                customerId={c?.id ?? null}
+                onSaved={() => void reload()}
+                workflowHistory={workflowEventLog}
+              />
+            )}
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection title="Calendar events" badge={bundle.calendarEvents.length || undefined}>

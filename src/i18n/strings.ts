@@ -95,7 +95,7 @@ const CORE: Record<LocaleCode, Record<string, string>> = {
     "dashboard.quickOperationsInvoicing": "Invoicing",
     "dashboard.quickOperationsInventory": "Inventory",
     "nav.team_management": "Team management",
-    "operations.intro": "Work orders, purchase orders, invoicing, inventory, and team management in one place.",
+    "operations.intro": "",
     "operations.notEnabled": "Operations is not enabled for your account. Ask your office manager or Tradesman admin to turn it on.",
     "operations.invoicingIntro": "Customer invoicing tools are expanding here. For now, open Payments to collect or review billing activity.",
     "operations.openPayments": "Open Payments",

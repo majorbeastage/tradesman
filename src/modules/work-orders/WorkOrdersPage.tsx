@@ -29,6 +29,7 @@ import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromM
 import { openWorkOrderDocumentPdf } from "../../lib/workOrderPdfExport"
 import { downloadPdfBlob } from "../../lib/documentPdf"
 import { WorkOrderEditorModal } from "../../components/document-editors/WorkOrderEditorModal"
+import PlatformFileSearchPanel from "../../components/PlatformFileSearchPanel"
 
 type Props = {
   setPage?: (page: string) => void
@@ -261,11 +262,11 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
       <section style={{ ...card, marginBottom: 20 }}>
         <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Create work order</h2>
         <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, marginBottom: 12, maxWidth: 520 }}>
-          Filter by customer
           <select
             value={filterCustomerId}
             onChange={(e) => setFilterCustomerId(e.target.value)}
             style={theme.formInput}
+            aria-label="Customer"
           >
             <option value="">All customers</option>
             {customerFilterOptions.map((c) => (
@@ -283,9 +284,12 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
           </p>
         ) : (
           <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
-            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
-              Source
-              <select value={selectedQuoteId} onChange={(e) => setSelectedQuoteId(e.target.value)} style={theme.formInput}>
+            <select
+              value={selectedQuoteId}
+              onChange={(e) => setSelectedQuoteId(e.target.value)}
+              style={theme.formInput}
+              aria-label="Estimate or customer-only work order"
+            >
                 {filterCustomerId ? (
                   <option value={WORK_ORDER_NO_ESTIMATE}>No estimate — customer work order only</option>
                 ) : null}
@@ -296,7 +300,6 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
                   </option>
                 ))}
               </select>
-            </label>
             {selectedQuoteId === WORK_ORDER_NO_ESTIMATE ? (
               <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
                 Job title (optional)
@@ -416,6 +419,24 @@ export default function WorkOrdersPage({ setPage, embedded }: Props) {
           </div>
         )}
       </section>
+
+      <PlatformFileSearchPanel
+        workOrders={orders}
+        estimates={quotes.map((q) => ({
+          id: q.id,
+          customer_name: q.customer_name,
+          title: q.title,
+          status: q.status,
+          total: q.total,
+          customer_id: q.customer_id,
+        }))}
+        onOpenWorkOrder={(order) => void viewWorkOrderDocument(order)}
+        onOpenEstimate={(quoteId, customerId) => {
+          if (customerId) queueQuotesCustomerPrefill(customerId)
+          setPage?.("quotes")
+          void quoteId
+        }}
+      />
 
       <DocumentTemplateModal
         open={templateModalOpen}
