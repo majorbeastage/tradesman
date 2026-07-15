@@ -346,17 +346,13 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
               </div>
             ) : null}
 
-            <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()}{" "}
-              {tab === "customers" ? " job reaches a workflow step" : " record's status changes"}.
-              {tab === "customers" ? (
-                <>
-                  {" "}
-                  Workflow step names come from your Business workflow chart and update automatically when you rename steps.
-                </>
-              ) : null}{" "}
-              Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
-            </p>
+            {tab !== "customers" ? (
+              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+                Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()}{" "}
+                record&apos;s status changes. Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs{" "}
+                <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
+              </p>
+            ) : null}
             {loading ? (
               <p style={{ color: theme.text }}>Loading…</p>
             ) : (
@@ -388,10 +384,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                 {tab === "customers" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#fffbeb" }}>
                     <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Customers — urgency automation</div>
-                    <p style={{ fontSize: 12, color: "#4b5563", margin: "0 0 10px", lineHeight: 1.45 }}>
-                      When enabled, the Customers list periodically raises workflow urgency one step (In Process → Needs Attention → Critical) if there has been no
-                      communication activity for the time you set. <strong>Complete</strong> and <strong>Lost</strong> are not changed. Uses each row&apos;s last update time.
-                    </p>
                     <label style={{ ...CALENDAR_ALERT_OPTION_LABEL, marginBottom: 10 }}>
                       <input
                         type="checkbox"
