@@ -13,7 +13,6 @@ import {
   type PortalSettingItem,
 } from "../types/portal-builder"
 import { carryConversationAutoRepliesToQuoteValues } from "../lib/automaticRepliesCarryOver"
-import { MessagingComplianceGuardrailsCard } from "./MessagingComplianceGuardrailsCard"
 import type { SetupMiniWizardId } from "../lib/setupGuideWizards"
 import SetupWizardLaunchButton from "./SetupWizardLaunchButton"
 import {
@@ -314,13 +313,6 @@ export default function ConversationAutoRepliesModal({
             </button>
           </div>
         </div>
-
-        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6b7280", lineHeight: 1.55 }}>
-          Configure what happens <strong>when a customer contacts you</strong> (intake) and <strong>how Tradesman responds</strong> (outbound).
-          Each channel is independent — for example, missed calls can text back while emails stay manual.
-        </p>
-
-        <MessagingComplianceGuardrailsCard />
 
         <div
           style={{
