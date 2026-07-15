@@ -120,63 +120,50 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
     [tab, workflowMetadata],
   )
 
-  const loadWorkflowMetadata = useCallback(async () => {
-    if (!supabase || !authUserId) return
-    const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
-    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+  /** Stable loader — pass workflow meta in; do not close over workflowMetadata state (that caused a load loop / Loading flash). */
+  const loadPrefsForUser = useCallback(async (targetUserId: string, workflowMeta: Record<string, unknown> | null) => {
+    if (!supabase || !targetUserId) return
+    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
     if (error) throw error
-    const meta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? (data.metadata as Record<string, unknown>)
-        : {}
-    setWorkflowMetadata(meta)
-  }, [authUserId])
-
-  const loadPrefsForUser = useCallback(
-    async (targetUserId: string, workflowMeta?: Record<string, unknown> | null) => {
-      if (!supabase || !targetUserId) return
-      const { data, error } = await supabase.from("profiles").select("metadata").eq("id", targetUserId).maybeSingle()
-      if (error) throw error
-      const meta = (data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>
-      const map = parseTabNotificationsMap(meta)
-      let nextPrefs = getPrefsForTab(map, tab)
-      if (tab === "customers") {
-        const valid = statusOptionsForTab("customers", { workflowMetadata: workflowMeta ?? workflowMetadata })
-        nextPrefs = sanitizeTabNotificationPrefsForStatuses(nextPrefs, valid)
+    const meta = (data?.metadata && typeof data.metadata === "object" ? data.metadata : {}) as Record<string, unknown>
+    const map = parseTabNotificationsMap(meta)
+    let nextPrefs = getPrefsForTab(map, tab)
+    if (tab === "customers") {
+      const valid = statusOptionsForTab("customers", { workflowMetadata: workflowMeta })
+      nextPrefs = sanitizeTabNotificationPrefsForStatuses(nextPrefs, valid)
+    }
+    setPrefs(nextPrefs)
+    if (tab === "customers") {
+      const ua = meta.customers_urgency_automation
+      if (ua && typeof ua === "object" && !Array.isArray(ua)) {
+        const o = ua as Record<string, unknown>
+        setUrgencyEscalationEnabled(o.enabled === true)
+        setUrgencyEscalationUnit(o.unit === "hours" ? "hours" : "days")
+        const amt = typeof o.amount === "number" ? o.amount : Number.parseFloat(String(o.amount ?? ""))
+        setUrgencyEscalationAmount(Number.isFinite(amt) && amt > 0 ? String(amt) : "")
+      } else {
+        setUrgencyEscalationEnabled(false)
+        setUrgencyEscalationUnit("days")
+        setUrgencyEscalationAmount("")
       }
-      setPrefs(nextPrefs)
-      if (tab === "customers") {
-        const ua = meta.customers_urgency_automation
-        if (ua && typeof ua === "object" && !Array.isArray(ua)) {
-          const o = ua as Record<string, unknown>
-          setUrgencyEscalationEnabled(o.enabled === true)
-          setUrgencyEscalationUnit(o.unit === "hours" ? "hours" : "days")
-          const amt = typeof o.amount === "number" ? o.amount : Number.parseFloat(String(o.amount ?? ""))
-          setUrgencyEscalationAmount(Number.isFinite(amt) && amt > 0 ? String(amt) : "")
-        } else {
-          setUrgencyEscalationEnabled(false)
-          setUrgencyEscalationUnit("days")
-          setUrgencyEscalationAmount("")
-        }
-      }
-    },
-    [tab, workflowMetadata],
-  )
+    }
+  }, [tab])
 
   const handleTeamUserChange = useCallback(
     (nextUserId: string) => {
       setSelectedAlertUserId(nextUserId)
       setLoading(true)
       setMsg(null)
-      void loadPrefsForUser(nextUserId)
+      void loadPrefsForUser(nextUserId, workflowMetadata)
         .catch((e) => setMsg(e instanceof Error ? e.message : "Could not load team member alerts."))
         .finally(() => setLoading(false))
     },
-    [loadPrefsForUser],
+    [loadPrefsForUser, workflowMetadata],
   )
 
   useEffect(() => {
     if (!open || !authUserId || !supabase) return
+    let cancelled = false
     setLoading(true)
     setMsg(null)
     setSelectedAlertUserId(profileUserId)
@@ -184,28 +171,37 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
       try {
         let workflowMeta: Record<string, unknown> | null = null
         if (tab === "customers") {
-          await loadWorkflowMetadata()
           const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
-          const { data: ownerData } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
+          if (cancelled) return
+          const { data: ownerData, error: ownerErr } = await supabase
+            .from("profiles")
+            .select("metadata")
+            .eq("id", ownerId)
+            .maybeSingle()
+          if (ownerErr) throw ownerErr
           workflowMeta =
             ownerData?.metadata && typeof ownerData.metadata === "object" && !Array.isArray(ownerData.metadata)
               ? (ownerData.metadata as Record<string, unknown>)
               : {}
-          setWorkflowMetadata(workflowMeta)
+          if (!cancelled) setWorkflowMetadata(workflowMeta)
         }
         const members = await loadAlertEditableTeamMembers(supabase, authUserId, authRole)
+        if (cancelled) return
         setTeamMembers(members)
         const allowed = new Set(members.map((m) => m.userId))
         const target = allowed.has(profileUserId) ? profileUserId : authUserId
         setSelectedAlertUserId(target)
         await loadPrefsForUser(target, workflowMeta)
       } catch (e) {
-        setMsg(e instanceof Error ? e.message : "Could not load alert settings.")
+        if (!cancelled) setMsg(e instanceof Error ? e.message : "Could not load alert settings.")
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     })()
-  }, [open, authUserId, authRole, profileUserId, tab, loadWorkflowMetadata, loadPrefsForUser])
+    return () => {
+      cancelled = true
+    }
+  }, [open, authUserId, authRole, profileUserId, tab, loadPrefsForUser])
 
   useEffect(() => {
     if (!open || tab !== "customers" || !workflowMetadata) return
