@@ -85,6 +85,8 @@ export default function JobTypesManagerModal({
   const [categoryAssignments, setCategoryAssignments] = useState<Record<string, string>>({})
   const [jobTypeCategoryId, setJobTypeCategoryId] = useState("job-general")
   const [categoryEditor, setCategoryEditor] = useState<LibraryCategory | "new" | null>(null)
+  const [dragJobTypeId, setDragJobTypeId] = useState<string | null>(null)
+  const [dropCategoryId, setDropCategoryId] = useState<string | null>(null)
 
   const resetForm = useCallback(() => {
     setName("")
@@ -287,6 +289,22 @@ export default function JobTypesManagerModal({
     else setCategoryAssignments(nextAssignments)
     await reload()
     onChanged?.()
+  }
+
+  async function moveJobTypeToCategory(jobTypeId: string, categoryId: string) {
+    if (!supabase || !userId) return
+    const current = categoryAssignments[jobTypeId] ?? categories[0]?.id
+    if (current === categoryId) return
+    const nextAssignments = { ...categoryAssignments, [jobTypeId]: categoryId }
+    const error = await persistLibraryCategorySettings(supabase, userId, "job_types", {
+      categories,
+      assignments: nextAssignments,
+    })
+    if (error) {
+      alert(error)
+      return
+    }
+    setCategoryAssignments(nextAssignments)
   }
 
   async function saveCategory(category: LibraryCategory) {
@@ -609,14 +627,47 @@ export default function JobTypesManagerModal({
             </button>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: variant === "inline" ? `repeat(${Math.min(Math.max(categories.length, 1), 4)}, minmax(0, 1fr))` : "1fr", gap: 12, alignItems: "start" }}>
-          {categories.map((category) => (
-            <div key={category.id} style={{ display: "grid", gap: 8, minWidth: 0 }}>
+          {categories.map((category) => {
+            const isDropTarget = dragJobTypeId != null && dropCategoryId === category.id
+            return (
+            <div
+              key={category.id}
+              onDragOver={(e) => {
+                if (!dragJobTypeId) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = "move"
+                if (dropCategoryId !== category.id) setDropCategoryId(category.id)
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return
+                if (dropCategoryId === category.id) setDropCategoryId(null)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const id = dragJobTypeId ?? e.dataTransfer.getData("text/plain")
+                setDragJobTypeId(null)
+                setDropCategoryId(null)
+                if (id) void moveJobTypeToCategory(id, category.id)
+              }}
+              style={{
+                display: "grid",
+                gap: 8,
+                minWidth: 0,
+                alignContent: "start",
+                borderRadius: 10,
+                outline: isDropTarget ? `2px dashed ${category.color}` : "2px dashed transparent",
+                outlineOffset: 2,
+                background: isDropTarget ? `${category.color}0d` : undefined,
+                transition: "background 120ms ease",
+                minHeight: dragJobTypeId ? 90 : undefined,
+              }}
+            >
               <div
                 onContextMenu={(event) => {
                   event.preventDefault()
                   setCategoryEditor(category)
                 }}
-                title="Right-click to edit category"
+                title="Right-click to edit category — drag job types here to move them"
                 style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: `${category.color}14`, border: `1px solid ${category.color}33`, cursor: "context-menu" }}
               >
                 <span style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
@@ -630,6 +681,16 @@ export default function JobTypesManagerModal({
             {sorted.filter((jt) => (categoryAssignments[jt.id] ?? categories[0]?.id) === category.id).map((jt) => (
               <div
                 key={jt.id}
+                draggable
+                onDragStart={(e) => {
+                  setDragJobTypeId(jt.id)
+                  e.dataTransfer.setData("text/plain", jt.id)
+                  e.dataTransfer.effectAllowed = "move"
+                }}
+                onDragEnd={() => {
+                  setDragJobTypeId(null)
+                  setDropCategoryId(null)
+                }}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -640,6 +701,8 @@ export default function JobTypesManagerModal({
                   background: "#f9fafb",
                   borderRadius: 6,
                   border: `1px solid ${theme.border}`,
+                  opacity: dragJobTypeId === jt.id ? 0.5 : 1,
+                  cursor: "grab",
                 }}
               >
                 <div
@@ -771,10 +834,13 @@ export default function JobTypesManagerModal({
               </div>
             ))}
             {sorted.filter((jt) => (categoryAssignments[jt.id] ?? categories[0]?.id) === category.id).length === 0 ? (
-              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", padding: "0 2px" }}>None yet</p>
+              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", padding: "0 2px" }}>
+                {dragJobTypeId ? "Drop here" : "None yet"}
+              </p>
             ) : null}
             </div>
-          ))}
+            )
+          })}
           </div>
         </div>
         <LibraryCategoryEditor

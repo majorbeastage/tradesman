@@ -80,7 +80,19 @@ export default function LibraryCategoryEditor({ category, open, onClose, onSave 
           </label>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button type="button" onClick={onClose} style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 6,
+              border: "1px solid #94a3b8",
+              background: "#fff",
+              color: "#0f172a",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
             Cancel
           </button>
           <button

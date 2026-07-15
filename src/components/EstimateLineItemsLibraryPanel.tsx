@@ -92,6 +92,8 @@ export default function EstimateLineItemsLibraryPanel({
   const [categories, setCategories] = useState<LibraryCategory[]>([])
   const [categoryEditor, setCategoryEditor] = useState<LibraryCategory | "new" | null>(null)
   const [newLineCategoryId, setNewLineCategoryId] = useState("line-labor")
+  const [dragLineId, setDragLineId] = useState<string | null>(null)
+  const [dropCategoryId, setDropCategoryId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
@@ -188,6 +190,25 @@ export default function EstimateLineItemsLibraryPanel({
     onSaved?.(rows)
   }
 
+  async function moveLineToCategory(rowId: string, categoryId: string) {
+    const current = draft.find((r) => r.id === rowId)
+    const currentCategory = current?.category_id ?? savedLineCategoryIdFromKind(current?.line_kind)
+    if (!current || currentCategory === categoryId) return
+    const next = draft.map((r) => (r.id === rowId ? { ...r, category_id: categoryId } : r))
+    setDraft(next)
+    if (!supabase) return
+    const cleaned = next.filter((r) => r.description.trim())
+    const { error, rows } = await persistEstimateLinePresetsForUser(supabase, userId, cleaned)
+    if (error) {
+      alert(error)
+      return
+    }
+    setDraft(rows)
+    const title = categories.find((c) => c.id === categoryId)?.title ?? "category"
+    setMessage(`Moved "${current.description.trim() || "Line"}" to ${title}.`)
+    onSaved?.(rows)
+  }
+
   async function saveCategory(category: LibraryCategory) {
     if (!supabase) return
     const next = categories.some((item) => item.id === category.id)
@@ -214,6 +235,16 @@ export default function EstimateLineItemsLibraryPanel({
     return (
       <div
         key={row.id}
+        draggable={!expanded}
+        onDragStart={(e) => {
+          setDragLineId(row.id)
+          e.dataTransfer.setData("text/plain", row.id)
+          e.dataTransfer.effectAllowed = "move"
+        }}
+        onDragEnd={() => {
+          setDragLineId(null)
+          setDropCategoryId(null)
+        }}
         style={{
           borderRadius: 8,
           border: `1px solid ${theme.border}`,
@@ -222,6 +253,8 @@ export default function EstimateLineItemsLibraryPanel({
           overflow: "hidden",
           display: "grid",
           gap: 0,
+          opacity: dragLineId === row.id ? 0.5 : 1,
+          cursor: "grab",
         }}
       >
         <button
@@ -569,14 +602,46 @@ export default function EstimateLineItemsLibraryPanel({
         >
           {categories.map((category) => {
             const items = columns.get(category.id) ?? []
+            const isDropTarget = dragLineId != null && dropCategoryId === category.id
             return (
-              <div key={category.id} style={{ display: "grid", gap: 8, minWidth: 0 }}>
+              <div
+                key={category.id}
+                onDragOver={(e) => {
+                  if (!dragLineId) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = "move"
+                  if (dropCategoryId !== category.id) setDropCategoryId(category.id)
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node)) return
+                  if (dropCategoryId === category.id) setDropCategoryId(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const id = dragLineId ?? e.dataTransfer.getData("text/plain")
+                  setDragLineId(null)
+                  setDropCategoryId(null)
+                  if (id) void moveLineToCategory(id, category.id)
+                }}
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  minWidth: 0,
+                  alignContent: "start",
+                  borderRadius: 10,
+                  outline: isDropTarget ? `2px dashed ${category.color}` : "2px dashed transparent",
+                  outlineOffset: 2,
+                  background: isDropTarget ? `${category.color}0d` : undefined,
+                  transition: "background 120ms ease",
+                  minHeight: dragLineId ? 90 : undefined,
+                }}
+              >
                 <div
                   onContextMenu={(event) => {
                     event.preventDefault()
                     setCategoryEditor(category)
                   }}
-                  title="Right-click to edit category"
+                  title="Right-click to edit category — drag lines here to move them"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -607,7 +672,9 @@ export default function EstimateLineItemsLibraryPanel({
                   </span>
                 </div>
                 {items.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", padding: "0 2px" }}>None yet</p>
+                  <p style={{ margin: 0, fontSize: 11, color: "#94a3b8", padding: "0 2px" }}>
+                    {dragLineId ? "Drop here" : "None yet"}
+                  </p>
                 ) : (
                   items.map(({ row, idx }) => renderTile(row, idx))
                 )}
