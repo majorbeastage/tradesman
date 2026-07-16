@@ -245,6 +245,9 @@ const ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS = new Set([
   "estimate_template_use_ai",
 ])
 
+/** Intro / footer free-text fields — shown in a collapsed section (minimized by default). */
+const ESTIMATE_TEMPLATE_TEXT_GROUP_IDS = new Set(["estimate_template_notes", "estimate_template_footer"])
+
 const ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS = new Set([
   "estimate_template_specialty_inspection",
   "estimate_template_report_home",
@@ -1203,10 +1206,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
     () => estimateTemplateItems.filter((i) => ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS.has(i.id)),
     [estimateTemplateItems],
   )
+  const estimateTemplateItemsText = useMemo(
+    () => estimateTemplateItems.filter((i) => ESTIMATE_TEMPLATE_TEXT_GROUP_IDS.has(i.id)),
+    [estimateTemplateItems],
+  )
   const estimateTemplateItemsPrimary = useMemo(
     () =>
       estimateTemplateItems.filter(
-        (i) => !ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS.has(i.id) && !ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS.has(i.id),
+        (i) =>
+          !ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS.has(i.id) &&
+          !ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS.has(i.id) &&
+          !ESTIMATE_TEMPLATE_TEXT_GROUP_IDS.has(i.id),
       ),
     [estimateTemplateItems],
   )
@@ -4819,7 +4829,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   onClick={() => setShowEstimateTemplateModal(true)}
                   style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 600 }}
                 >
-                  Advanced Options
+                  Estimate Template Options
                 </button>
               )}
               {customActionButtons.map((btn) => (
@@ -5081,7 +5091,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
         {showEstimateTemplateModal && (
           <PortalSettingsModal
-            title="Estimate Template options"
+            title="Estimate Template Options"
             maxWidthPx={560}
             closeButtonLabel="Save & close"
             intro={null}
@@ -5092,6 +5102,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
             onClose={() => void closeEstimateTemplateModal()}
             afterMainForm={
               <>
+                {estimateTemplateItemsText.length > 0 ? (
+                  <details
+                    style={{
+                      marginTop: 4,
+                      marginBottom: 10,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: `1px solid ${theme.border}`,
+                      background: "#f8fafc",
+                    }}
+                  >
+                    <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 14, color: theme.text, userSelect: "none" }}>
+                      Intro &amp; footer text
+                    </summary>
+                    <div style={{ marginTop: 14 }}>
+                      <PortalSettingItemsForm
+                        items={estimateTemplateItemsText}
+                        formValues={estimateTemplateFormValues}
+                        setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
+                        isItemVisible={isEstimateTemplateItemVisible}
+                      />
+                    </div>
+                  </details>
+                ) : null}
                 <details
                   style={{
                     marginTop: 4,
@@ -5191,10 +5225,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       setFormValue={(id, value) => setEstimateTemplateFormValues((prev) => ({ ...prev, [id]: value }))}
                       isItemVisible={isEstimateTemplateItemVisible}
                     />
-                    <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                      Templates you check here add a <strong>Start report</strong> button next to <strong>Start quote</strong> on an open estimate
-                      (internal label for report drafting — not customer-facing copy).
-                    </p>
                   </div>
                 ) : null}
               </>

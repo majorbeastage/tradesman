@@ -1446,13 +1446,13 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
   {
     id: "estimate_template_notes",
     type: "custom_field",
-    label: "Intro / header text (plain text, below the title — both PDF and Word)",
+    label: "Intro / header text",
     customFieldSubtype: "textarea",
   },
   {
     id: "estimate_template_footer",
     type: "custom_field",
-    label: "Footer text (totals context, terms, payment — plain text, after line items)",
+    label: "Footer text",
     customFieldSubtype: "textarea",
   },
   {
