@@ -4,7 +4,12 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
-import { loadPartsInventoryFromProfile, upsertPartsInventoryItem, type PartsInventoryItem } from "../../lib/partsInventory"
+import {
+  loadPartsInventoryFromProfile,
+  savePartsInventoryToProfile,
+  upsertPartsInventoryItem,
+  type PartsInventoryItem,
+} from "../../lib/partsInventory"
 import { portalDashboardBackBtn } from "../../lib/portalNavButtons"
 import Barcode from "../../components/Barcode"
 
@@ -18,6 +23,17 @@ function inventoryNumber(it: PartsInventoryItem): string {
 function formatPrice(price: number | null): string {
   if (price === null || !Number.isFinite(price)) return ""
   return price.toLocaleString(undefined, { style: "currency", currency: "USD" })
+}
+
+type InventoryEditDraft = {
+  id: string
+  sku: string
+  name: string
+  description: string
+  price: string
+  quantity: string
+  unit: string
+  location: string
 }
 
 export default function PartsInventoryPage({ setPage, embedded }: Props) {
@@ -34,6 +50,9 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
   const [unit, setUnit] = useState("ea")
   const [location, setLocation] = useState("")
   const [busy, setBusy] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<InventoryEditDraft | null>(null)
+  const [savingId, setSavingId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) return
@@ -77,6 +96,65 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
       setErr(formatAppError(e))
     } finally {
       setBusy(false)
+    }
+  }
+
+  function openEdit(it: PartsInventoryItem) {
+    setExpandedId(it.id)
+    setDraft({
+      id: it.id,
+      sku: it.sku,
+      name: it.name,
+      description: it.description,
+      price: it.price !== null ? String(it.price) : "",
+      quantity: String(it.quantity),
+      unit: it.unit,
+      location: it.location,
+    })
+  }
+
+  function closeEdit() {
+    setExpandedId(null)
+    setDraft(null)
+  }
+
+  async function saveEdit() {
+    if (!supabase || !userId || !draft) return
+    setSavingId(draft.id)
+    setErr("")
+    try {
+      await upsertPartsInventoryItem(supabase, userId, {
+        id: draft.id,
+        sku: draft.sku,
+        name: draft.name,
+        description: draft.description,
+        price: draft.price.trim() === "" ? null : Number(draft.price),
+        quantity: Number(draft.quantity) || 0,
+        unit: draft.unit,
+        location: draft.location,
+      })
+      await reload()
+      closeEdit()
+    } catch (e: unknown) {
+      setErr(formatAppError(e))
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  async function deleteItem(id: string) {
+    if (!supabase || !userId) return
+    if (!window.confirm("Delete this inventory item? This cannot be undone.")) return
+    setSavingId(id)
+    setErr("")
+    try {
+      await savePartsInventoryToProfile(supabase, userId, items.filter((x) => x.id !== id))
+      await reload()
+      if (expandedId === id) closeEdit()
+    } catch (e: unknown) {
+      setErr(formatAppError(e))
+    } finally {
+      setSavingId(null)
     }
   }
 
@@ -154,30 +232,108 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
           <p style={{ margin: 0, color: "#64748b" }}>No parts on file yet.</p>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {items.map((it) => (
-              <div key={it.id} style={rowCard}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ minWidth: 0, flex: "1 1 240px" }}>
-                    <div style={{ fontWeight: 800 }}>
-                      {it.name}
-                      {it.price !== null ? (
-                        <span style={{ fontWeight: 700, color: "#0f766e" }}> · {formatPrice(it.price)}</span>
-                      ) : null}
+            {items.map((it) => {
+              const expanded = expandedId === it.id
+              const invNum =
+                expanded && draft ? draft.sku.trim() || `INV-${it.id.slice(0, 8).toUpperCase()}` : inventoryNumber(it)
+              return (
+                <div key={it.id} style={rowCard}>
+                  <button
+                    type="button"
+                    onClick={() => (expanded ? closeEdit() : openEdit(it))}
+                    style={rowHeaderBtn}
+                    aria-expanded={expanded}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span
+                        aria-hidden
+                        style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s", color: "#94a3b8", fontSize: 12 }}
+                      >
+                        ▸
+                      </span>
+                      <span style={{ fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {it.name}
+                      </span>
+                    </span>
+                    <span style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: "#64748b" }}>
+                      {it.price !== null ? <span style={{ color: "#0f766e", fontWeight: 700 }}>{formatPrice(it.price)}</span> : null}
+                      <span>
+                        Qty {it.quantity} {it.unit}
+                      </span>
+                      {it.location ? <span>{it.location}</span> : null}
+                    </span>
+                  </button>
+
+                  {expanded && draft ? (
+                    <div style={{ marginTop: 12, borderTop: `1px solid ${theme.border}`, paddingTop: 12, display: "grid", gap: 10 }}>
+                      <label style={labelStyle}>
+                        Title
+                        <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={theme.formInput} />
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <label style={labelStyle}>
+                          SKU / part # (barcode)
+                          <input value={draft.sku} onChange={(e) => setDraft({ ...draft, sku: e.target.value })} style={theme.formInput} />
+                        </label>
+                        <label style={labelStyle}>
+                          Price
+                          <input
+                            value={draft.price}
+                            onChange={(e) => setDraft({ ...draft, price: e.target.value })}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            style={theme.formInput}
+                          />
+                        </label>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                        <label style={labelStyle}>
+                          Quantity
+                          <input value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} type="number" style={theme.formInput} />
+                        </label>
+                        <label style={labelStyle}>
+                          Unit
+                          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} style={theme.formInput} />
+                        </label>
+                        <label style={labelStyle}>
+                          Location
+                          <input value={draft.location} onChange={(e) => setDraft({ ...draft, location: e.target.value })} style={theme.formInput} />
+                        </label>
+                      </div>
+                      <label style={labelStyle}>
+                        Description
+                        <textarea
+                          value={draft.description}
+                          onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                          style={{ ...theme.formInput, minHeight: 64, resize: "vertical" }}
+                          placeholder="Optional details, specs, notes…"
+                        />
+                      </label>
+
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "flex-end" }}>
+                        <div style={{ flex: "0 0 auto" }}>
+                          <Barcode value={invNum} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <button type="button" onClick={() => void saveEdit()} disabled={savingId === it.id} style={primaryBtn}>
+                            {savingId === it.id ? "Saving…" : "Save"}
+                          </button>
+                          <button type="button" onClick={closeEdit} disabled={savingId === it.id} style={secondaryBtn}>
+                            Cancel
+                          </button>
+                          <button type="button" onClick={() => void deleteItem(it.id)} disabled={savingId === it.id} style={deleteBtn}>
+                            Delete
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    {it.description ? (
-                      <div style={{ fontSize: 13, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{it.description}</div>
-                    ) : null}
-                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
-                      Qty {it.quantity} {it.unit}
-                      {it.location ? ` · ${it.location}` : ""}
-                    </div>
-                  </div>
-                  <div style={{ flex: "0 0 auto" }}>
-                    <Barcode value={inventoryNumber(it)} />
-                  </div>
+                  ) : null}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </section>
@@ -193,5 +349,20 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
 
 const card: CSSProperties = { borderRadius: 12, border: `1px solid ${theme.border}`, background: "#f8fafc", padding: "16px 18px" }
 const rowCard: CSSProperties = { border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 14px", background: "#fff" }
+const rowHeaderBtn: CSSProperties = {
+  display: "flex",
+  width: "100%",
+  gap: 12,
+  justifyContent: "space-between",
+  alignItems: "center",
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  cursor: "pointer",
+  textAlign: "left",
+  color: theme.text,
+}
 const labelStyle: CSSProperties = { display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }
 const primaryBtn: CSSProperties = { padding: "10px 16px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer", justifySelf: "start" }
+const secondaryBtn: CSSProperties = { padding: "10px 16px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", color: theme.text, fontWeight: 600, cursor: "pointer" }
+const deleteBtn: CSSProperties = { padding: "10px 14px", borderRadius: 8, border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", fontWeight: 700, cursor: "pointer" }
