@@ -1,0 +1,15 @@
+:root {
+  --orange: #f97316;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #94a3b8;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--text);
+  background: #f8fafc;
+}
+button { font-family: inherit; }
+input, textarea { font-family: inherit; }

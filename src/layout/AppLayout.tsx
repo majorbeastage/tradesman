@@ -249,7 +249,7 @@ export default function AppLayout({
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
       </div>
       {!isMobile && !hidePortalChrome && user?.id ? <NotificationCenter userId={user.id} setPage={setPage} /> : null}
-      {!isMobile && !hidePortalChrome && user?.id ? <MessengerWidget /> : null}
+      {!isMobile && !hidePortalChrome && user?.id ? <MessengerWidget setPage={setPage} /> : null}
     </div>
   )
 }
