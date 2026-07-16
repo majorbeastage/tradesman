@@ -6,8 +6,19 @@ import { theme } from "../../styles/theme"
 import { formatAppError } from "../../lib/formatAppError"
 import { loadPartsInventoryFromProfile, upsertPartsInventoryItem, type PartsInventoryItem } from "../../lib/partsInventory"
 import { portalDashboardBackBtn } from "../../lib/portalNavButtons"
+import Barcode from "../../components/Barcode"
 
 type Props = { setPage?: (page: string) => void; embedded?: boolean }
+
+/** Inventory number encoded in the barcode: the SKU when set, else a stable id-based code. */
+function inventoryNumber(it: PartsInventoryItem): string {
+  return it.sku.trim() || `INV-${it.id.slice(0, 8).toUpperCase()}`
+}
+
+function formatPrice(price: number | null): string {
+  if (price === null || !Number.isFinite(price)) return ""
+  return price.toLocaleString(undefined, { style: "currency", currency: "USD" })
+}
 
 export default function PartsInventoryPage({ setPage, embedded }: Props) {
   const { user } = useAuth()
@@ -17,6 +28,8 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
   const [err, setErr] = useState("")
   const [sku, setSku] = useState("")
   const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
+  const [price, setPrice] = useState("")
   const [quantity, setQuantity] = useState("0")
   const [unit, setUnit] = useState("ea")
   const [location, setLocation] = useState("")
@@ -47,12 +60,16 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
       await upsertPartsInventoryItem(supabase, userId, {
         sku,
         name,
+        description,
+        price: price.trim() === "" ? null : Number(price),
         quantity: Number(quantity) || 0,
         unit,
         location,
       })
       setSku("")
       setName("")
+      setDescription("")
+      setPrice("")
       setQuantity("0")
       setLocation("")
       await reload()
@@ -78,27 +95,51 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
         <h2 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Add inventory item</h2>
         <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
           <label style={labelStyle}>
-            SKU / part #
+            SKU / part # (used for the barcode)
             <input value={sku} onChange={(e) => setSku(e.target.value)} style={theme.formInput} />
           </label>
           <label style={labelStyle}>
             Name
             <input value={name} onChange={(e) => setName(e.target.value)} style={theme.formInput} required />
           </label>
+          <label style={labelStyle}>
+            Description
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              style={{ ...theme.formInput, minHeight: 64, resize: "vertical" }}
+              placeholder="Optional details, specs, notes…"
+            />
+          </label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label style={labelStyle}>
+              Price
+              <input
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="0.00"
+                style={theme.formInput}
+              />
+            </label>
             <label style={labelStyle}>
               Quantity
               <input value={quantity} onChange={(e) => setQuantity(e.target.value)} type="number" style={theme.formInput} />
             </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <label style={labelStyle}>
               Unit
               <input value={unit} onChange={(e) => setUnit(e.target.value)} style={theme.formInput} />
             </label>
+            <label style={labelStyle}>
+              Location
+              <input value={location} onChange={(e) => setLocation(e.target.value)} style={theme.formInput} />
+            </label>
           </div>
-          <label style={labelStyle}>
-            Location
-            <input value={location} onChange={(e) => setLocation(e.target.value)} style={theme.formInput} />
-          </label>
           <button type="button" disabled={busy || !name.trim()} onClick={() => void handleAdd()} style={primaryBtn}>
             {busy ? "Saving…" : "Add item"}
           </button>
@@ -115,13 +156,25 @@ export default function PartsInventoryPage({ setPage, embedded }: Props) {
           <div style={{ display: "grid", gap: 8 }}>
             {items.map((it) => (
               <div key={it.id} style={rowCard}>
-                <div style={{ fontWeight: 800 }}>
-                  {it.name}
-                  {it.sku ? <span style={{ fontWeight: 600, color: "#64748b" }}> · {it.sku}</span> : null}
-                </div>
-                <div style={{ fontSize: 13, color: "#64748b" }}>
-                  Qty {it.quantity} {it.unit}
-                  {it.location ? ` · ${it.location}` : ""}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0, flex: "1 1 240px" }}>
+                    <div style={{ fontWeight: 800 }}>
+                      {it.name}
+                      {it.price !== null ? (
+                        <span style={{ fontWeight: 700, color: "#0f766e" }}> · {formatPrice(it.price)}</span>
+                      ) : null}
+                    </div>
+                    {it.description ? (
+                      <div style={{ fontSize: 13, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{it.description}</div>
+                    ) : null}
+                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                      Qty {it.quantity} {it.unit}
+                      {it.location ? ` · ${it.location}` : ""}
+                    </div>
+                  </div>
+                  <div style={{ flex: "0 0 auto" }}>
+                    <Barcode value={inventoryNumber(it)} />
+                  </div>
                 </div>
               </div>
             ))}

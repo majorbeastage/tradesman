@@ -4,6 +4,8 @@ export type PartsInventoryItem = {
   id: string
   sku: string
   name: string
+  description: string
+  price: number | null
   quantity: number
   unit: string
   location: string
@@ -20,10 +22,13 @@ export function parsePartsInventory(raw: unknown): PartsInventoryItem[] {
     const o = row as Record<string, unknown>
     if (typeof o.id !== "string" || typeof o.name !== "string") continue
     const q = Number(o.quantity)
+    const p = Number(o.price)
     out.push({
       id: o.id,
       sku: typeof o.sku === "string" ? o.sku : "",
       name: o.name,
+      description: typeof o.description === "string" ? o.description : "",
+      price: Number.isFinite(p) && o.price !== null && o.price !== "" ? p : null,
       quantity: Number.isFinite(q) ? q : 0,
       unit: typeof o.unit === "string" ? o.unit : "ea",
       location: typeof o.location === "string" ? o.location : "",
@@ -64,7 +69,16 @@ export async function savePartsInventoryToProfile(
 export async function upsertPartsInventoryItem(
   client: SupabaseClient,
   userId: string,
-  item: { id?: string; sku: string; name: string; quantity: number; unit: string; location: string },
+  item: {
+    id?: string
+    sku: string
+    name: string
+    description?: string
+    price?: number | null
+    quantity: number
+    unit: string
+    location: string
+  },
 ): Promise<PartsInventoryItem> {
   const items = await loadPartsInventoryFromProfile(client, userId)
   const now = new Date().toISOString()
@@ -72,6 +86,8 @@ export async function upsertPartsInventoryItem(
     id: item.id ?? crypto.randomUUID(),
     sku: item.sku.trim(),
     name: item.name.trim() || "Part",
+    description: (item.description ?? "").trim(),
+    price: typeof item.price === "number" && Number.isFinite(item.price) ? item.price : null,
     quantity: item.quantity,
     unit: item.unit.trim() || "ea",
     location: item.location.trim(),

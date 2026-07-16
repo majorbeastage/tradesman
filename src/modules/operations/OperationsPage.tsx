@@ -14,7 +14,7 @@ import { omCalendarPolicyNavContext, operationsSubModuleAllowedByPolicy } from "
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
-import { queueEstimatesLibraryOpen } from "../../lib/workflowNavigation"
+import OperationsDocumentSearchPanel from "../../components/OperationsDocumentSearchPanel"
 
 export type OperationsPageProps = {
   setPage?: (page: string) => void
@@ -62,6 +62,7 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
   const [tab, setTab] = useState<OperationsSubModuleId>(() =>
     enabledTabs.includes(initialTab) ? initialTab : enabledTabs[0] ?? "work_orders",
   )
+  const [showDocumentSearch, setShowDocumentSearch] = useState(false)
 
   const activeTab = enabledTabs.includes(tab) ? tab : enabledTabs[0] ?? "work_orders"
 
@@ -100,38 +101,47 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {enabledTabs.map((id) => (
-          <button key={id} type="button" style={subNavBtn(activeTab === id)} onClick={() => setTab(id)}>
+          <button
+            key={id}
+            type="button"
+            style={subNavBtn(!showDocumentSearch && activeTab === id)}
+            onClick={() => {
+              setTab(id)
+              setShowDocumentSearch(false)
+            }}
+          >
             {labels[id]}
           </button>
         ))}
-        {setPage ? (
-          <button
-            type="button"
-            style={subNavBtn(false)}
-            onClick={() => {
-              queueEstimatesLibraryOpen()
-              setPage("quotes")
-            }}
-          >
-            {t("nav.estimates")}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          style={subNavBtn(showDocumentSearch)}
+          onClick={() => setShowDocumentSearch(true)}
+        >
+          Document search
+        </button>
       </div>
 
       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
-        {activeTab === "work_orders" ? <WorkOrdersPage setPage={setPage} embedded /> : null}
-        {activeTab === "purchase_orders" ? <PurchaseOrdersPage setPage={setPage} embedded /> : null}
-        {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
-        {activeTab === "invoicing" ? <OperationsInvoicingPanel setPage={setPage} /> : null}
-        {activeTab === "team_management" && authUserId ? (
-          <CalendarTeamManagementPanel
-            officeManagerUserId={authUserId}
-            viewerUserId={authUserId}
-            roster={roster}
-            managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
-            onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}
-          />
-        ) : null}
+        {showDocumentSearch ? (
+          <OperationsDocumentSearchPanel userId={authUserId} setPage={setPage} />
+        ) : (
+          <>
+            {activeTab === "work_orders" ? <WorkOrdersPage setPage={setPage} embedded /> : null}
+            {activeTab === "purchase_orders" ? <PurchaseOrdersPage setPage={setPage} embedded /> : null}
+            {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
+            {activeTab === "invoicing" ? <OperationsInvoicingPanel setPage={setPage} /> : null}
+            {activeTab === "team_management" && authUserId ? (
+              <CalendarTeamManagementPanel
+                officeManagerUserId={authUserId}
+                viewerUserId={authUserId}
+                roster={roster}
+                managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
+                onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}
+              />
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   )
