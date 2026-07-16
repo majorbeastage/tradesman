@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type CSSProperties } from "react"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
@@ -16,6 +16,18 @@ const CARD = {
   background: "#fafafa",
   display: "grid" as const,
   gap: 12,
+}
+
+const SMALL_BTN: CSSProperties = {
+  width: "fit-content",
+  padding: "5px 10px",
+  fontSize: 12,
+  fontWeight: 600,
+  borderRadius: 6,
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  color: theme.text,
+  cursor: "pointer",
 }
 
 /** Body shape from `push-test` (also returned on 4xx/5xx when JSON). */
@@ -110,7 +122,7 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
               const r = await requestPushPermissionAndRegister(supabase, user?.id ?? null)
               setPermMsg(r.message)
             }}
-            style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600 }}
+            style={{ ...SMALL_BTN }}
           >
             Request push permission on this device
           </button>
@@ -171,7 +183,7 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
                   setTestPushBusy(false)
                 }
               }}
-              style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600, background: "#ecfdf5", borderColor: "#6ee7b7" }}
+              style={{ ...SMALL_BTN, background: "#ecfdf5", borderColor: "#6ee7b7" }}
             >
               {testPushBusy ? "Sending test…" : "Send test push (this device)"}
             </button>
@@ -197,7 +209,7 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
               const r = await requestGpsPermission()
               setPermMsg(r.message)
             }}
-            style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600 }}
+            style={{ ...SMALL_BTN }}
           >
             Request location permission on this device
           </button>
@@ -210,7 +222,7 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
                 const r = await openAppSystemSettings()
                 setPermMsg(r.ok ? "Opened system settings for Tradesman. Enable Location and/or Notifications, then return here." : r.message)
               }}
-              style={{ ...theme.formInput, width: "fit-content", cursor: "pointer", fontWeight: 600, background: "#eff6ff", borderColor: "#93c5fd" }}
+              style={{ ...SMALL_BTN, background: "#eff6ff", borderColor: "#93c5fd" }}
             >
               Open system settings (Tradesman app)
             </button>

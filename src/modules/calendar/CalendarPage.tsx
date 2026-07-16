@@ -40,7 +40,6 @@ import { JOB_TYPE_CALENDAR_COLORS, JOB_TYPE_ICON_OPTIONS, glyphForJobTypeIcon } 
 import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
-import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
 import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
@@ -3715,11 +3714,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 >
                   Map
                 </button>
-              ) : null}
-              {userId ? (
-                <>
-                  <TabNotificationAlertsButton tab="calendar" profileUserId={userId} guideWizardId="scheduling_alerts" />
-                </>
               ) : null}
             </div>
             {showCalAutoResponse ? (

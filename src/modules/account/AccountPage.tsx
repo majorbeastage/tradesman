@@ -23,6 +23,7 @@ import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
+import NotificationSettingsCard from "../../components/NotificationSettingsCard"
 import AppSchemePicker from "../../components/AppSchemePicker"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
@@ -1288,6 +1289,7 @@ export function AccountProfilePanel({
                     category={cat}
                   >
                     <MobileAppPreferencesCard profileUserId={profileUserId} hideTitle />
+                    <NotificationSettingsCard profileUserId={profileUserId} />
                   </AccountFold>
                 </Fragment>
               )

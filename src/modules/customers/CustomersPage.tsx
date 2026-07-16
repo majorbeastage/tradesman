@@ -21,7 +21,7 @@ import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import ShareContactModal from "../../components/ShareContactModal"
 import { loadOrganizationPeers, type OrganizationPeer } from "../../lib/organizationPeers"
 import CustomerCallButton from "../../components/CustomerCallButton"
-import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
+
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
 import AddCustomerModal from "../../components/AddCustomerModal"
 import CustomerSmsOptInSection from "../../components/CustomerSmsOptInSection"
@@ -2245,7 +2245,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         >
           Lead filter preferences
         </button>
-        {userId ? <TabNotificationAlertsButton tab="customers" profileUserId={userId} /> : null}
         <button
           type="button"
           onClick={() => setShowQuickViewSettings(true)}
