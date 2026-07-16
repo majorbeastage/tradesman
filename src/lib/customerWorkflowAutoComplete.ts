@@ -18,6 +18,7 @@ import {
   parseCustomerWorkflowMeta,
   resolveWorkflowNodeDepartmentKey,
 } from "./customerWorkflowRouting"
+import { emitUserNotification } from "./userNotifications"
 
 /** Real-world events that can auto-close workflow steps. */
 export type WorkflowAutoEvent = "estimate_sent" | "estimate_signed" | "job_scheduled" | "payment_received"
@@ -132,6 +133,13 @@ export async function autoAdvanceCustomerWorkflow(
       console.warn("[workflowAutoComplete] persist", error.message)
       return false
     }
+    void emitUserNotification(supabase, {
+      ownerUserId,
+      kind: "workflow_step_completed",
+      title: "Workflow step completed",
+      body: result.currentNodeLabel ? `Advanced to: ${result.currentNodeLabel}` : "Workflow advanced.",
+      customerId,
+    })
     return true
   } catch (e) {
     console.warn("[workflowAutoComplete]", e instanceof Error ? e.message : e)

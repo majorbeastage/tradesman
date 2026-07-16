@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { uploadEntityAttachmentFile } from "./uploadCommAttachment"
 import { autoAdvanceCustomerWorkflow } from "./customerWorkflowAutoComplete"
+import { emitUserNotification } from "./userNotifications"
 
 export const ARCHIVED_ESTIMATE_PDF_META = "archived_estimate_pdf"
 export const CUSTOMER_SIGNED_ESTIMATE_LABEL = "Customer Signed Estimate or Proposal"
@@ -170,6 +171,14 @@ async function markQuoteApprovedByCustomer(
   const customerId = (quote as { customer_id?: string | null }).customer_id ?? null
   if (customerId) {
     await autoAdvanceCustomerWorkflow(supabase, userId, customerId, "estimate_signed")
+    void emitUserNotification(supabase, {
+      ownerUserId: userId,
+      kind: "estimate_approved",
+      title: "Estimate approved by customer",
+      body: "A signed / approved estimate was received.",
+      customerId,
+      quoteId,
+    })
   }
 }
 

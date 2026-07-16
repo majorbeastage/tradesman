@@ -40,6 +40,7 @@ import { JOB_TYPE_CALENDAR_COLORS, JOB_TYPE_ICON_OPTIONS, glyphForJobTypeIcon } 
 import { sandboxTrainingAlert, shouldSuppressSandboxTrainingError, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
+import { emitUserNotification } from "../../lib/userNotifications"
 import CustomerCallButton from "../../components/CustomerCallButton"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
 import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
@@ -1630,6 +1631,21 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
     const prevCalStatus = calendarEventEffectiveStatus(completeFlowEvent)
     void invokeNotifyCalendarStatus(seriesIds, prevCalStatus, "Completed")
+
+    {
+      const ownerId = (completeFlowEvent as { user_id?: string | null }).user_id ?? userId
+      const custId = (completeFlowEvent as { customer_id?: string | null }).customer_id ?? null
+      if (ownerId) {
+        void emitUserNotification(supabase, {
+          ownerUserId: ownerId,
+          kind: "calendar_completed",
+          title: "Calendar event completed",
+          body: completeFlowEvent.title ? `Completed: ${completeFlowEvent.title}` : "A calendar event was completed.",
+          customerId: custId,
+          calendarEventId: completeFlowEvent.id,
+        })
+      }
+    }
 
     const sendErrs: string[] = []
     const postOutbound = async (channel: "email" | "sms", payload: Record<string, unknown>) => {
