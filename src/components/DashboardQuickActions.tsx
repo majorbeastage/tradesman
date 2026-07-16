@@ -43,6 +43,7 @@ import DashboardQuickLinkGrid from "./DashboardQuickLinkGrid"
 import DashboardQuickLinkCustomizeZones from "./DashboardQuickLinkCustomizeZones"
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
+import { openMessenger } from "../lib/messengerBus"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { isOfficeManagerLikeRole } from "../lib/profileRoles"
@@ -1297,6 +1298,25 @@ export default function DashboardQuickActions(props: Props) {
         />
       )
     }
+    if (id === "instant_messaging") {
+      return (
+        <Tile
+          key={id}
+          scheme={tileScheme}
+          compact={isMobile}
+          uniformGrid={uniformGrid}
+          mobileGrid={mobileGrid}
+          label="Instant messaging"
+          accent="#F97316"
+          customize={customize}
+          onRemove={rm}
+          removeChipLabel={labels.customizeRemove}
+          onContextMenu={(e) => openStyleMenu(id, e)}
+          tileStyle={tileStyle}
+          onClick={() => !customize && openMessenger()}
+        />
+      )
+    }
     if (id === "job_types") {
       return (
         <Tile
@@ -1678,6 +1698,8 @@ function optionalQuickLinkLabel(id: DashboardOptionalQuickLinkId, labels: Props[
       return labels.setupGuide
     case "email_client":
       return labels.emailClient
+    case "instant_messaging":
+      return "Instant messaging"
     default:
       return id
   }

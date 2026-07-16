@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
 import PortalViewBar from "../components/PortalViewBar"
 import NotificationCenter from "../components/NotificationCenter"
+import MessengerWidget from "../components/MessengerWidget"
 import { SchemeMatrixShellBackdrop } from "../components/SchemeSidebarDecorations"
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../lib/sidebarLayoutPrefs"
 import { useAppScheme } from "../contexts/AppSchemeContext"
@@ -248,6 +249,7 @@ export default function AppLayout({
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
       </div>
       {!isMobile && !hidePortalChrome && user?.id ? <NotificationCenter userId={user.id} setPage={setPage} /> : null}
+      {!isMobile && !hidePortalChrome && user?.id ? <MessengerWidget /> : null}
     </div>
   )
 }

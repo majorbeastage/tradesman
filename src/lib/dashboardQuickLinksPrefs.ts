@@ -27,6 +27,7 @@ export type DashboardOptionalQuickLinkId =
   | "operations_inventory"
   | "growth"
   | "email_client"
+  | "instant_messaging"
 
 export type DashboardQuickLinkId = DashboardCoreQuickLinkId | DashboardOptionalQuickLinkId
 
@@ -58,6 +59,7 @@ export const ALL_DASHBOARD_OPTIONAL_IDS = new Set<DashboardOptionalQuickLinkId>(
   "operations_inventory",
   "growth",
   "email_client",
+  "instant_messaging",
 ])
 
 export const ALL_DASHBOARD_LINK_IDS = new Set<DashboardQuickLinkId>([
@@ -85,6 +87,7 @@ export const DASHBOARD_PALETTE_ONLY_IDS: DashboardOptionalQuickLinkId[] = [
   "operations_inventory",
   "growth",
   "email_client",
+  "instant_messaging",
 ]
 
 export const DEFAULT_DASHBOARD_OPTIONAL_ORDER: DashboardOptionalQuickLinkId[] = [
@@ -758,6 +761,7 @@ export const DEFAULT_USER_QUICK_LINK_ORDER: DashboardQuickLinkId[] = [
   "operations_work_orders",
   "operations_purchase_orders",
   "operations_inventory",
+  "instant_messaging",
   "setup_guide",
 ]
 
@@ -770,6 +774,7 @@ export const DEFAULT_OFFICE_MANAGER_QUICK_LINK_ORDER: DashboardQuickLinkId[] = [
   "calendar",
   "customer_payments_soon",
   "email_client",
+  "instant_messaging",
   "time_clock",
   "payments",
   "growth",
