@@ -1376,7 +1376,7 @@ export default function DashboardQuickActions(props: Props) {
           onClick={() => {
             if (customize) return
             queueOpenCustomReceiptModal()
-            go("calendar")
+            go("operations")
           }}
         />
       )

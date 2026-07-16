@@ -661,7 +661,7 @@ export function CustomerQuickViewSidePane({
 
   function editReceipt() {
     queueOpenCustomReceiptModal()
-    setPage?.("calendar")
+    setPage?.("operations")
   }
 
   if (tab === "customer_payments") {

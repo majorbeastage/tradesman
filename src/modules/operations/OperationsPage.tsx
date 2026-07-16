@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import WorkOrdersPage from "../work-orders/WorkOrdersPage"
 import PurchaseOrdersPage from "../purchase-orders/PurchaseOrdersPage"
 import PartsInventoryPage from "../parts-inventory/PartsInventoryPage"
@@ -15,6 +15,9 @@ import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
 import OperationsDocumentSearchPanel from "../../components/OperationsDocumentSearchPanel"
+import CustomReceiptModal from "../../components/CustomReceiptModal"
+import { supabase } from "../../lib/supabase"
+import { consumeCustomReceiptCustomerPrefill, consumeOpenCustomReceiptModal } from "../../lib/workflowNavigation"
 
 export type OperationsPageProps = {
   setPage?: (page: string) => void
@@ -63,6 +66,21 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
     enabledTabs.includes(initialTab) ? initialTab : enabledTabs[0] ?? "work_orders",
   )
   const [showDocumentSearch, setShowDocumentSearch] = useState(false)
+  const [showCustomReceiptModal, setShowCustomReceiptModal] = useState(false)
+  const [customReceiptPrefillCustomerId, setCustomReceiptPrefillCustomerId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const cid = consumeCustomReceiptCustomerPrefill()
+    if (cid) {
+      setCustomReceiptPrefillCustomerId(cid)
+      setShowCustomReceiptModal(true)
+      return
+    }
+    if (consumeOpenCustomReceiptModal()) {
+      setCustomReceiptPrefillCustomerId(null)
+      setShowCustomReceiptModal(true)
+    }
+  }, [])
 
   const activeTab = enabledTabs.includes(tab) ? tab : enabledTabs[0] ?? "work_orders"
 
@@ -120,6 +138,16 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
         >
           Document search
         </button>
+        <button
+          type="button"
+          style={subNavBtn(false)}
+          onClick={() => {
+            setCustomReceiptPrefillCustomerId(null)
+            setShowCustomReceiptModal(true)
+          }}
+        >
+          Custom receipt
+        </button>
       </div>
 
       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
@@ -143,6 +171,16 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
           </>
         )}
       </div>
+      <CustomReceiptModal
+        open={showCustomReceiptModal}
+        onClose={() => {
+          setShowCustomReceiptModal(false)
+          setCustomReceiptPrefillCustomerId(null)
+        }}
+        supabase={supabase}
+        userId={authUserId}
+        initialCustomerId={customReceiptPrefillCustomerId}
+      />
     </div>
   )
 }

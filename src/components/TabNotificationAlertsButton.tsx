@@ -54,9 +54,8 @@ function ChannelBlock(props: {
   statuses: readonly string[]
   prefs: TabNotificationPrefs
   setPrefs: (p: TabNotificationPrefs) => void
-  statusLabel?: string
 }) {
-  const { label, channel, statuses, prefs, setPrefs, statusLabel = "status" } = props
+  const { label, channel, statuses, prefs, setPrefs } = props
   const ch = prefs[channel]
   const toggleStatus = (st: string) => {
     const has = ch.statuses.includes(st)
@@ -80,7 +79,6 @@ function ChannelBlock(props: {
       </label>
       {ch.onStatusChange && (
         <div style={{ marginTop: 10, display: "grid", gap: 6, paddingLeft: 4 }}>
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Notify when {statusLabel} becomes:</span>
           {statuses.length === 0 ? (
             <span style={{ fontSize: 12, color: "#9ca3af" }}>No workflow steps configured yet. Add steps in Business workflow.</span>
           ) : (
@@ -275,13 +273,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
             ? "Customers"
             : "Calendar"
 
-  const statusHint =
-    tab === "customers"
-      ? "workflow step"
-      : tab === "calendar"
-        ? "calendar event status"
-        : "status"
-
   const selectedMemberLabel = teamMembers.find((m) => m.userId === selectedAlertUserId)?.label ?? "Team member"
 
   return (
@@ -346,13 +337,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
               </div>
             ) : null}
 
-            {tab !== "customers" ? (
-              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-                Choose when to receive <strong>mobile push</strong>, <strong>email</strong>, and <strong>SMS</strong> when a {tabLabel.toLowerCase()}{" "}
-                record&apos;s status changes. Calendar and quotes use the Tradesman backend (Edge Functions) when you save; push also needs{" "}
-                <strong>Allow push</strong> on Account → Mobile app (MyT) and permission on the device.
-              </p>
-            ) : null}
             {loading ? (
               <p style={{ color: theme.text }}>Loading…</p>
             ) : (
@@ -363,7 +347,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                   statuses={statuses}
                   prefs={prefs}
                   setPrefs={setPrefs}
-                  statusLabel={statusHint}
                 />
                 <ChannelBlock
                   label="Send email when job / record status changes"
@@ -371,7 +354,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                   statuses={statuses}
                   prefs={prefs}
                   setPrefs={setPrefs}
-                  statusLabel={statusHint}
                 />
                 <ChannelBlock
                   label="Send text (SMS) when job / record status changes"
@@ -379,7 +361,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                   statuses={statuses}
                   prefs={prefs}
                   setPrefs={setPrefs}
-                  statusLabel={statusHint}
                 />
                 {tab === "customers" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#fffbeb" }}>
@@ -417,9 +398,6 @@ export default function TabNotificationAlertsButton({ tab, profileUserId, guideW
                 {tab === "calendar" && (
                   <div style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, background: "#f0f9ff" }}>
                     <div style={{ fontWeight: 700, marginBottom: 8, color: theme.text }}>Calendar — customer &amp; schedule assists</div>
-                    <p style={{ fontSize: 12, color: "#4b5563", margin: "0 0 10px", lineHeight: 1.45 }}>
-                      Used when en-route and completion flows are enabled server-side.
-                    </p>
                     <label style={CALENDAR_ALERT_OPTION_LABEL}>
                       <input
                         type="checkbox"

@@ -1491,7 +1491,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       case "receipts":
         queueCustomReceiptCustomerPrefill(customerId)
         queueOpenCustomReceiptModal()
-        setPage("calendar")
+        setPage("operations")
         break
       case "scheduling":
         queueSchedulingCustomerPrefill(customerId)
