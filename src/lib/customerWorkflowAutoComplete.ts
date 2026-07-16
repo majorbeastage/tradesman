@@ -140,6 +140,15 @@ export async function autoAdvanceCustomerWorkflow(
       body: result.currentNodeLabel ? `Advanced to: ${result.currentNodeLabel}` : "Workflow advanced.",
       customerId,
     })
+    if (result.currentNodeId) {
+      void emitUserNotification(supabase, {
+        ownerUserId,
+        kind: "assigned_step_ready",
+        title: "Workflow step ready",
+        body: result.currentNodeLabel ? `Ready: ${result.currentNodeLabel}` : "The next workflow step is ready.",
+        customerId,
+      })
+    }
     return true
   } catch (e) {
     console.warn("[workflowAutoComplete]", e instanceof Error ? e.message : e)

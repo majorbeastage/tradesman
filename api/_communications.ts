@@ -8,6 +8,7 @@ import {
   orgGroupKeysForEmail,
   parseSplitOrgEmails,
 } from "./_customerContactKind.js"
+import { emitUserNotificationServer } from "./_userNotifications.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -1152,6 +1153,14 @@ export async function getOrCreateCustomerByPhone(
   })
   if (insertIdentifierErr) throw insertIdentifierErr
 
+  void emitUserNotificationServer(supabase, {
+    ownerUserId: userId,
+    kind: "new_lead",
+    title: "New lead received",
+    body: `New contact from ${normalizedPhone}`,
+    customerId,
+  })
+
   return { customerId, previousCustomer: false }
 }
 
@@ -1341,6 +1350,14 @@ export async function getOrCreateCustomerByEmail(
     verified: false,
   })
   if (insertIdentifierErr) throw insertIdentifierErr
+
+  void emitUserNotificationServer(supabase, {
+    ownerUserId: userId,
+    kind: "new_lead",
+    title: "New lead received",
+    body: classification.displayName ? `New contact: ${classification.displayName}` : `New contact from ${normalizedEmail}`,
+    customerId,
+  })
 
   return { customerId, previousCustomer: false }
 }

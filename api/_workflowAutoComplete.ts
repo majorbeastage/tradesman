@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { emitUserNotificationServer } from "./_userNotifications.js"
 
 /**
  * Server-side port of src/lib/customerWorkflowAutoComplete.ts for the payment
@@ -130,6 +131,22 @@ export async function autoAdvanceCustomerWorkflowServer(
     if (error) {
       console.warn("[workflowAutoComplete:server] persist", error.message)
       return false
+    }
+    void emitUserNotificationServer(sb, {
+      ownerUserId,
+      kind: "workflow_step_completed",
+      title: "Workflow step completed",
+      body: next?.label ? `Advanced to: ${next.label}` : "Workflow advanced.",
+      customerId,
+    })
+    if (next?.id) {
+      void emitUserNotificationServer(sb, {
+        ownerUserId,
+        kind: "assigned_step_ready",
+        title: "Workflow step ready",
+        body: next.label ? `Ready: ${next.label}` : "The next workflow step is ready.",
+        customerId,
+      })
     }
     return true
   } catch (e) {
