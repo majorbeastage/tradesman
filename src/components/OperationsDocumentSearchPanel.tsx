@@ -11,6 +11,15 @@ import {
 } from "../lib/workOrders"
 import { loadPurchaseOrdersFromProfile, type PurchaseOrderRecord } from "../lib/purchaseOrders"
 import { loadPaymentRequests, paymentStatusLabel, type PaymentRequestRow } from "../lib/paymentRequests"
+import {
+  buildCustomReceiptPdfBytes,
+  customReceiptDraftToFormState,
+  formatCustomReceiptLineItems,
+  loadAllCustomReceiptsForUser,
+  loadReceiptTemplateSettings,
+  type CustomReceiptDraft,
+  type CustomReceiptTemplateSettings,
+} from "../lib/customReceipt"
 import { templateFormFromMetadata } from "../lib/jobDocumentTemplate"
 import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../lib/workOrderDocumentTemplate"
 import { PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../lib/purchaseOrderDocumentTemplate"
@@ -21,7 +30,7 @@ import DocumentPdfViewerModal from "./DocumentPdfViewerModal"
 import { WorkOrderEditorModal } from "./document-editors/WorkOrderEditorModal"
 import { PurchaseOrderEditorModal } from "./document-editors/PurchaseOrderEditorModal"
 
-type DocKind = "work_order" | "purchase_order" | "invoice" | "estimate"
+type DocKind = "work_order" | "purchase_order" | "invoice" | "estimate" | "receipt"
 
 type Props = {
   userId: string | null
@@ -46,6 +55,7 @@ const KIND_META: Record<DocKind, { label: string; plural: string; color: string 
   purchase_order: { label: "PURCHASE ORDER", plural: "Purchase orders", color: "#8b5cf6" },
   invoice: { label: "INVOICE", plural: "Invoices", color: "#16a34a" },
   estimate: { label: "ESTIMATE", plural: "Estimates", color: "#f59e0b" },
+  receipt: { label: "RECEIPT", plural: "Receipts", color: "#0d9488" },
 }
 
 export default function OperationsDocumentSearchPanel({ userId, setPage }: Props) {
@@ -55,6 +65,8 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRecord[]>([])
   const [estimates, setEstimates] = useState<SignedQuotePick[]>([])
   const [invoices, setInvoices] = useState<PaymentRequestRow[]>([])
+  const [receipts, setReceipts] = useState<CustomReceiptDraft[]>([])
+  const [receiptTemplate, setReceiptTemplate] = useState<CustomReceiptTemplateSettings | null>(null)
   const [customerNames, setCustomerNames] = useState<Record<string, string>>({})
   const [woTemplate, setWoTemplate] = useState<Record<string, string>>({})
   const [poTemplate, setPoTemplate] = useState<Record<string, string>>({})
@@ -71,17 +83,19 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
     setLoading(true)
     setErr("")
     try {
-      const [wo, po, quotes, pays, profileRow] = await Promise.all([
+      const [wo, po, quotes, pays, rcpts, profileRow] = await Promise.all([
         loadWorkOrdersFromProfile(supabase, userId),
         loadPurchaseOrdersFromProfile(supabase, userId),
         loadQuotesForWorkOrders(supabase, userId, null),
         loadPaymentRequests(userId, 200),
+        loadAllCustomReceiptsForUser(supabase, userId).catch(() => [] as CustomReceiptDraft[]),
         supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
       ])
       setWorkOrders(wo)
       setPurchaseOrders(po)
       setEstimates(quotes)
       setInvoices(pays)
+      setReceipts(rcpts)
 
       const meta =
         profileRow.data?.metadata && typeof profileRow.data.metadata === "object" && !Array.isArray(profileRow.data.metadata)
@@ -171,8 +185,23 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
         customerId: inv.customer_id,
       })
     }
+    for (const r of receipts) {
+      const { subtotal } = formatCustomReceiptLineItems(r.line_items)
+      const total = r.manual_amount != null && Number.isFinite(r.manual_amount) ? r.manual_amount : subtotal > 0 ? subtotal : null
+      out.push({
+        kind: "receipt",
+        id: r.id,
+        docNumber: `RCPT-${r.id.slice(0, 8).toUpperCase()}`,
+        name: r.customer_name,
+        detail: r.job_title || "Custom receipt",
+        status: r.sent_at ? "Sent" : "Saved",
+        total,
+        createdAt: r.updated_at || r.created_at || "",
+        customerId: r.customer_id ?? null,
+      })
+    }
     return out
-  }, [workOrders, purchaseOrders, estimates, invoices, customerNames])
+  }, [workOrders, purchaseOrders, estimates, invoices, receipts, customerNames])
 
   const hits = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -190,7 +219,7 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
   }, [allHits, query, kindFilter])
 
   const counts = useMemo(() => {
-    const c = { work_order: 0, purchase_order: 0, invoice: 0, estimate: 0 } as Record<DocKind, number>
+    const c = { work_order: 0, purchase_order: 0, invoice: 0, estimate: 0, receipt: 0 } as Record<DocKind, number>
     for (const h of allHits) c[h.kind] += 1
     return c
   }, [allHits])
@@ -209,7 +238,17 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
     setDocBusyId(hit.id)
     try {
       if (pdfViewer?.url) URL.revokeObjectURL(pdfViewer.url)
-      if (hit.kind === "work_order") {
+      if (hit.kind === "receipt") {
+        const draft = receipts.find((r) => r.id === hit.id)
+        if (!draft) return
+        const template = receiptTemplate ?? (await loadReceiptTemplateSettings(supabase, userId))
+        if (!receiptTemplate) setReceiptTemplate(template)
+        const bytes = await buildCustomReceiptPdfBytes(customReceiptDraftToFormState(draft), template)
+        const buf = new ArrayBuffer(bytes.byteLength)
+        new Uint8Array(buf).set(bytes)
+        const url = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }))
+        setPdfViewer({ url, title: `Receipt · ${draft.customer_name}` })
+      } else if (hit.kind === "work_order") {
         const order = workOrders.find((o) => o.id === hit.id)
         if (!order) return
         const url = await openWorkOrderDocumentPdf(supabase, userId, order, woTemplate)
@@ -232,12 +271,12 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
       <div style={{ marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: theme.text }}>Document search</h2>
         <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-          Search every work order, purchase order, invoice, and estimate on file from one place.
+          Search every work order, purchase order, invoice, estimate, and receipt on file from one place.
         </p>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-        {(["all", "work_order", "purchase_order", "invoice", "estimate"] as const).map((k) => {
+        {(["all", "work_order", "purchase_order", "invoice", "estimate", "receipt"] as const).map((k) => {
           const active = kindFilter === k
           const label = k === "all" ? `All (${allHits.length})` : `${KIND_META[k].plural} (${counts[k]})`
           return (

@@ -66,19 +66,21 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
     enabledTabs.includes(initialTab) ? initialTab : enabledTabs[0] ?? "work_orders",
   )
   const [showDocumentSearch, setShowDocumentSearch] = useState(false)
-  const [showCustomReceiptModal, setShowCustomReceiptModal] = useState(false)
+  const [showCustomReceipt, setShowCustomReceipt] = useState(false)
   const [customReceiptPrefillCustomerId, setCustomReceiptPrefillCustomerId] = useState<string | null>(null)
 
   useEffect(() => {
     const cid = consumeCustomReceiptCustomerPrefill()
     if (cid) {
       setCustomReceiptPrefillCustomerId(cid)
-      setShowCustomReceiptModal(true)
+      setShowDocumentSearch(false)
+      setShowCustomReceipt(true)
       return
     }
     if (consumeOpenCustomReceiptModal()) {
       setCustomReceiptPrefillCustomerId(null)
-      setShowCustomReceiptModal(true)
+      setShowDocumentSearch(false)
+      setShowCustomReceipt(true)
     }
   }, [])
 
@@ -122,10 +124,11 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
           <button
             key={id}
             type="button"
-            style={subNavBtn(!showDocumentSearch && activeTab === id)}
+            style={subNavBtn(!showDocumentSearch && !showCustomReceipt && activeTab === id)}
             onClick={() => {
               setTab(id)
               setShowDocumentSearch(false)
+              setShowCustomReceipt(false)
             }}
           >
             {labels[id]}
@@ -134,16 +137,20 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
         <button
           type="button"
           style={subNavBtn(showDocumentSearch)}
-          onClick={() => setShowDocumentSearch(true)}
+          onClick={() => {
+            setShowDocumentSearch(true)
+            setShowCustomReceipt(false)
+          }}
         >
           Document search
         </button>
         <button
           type="button"
-          style={subNavBtn(false)}
+          style={subNavBtn(showCustomReceipt)}
           onClick={() => {
             setCustomReceiptPrefillCustomerId(null)
-            setShowCustomReceiptModal(true)
+            setShowDocumentSearch(false)
+            setShowCustomReceipt(true)
           }}
         >
           Custom receipt
@@ -153,6 +160,18 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
         {showDocumentSearch ? (
           <OperationsDocumentSearchPanel userId={authUserId} setPage={setPage} />
+        ) : showCustomReceipt ? (
+          <CustomReceiptModal
+            open
+            variant="inline"
+            onClose={() => {
+              setShowCustomReceipt(false)
+              setCustomReceiptPrefillCustomerId(null)
+            }}
+            supabase={supabase}
+            userId={authUserId}
+            initialCustomerId={customReceiptPrefillCustomerId}
+          />
         ) : (
           <>
             {activeTab === "work_orders" ? <WorkOrdersPage setPage={setPage} embedded /> : null}
@@ -171,16 +190,6 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
           </>
         )}
       </div>
-      <CustomReceiptModal
-        open={showCustomReceiptModal}
-        onClose={() => {
-          setShowCustomReceiptModal(false)
-          setCustomReceiptPrefillCustomerId(null)
-        }}
-        supabase={supabase}
-        userId={authUserId}
-        initialCustomerId={customReceiptPrefillCustomerId}
-      />
     </div>
   )
 }

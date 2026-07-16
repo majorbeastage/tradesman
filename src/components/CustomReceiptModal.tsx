@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../styles/theme"
 import {
@@ -15,8 +15,11 @@ import {
   type CustomReceiptFormState,
   type CustomerReceiptPickerRow,
 } from "../lib/customReceipt"
-import { downloadPdfBlob } from "../lib/documentPdf"
+import { downloadPdfBlob, uint8ArrayToBase64 } from "../lib/documentPdf"
 import { useSandboxTrainingMode } from "../lib/sandboxTrainingUi"
+import { useAuth } from "../contexts/AuthContext"
+import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
+import { uploadBytesForOutbound } from "../lib/uploadCommAttachment"
 
 export type CustomReceiptModalProps = {
   open: boolean
@@ -24,6 +27,8 @@ export type CustomReceiptModalProps = {
   supabase: SupabaseClient | null
   userId: string | null
   initialCustomerId?: string | null
+  /** "modal" (overlay) or "inline" (renders directly in the page). */
+  variant?: "modal" | "inline"
 }
 
 const LINE_KINDS = ["labor", "material", "misc", "fee", "other"] as const
@@ -34,8 +39,10 @@ export default function CustomReceiptModal({
   supabase,
   userId,
   initialCustomerId,
+  variant = "modal",
 }: CustomReceiptModalProps) {
   const sandboxTraining = useSandboxTrainingMode()
+  const { session } = useAuth()
   const [form, setForm] = useState<CustomReceiptFormState>(() => defaultCustomReceiptFormState())
   const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
   const [savedReceipts, setSavedReceipts] = useState<CustomReceiptDraft[]>([])
@@ -45,7 +52,10 @@ export default function CustomReceiptModal({
   const [newUnit, setNewUnit] = useState("0")
   const [newKind, setNewKind] = useState<string>("misc")
   const [busy, setBusy] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [sendMenuOpen, setSendMenuOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const isInline = variant === "inline"
 
   useEffect(() => {
     if (!open) return
@@ -148,6 +158,89 @@ export default function CustomReceiptModal({
     }
   }
 
+  async function handleSend(channel: "email" | "sms" | "both") {
+    setSendMenuOpen(false)
+    if (!supabase || !userId) return
+    const cid = form.customerId.trim()
+    if (!cid) {
+      setNotice("Select a customer first to send this receipt.")
+      return
+    }
+    if (!form.customerName.trim()) {
+      setNotice("Enter a customer name.")
+      return
+    }
+    const token = session?.access_token?.trim()
+    if (!token) {
+      setNotice("Sign in again to send.")
+      return
+    }
+    const wantEmail = channel === "email" || channel === "both"
+    const wantSms = channel === "sms" || channel === "both"
+    const email = form.customerEmail.trim()
+    const phone = form.customerPhone.trim()
+    if (wantEmail && !email) {
+      setNotice("No email on file for this customer. Add one above or choose Text.")
+      return
+    }
+    if (wantSms && !phone) {
+      setNotice("No phone on file for this customer. Add one above or choose Email.")
+      return
+    }
+    setSending(true)
+    setNotice(null)
+    try {
+      const template = await loadReceiptTemplateSettings(supabase, userId)
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
+      if (!bytes.length) throw new Error("Receipt PDF is empty.")
+      const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
+      const filename = `receipt-${slug}.pdf`
+      const jobLine = form.jobTitle.trim() ? `\n\n${form.jobTitle.trim()}` : ""
+
+      if (wantEmail) {
+        const res = await fetch("/api/outbound-messages?__channel=email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: outboundMessagesJsonBody({
+            to: email,
+            subject: `Receipt from ${template.businessLabel}`,
+            body: `Hi ${form.customerName.trim()},\n\nPlease find your receipt attached.${jobLine}\n\nThank you.`,
+            userId,
+            customerId: cid,
+            requireAttachments: true,
+            attachments: [{ filename, content: uint8ArrayToBase64(bytes) }],
+          }),
+        })
+        const raw = await res.text()
+        if (!res.ok) throw new Error(raw.slice(0, 300))
+      }
+
+      if (wantSms) {
+        const url = await uploadBytesForOutbound(userId, bytes, filename, "custom-receipt-sms", "application/pdf")
+        if (!url) throw new Error("Could not upload the receipt for text.")
+        const res = await fetch("/api/outbound-messages?__channel=sms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: outboundMessagesJsonBody({
+            to: phone,
+            body: `Hi ${form.customerName.trim()}, here is your receipt.`,
+            userId,
+            customerId: cid,
+            mediaPublicUrls: [url],
+          }),
+        })
+        const raw = await res.text()
+        if (!res.ok) throw new Error(raw.slice(0, 300))
+      }
+
+      setNotice(channel === "both" ? "Receipt sent by text and email." : channel === "email" ? "Receipt emailed to customer." : "Receipt texted to customer.")
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
   function loadSavedReceipt(id: string) {
     const draft = savedReceipts.find((r) => r.id === id)
     if (!draft) return
@@ -182,35 +275,29 @@ export default function CustomReceiptModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="custom-receipt-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 12000,
-        background: "rgba(15,23,42,0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose()
-      }}
-    >
+    <CustomReceiptShell isInline={isInline} busy={busy || sending} onBackdrop={onClose}>
       <div
-        style={{
-          width: "min(720px, 100%)",
-          maxHeight: "92vh",
-          overflowY: "auto",
-          background: "#fff",
-          borderRadius: 12,
-          border: `1px solid ${theme.border}`,
-          padding: "20px 22px",
-          boxShadow: "0 20px 50px rgba(0,0,0,0.18)",
-        }}
+        style={
+          isInline
+            ? {
+                width: "100%",
+                maxWidth: 860,
+                background: "#fff",
+                borderRadius: 12,
+                border: `1px solid ${theme.border}`,
+                padding: "20px 22px",
+              }
+            : {
+                width: "min(720px, 100%)",
+                maxHeight: "92vh",
+                overflowY: "auto",
+                background: "#fff",
+                borderRadius: 12,
+                border: `1px solid ${theme.border}`,
+                padding: "20px 22px",
+                boxShadow: "0 20px 50px rgba(0,0,0,0.18)",
+              }
+        }
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
           <div>
@@ -487,7 +574,7 @@ export default function CustomReceiptModal({
           </div>
 
           {notice ? (
-            <p style={{ margin: 0, fontSize: 13, color: notice.toLowerCase().includes("saved") || notice.includes("downloaded") ? "#15803d" : "#b45309" }}>
+            <p style={{ margin: 0, fontSize: 13, color: /(saved|downloaded|emailed|texted|sent by text)/i.test(notice) ? "#15803d" : "#b45309" }}>
               {notice}
             </p>
           ) : null}
@@ -509,9 +596,71 @@ export default function CustomReceiptModal({
             >
               {busy ? "Working…" : "Download PDF"}
             </button>
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                disabled={busy || sending || !form.customerId.trim()}
+                onClick={() => setSendMenuOpen((v) => !v)}
+                title={!form.customerId.trim() ? "Select a customer to enable sending" : undefined}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: form.customerId.trim() ? "#059669" : "#cbd5e1",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: busy || sending || !form.customerId.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                {sending ? "Sending…" : "Send to customer ▾"}
+              </button>
+              {sendMenuOpen && form.customerId.trim() ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "calc(100% + 6px)",
+                    left: 0,
+                    zIndex: 5,
+                    background: "#fff",
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: 8,
+                    boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
+                    overflow: "hidden",
+                    minWidth: 150,
+                  }}
+                >
+                  {([
+                    { key: "sms", label: "Text" },
+                    { key: "email", label: "Email" },
+                    { key: "both", label: "Both" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => void handleSend(opt.key)}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 14px",
+                        border: "none",
+                        borderBottom: opt.key !== "both" ? `1px solid ${theme.border}` : "none",
+                        background: "#fff",
+                        color: theme.text,
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
-              disabled={busy || !form.customerId.trim()}
+              disabled={busy}
               onClick={() => void handleSaveToCustomer()}
               style={{
                 padding: "10px 16px",
@@ -544,6 +693,42 @@ export default function CustomReceiptModal({
           </div>
         </div>
       </div>
+    </CustomReceiptShell>
+  )
+}
+
+function CustomReceiptShell({
+  isInline,
+  busy,
+  onBackdrop,
+  children,
+}: {
+  isInline: boolean
+  busy: boolean
+  onBackdrop: () => void
+  children: ReactNode
+}) {
+  if (isInline) return <div style={{ display: "grid" }}>{children}</div>
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="custom-receipt-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 12000,
+        background: "rgba(15,23,42,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onBackdrop()
+      }}
+    >
+      {children}
     </div>
   )
 }

@@ -312,6 +312,32 @@ export async function loadCustomReceiptsForCustomer(
   return parseCustomReceiptDrafts(meta)
 }
 
+/** All custom receipts saved across this user's customers (for Operations document search). */
+export async function loadAllCustomReceiptsForUser(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<CustomReceiptDraft[]> {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id, display_name, metadata")
+    .eq("user_id", userId)
+    .limit(1000)
+  if (error) throw error
+  const out: CustomReceiptDraft[] = []
+  for (const row of data ?? []) {
+    const r = row as { id: string; display_name?: string | null; metadata?: unknown }
+    const drafts = parseCustomReceiptDrafts(r.metadata)
+    for (const d of drafts) {
+      out.push({
+        ...d,
+        customer_id: d.customer_id ?? r.id,
+        customer_name: d.customer_name || (r.display_name?.trim() ?? "Customer"),
+      })
+    }
+  }
+  return out.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+}
+
 export async function saveCustomReceiptToCustomerProfile(
   supabase: SupabaseClient,
   userId: string,
