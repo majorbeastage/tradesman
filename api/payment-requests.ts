@@ -17,6 +17,7 @@ import {
   type PaymentProviderId,
 } from "./_paymentProviders.js"
 import { PDFDocument, StandardFonts } from "pdf-lib"
+import { autoAdvanceCustomerWorkflowServer } from "./_workflowAutoComplete.js"
 
 type Json = Record<string, unknown>
 
@@ -219,6 +220,7 @@ async function handleCreateLink(req: VercelRequest, res: VercelResponse) {
   const quoteId = String(body.quoteId ?? "").trim() || null
   const calendarEventId = String(body.calendarEventId ?? "").trim() || null
   const invoiceId = String(body.invoiceId ?? "").trim() || null
+  const isPaymentPlan = body.paymentPlan === true || body.isPaymentPlan === true
   if (!customerId || !Number.isFinite(amount) || amount <= 0) {
     res.status(400).json({ error: "customerId and positive amount are required." })
     return
@@ -259,7 +261,7 @@ async function handleCreateLink(req: VercelRequest, res: VercelResponse) {
       payment_url: link.paymentUrl,
       status: "draft",
       provider_reference_id: link.providerReferenceId,
-      metadata: { provider_note: link.note ?? null },
+      metadata: { provider_note: link.note ?? null, ...(isPaymentPlan ? { payment_plan: true } : {}) },
     })
     .select("*")
     .single()
@@ -486,6 +488,13 @@ async function handleWebhook(req: VercelRequest, res: VercelResponse) {
     })
   } catch {
     /* optional */
+  }
+  // A completed one-time payment closes the "customer payment" workflow step and
+  // advances the customer. Payment-plan / installment links opt out (partial payments).
+  const prMeta = (pr as { metadata?: Record<string, unknown> | null }).metadata ?? {}
+  const isPaymentPlan = prMeta?.payment_plan === true || prMeta?.is_installment === true
+  if (!isPaymentPlan) {
+    await autoAdvanceCustomerWorkflowServer(sb, userId, customerId, "payment_received")
   }
   if (profileCtx.autoReceipt) {
     const { data: prof } = await sb.from("profiles").select("display_name, metadata").eq("id", userId).maybeSingle()

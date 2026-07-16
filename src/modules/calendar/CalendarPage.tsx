@@ -87,6 +87,7 @@ import {
   minutesFromColumnY,
 } from "../../lib/calendarGridTime"
 import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
+import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { readContactTargetFromMetadata, resolveCustomerContactByTarget } from "../../lib/customerContactRouting"
@@ -2925,6 +2926,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (insertedEventIds.length > 0) void invokeNotifyCalendarStatus(insertedEventIds, "", "Scheduled")
     if (addCustomerId) {
       await refreshCustomerPipelineOnEngagement(supabase, addCustomerId, "scheduled")
+      await autoAdvanceCustomerWorkflow(supabase, eventOwnerUserId, addCustomerId, "job_scheduled")
     }
 
     const sendErrs: string[] = []

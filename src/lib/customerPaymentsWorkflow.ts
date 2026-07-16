@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { CustomerPaymentProfileMetadata } from "./customerPaymentMetadata"
 
 import { mergeQuoteWorkflowAfterSent, mergeQuoteWorkflowMarked } from "./quoteCustomerPayWorkflow"
+import { autoAdvanceCustomerWorkflow } from "./customerWorkflowAutoComplete"
 
 export type CustomerPaymentEventType =
   | "payment_link_sent"
@@ -242,6 +243,8 @@ export async function markQuoteCustomerPaymentCollected(input: {
   kind: "paid" | "waived"
   amountLabel?: string | null
   note?: string | null
+  /** When true, this is one installment of a plan — do not auto-complete the payment workflow step. */
+  isPaymentPlan?: boolean
 }): Promise<{ ok: boolean; metadata?: Record<string, unknown>; error?: string }> {
   const quoteId = input.quoteId.trim()
   if (!input.supabase || !quoteId) return { ok: false, error: "Missing quote or database." }
@@ -267,8 +270,14 @@ export async function markQuoteCustomerPaymentCollected(input: {
       calendarEventId: input.calendarEventId ?? null,
       eventType: "payment_marked_collected",
       amount: amt,
-      metadata: { manual_kind: input.kind },
+      metadata: { manual_kind: input.kind, ...(input.isPaymentPlan ? { payment_plan: true } : {}) },
     })
+
+    // A completed one-time payment closes the "customer payment" step. Payment-plan
+    // installments and waived entries never auto-complete (partial / non-final).
+    if (input.kind === "paid" && !input.isPaymentPlan && input.customerId) {
+      await autoAdvanceCustomerWorkflow(input.supabase, input.userId, input.customerId, "payment_received")
+    }
     return { ok: true, metadata: nextMeta }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unexpected error." }

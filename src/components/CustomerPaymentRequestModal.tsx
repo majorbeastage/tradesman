@@ -85,6 +85,7 @@ export default function CustomerPaymentRequestModal({
   const [emailBusy, setEmailBusy] = useState(false)
   const [smsBusy, setSmsBusy] = useState(false)
   const [markBusy, setMarkBusy] = useState(false)
+  const [isPaymentPlan, setIsPaymentPlan] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [pickedQuoteId, setPickedQuoteId] = useState<string>("")
   const [emailTo, setEmailTo] = useState("")
@@ -332,6 +333,7 @@ export default function CustomerPaymentRequestModal({
         kind,
         amountLabel,
         note: null,
+        isPaymentPlan: kind === "paid" ? isPaymentPlan : false,
       })
       if (!res.ok || !res.metadata) {
         setNotice(res.error ?? "Could not update payment status.")
@@ -618,6 +620,27 @@ export default function CustomerPaymentRequestModal({
                   Cash, check, or another processor doesn&apos;t change your hosted link — record it here so your team sees Paid / waived on
                   this estimate.
                 </p>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    margin: "0 0 10px",
+                    fontSize: 12,
+                    color: theme.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isPaymentPlan}
+                    onChange={(e) => setIsPaymentPlan(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <span>
+                    This is part of a payment plan / installment (don&apos;t auto-complete the payment workflow step)
+                  </span>
+                </label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                   <button
                     type="button"

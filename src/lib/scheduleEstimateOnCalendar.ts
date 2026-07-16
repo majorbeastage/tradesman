@@ -12,6 +12,7 @@ import { parseLocalDateTime } from "./parseLocalDateTime"
 import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } from "./scheduleDurationDefaults"
 import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
+import { autoAdvanceCustomerWorkflow } from "./customerWorkflowAutoComplete"
 import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave, type CalendarAssigneeResolution } from "./calendarAssignee"
 import type { PortalSettingItem } from "../types/portal-builder"
 
@@ -214,6 +215,7 @@ export async function scheduleEstimateOnCalendar(
 
   if (input.customerId) {
     await refreshCustomerPipelineOnEngagement(input.supabase, input.customerId, "scheduled")
+    await autoAdvanceCustomerWorkflow(input.supabase, input.targetUserId, input.customerId, "job_scheduled")
   }
 
   return {

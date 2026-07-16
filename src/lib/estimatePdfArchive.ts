@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { uploadEntityAttachmentFile } from "./uploadCommAttachment"
+import { autoAdvanceCustomerWorkflow } from "./customerWorkflowAutoComplete"
 
 export const ARCHIVED_ESTIMATE_PDF_META = "archived_estimate_pdf"
 export const CUSTOMER_SIGNED_ESTIMATE_LABEL = "Customer Signed Estimate or Proposal"
@@ -141,7 +142,7 @@ async function markQuoteApprovedByCustomer(
 ): Promise<void> {
   const { data: quote, error } = await supabase
     .from("quotes")
-    .select("metadata, status")
+    .select("metadata, status, customer_id")
     .eq("id", quoteId)
     .eq("user_id", userId)
     .maybeSingle()
@@ -164,6 +165,12 @@ async function markQuoteApprovedByCustomer(
     .update({ metadata: nextMeta, ...(nextStatus ? { status: nextStatus } : {}) })
     .eq("id", quoteId)
     .eq("user_id", userId)
+
+  // A signed estimate closes the "customer approves / signs" step (and everything before it).
+  const customerId = (quote as { customer_id?: string | null }).customer_id ?? null
+  if (customerId) {
+    await autoAdvanceCustomerWorkflow(supabase, userId, customerId, "estimate_signed")
+  }
 }
 
 /** Copy an inbound email/MMS file onto a quote as a customer-signed estimate or proposal. */

@@ -20,7 +20,7 @@ export type InferredCustomerWorkflowStep = {
   reason: string
 }
 
-type StageKey =
+export type StageKey =
   | "intake"
   | "estimate"
   | "approval"
@@ -30,9 +30,9 @@ type StageKey =
   | "billing"
   | "complete"
 
-const STAGE_ORDER: StageKey[] = ["intake", "estimate", "approval", "schedule", "field", "parts", "billing", "complete"]
+export const STAGE_ORDER: StageKey[] = ["intake", "estimate", "approval", "schedule", "field", "parts", "billing", "complete"]
 
-function stageForNodeLabel(label: string): StageKey | null {
+export function stageForNodeLabel(label: string): StageKey | null {
   const l = label.toLowerCase()
   if (/lead|intake|reception|inquir|contact|call/.test(l)) return "intake"
   if (/estimate|quote|bid|proposal/.test(l)) return "estimate"

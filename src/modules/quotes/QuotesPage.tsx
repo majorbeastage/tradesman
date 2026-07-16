@@ -193,6 +193,7 @@ import {
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
 import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
+import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import { uploadBytesForOutbound } from "../../lib/uploadCommAttachment"
 import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS } from "../../lib/smsComplianceLimits"
 import {
@@ -4396,6 +4397,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "email").catch(() => undefined)
       }
+      if (supabase && userId && selectedQuote?.customer_id) {
+        void autoAdvanceCustomerWorkflow(supabase, userId, selectedQuote.customer_id, "estimate_sent")
+      }
       if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
       return true
     } catch (e) {
@@ -4499,6 +4503,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (!sandboxTraining && !options?.skipPanelClose) alert("Text sent with estimate PDF attached.")
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "manual").catch(() => undefined)
+      }
+      if (supabase && userId && selectedQuote?.customer_id) {
+        void autoAdvanceCustomerWorkflow(supabase, userId, selectedQuote.customer_id, "estimate_sent")
       }
       if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
       return true
