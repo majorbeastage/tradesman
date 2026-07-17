@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tradesman Messaging</string>
+    <string name="title_activity_main">Tradesman Messaging</string>
+    <string name="package_name">com.tradesmanus.messaging</string>
+    <string name="custom_url_scheme">com.tradesmanus.messaging</string>
+</resources>
