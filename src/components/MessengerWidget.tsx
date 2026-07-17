@@ -638,7 +638,7 @@ export default function MessengerWidget({ setPage }: Props) {
                     value={custQuery}
                     onChange={(e) => setCustQuery(e.target.value)}
                     placeholder="Search your customers…"
-                    style={{ margin: 8, padding: "7px 9px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, color: theme.text }}
+                    style={{ margin: 8, padding: "7px 9px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, color: "#0f172a", background: "#fff" }}
                   />
                   <div style={{ overflowY: "auto" }}>
                     {custResults.length === 0 ? (
@@ -687,7 +687,7 @@ export default function MessengerWidget({ setPage }: Props) {
                   }}
                   placeholder="Type a message…"
                   rows={1}
-                  style={{ flex: 1, resize: "none", padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, fontFamily: "inherit", maxHeight: 90, color: theme.text }}
+                  style={{ flex: 1, resize: "none", padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, fontFamily: "inherit", maxHeight: 90, color: "#0f172a", background: "#fff" }}
                 />
                 <button
                   type="button"
@@ -705,7 +705,7 @@ export default function MessengerWidget({ setPage }: Props) {
                 value={groupTitle}
                 onChange={(e) => setGroupTitle(e.target.value)}
                 placeholder="Group name (optional)"
-                style={{ margin: 10, padding: "9px 11px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14, color: theme.text }}
+                style={{ margin: 10, padding: "9px 11px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14, color: "#0f172a", background: "#fff" }}
               />
               <div style={{ padding: "0 12px 6px", fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5 }}>Add members</div>
               <div style={{ flex: 1, overflowY: "auto" }}>
