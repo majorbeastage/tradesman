@@ -16,3 +16,23 @@ export function onOpenMessenger(cb: (detail: OpenMessengerDetail) => void): () =
   window.addEventListener(OPEN_MESSENGER_EVENT, handler)
   return () => window.removeEventListener(OPEN_MESSENGER_EVENT, handler)
 }
+
+/** Join a stable conference room (e.g. from a scheduled calendar video call). */
+export const JOIN_CONFERENCE_EVENT = "tradesman-join-conference"
+
+export type JoinConferenceDetail = { roomId: string; video: boolean }
+
+export function joinConference(roomId: string, video: boolean): void {
+  if (typeof window === "undefined" || !roomId) return
+  window.dispatchEvent(new CustomEvent<JoinConferenceDetail>(JOIN_CONFERENCE_EVENT, { detail: { roomId, video } }))
+}
+
+export function onJoinConference(cb: (detail: JoinConferenceDetail) => void): () => void {
+  if (typeof window === "undefined") return () => {}
+  const handler = (e: Event) => {
+    const d = (e as CustomEvent<JoinConferenceDetail>).detail
+    if (d?.roomId) cb(d)
+  }
+  window.addEventListener(JOIN_CONFERENCE_EVENT, handler)
+  return () => window.removeEventListener(JOIN_CONFERENCE_EVENT, handler)
+}

@@ -17,7 +17,7 @@ import {
   type MessengerCustomer,
   type ThreadSummary,
 } from "../lib/internalMessaging"
-import { onOpenMessenger } from "../lib/messengerBus"
+import { onOpenMessenger, onJoinConference } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
@@ -363,6 +363,16 @@ export default function MessengerWidget({ setPage }: Props) {
       setView("dial")
     }
   }, [room.state])
+
+  // Join a scheduled calendar video call (stable room) from anywhere in the app.
+  useEffect(() => {
+    return onJoinConference(({ roomId, video }) => {
+      setOpen(true)
+      setView("dial")
+      void room.joinNamedRoom(roomId, { video })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (!me) return null
 

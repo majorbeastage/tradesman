@@ -357,6 +357,29 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     [acquireMedia, cleanup, joinRoom, me, upsertParticipant],
   )
 
+  // Join a stable, pre-agreed room (e.g. a scheduled calendar video call).
+  // No invites are sent — every participant joins the same room id and presence
+  // wires up the mesh.
+  const joinNamedRoom = useCallback(
+    async (roomId: string, opts: { video: boolean }) => {
+      if (!supabase || !me) return
+      if (roomIdRef.current) return
+      setError(null)
+      setIsVideo(opts.video)
+      setState("ringing")
+      try {
+        await acquireMedia(opts.video)
+        await joinRoom(roomId)
+        maybeStartTimer()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not join the call (camera/mic blocked?).")
+        setState("error")
+        cleanup()
+      }
+    },
+    [acquireMedia, cleanup, joinRoom, maybeStartTimer, me],
+  )
+
   const accept = useCallback(async () => {
     const inv = incoming
     if (!inv) return
@@ -449,6 +472,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setError,
     selfStream,
     startCall,
+    joinNamedRoom,
     accept,
     decline,
     hangup,
