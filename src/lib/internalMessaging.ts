@@ -39,7 +39,7 @@ export function isInternalMessagingUnavailable(message: string | null | undefine
   // messages that merely name the table (e.g. RLS "violates row-level security
   // policy for table internal_threads") — those mean it IS set up but the write
   // was rejected, and should surface their real message instead.
-  return /(does not exist|schema cache|could not find the table|PGRST205)/i.test(message ?? "")
+  return /(does not exist|schema cache|could not find the (table|function)|PGRST20[25])/i.test(message ?? "")
 }
 
 function parseCustomerRef(raw: unknown): CustomerRef | null {
@@ -223,18 +223,18 @@ export async function findOrCreateDirectThread(
       }
     }
 
-    const { data: created, error: cErr } = await supabase
-      .from("internal_threads")
-      .insert({ created_by: me, is_group: false })
-      .select("id")
-      .single()
-    if (cErr || !created) return { threadId: null, error: cErr ? (isInternalMessagingUnavailable(cErr.message) ? "Messaging is not set up yet." : cErr.message) : "Could not start chat." }
-    const threadId = created.id as string
-    const { error: memErr } = await supabase
-      .from("internal_thread_members")
-      .insert([{ thread_id: threadId, user_id: me }, { thread_id: threadId, user_id: other }])
-    if (memErr) return { threadId: null, error: memErr.message }
-    return { threadId }
+    const { data: newId, error: rpcErr } = await supabase.rpc("create_internal_thread", {
+      p_is_group: false,
+      p_title: null,
+      p_member_ids: [other],
+    })
+    if (rpcErr || !newId) {
+      return {
+        threadId: null,
+        error: rpcErr ? (isInternalMessagingUnavailable(rpcErr.message) ? "Messaging is not set up yet." : rpcErr.message) : "Could not start chat.",
+      }
+    }
+    return { threadId: newId as string }
   } catch (e) {
     return { threadId: null, error: e instanceof Error ? e.message : String(e) }
   }
@@ -250,17 +250,18 @@ export async function createGroupThread(
   const others = [...new Set(memberIds.filter((id) => id && id !== me))]
   if (others.length === 0) return { threadId: null, error: "Pick at least one member." }
   try {
-    const { data: created, error: cErr } = await supabase
-      .from("internal_threads")
-      .insert({ created_by: me, is_group: true, title: title.trim() || "Group chat" })
-      .select("id")
-      .single()
-    if (cErr || !created) return { threadId: null, error: cErr ? (isInternalMessagingUnavailable(cErr.message) ? "Messaging is not set up yet." : cErr.message) : "Could not create group." }
-    const threadId = created.id as string
-    const rows = [me, ...others].map((uid) => ({ thread_id: threadId, user_id: uid }))
-    const { error: memErr } = await supabase.from("internal_thread_members").insert(rows)
-    if (memErr) return { threadId: null, error: memErr.message }
-    return { threadId }
+    const { data: newId, error: rpcErr } = await supabase.rpc("create_internal_thread", {
+      p_is_group: true,
+      p_title: title.trim() || "Group chat",
+      p_member_ids: others,
+    })
+    if (rpcErr || !newId) {
+      return {
+        threadId: null,
+        error: rpcErr ? (isInternalMessagingUnavailable(rpcErr.message) ? "Messaging is not set up yet." : rpcErr.message) : "Could not create group.",
+      }
+    }
+    return { threadId: newId as string }
   } catch (e) {
     return { threadId: null, error: e instanceof Error ? e.message : String(e) }
   }

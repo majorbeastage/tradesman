@@ -170,12 +170,13 @@ export async function findOrCreateDirectThread(supabase: SupabaseClient, me: str
       }
     }
   }
-  const { data: created, error } = await supabase.from("internal_threads").insert({ created_by: me, is_group: false }).select("id").single()
-  if (error || !created) return null
-  const threadId = created.id as string
-  const { error: memErr } = await supabase.from("internal_thread_members").insert([{ thread_id: threadId, user_id: me }, { thread_id: threadId, user_id: other }])
-  if (memErr) return null
-  return threadId
+  const { data: newId, error } = await supabase.rpc("create_internal_thread", {
+    p_is_group: false,
+    p_title: null,
+    p_member_ids: [other],
+  })
+  if (error || !newId) return null
+  return newId as string
 }
 
 export async function createGroupThread(
@@ -186,17 +187,13 @@ export async function createGroupThread(
 ): Promise<string | null> {
   const others = [...new Set(memberIds.filter((id) => id && id !== me))]
   if (others.length === 0) return null
-  const { data: created, error } = await supabase
-    .from("internal_threads")
-    .insert({ created_by: me, is_group: true, title: title.trim() || "Group chat" })
-    .select("id")
-    .single()
-  if (error || !created) return null
-  const threadId = created.id as string
-  const rows = [me, ...others].map((uid) => ({ thread_id: threadId, user_id: uid }))
-  const { error: memErr } = await supabase.from("internal_thread_members").insert(rows)
-  if (memErr) return null
-  return threadId
+  const { data: newId, error } = await supabase.rpc("create_internal_thread", {
+    p_is_group: true,
+    p_title: title.trim() || "Group chat",
+    p_member_ids: others,
+  })
+  if (error || !newId) return null
+  return newId as string
 }
 
 export type MessengerCustomer = { id: string; name: string }
