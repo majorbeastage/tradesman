@@ -125,12 +125,18 @@ export async function sendThreadMessage(
   me: string,
   threadId: string,
   body: string,
+  customerRef?: CustomerRef | null,
 ): Promise<InternalMessage | null> {
   const trimmed = body.trim()
-  if (!trimmed) return null
+  if (!trimmed && !customerRef) return null
   const { data, error } = await supabase
     .from("internal_messages")
-    .insert({ thread_id: threadId, sender_id: me, body: trimmed })
+    .insert({
+      thread_id: threadId,
+      sender_id: me,
+      body: trimmed || (customerRef ? `Shared ${customerRef.name}` : ""),
+      customer_ref: customerRef ?? null,
+    })
     .select(MSG_COLS)
     .single()
   if (error || !data) return null
@@ -170,6 +176,46 @@ export async function findOrCreateDirectThread(supabase: SupabaseClient, me: str
   const { error: memErr } = await supabase.from("internal_thread_members").insert([{ thread_id: threadId, user_id: me }, { thread_id: threadId, user_id: other }])
   if (memErr) return null
   return threadId
+}
+
+export async function createGroupThread(
+  supabase: SupabaseClient,
+  me: string,
+  memberIds: string[],
+  title: string,
+): Promise<string | null> {
+  const others = [...new Set(memberIds.filter((id) => id && id !== me))]
+  if (others.length === 0) return null
+  const { data: created, error } = await supabase
+    .from("internal_threads")
+    .insert({ created_by: me, is_group: true, title: title.trim() || "Group chat" })
+    .select("id")
+    .single()
+  if (error || !created) return null
+  const threadId = created.id as string
+  const rows = [me, ...others].map((uid) => ({ thread_id: threadId, user_id: uid }))
+  const { error: memErr } = await supabase.from("internal_thread_members").insert(rows)
+  if (memErr) return null
+  return threadId
+}
+
+export type MessengerCustomer = { id: string; name: string }
+
+export async function searchMessengerCustomers(
+  supabase: SupabaseClient,
+  me: string,
+  query: string,
+  limit = 20,
+): Promise<MessengerCustomer[]> {
+  let q = supabase.from("customers").select("id, display_name").eq("user_id", me)
+  const trimmed = query.trim()
+  if (trimmed) q = q.ilike("display_name", `%${trimmed}%`)
+  const { data, error } = await q.order("updated_at", { ascending: false }).limit(limit)
+  if (error) return []
+  return ((data ?? []) as { id: string; display_name: string | null }[]).map((r) => ({
+    id: r.id,
+    name: r.display_name?.trim() || "Unnamed customer",
+  }))
 }
 
 export async function loadPeerNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
