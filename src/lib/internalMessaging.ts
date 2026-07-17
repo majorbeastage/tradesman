@@ -35,7 +35,11 @@ export type ThreadSummary = InternalThread & {
 const MSG_COLS = "id, created_at, thread_id, sender_id, body, customer_ref"
 
 export function isInternalMessagingUnavailable(message: string | null | undefined): boolean {
-  return /internal_thread|internal_messages|does not exist|relation|schema cache|is_internal_thread_member/i.test(message ?? "")
+  // Only treat "table/function truly missing" errors as not-set-up. Do NOT match
+  // messages that merely name the table (e.g. RLS "violates row-level security
+  // policy for table internal_threads") — those mean it IS set up but the write
+  // was rejected, and should surface their real message instead.
+  return /(does not exist|schema cache|could not find the table|PGRST205)/i.test(message ?? "")
 }
 
 function parseCustomerRef(raw: unknown): CustomerRef | null {
