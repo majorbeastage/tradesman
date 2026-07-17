@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { supabase } from "../lib/supabaseClient"
+import { useConferenceRoom } from "../lib/useConferenceRoom"
+import ConferenceCallView from "./ConferenceCallView"
 import {
   createGroupThread,
   findOrCreateDirectThread,
@@ -160,6 +162,9 @@ export default function MessengerScreen({ me }: { me: string }) {
 
   const peerName = useCallback((id: string) => (id === me ? "You" : names.get(id) ?? "Member"), [names, me])
 
+  // Internal team calls/conferences (audio + video) over WebRTC.
+  const room = useConferenceRoom(me, peerName)
+
   function threadTitle(t: ThreadSummary): string {
     if (t.is_group) return t.title?.trim() || "Group chat"
     const other = t.members.find((id) => id !== me)
@@ -168,13 +173,26 @@ export default function MessengerScreen({ me }: { me: string }) {
 
   const selectedThread = useMemo(() => threads.find((t) => t.id === selected) ?? null, [threads, selected])
 
+  function callThread(t: ThreadSummary, video: boolean) {
+    const others = t.members.filter((id) => id !== me)
+    if (others.length === 0) return
+    void room.startCall(others, { video })
+  }
+
+  const callOverlay = room.state !== "idle" ? <ConferenceCallView room={room} selfName="You" /> : null
+
+  // A call (outgoing, incoming, or in-progress) takes over the full screen on mobile.
+  if (callOverlay) return callOverlay
+
   // ── Chat view ────────────────────────────────────────────────────────────
   if (selected && selectedThread) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={headerBar}>
           <button onClick={() => setSelected(null)} style={backBtn}>‹</button>
-          <strong style={{ fontSize: 16 }}>{threadTitle(selectedThread)}</strong>
+          <strong style={{ fontSize: 16, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(selectedThread)}</strong>
+          <button onClick={() => callThread(selectedThread, false)} title="Audio call" style={callHdrBtn}>📞</button>
+          <button onClick={() => callThread(selectedThread, true)} title="Video call" style={callHdrBtn}>🎥</button>
         </div>
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           {messages.map((m) => {
@@ -403,6 +421,7 @@ export default function MessengerScreen({ me }: { me: string }) {
 
 const headerBar: CSSProperties = { display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: "var(--orange)", color: "#fff" }
 const backBtn: CSSProperties = { border: "none", background: "transparent", color: "#fff", fontSize: 22, cursor: "pointer" }
+const callHdrBtn: CSSProperties = { border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", borderRadius: 8, padding: "5px 9px", fontSize: 15, cursor: "pointer" }
 const badge: CSSProperties = { minWidth: 22, height: 22, borderRadius: 11, background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }
 
 const rowStyle: CSSProperties = {

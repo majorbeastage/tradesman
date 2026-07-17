@@ -14,9 +14,35 @@ Working in this scaffold:
 - Supabase client + auth (email/password login fallback)
 - **Shared auto-login** handoff from the full mobile app (deep link, see below)
 - Team contact list + 1:1 threads + send/receive with Supabase Realtime
+- Ad-hoc groups, customer references, dial-out via `twilio-bridge-call`
+- **Internal team calling — audio + video conference** (WebRTC, no Twilio). 📞/🎥
+  buttons in the chat header start a call with everyone in the thread; incoming
+  calls take over the screen with Accept/Decline. Shares the same signaling
+  (`rtc-inbox-<uid>` / `rtc-room-<roomId>` Supabase Realtime channels) as the
+  desktop widget, so desktop ⇄ mobile calls interoperate. See
+  `src/lib/useConferenceRoom.ts` + `src/screens/ConferenceCallView.tsx`.
 
-Roadmap (parity with desktop widget): ad-hoc groups, customer references,
-presence dots, dial-out via `twilio-bridge-call`, push notifications.
+Roadmap (parity with desktop widget): presence dots, push notifications,
+conference "add participant", external (non-team) invite links.
+
+### Calling requires camera/mic permission (native)
+
+WebRTC uses `getUserMedia`. When you generate the native projects, add:
+
+- **Android** (`android/app/src/main/AndroidManifest.xml`):
+  ```xml
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  ```
+  The Capacitor WebView also needs runtime permission grants; `getUserMedia`
+  prompts are handled by the system WebView on API 33+.
+- **iOS** (`ios/App/App/Info.plist`):
+  ```xml
+  <key>NSCameraUsageDescription</key><string>Video calls with your team.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Voice calls with your team.</string>
+  ```
 
 ## Shared auto-login (link into the full mobile app)
 
