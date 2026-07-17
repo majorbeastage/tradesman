@@ -20,7 +20,8 @@ import {
 import { onOpenMessenger } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
-import { useInternalCall } from "../lib/useInternalCall"
+import { useConferenceRoom } from "../lib/useConferenceRoom"
+import ConferenceCallView from "./ConferenceCallView"
 
 type Props = { setPage: (page: string) => void }
 
@@ -95,38 +96,22 @@ export default function MessengerWidget({ setPage }: Props) {
     [peers, me],
   )
 
-  // Internal teammate calls over WebRTC (no Twilio).
-  const intercom = useInternalCall(me, peerName)
+  // Internal teammate calls/conferences (audio + video) over WebRTC (no Twilio).
+  const room = useConferenceRoom(me, peerName)
 
-  // Unified active-call panel: an internal WebRTC call takes priority over the PSTN pad.
+  // PSTN dial-out panel state (Twilio softphone).
   const active =
-    intercom.callState !== "idle"
+    voice.callState !== "idle"
       ? {
-          state: intercom.callState as string,
-          label: intercom.peer?.name ?? "Call",
-          muted: intercom.muted,
-          seconds: intercom.seconds,
-          error: intercom.error,
-          canAccept: intercom.callState === "incoming",
-          toggleMute: intercom.toggleMute,
-          hangup: intercom.hangup,
-          accept: intercom.accept,
-          reject: intercom.reject,
+          state: voice.callState as string,
+          label: voice.peer?.label ?? "Call",
+          muted: voice.muted,
+          seconds: voice.seconds,
+          error: voice.error,
+          toggleMute: voice.toggleMute,
+          hangup: voice.hangup,
         }
-      : voice.callState !== "idle"
-        ? {
-            state: voice.callState as string,
-            label: voice.peer?.label ?? "Call",
-            muted: voice.muted,
-            seconds: voice.seconds,
-            error: voice.error,
-            canAccept: false,
-            toggleMute: voice.toggleMute,
-            hangup: voice.hangup,
-            accept: () => {},
-            reject: () => {},
-          }
-        : null
+      : null
 
   const refreshThreads = useCallback(async () => {
     if (!me) return
@@ -361,27 +346,28 @@ export default function MessengerWidget({ setPage }: Props) {
     void voice.placePhoneCall(to, dialNumber)
   }
 
-  // Call the other member of the currently open 1:1 thread (WebRTC, no Twilio).
-  function callSelectedMember() {
-    if (!selectedThread || selectedThread.is_group) return
-    const other = selectedThread.members.find((id) => id !== me)
-    if (!other) return
+  // Start an internal call/conference (audio or video) with everyone in the open thread.
+  function callThread(video: boolean) {
+    if (!selectedThread) return
+    const others = selectedThread.members.filter((id) => id !== me)
+    if (others.length === 0) return
     setOpen(true)
     setView("dial")
-    void intercom.placeCall(other, peerName(other))
+    void room.startCall(others, { video })
   }
 
-  // Surface an incoming team call: open the widget and show the Accept/Decline panel.
+  // Surface an incoming/active team call: open the widget and show the conference panel.
   useEffect(() => {
-    if (intercom.callState === "incoming") {
+    if (room.state === "incoming" || room.state === "ringing" || room.state === "in_call") {
       setOpen(true)
       setView("dial")
     }
-  }, [intercom.callState])
+  }, [room.state])
 
   if (!me) return null
 
   const callActive = active != null
+  const roomActive = room.state !== "idle"
 
   const headerTitle =
     view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Dial out" : view === "new_group" ? "New group" : "Instant messaging"
@@ -458,16 +444,27 @@ export default function MessengerWidget({ setPage }: Props) {
                 </button>
               </>
             ) : null}
-            {view === "chat" && selectedThread && !selectedThread.is_group ? (
-              <button
-                type="button"
-                onClick={callSelectedMember}
-                title="Call this teammate"
-                aria-label="Call this teammate"
-                style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
-              >
-                📞
-              </button>
+            {view === "chat" && selectedThread ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => callThread(false)}
+                  title="Audio call"
+                  aria-label="Audio call"
+                  style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+                >
+                  📞
+                </button>
+                <button
+                  type="button"
+                  onClick={() => callThread(true)}
+                  title="Video call"
+                  aria-label="Video call"
+                  style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+                >
+                  🎥
+                </button>
+              </>
             ) : null}
             <button type="button" onClick={() => setOpen(false)} aria-label="Close" style={{ border: "none", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
               ×
@@ -691,7 +688,9 @@ export default function MessengerWidget({ setPage }: Props) {
             </div>
           ) : (
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
-              {callActive && active ? (
+              {roomActive ? (
+                <ConferenceCallView room={room} selfName="You" />
+              ) : callActive && active ? (
                 <div style={{ display: "grid", gap: 12, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 16, background: "#f8fafc" }}>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{active.label}</div>
@@ -707,42 +706,23 @@ export default function MessengerWidget({ setPage }: Props) {
                               : `In call · ${Math.floor(active.seconds / 60)}:${String(active.seconds % 60).padStart(2, "0")}`}
                     </div>
                   </div>
-                  {active.canAccept ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        onClick={() => void active.accept()}
-                        style={{ flex: 1, border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "12px", fontWeight: 800, cursor: "pointer" }}
-                      >
-                        ✓ Accept
-                      </button>
-                      <button
-                        type="button"
-                        onClick={active.reject}
-                        style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "12px", fontWeight: 800, cursor: "pointer" }}
-                      >
-                        ✕ Decline
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        onClick={active.toggleMute}
-                        disabled={active.state !== "in_call"}
-                        style={{ flex: 1, border: `1px solid ${theme.border}`, background: active.muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: active.state === "in_call" ? "pointer" : "default", opacity: active.state === "in_call" ? 1 : 0.6 }}
-                      >
-                        {active.muted ? "🔇 Unmute" : "🎙 Mute"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={active.hangup}
-                        style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
-                      >
-                        ✕ Hang up
-                      </button>
-                    </div>
-                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={active.toggleMute}
+                      disabled={active.state !== "in_call"}
+                      style={{ flex: 1, border: `1px solid ${theme.border}`, background: active.muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: active.state === "in_call" ? "pointer" : "default", opacity: active.state === "in_call" ? 1 : 0.6 }}
+                    >
+                      {active.muted ? "🔇 Unmute" : "🎙 Mute"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={active.hangup}
+                      style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
+                    >
+                      ✕ Hang up
+                    </button>
+                  </div>
                   {active.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center" }}>{active.error}</p> : null}
                 </div>
               ) : (
