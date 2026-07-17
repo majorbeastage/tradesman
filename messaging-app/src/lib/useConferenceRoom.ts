@@ -59,11 +59,14 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const [seconds, setSeconds] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [selfStream, setSelfStream] = useState<MediaStream | null>(null)
+  const [sharingScreen, setSharingScreen] = useState(false)
 
   const roomIdRef = useRef<string | null>(null)
   const roomChanRef = useRef<RealtimeChannel | null>(null)
   const inboxRef = useRef<RealtimeChannel | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const cameraTrackRef = useRef<MediaStreamTrack | null>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map())
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -119,12 +122,20 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     pcsRef.current.clear()
     pendingIceRef.current.clear()
     try {
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop())
+    } catch {
+      /* ignore */
+    }
+    screenStreamRef.current = null
+    try {
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
     } catch {
       /* ignore */
     }
     localStreamRef.current = null
+    cameraTrackRef.current = null
     setSelfStream(null)
+    setSharingScreen(false)
     if (roomChanRef.current) {
       try {
         void supabase?.removeChannel(roomChanRef.current)
@@ -301,6 +312,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const acquireMedia = useCallback(async (video: boolean) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video })
     localStreamRef.current = stream
+    cameraTrackRef.current = stream.getVideoTracks()[0] ?? null
     if (video) {
       setSelfStream(stream)
       setCameraOn(true)
@@ -308,6 +320,104 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setMuted(false)
     return stream
   }, [])
+
+  /** Swap the outgoing video track on every peer (camera ↔ screen). Renegotiates if needed. */
+  const replaceOutgoingVideo = useCallback(
+    async (track: MediaStreamTrack | null) => {
+      const myId = meRef.current
+      for (const [peerId, pc] of pcsRef.current) {
+        const sender = pc.getSenders().find((s) => s.track?.kind === "video")
+        try {
+          if (sender) {
+            await sender.replaceTrack(track)
+          } else if (track) {
+            const stream = localStreamRef.current
+            if (stream && !stream.getVideoTracks().includes(track)) stream.addTrack(track)
+            pc.addTrack(track, stream ?? new MediaStream([track]))
+            // Renegotiate so the far side learns about the new video track.
+            if (myId && myId < peerId) {
+              const offer = await pc.createOffer()
+              await pc.setLocalDescription(offer)
+              sendRoom("signal", { to: peerId, from: myId, kind: "offer", sdp: offer } as SignalPayload)
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [sendRoom],
+  )
+
+  const stopScreenShare = useCallback(async () => {
+    try {
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop())
+    } catch {
+      /* ignore */
+    }
+    screenStreamRef.current = null
+    setSharingScreen(false)
+    const cam = cameraTrackRef.current
+    const local = localStreamRef.current
+    if (cam && cam.readyState === "live") {
+      // Put camera back into the local preview stream.
+      if (local) {
+        local.getVideoTracks().forEach((t) => {
+          if (t !== cam) {
+            try {
+              local.removeTrack(t)
+            } catch {
+              /* ignore */
+            }
+          }
+        })
+        if (!local.getVideoTracks().includes(cam)) local.addTrack(cam)
+        setSelfStream(new MediaStream([...local.getAudioTracks(), cam]))
+      }
+      await replaceOutgoingVideo(cam)
+      setCameraOn(true)
+      setIsVideo(true)
+    } else {
+      await replaceOutgoingVideo(null)
+      setSelfStream(local ? new MediaStream(local.getAudioTracks()) : null)
+      setCameraOn(false)
+    }
+  }, [replaceOutgoingVideo])
+
+  const startScreenShare = useCallback(async () => {
+    try {
+      const display = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 15, displaySurface: "monitor" } as MediaTrackConstraints,
+        audio: false,
+      })
+      const screenTrack = display.getVideoTracks()[0]
+      if (!screenTrack) {
+        display.getTracks().forEach((t) => t.stop())
+        return
+      }
+      // Remember camera (do not stop it — we may restore later).
+      const local = localStreamRef.current
+      if (local) {
+        const existingCam = local.getVideoTracks()[0]
+        if (existingCam && existingCam !== screenTrack) cameraTrackRef.current = existingCam
+      }
+      screenStreamRef.current = display
+      setSharingScreen(true)
+      setIsVideo(true)
+      setCameraOn(false)
+      // Preview shows screen locally.
+      const audioTracks = local?.getAudioTracks() ?? []
+      setSelfStream(new MediaStream([...audioTracks, screenTrack]))
+      await replaceOutgoingVideo(screenTrack)
+      screenTrack.onended = () => {
+        void stopScreenShare()
+      }
+    } catch (e) {
+      // User cancelled the picker — not an error state for the call.
+      if (e instanceof Error && /Permission denied|NotAllowedError|abort/i.test(e.name + e.message)) return
+      setError(e instanceof Error ? e.message : "Could not share screen.")
+    }
+  }, [replaceOutgoingVideo, stopScreenShare])
 
   // Start an outbound call/conference with the given teammates.
   const startCall = useCallback(
@@ -467,6 +577,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     muted,
     cameraOn,
     isVideo,
+    sharingScreen,
     seconds,
     error,
     setError,
@@ -478,5 +589,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     hangup,
     toggleMute,
     toggleCamera,
+    startScreenShare,
+    stopScreenShare,
   }
 }

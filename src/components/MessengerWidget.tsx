@@ -21,7 +21,7 @@ import { onOpenMessenger, onJoinConference } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
-import ConferenceCallView from "./ConferenceCallView"
+import ConferenceCallView, { ConferenceCallBody, mountReactInPopup, openConferencePopOut } from "./ConferenceCallView"
 import {
   AVAILABILITY_COLOR,
   AVAILABILITY_LABEL,
@@ -69,6 +69,8 @@ export default function MessengerWidget({ setPage }: Props) {
   const [online, setOnline] = useState<Set<string>>(new Set())
   const [availability, setAvailability] = useState<Availability>("available")
   const [availOpen, setAvailOpen] = useState(false)
+  const [callPoppedOut, setCallPoppedOut] = useState(false)
+  const callPopCloseRef = useRef<(() => void) | null>(null)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<InternalMessage[]>([])
   const [input, setInput] = useState("")
@@ -366,17 +368,75 @@ export default function MessengerWidget({ setPage }: Props) {
     const others = selectedThread.members.filter((id) => id !== me)
     if (others.length === 0) return
     setOpen(true)
-    setView("dial")
+    // Stay in the chat so you can keep messaging during the call.
+    setView("chat")
     void room.startCall(others, { video })
   }
 
-  // Surface an incoming/active team call: open the widget and show the conference panel.
+  // Surface an incoming team call: open the widget. Prefer staying on chat when possible.
   useEffect(() => {
-    if (room.state === "incoming" || room.state === "ringing" || room.state === "in_call") {
+    if (room.state === "incoming") {
       setOpen(true)
       setView("dial")
+    } else if (room.state === "ringing" || room.state === "in_call") {
+      setOpen(true)
+      if (selectedThreadIdRef.current) setView("chat")
     }
   }, [room.state])
+
+  // When accepting an incoming call with no thread open, open/create a DM with the first remote peer.
+  useEffect(() => {
+    if (room.state !== "in_call" || selectedThreadIdRef.current || !me) return
+    const other = room.participants[0]?.id
+    if (!other) return
+    void findOrCreateDirectThread(supabase, me, other).then((r) => {
+      if (r.threadId) {
+        setSelectedThreadId(r.threadId)
+        setView("chat")
+        void loadThreadMessages(supabase, r.threadId).then(setMessages)
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.state, room.participants])
+
+  async function handlePopOut() {
+    if (callPopCloseRef.current) return
+    try {
+      const close = await openConferencePopOut((mount) =>
+        mountReactInPopup(
+          mount,
+          <ConferenceCallBody room={room} selfName="You" />,
+        ),
+      )
+      callPopCloseRef.current = close
+      setCallPoppedOut(true)
+    } catch (e) {
+      room.setError(e instanceof Error ? e.message : "Could not open video popup.")
+    }
+  }
+
+  function handleReturnFromPopOut() {
+    try {
+      callPopCloseRef.current?.()
+    } catch {
+      /* ignore */
+    }
+    callPopCloseRef.current = null
+    setCallPoppedOut(false)
+  }
+
+  useEffect(() => {
+    if (room.state === "idle" && callPoppedOut) handleReturnFromPopOut()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.state])
+
+  useEffect(() => () => {
+    try {
+      callPopCloseRef.current?.()
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   // Join a scheduled calendar video call (stable room) from anywhere in the app.
   useEffect(() => {
@@ -392,6 +452,44 @@ export default function MessengerWidget({ setPage }: Props) {
 
   const callActive = active != null
   const roomActive = room.state !== "idle"
+
+  const inCallChat =
+    roomActive && selectedThreadId
+      ? {
+          messages: messages.slice(-40).map((m) => ({
+            id: m.id,
+            mine: m.sender_id === me,
+            senderLabel: peerName(m.sender_id),
+            body: m.body || (m.customer_ref ? `👤 ${m.customer_ref.name}` : ""),
+          })),
+          onSend: (text: string) => {
+            void (async () => {
+              if (!me || !selectedThreadId) return
+              const res = await sendThreadMessage(supabase, me, selectedThreadId, text, null)
+              if (res.ok && res.message) {
+                setMessages((prev) => (prev.some((x) => x.id === res.message!.id) ? prev : [...prev, res.message!]))
+                void refreshThreads()
+              }
+            })()
+          },
+          sending,
+        }
+      : null
+
+  const callPanel =
+    roomActive ? (
+      <div style={{ padding: view === "chat" ? "8px 8px 0" : 0 }}>
+        <ConferenceCallView
+          room={room}
+          selfName="You"
+          compact={view === "chat"}
+          chat={inCallChat}
+          onPopOut={() => void handlePopOut()}
+          poppedOut={callPoppedOut}
+          onReturnFromPopOut={handleReturnFromPopOut}
+        />
+      </div>
+    ) : null
 
   const headerTitle =
     view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Dial out" : view === "new_group" ? "New group" : "Instant messaging"
@@ -589,6 +687,7 @@ export default function MessengerWidget({ setPage }: Props) {
             </div>
           ) : view === "chat" ? (
             <>
+              {callPanel}
               <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8, background: "#f8fafc" }}>
                 {messages.length === 0 ? (
                   <div style={{ margin: "auto", color: "#94a3b8", fontSize: 13 }}>No messages yet. Say hello 👋</div>
@@ -745,7 +844,14 @@ export default function MessengerWidget({ setPage }: Props) {
           ) : (
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
               {roomActive ? (
-                <ConferenceCallView room={room} selfName="You" />
+                <ConferenceCallView
+                  room={room}
+                  selfName="You"
+                  chat={inCallChat}
+                  onPopOut={() => void handlePopOut()}
+                  poppedOut={callPoppedOut}
+                  onReturnFromPopOut={handleReturnFromPopOut}
+                />
               ) : callActive && active ? (
                 <div style={{ display: "grid", gap: 12, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 16, background: "#f8fafc" }}>
                   <div style={{ textAlign: "center" }}>

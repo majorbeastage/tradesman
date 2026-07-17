@@ -1,7 +1,12 @@
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
 
 type RoomApi = ReturnType<typeof useConferenceRoom>
+
+type ChatProps = {
+  messages: { id: string; mine: boolean; senderLabel: string; body: string }[]
+  onSend: (text: string) => void
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -10,16 +15,16 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function VideoTile({ stream, label, muted }: { stream: MediaStream | null; label: string; muted?: boolean }) {
+function VideoTile({ stream, label, muted, screen }: { stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
     const el = ref.current
     if (el && stream && el.srcObject !== stream) el.srcObject = stream
   }, [stream])
   return (
-    <div style={tile}>
+    <div style={{ ...tile, aspectRatio: screen ? "16 / 9" : "3 / 4" }}>
       {stream ? (
-        <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover" }} />
       ) : (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: 13 }}>
           connecting…
@@ -30,8 +35,23 @@ function VideoTile({ stream, label, muted }: { stream: MediaStream | null; label
   )
 }
 
-export default function ConferenceCallView({ room, selfName }: { room: RoomApi; selfName: string }) {
-  const { state, participants, incoming, muted, cameraOn, isVideo, seconds, error, selfStream } = room
+export default function ConferenceCallView({
+  room,
+  selfName,
+  chat,
+}: {
+  room: RoomApi
+  selfName: string
+  chat?: ChatProps | null
+}) {
+  const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
+  const [showChat, setShowChat] = useState(false)
+  const [text, setText] = useState("")
+  const endRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [chat?.messages.length, showChat])
 
   if (state === "incoming" && incoming) {
     return (
@@ -45,8 +65,12 @@ export default function ConferenceCallView({ room, selfName }: { room: RoomApi; 
           </div>
         </div>
         <div style={{ display: "flex", gap: 16, padding: 24, justifyContent: "center" }}>
-          <button type="button" onClick={room.decline} style={{ ...roundBtn, background: "#dc2626" }}>✕</button>
-          <button type="button" onClick={() => void room.accept()} style={{ ...roundBtn, background: "#059669" }}>✓</button>
+          <button type="button" onClick={room.decline} style={{ ...roundBtn, background: "#dc2626" }}>
+            ✕
+          </button>
+          <button type="button" onClick={() => void room.accept()} style={{ ...roundBtn, background: "#059669" }}>
+            ✓
+          </button>
         </div>
       </div>
     )
@@ -57,20 +81,31 @@ export default function ConferenceCallView({ room, selfName }: { room: RoomApi; 
   const stateText =
     state === "ringing" ? "Ringing…" : state === "error" ? "Call error" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 
+  function submitChat(e: FormEvent) {
+    e.preventDefault()
+    const t = text.trim()
+    if (!t || !chat) return
+    chat.onSend(t)
+    setText("")
+  }
+
   return (
     <div style={fullscreen}>
       <div style={{ textAlign: "center", padding: "16px 12px 4px" }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>{title}</div>
-        <div style={{ marginTop: 2, fontSize: 14, fontWeight: 600, color: "#cbd5e1" }}>{stateText}</div>
+        <div style={{ marginTop: 2, fontSize: 14, fontWeight: 600, color: "#cbd5e1" }}>
+          {stateText}
+          {sharingScreen ? " · Sharing" : ""}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-        {isVideo ? (
+        {isVideo || sharingScreen ? (
           <div style={{ display: "grid", gridTemplateColumns: participants.length > 0 ? "1fr 1fr" : "1fr", gap: 8 }}>
             {participants.map((p) => (
               <VideoTile key={p.id} stream={p.stream} label={p.name} />
             ))}
-            <VideoTile stream={selfStream} label={selfName} muted />
+            <VideoTile stream={selfStream} label={sharingScreen ? `${selfName} (screen)` : selfName} muted screen={sharingScreen} />
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -87,19 +122,64 @@ export default function ConferenceCallView({ room, selfName }: { room: RoomApi; 
             ))}
           </div>
         )}
+
+        {showChat && chat ? (
+          <div style={{ marginTop: 12, borderRadius: 12, background: "rgba(255,255,255,0.08)", overflow: "hidden", maxHeight: 220, display: "flex", flexDirection: "column" }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              {chat.messages.length === 0 ? (
+                <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center" }}>Message while you talk</div>
+              ) : (
+                chat.messages.map((m) => (
+                  <div key={m.id} style={{ alignSelf: m.mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
+                    {!m.mine ? <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{m.senderLabel}</div> : null}
+                    <div style={{ padding: "7px 10px", borderRadius: 10, background: m.mine ? "#f97316" : "#1e293b", color: "#fff", fontSize: 14, whiteSpace: "pre-wrap" }}>{m.body}</div>
+                  </div>
+                ))
+              )}
+              <div ref={endRef} />
+            </div>
+            <form onSubmit={submitChat} style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Message…"
+                style={{ flex: 1, borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#fff", padding: "10px", fontSize: 15 }}
+              />
+              <button type="submit" style={{ border: "none", background: "#f97316", color: "#fff", borderRadius: 8, padding: "0 14px", fontWeight: 800 }}>
+                Send
+              </button>
+            </form>
+          </div>
+        ) : null}
+
         {error ? <p style={{ margin: "12px 0 0", fontSize: 13, color: "#fca5a5", textAlign: "center" }}>{error}</p> : null}
       </div>
 
-      <div style={{ display: "flex", gap: 18, padding: "16px 24px 28px", justifyContent: "center" }}>
-        <button type="button" onClick={room.toggleMute} style={{ ...roundBtn, background: muted ? "#b91c1c" : "#334155", fontSize: 22 }}>
+      <div style={{ display: "flex", gap: 12, padding: "12px 16px calc(16px + env(safe-area-inset-bottom))", justifyContent: "center", flexWrap: "wrap" }}>
+        <button type="button" onClick={room.toggleMute} style={{ ...roundBtn, background: muted ? "#b91c1c" : "#334155", fontSize: 20 }}>
           {muted ? "🔇" : "🎙"}
         </button>
-        {isVideo ? (
-          <button type="button" onClick={room.toggleCamera} style={{ ...roundBtn, background: cameraOn ? "#334155" : "#b91c1c", fontSize: 22 }}>
+        {(isVideo || sharingScreen) && !sharingScreen ? (
+          <button type="button" onClick={room.toggleCamera} style={{ ...roundBtn, background: cameraOn ? "#334155" : "#b91c1c", fontSize: 20 }}>
             {cameraOn ? "📷" : "🚫"}
           </button>
         ) : null}
-        <button type="button" onClick={room.hangup} style={{ ...roundBtn, background: "#dc2626", fontSize: 24 }}>📵</button>
+        <button
+          type="button"
+          onClick={() => void (sharingScreen ? room.stopScreenShare() : room.startScreenShare())}
+          style={{ ...roundBtn, background: sharingScreen ? "#1d4ed8" : "#334155", fontSize: 18 }}
+          title={sharingScreen ? "Stop share" : "Share screen"}
+        >
+          🖥️
+        </button>
+        {chat ? (
+          <button type="button" onClick={() => setShowChat((v) => !v)} style={{ ...roundBtn, background: showChat ? "#c2410c" : "#334155", fontSize: 18 }}>
+            💬
+          </button>
+        ) : null}
+        <button type="button" onClick={room.hangup} style={{ ...roundBtn, background: "#dc2626", fontSize: 22 }}>
+          📵
+        </button>
       </div>
     </div>
   )
@@ -112,14 +192,15 @@ const fullscreen: CSSProperties = {
   background: "#0f172a",
   display: "flex",
   flexDirection: "column",
+  paddingTop: "env(safe-area-inset-top)",
 }
 const roundBtn: CSSProperties = {
-  width: 68,
-  height: 68,
+  width: 58,
+  height: 58,
   borderRadius: "50%",
   border: "none",
   color: "#fff",
-  fontSize: 26,
+  fontSize: 22,
   fontWeight: 800,
   cursor: "pointer",
 }

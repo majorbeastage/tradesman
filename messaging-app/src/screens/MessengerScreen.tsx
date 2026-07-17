@@ -251,8 +251,6 @@ export default function MessengerScreen({ me }: { me: string }) {
     void room.startCall(others, { video })
   }
 
-  if (room.state !== "idle") return <ConferenceCallView room={room} selfName={myName} />
-
   const weekDays = useMemo(() => {
     const days: Date[] = []
     for (let i = 0; i < 7; i++) {
@@ -275,6 +273,31 @@ export default function MessengerScreen({ me }: { me: string }) {
     }
     return map
   }, [calEvents])
+
+  const inCallChat =
+    selected && room.state !== "idle"
+      ? {
+          messages: messages.slice(-40).map((m) => ({
+            id: m.id,
+            mine: m.sender_id === me,
+            senderLabel: peerName(m.sender_id),
+            body: m.body || (m.customer_ref ? `👤 ${m.customer_ref.name}` : ""),
+          })),
+          onSend: (text: string) => {
+            if (!selected) return
+            void sendThreadMessage(supabase, me, selected, text, null).then((msg) => {
+              if (msg) {
+                setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]))
+                void refresh()
+              }
+            })
+          },
+        }
+      : null
+
+  if (room.state !== "idle") {
+    return <ConferenceCallView room={room} selfName={myName} chat={inCallChat} />
+  }
 
   const topNav = (
     <div className="app-header">

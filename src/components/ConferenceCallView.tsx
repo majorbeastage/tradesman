@@ -1,8 +1,15 @@
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { createRoot, type Root } from "react-dom/client"
 import { theme } from "../styles/theme"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
 
 type RoomApi = ReturnType<typeof useConferenceRoom>
+
+type ChatProps = {
+  messages: { id: string; mine: boolean; senderLabel: string; body: string }[]
+  onSend: (text: string) => void
+  sending?: boolean
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -11,16 +18,16 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function VideoTile({ stream, label, muted }: { stream: MediaStream | null; label: string; muted?: boolean }) {
+function VideoTile({ stream, label, muted, screen }: { stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
     const el = ref.current
     if (el && stream && el.srcObject !== stream) el.srcObject = stream
   }, [stream])
   return (
-    <div style={tile}>
+    <div style={{ ...tile, aspectRatio: screen ? "16 / 9" : "4 / 3" }}>
       {stream ? (
-        <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover", background: "#000" }} />
       ) : (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: 12 }}>
           connecting…
@@ -48,8 +55,78 @@ function AudioTile({ name, connected }: { name: string; connected: boolean }) {
   )
 }
 
-export default function ConferenceCallView({ room, selfName }: { room: RoomApi; selfName: string }) {
-  const { state, participants, incoming, muted, cameraOn, isVideo, seconds, error, selfStream } = room
+function InCallChat({ chat }: { chat: ChatProps }) {
+  const [text, setText] = useState("")
+  const endRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [chat.messages.length])
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    const t = text.trim()
+    if (!t || chat.sending) return
+    chat.onSend(t)
+    setText("")
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", borderTop: `1px solid ${theme.border}`, background: "#fff", borderRadius: 10, overflow: "hidden", minHeight: 140, maxHeight: 200 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+        {chat.messages.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", padding: 8 }}>Message this call while you talk</div>
+        ) : (
+          chat.messages.map((m) => (
+            <div key={m.id} style={{ alignSelf: m.mine ? "flex-end" : "flex-start", maxWidth: "88%" }}>
+              {!m.mine ? <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>{m.senderLabel}</div> : null}
+              <div
+                style={{
+                  padding: "6px 9px",
+                  borderRadius: 10,
+                  background: m.mine ? theme.primary : "#f1f5f9",
+                  color: m.mine ? "#fff" : theme.text,
+                  fontSize: 12.5,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {m.body}
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={endRef} />
+      </div>
+      <form onSubmit={submit} style={{ display: "flex", gap: 6, padding: 8, borderTop: `1px solid ${theme.border}` }}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Type a message…"
+          style={{ flex: 1, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, color: "#0f172a", background: "#fff" }}
+        />
+        <button type="submit" disabled={chat.sending || !text.trim()} style={{ border: "none", background: theme.primary, color: "#fff", borderRadius: 8, padding: "7px 10px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+          Send
+        </button>
+      </form>
+    </div>
+  )
+}
+
+type Props = {
+  room: RoomApi
+  selfName: string
+  /** Compact strip when chat is primary underneath. */
+  compact?: boolean
+  chat?: ChatProps | null
+  /** Desktop: open video in a separate popup / PiP window. */
+  onPopOut?: () => void
+  poppedOut?: boolean
+  onReturnFromPopOut?: () => void
+}
+
+export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, poppedOut, onReturnFromPopOut }: Props) {
+  const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
+  const [showChat, setShowChat] = useState(Boolean(chat))
 
   if (state === "incoming" && incoming) {
     return (
@@ -74,58 +151,178 @@ export default function ConferenceCallView({ room, selfName }: { room: RoomApi; 
     )
   }
 
+  if (poppedOut) {
+    return (
+      <div style={{ ...wrap, padding: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>
+            Video in popup · {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={onReturnFromPopOut} style={{ ...ctrlBtn, padding: "6px 10px", background: "#fff", border: `1px solid ${theme.border}`, color: "#0f172a" }}>
+            Return video
+          </button>
+          <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, padding: "6px 10px", background: "#dc2626", color: "#fff", border: "none" }}>
+            Leave
+          </button>
+        </div>
+        {chat ? (
+          <div style={{ marginTop: 8 }}>
+            <InCallChat chat={chat} />
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   const connectedCount = participants.filter((p) => p.connected).length + 1
   const title = participants.length === 1 ? participants[0].name : `Team call · ${connectedCount}`
   const stateText =
     state === "ringing" ? "Ringing…" : state === "error" ? "Call error" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 
   return (
-    <div style={wrap}>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{title}</div>
-        <div style={{ marginTop: 2, fontSize: 13, fontWeight: 700, color: "#475569" }}>{stateText}</div>
+    <div style={{ ...wrap, padding: compact ? 10 : 14, gap: compact ? 8 : 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: compact ? 13 : 16, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+          <div style={{ marginTop: 1, fontSize: 12, fontWeight: 700, color: "#475569" }}>
+            {stateText}
+            {sharingScreen ? " · Sharing screen" : ""}
+          </div>
+        </div>
+        {onPopOut ? (
+          <button type="button" onClick={onPopOut} title="Pop out video" style={{ ...ctrlBtn, padding: "6px 8px", background: "#fff", border: `1px solid ${theme.border}`, color: "#0f172a", flex: "0 0 auto" }}>
+            ⧉
+          </button>
+        ) : null}
       </div>
 
-      {isVideo ? (
-        <div style={{ display: "grid", gridTemplateColumns: participants.length > 1 ? "1fr 1fr" : "1fr", gap: 8 }}>
-          {participants.map((p) => (
-            <VideoTile key={p.id} stream={p.stream} label={p.name} />
-          ))}
-          <VideoTile stream={selfStream} label={selfName} muted />
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          {participants.map((p) => (
-            <AudioTile key={p.id} name={p.name} connected={p.connected} />
-          ))}
-        </div>
-      )}
+      {!compact || isVideo || sharingScreen ? (
+        isVideo || sharingScreen ? (
+          <div style={{ display: "grid", gridTemplateColumns: participants.length > 1 ? "1fr 1fr" : "1fr", gap: 8 }}>
+            {participants.map((p) => (
+              <VideoTile key={p.id} stream={p.stream} label={p.name} />
+            ))}
+            <VideoTile stream={selfStream} label={sharingScreen ? `${selfName} (screen)` : selfName} muted screen={sharingScreen} />
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {participants.map((p) => (
+              <AudioTile key={p.id} name={p.name} connected={p.connected} />
+            ))}
+          </div>
+        )
+      ) : null}
 
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button
           type="button"
           onClick={room.toggleMute}
-          style={{ ...ctrlBtn, flex: 1, background: muted ? "#fee2e2" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}` }}
+          style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: muted ? "#fee2e2" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
         >
-          {muted ? "🔇 Unmute" : "🎙 Mute"}
+          {muted ? "Unmute" : "Mute"}
         </button>
-        {isVideo ? (
+        {(isVideo || sharingScreen) && !sharingScreen ? (
           <button
             type="button"
             onClick={room.toggleCamera}
-            style={{ ...ctrlBtn, flex: 1, background: cameraOn ? "#fff" : "#fee2e2", color: "#0f172a", border: `1px solid ${theme.border}` }}
+            style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: cameraOn ? "#fff" : "#fee2e2", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
           >
-            {cameraOn ? "📷 Cam on" : "🚫 Cam off"}
+            {cameraOn ? "Cam" : "Cam off"}
           </button>
         ) : null}
-        <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, background: "#dc2626", color: "#fff", border: "none" }}>
-          ✕ Leave
+        <button
+          type="button"
+          onClick={() => void (sharingScreen ? room.stopScreenShare() : room.startScreenShare())}
+          style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: sharingScreen ? "#dbeafe" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
+        >
+          {sharingScreen ? "Stop share" : "Share"}
+        </button>
+        {chat ? (
+          <button
+            type="button"
+            onClick={() => setShowChat((v) => !v)}
+            style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: showChat ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
+          >
+            Chat
+          </button>
+        ) : null}
+        <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: "#dc2626", color: "#fff", border: "none", padding: "8px" }}>
+          Leave
         </button>
       </div>
 
+      {showChat && chat ? <InCallChat chat={chat} /> : null}
       {error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center" }}>{error}</p> : null}
     </div>
   )
+}
+
+export default function ConferenceCallView(props: Props) {
+  return <ConferenceCallBody {...props} />
+}
+
+/** Open a desktop popup / Document PiP and render the call UI there. Returns a closer. */
+export async function openConferencePopOut(render: (mount: HTMLElement) => () => void): Promise<() => void> {
+  type Dip = { requestWindow: (opts?: { width?: number; height?: number }) => Promise<Window> }
+  const dip = (window as unknown as { documentPictureInPicture?: Dip }).documentPictureInPicture
+
+  let win: Window | null = null
+  try {
+    if (dip?.requestWindow) {
+      win = await dip.requestWindow({ width: 520, height: 420 })
+    }
+  } catch {
+    win = null
+  }
+  if (!win) {
+    win = window.open("", "tradesman-video-call", "popup=yes,width=640,height=480")
+  }
+  if (!win) throw new Error("Popup blocked — allow popups for Tradesman to pop out video.")
+
+  const doc = win.document
+  doc.title = "Tradesman call"
+  doc.head.innerHTML = `<style>
+    html,body{margin:0;height:100%;background:#0f172a;font-family:Segoe UI,system-ui,sans-serif}
+    #root{height:100%;box-sizing:border-box;padding:10px;overflow:auto}
+  </style>`
+  const mount = doc.createElement("div")
+  mount.id = "root"
+  doc.body.replaceChildren(mount)
+
+  const unmount = render(mount)
+
+  const onUnload = () => {
+    try {
+      unmount()
+    } catch {
+      /* ignore */
+    }
+  }
+  win.addEventListener("pagehide", onUnload)
+
+  return () => {
+    try {
+      win?.removeEventListener("pagehide", onUnload)
+      unmount()
+      win?.close()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Helper to mount a React tree into a popup element. */
+export function mountReactInPopup(mount: HTMLElement, node: ReactNode): () => void {
+  const root: Root = createRoot(mount)
+  root.render(node)
+  return () => {
+    try {
+      root.unmount()
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 const wrap: CSSProperties = {
@@ -159,5 +356,5 @@ const ctrlBtn: CSSProperties = {
   padding: "10px",
   fontWeight: 800,
   cursor: "pointer",
-  fontSize: 13,
+  fontSize: 12,
 }
