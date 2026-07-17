@@ -22,6 +22,13 @@ import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
 import ConferenceCallView from "./ConferenceCallView"
+import {
+  AVAILABILITY_COLOR,
+  AVAILABILITY_LABEL,
+  loadMyAvailability,
+  saveMyAvailability,
+  type Availability,
+} from "../lib/messengerAvailability"
 
 type Props = { setPage: (page: string) => void }
 
@@ -60,6 +67,8 @@ export default function MessengerWidget({ setPage }: Props) {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadsLoaded, setThreadsLoaded] = useState(false)
   const [online, setOnline] = useState<Set<string>>(new Set())
+  const [availability, setAvailability] = useState<Availability>("available")
+  const [availOpen, setAvailOpen] = useState(false)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<InternalMessage[]>([])
   const [input, setInput] = useState("")
@@ -112,6 +121,11 @@ export default function MessengerWidget({ setPage }: Props) {
           hangup: voice.hangup,
         }
       : null
+
+  useEffect(() => {
+    if (!me || !supabase) return
+    void loadMyAvailability(supabase, me).then(setAvailability)
+  }, [me])
 
   const refreshThreads = useCallback(async () => {
     if (!me) return
@@ -402,9 +416,43 @@ export default function MessengerWidget({ setPage }: Props) {
             overflow: "hidden",
           }}
         >
-          {/* Header */}
+          {/* Header — profile + availability on the left (desktop messenger) */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: theme.primary, color: "#fff" }}>
-            {view !== "list" ? (
+            {view === "list" ? (
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setAvailOpen((v) => !v)}
+                  title="Your availability"
+                  style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 999, padding: "3px 8px 3px 3px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                >
+                  <span style={{ position: "relative", width: 28, height: 28, borderRadius: "50%", background: "#fff", color: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11 }}>
+                    {initials(user?.user_metadata?.display_name || user?.email?.split("@")[0] || "You")}
+                    <span style={{ position: "absolute", right: -1, bottom: -1, width: 9, height: 9, borderRadius: "50%", background: AVAILABILITY_COLOR[availability], border: "2px solid #fff" }} />
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 700 }}>{AVAILABILITY_LABEL[availability]}</span>
+                </button>
+                {availOpen ? (
+                  <div style={{ position: "absolute", top: 36, left: 0, zIndex: 5, background: "#fff", color: theme.text, borderRadius: 10, border: `1px solid ${theme.border}`, boxShadow: "0 8px 24px rgba(15,23,42,0.18)", padding: 6, display: "grid", gap: 4, minWidth: 140 }}>
+                    {(["available", "away", "busy"] as Availability[]).map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => {
+                          setAvailability(a)
+                          setAvailOpen(false)
+                          if (me) void saveMyAvailability(supabase, me, a)
+                        }}
+                        style={{ border: "none", background: availability === a ? "#f1f5f9" : "transparent", textAlign: "left", padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                      >
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: AVAILABILITY_COLOR[a], marginRight: 6 }} />
+                        {AVAILABILITY_LABEL[a]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
               <button
                 type="button"
                 onClick={() => {
@@ -416,8 +464,6 @@ export default function MessengerWidget({ setPage }: Props) {
               >
                 ‹
               </button>
-            ) : (
-              <img src={messagingIcon} alt="" width={24} height={24} style={{ borderRadius: 6, display: "block" }} />
             )}
             <span style={{ fontWeight: 800, fontSize: 14, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {headerTitle}

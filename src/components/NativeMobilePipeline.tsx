@@ -7,6 +7,7 @@ import {
   isNativeApp,
   syncPushTokenIfPermissionGranted,
 } from "../lib/capacitorMobile"
+import { initMessagingHandoffListener } from "../lib/messagingHandoff"
 
 /**
  * Native only: registers push token rows and (when GPS opt-in) periodically upserts user_last_locations.
@@ -31,6 +32,14 @@ export default function NativeMobilePipeline() {
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
   }, [loadMobilePrefs])
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined
+    void initMessagingHandoffListener().then((fn) => {
+      cleanup = fn
+    })
+    return () => cleanup?.()
+  }, [])
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return

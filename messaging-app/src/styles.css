@@ -3,13 +3,42 @@
   --border: #e5e7eb;
   --text: #111827;
   --muted: #94a3b8;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --header-extra: 12px; /* extra cushion under status bar */
+  --footer-extra: 10px; /* extra cushion above gesture/nav bar */
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+html {
+  /* Let CSS env(safe-area-inset-*) work on notched / gesture devices */
+}
 body {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   color: var(--text);
   background: #f8fafc;
+  /* Avoid rubber-band scrolling under system bars on some WebViews */
+  overscroll-behavior: none;
 }
 button { font-family: inherit; }
 input, textarea { font-family: inherit; }
+
+.app-shell {
+  min-height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  padding-top: calc(var(--safe-top) + var(--header-extra));
+  background: var(--orange);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.app-footer {
+  padding-bottom: calc(var(--safe-bottom) + var(--footer-extra));
+  background: #fff;
+  flex-shrink: 0;
+}

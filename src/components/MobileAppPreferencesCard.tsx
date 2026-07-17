@@ -8,6 +8,7 @@ import {
   isNativeApp,
   openAppSystemSettings,
 } from "../lib/capacitorMobile"
+import { openMessagingAppWithSession } from "../lib/messagingHandoff"
 
 const CARD = {
   padding: 16,
@@ -225,6 +226,24 @@ export default function MobileAppPreferencesCard({ profileUserId, hideTitle }: P
               style={{ ...SMALL_BTN, background: "#eff6ff", borderColor: "#93c5fd" }}
             >
               Open system settings (Tradesman app)
+            </button>
+          ) : null}
+          {canTestPushThisDevice ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={async () => {
+                setPermMsg(null)
+                const r = await openMessagingAppWithSession()
+                setPermMsg(
+                  r.ok
+                    ? "Opening Tradesman Messaging with your current login…"
+                    : r.error || "Could not open Messaging.",
+                )
+              }}
+              style={{ ...SMALL_BTN, background: "#fff7ed", borderColor: "#fdba74" }}
+            >
+              Open Messaging app (auto sign-in)
             </button>
           ) : null}
         </>
