@@ -19,7 +19,8 @@ import {
 } from "../lib/internalMessaging"
 import { onOpenMessenger } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
-import type { Call, Device } from "@twilio/voice-sdk"
+import { useVoiceDevice } from "../lib/useVoiceDevice"
+import { useInternalCall } from "../lib/useInternalCall"
 
 type Props = { setPage: (page: string) => void }
 
@@ -74,19 +75,13 @@ export default function MessengerWidget({ setPage }: Props) {
   const [groupTitle, setGroupTitle] = useState("")
   const [creatingGroup, setCreatingGroup] = useState(false)
 
-  // Dial out
+  // Dial out (bridge fallback — rings the user's phone first)
   const [dialNumber, setDialNumber] = useState("")
   const [dialing, setDialing] = useState(false)
   const [dialMsg, setDialMsg] = useState<string | null>(null)
 
-  // In-browser softphone (WebRTC via Twilio Voice SDK — uses the computer mic/speaker)
-  const [callState, setCallState] = useState<"idle" | "connecting" | "ringing" | "in_call" | "error">("idle")
-  const [callErr, setCallErr] = useState<string | null>(null)
-  const [muted, setMuted] = useState(false)
-  const [callSeconds, setCallSeconds] = useState(0)
-  const deviceRef = useRef<Device | null>(null)
-  const callRef = useRef<Call | null>(null)
-  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Twilio softphone for PSTN dial-out only.
+  const voice = useVoiceDevice()
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const selectedThreadIdRef = useRef<string | null>(null)
@@ -99,6 +94,39 @@ export default function MessengerWidget({ setPage }: Props) {
     },
     [peers, me],
   )
+
+  // Internal teammate calls over WebRTC (no Twilio).
+  const intercom = useInternalCall(me, peerName)
+
+  // Unified active-call panel: an internal WebRTC call takes priority over the PSTN pad.
+  const active =
+    intercom.callState !== "idle"
+      ? {
+          state: intercom.callState as string,
+          label: intercom.peer?.name ?? "Call",
+          muted: intercom.muted,
+          seconds: intercom.seconds,
+          error: intercom.error,
+          canAccept: intercom.callState === "incoming",
+          toggleMute: intercom.toggleMute,
+          hangup: intercom.hangup,
+          accept: intercom.accept,
+          reject: intercom.reject,
+        }
+      : voice.callState !== "idle"
+        ? {
+            state: voice.callState as string,
+            label: voice.peer?.label ?? "Call",
+            muted: voice.muted,
+            seconds: voice.seconds,
+            error: voice.error,
+            canAccept: false,
+            toggleMute: voice.toggleMute,
+            hangup: voice.hangup,
+            accept: () => {},
+            reject: () => {},
+          }
+        : null
 
   const refreshThreads = useCallback(async () => {
     if (!me) return
@@ -321,136 +349,39 @@ export default function MessengerWidget({ setPage }: Props) {
     }
   }
 
-  const stopCallTimer = useCallback(() => {
-    if (callTimerRef.current) {
-      clearInterval(callTimerRef.current)
-      callTimerRef.current = null
-    }
-  }, [])
-
-  const teardownDevice = useCallback(() => {
-    stopCallTimer()
-    try {
-      callRef.current?.disconnect()
-    } catch {
-      /* ignore */
-    }
-    callRef.current = null
-    try {
-      deviceRef.current?.destroy()
-    } catch {
-      /* ignore */
-    }
-    deviceRef.current = null
-  }, [stopCallTimer])
-
-  // Place a real call from this computer (mic/speaker) using the Twilio number.
-  async function startWebCall() {
+  // Twilio softphone: dial out to a phone number (PSTN).
+  function startWebCall() {
     const digits = dialNumber.replace(/\D/g, "")
     if (digits.length < 10) {
-      setCallErr("Enter a 10-digit number.")
+      voice.setError("Enter a 10-digit number.")
       return
     }
-    setCallErr(null)
     setDialMsg(null)
-    setCallState("connecting")
-    try {
-      const { data: sess } = await supabase!.auth.getSession()
-      const accessToken = sess?.session?.access_token
-      if (!accessToken) {
-        setCallErr("Please sign in again.")
-        setCallState("error")
-        return
-      }
-      const resp = await fetch("/api/twilio-voice-token", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      })
-      const tokJson = (await resp.json().catch(() => null)) as { token?: string; error?: string; hint?: string } | null
-      if (!resp.ok || !tokJson?.token) {
-        setCallErr(tokJson?.error || `Could not start calling (HTTP ${resp.status}).`)
-        setCallState("error")
-        return
-      }
-
-      const { Device } = await import("@twilio/voice-sdk")
-      teardownDevice()
-      const device = new Device(tokJson.token, { codecPreferences: ["opus", "pcmu"] as never, logLevel: "error" as never })
-      deviceRef.current = device
-      device.on("error", (e: { message?: string }) => {
-        setCallErr(e?.message || "Call error.")
-        setCallState("error")
-        stopCallTimer()
-      })
-
-      const to = digits.length === 10 ? `+1${digits}` : `+${digits}`
-      const call = await device.connect({ params: { To: to } })
-      callRef.current = call
-      setMuted(false)
-      setCallSeconds(0)
-      setCallState("ringing")
-
-      call.on("accept", () => {
-        setCallState("in_call")
-        stopCallTimer()
-        callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
-      })
-      call.on("disconnect", () => {
-        setCallState("idle")
-        stopCallTimer()
-        callRef.current = null
-        try {
-          deviceRef.current?.destroy()
-        } catch {
-          /* ignore */
-        }
-        deviceRef.current = null
-      })
-      call.on("cancel", () => {
-        setCallState("idle")
-        stopCallTimer()
-      })
-      call.on("error", (e: { message?: string }) => {
-        setCallErr(e?.message || "Call error.")
-        setCallState("error")
-        stopCallTimer()
-      })
-    } catch (e) {
-      setCallErr(e instanceof Error ? e.message : String(e))
-      setCallState("error")
-      stopCallTimer()
-    }
+    const to = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    void voice.placePhoneCall(to, dialNumber)
   }
 
-  function endWebCall() {
-    try {
-      callRef.current?.disconnect()
-    } catch {
-      /* ignore */
-    }
-    teardownDevice()
-    setCallState("idle")
+  // Call the other member of the currently open 1:1 thread (WebRTC, no Twilio).
+  function callSelectedMember() {
+    if (!selectedThread || selectedThread.is_group) return
+    const other = selectedThread.members.find((id) => id !== me)
+    if (!other) return
+    setOpen(true)
+    setView("dial")
+    void intercom.placeCall(other, peerName(other))
   }
 
-  function toggleMute() {
-    const call = callRef.current
-    if (!call) return
-    const next = !muted
-    try {
-      call.mute(next)
-      setMuted(next)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Tear down any active call when the widget closes or unmounts.
+  // Surface an incoming team call: open the widget and show the Accept/Decline panel.
   useEffect(() => {
-    if (!open) teardownDevice()
-  }, [open, teardownDevice])
-  useEffect(() => () => teardownDevice(), [teardownDevice])
+    if (intercom.callState === "incoming") {
+      setOpen(true)
+      setView("dial")
+    }
+  }, [intercom.callState])
 
   if (!me) return null
+
+  const callActive = active != null
 
   const headerTitle =
     view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Dial out" : view === "new_group" ? "New group" : "Instant messaging"
@@ -526,6 +457,17 @@ export default function MessengerWidget({ setPage }: Props) {
                   ☎
                 </button>
               </>
+            ) : null}
+            {view === "chat" && selectedThread && !selectedThread.is_group ? (
+              <button
+                type="button"
+                onClick={callSelectedMember}
+                title="Call this teammate"
+                aria-label="Call this teammate"
+                style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+              >
+                📞
+              </button>
             ) : null}
             <button type="button" onClick={() => setOpen(false)} aria-label="Close" style={{ border: "none", background: "transparent", color: "#fff", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
               ×
@@ -749,69 +691,94 @@ export default function MessengerWidget({ setPage }: Props) {
             </div>
           ) : (
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                Call from this computer using your Tradesman business number. Audio uses your microphone and speaker.
-              </p>
-              <input
-                type="tel"
-                inputMode="tel"
-                value={dialNumber}
-                onChange={(e) => setDialNumber(e.target.value)}
-                placeholder="(555) 123-4567"
-                disabled={callState === "in_call" || callState === "ringing" || callState === "connecting"}
-                style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: "#0f172a", background: "#fff" }}
-              />
-
-              {callState === "idle" || callState === "error" ? (
-                <button
-                  type="button"
-                  onClick={() => void startWebCall()}
-                  style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "12px 14px", fontWeight: 800, cursor: "pointer", fontSize: 15 }}
-                >
-                  📞 Call
-                </button>
-              ) : (
-                <div style={{ display: "grid", gap: 10, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, background: "#f8fafc" }}>
-                  <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
-                    {callState === "connecting"
-                      ? "Connecting…"
-                      : callState === "ringing"
-                        ? "Ringing…"
-                        : `In call · ${Math.floor(callSeconds / 60)}:${String(callSeconds % 60).padStart(2, "0")}`}
+              {callActive && active ? (
+                <div style={{ display: "grid", gap: 12, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 16, background: "#f8fafc" }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{active.label}</div>
+                    <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: "#475569" }}>
+                      {active.state === "calling"
+                        ? "Calling…"
+                        : active.state === "connecting"
+                          ? "Connecting…"
+                          : active.state === "ringing"
+                            ? "Ringing…"
+                            : active.state === "incoming"
+                              ? "Incoming call…"
+                              : `In call · ${Math.floor(active.seconds / 60)}:${String(active.seconds % 60).padStart(2, "0")}`}
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={toggleMute}
-                      disabled={callState !== "in_call"}
-                      style={{ flex: 1, border: `1px solid ${theme.border}`, background: muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: callState === "in_call" ? "pointer" : "default", opacity: callState === "in_call" ? 1 : 0.6 }}
-                    >
-                      {muted ? "🔇 Unmute" : "🎙 Mute"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={endWebCall}
-                      style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
-                    >
-                      ✕ Hang up
-                    </button>
-                  </div>
+                  {active.canAccept ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => void active.accept()}
+                        style={{ flex: 1, border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "12px", fontWeight: 800, cursor: "pointer" }}
+                      >
+                        ✓ Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={active.reject}
+                        style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "12px", fontWeight: 800, cursor: "pointer" }}
+                      >
+                        ✕ Decline
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={active.toggleMute}
+                        disabled={active.state !== "in_call"}
+                        style={{ flex: 1, border: `1px solid ${theme.border}`, background: active.muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: active.state === "in_call" ? "pointer" : "default", opacity: active.state === "in_call" ? 1 : 0.6 }}
+                      >
+                        {active.muted ? "🔇 Unmute" : "🎙 Mute"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={active.hangup}
+                        style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
+                      >
+                        ✕ Hang up
+                      </button>
+                    </div>
+                  )}
+                  {active.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center" }}>{active.error}</p> : null}
                 </div>
+              ) : (
+                <>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                    Call from this computer using your Tradesman business number. Audio uses your microphone and speaker.
+                  </p>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    value={dialNumber}
+                    onChange={(e) => setDialNumber(e.target.value)}
+                    placeholder="(555) 123-4567"
+                    style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: "#0f172a", background: "#fff" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => startWebCall()}
+                    style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "12px 14px", fontWeight: 800, cursor: "pointer", fontSize: 15 }}
+                  >
+                    📞 Call
+                  </button>
+                  {voice.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", lineHeight: 1.45 }}>{voice.error}</p> : null}
+                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => void handleDial()}
+                      disabled={dialing}
+                      style={{ border: `1px solid ${theme.border}`, background: "#fff", color: "#334155", borderRadius: 8, padding: "9px 14px", fontWeight: 700, cursor: dialing ? "default" : "pointer", opacity: dialing ? 0.6 : 1, fontSize: 13 }}
+                    >
+                      {dialing ? "Calling…" : "Ring my phone instead"}
+                    </button>
+                    {dialMsg ? <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{dialMsg}</p> : null}
+                  </div>
+                </>
               )}
-
-              {callErr ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", lineHeight: 1.45 }}>{callErr}</p> : null}
-
-              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => void handleDial()}
-                  disabled={dialing || callState !== "idle"}
-                  style={{ border: `1px solid ${theme.border}`, background: "#fff", color: "#334155", borderRadius: 8, padding: "9px 14px", fontWeight: 700, cursor: dialing || callState !== "idle" ? "default" : "pointer", opacity: dialing || callState !== "idle" ? 0.6 : 1, fontSize: 13 }}
-                >
-                  {dialing ? "Calling…" : "Ring my phone instead"}
-                </button>
-                {dialMsg ? <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{dialMsg}</p> : null}
-              </div>
             </div>
           )}
         </div>
