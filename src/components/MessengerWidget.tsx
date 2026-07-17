@@ -19,6 +19,7 @@ import {
 } from "../lib/internalMessaging"
 import { onOpenMessenger } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
+import type { Call, Device } from "@twilio/voice-sdk"
 
 type Props = { setPage: (page: string) => void }
 
@@ -77,6 +78,15 @@ export default function MessengerWidget({ setPage }: Props) {
   const [dialNumber, setDialNumber] = useState("")
   const [dialing, setDialing] = useState(false)
   const [dialMsg, setDialMsg] = useState<string | null>(null)
+
+  // In-browser softphone (WebRTC via Twilio Voice SDK — uses the computer mic/speaker)
+  const [callState, setCallState] = useState<"idle" | "connecting" | "ringing" | "in_call" | "error">("idle")
+  const [callErr, setCallErr] = useState<string | null>(null)
+  const [muted, setMuted] = useState(false)
+  const [callSeconds, setCallSeconds] = useState(0)
+  const deviceRef = useRef<Device | null>(null)
+  const callRef = useRef<Call | null>(null)
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const selectedThreadIdRef = useRef<string | null>(null)
@@ -310,6 +320,135 @@ export default function MessengerWidget({ setPage }: Props) {
       setDialing(false)
     }
   }
+
+  const stopCallTimer = useCallback(() => {
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current)
+      callTimerRef.current = null
+    }
+  }, [])
+
+  const teardownDevice = useCallback(() => {
+    stopCallTimer()
+    try {
+      callRef.current?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    callRef.current = null
+    try {
+      deviceRef.current?.destroy()
+    } catch {
+      /* ignore */
+    }
+    deviceRef.current = null
+  }, [stopCallTimer])
+
+  // Place a real call from this computer (mic/speaker) using the Twilio number.
+  async function startWebCall() {
+    const digits = dialNumber.replace(/\D/g, "")
+    if (digits.length < 10) {
+      setCallErr("Enter a 10-digit number.")
+      return
+    }
+    setCallErr(null)
+    setDialMsg(null)
+    setCallState("connecting")
+    try {
+      const { data: sess } = await supabase!.auth.getSession()
+      const accessToken = sess?.session?.access_token
+      if (!accessToken) {
+        setCallErr("Please sign in again.")
+        setCallState("error")
+        return
+      }
+      const resp = await fetch("/api/twilio-voice-token", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      const tokJson = (await resp.json().catch(() => null)) as { token?: string; error?: string; hint?: string } | null
+      if (!resp.ok || !tokJson?.token) {
+        setCallErr(tokJson?.error || `Could not start calling (HTTP ${resp.status}).`)
+        setCallState("error")
+        return
+      }
+
+      const { Device } = await import("@twilio/voice-sdk")
+      teardownDevice()
+      const device = new Device(tokJson.token, { codecPreferences: ["opus", "pcmu"] as never, logLevel: "error" as never })
+      deviceRef.current = device
+      device.on("error", (e: { message?: string }) => {
+        setCallErr(e?.message || "Call error.")
+        setCallState("error")
+        stopCallTimer()
+      })
+
+      const to = digits.length === 10 ? `+1${digits}` : `+${digits}`
+      const call = await device.connect({ params: { To: to } })
+      callRef.current = call
+      setMuted(false)
+      setCallSeconds(0)
+      setCallState("ringing")
+
+      call.on("accept", () => {
+        setCallState("in_call")
+        stopCallTimer()
+        callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
+      })
+      call.on("disconnect", () => {
+        setCallState("idle")
+        stopCallTimer()
+        callRef.current = null
+        try {
+          deviceRef.current?.destroy()
+        } catch {
+          /* ignore */
+        }
+        deviceRef.current = null
+      })
+      call.on("cancel", () => {
+        setCallState("idle")
+        stopCallTimer()
+      })
+      call.on("error", (e: { message?: string }) => {
+        setCallErr(e?.message || "Call error.")
+        setCallState("error")
+        stopCallTimer()
+      })
+    } catch (e) {
+      setCallErr(e instanceof Error ? e.message : String(e))
+      setCallState("error")
+      stopCallTimer()
+    }
+  }
+
+  function endWebCall() {
+    try {
+      callRef.current?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    teardownDevice()
+    setCallState("idle")
+  }
+
+  function toggleMute() {
+    const call = callRef.current
+    if (!call) return
+    const next = !muted
+    try {
+      call.mute(next)
+      setMuted(next)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Tear down any active call when the widget closes or unmounts.
+  useEffect(() => {
+    if (!open) teardownDevice()
+  }, [open, teardownDevice])
+  useEffect(() => () => teardownDevice(), [teardownDevice])
 
   if (!me) return null
 
@@ -611,7 +750,7 @@ export default function MessengerWidget({ setPage }: Props) {
           ) : (
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
               <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                Place a call through your Tradesman business number. Your phone rings first, then connects to the number below.
+                Call from this computer using your Tradesman business number. Audio uses your microphone and speaker.
               </p>
               <input
                 type="tel"
@@ -619,17 +758,60 @@ export default function MessengerWidget({ setPage }: Props) {
                 value={dialNumber}
                 onChange={(e) => setDialNumber(e.target.value)}
                 placeholder="(555) 123-4567"
+                disabled={callState === "in_call" || callState === "ringing" || callState === "connecting"}
                 style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: "#0f172a", background: "#fff" }}
               />
-              <button
-                type="button"
-                onClick={() => void handleDial()}
-                disabled={dialing}
-                style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "10px 14px", fontWeight: 700, cursor: dialing ? "default" : "pointer", opacity: dialing ? 0.7 : 1 }}
-              >
-                {dialing ? "Calling…" : "Call"}
-              </button>
-              {dialMsg ? <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{dialMsg}</p> : null}
+
+              {callState === "idle" || callState === "error" ? (
+                <button
+                  type="button"
+                  onClick={() => void startWebCall()}
+                  style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 8, padding: "12px 14px", fontWeight: 800, cursor: "pointer", fontSize: 15 }}
+                >
+                  📞 Call
+                </button>
+              ) : (
+                <div style={{ display: "grid", gap: 10, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 12, background: "#f8fafc" }}>
+                  <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
+                    {callState === "connecting"
+                      ? "Connecting…"
+                      : callState === "ringing"
+                        ? "Ringing…"
+                        : `In call · ${Math.floor(callSeconds / 60)}:${String(callSeconds % 60).padStart(2, "0")}`}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={toggleMute}
+                      disabled={callState !== "in_call"}
+                      style={{ flex: 1, border: `1px solid ${theme.border}`, background: muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: callState === "in_call" ? "pointer" : "default", opacity: callState === "in_call" ? 1 : 0.6 }}
+                    >
+                      {muted ? "🔇 Unmute" : "🎙 Mute"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={endWebCall}
+                      style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
+                    >
+                      ✕ Hang up
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {callErr ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", lineHeight: 1.45 }}>{callErr}</p> : null}
+
+              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10, display: "grid", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => void handleDial()}
+                  disabled={dialing || callState !== "idle"}
+                  style={{ border: `1px solid ${theme.border}`, background: "#fff", color: "#334155", borderRadius: 8, padding: "9px 14px", fontWeight: 700, cursor: dialing || callState !== "idle" ? "default" : "pointer", opacity: dialing || callState !== "idle" ? 0.6 : 1, fontSize: 13 }}
+                >
+                  {dialing ? "Calling…" : "Ring my phone instead"}
+                </button>
+                {dialMsg ? <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{dialMsg}</p> : null}
+              </div>
             </div>
           )}
         </div>
