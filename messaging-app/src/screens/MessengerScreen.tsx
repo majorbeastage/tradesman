@@ -333,7 +333,7 @@ export default function MessengerScreen({ me }: { me: string }) {
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>Places a call through your Tradesman business number. Your phone rings first, then connects to the number you enter.</p>
-          <input type="tel" inputMode="tel" value={dialNumber} onChange={(e) => setDialNumber(e.target.value)} placeholder="(555) 123-4567" style={{ padding: "12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 17, color: "var(--text)" }} />
+          <input type="tel" inputMode="tel" value={dialNumber} onChange={(e) => setDialNumber(e.target.value)} placeholder="(555) 123-4567" style={{ padding: "12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 17, color: "#0f172a", background: "#fff" }} />
           <button onClick={() => void handleDial()} disabled={dialing} style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 10, padding: "12px", fontWeight: 700, fontSize: 15, cursor: dialing ? "default" : "pointer", opacity: dialing ? 0.7 : 1 }}>
             {dialing ? "Calling…" : "Call"}
           </button>

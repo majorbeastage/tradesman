@@ -619,7 +619,7 @@ export default function MessengerWidget({ setPage }: Props) {
                 value={dialNumber}
                 onChange={(e) => setDialNumber(e.target.value)}
                 placeholder="(555) 123-4567"
-                style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: theme.text }}
+                style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: "#0f172a", background: "#fff" }}
               />
               <button
                 type="button"
