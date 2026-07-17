@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { theme } from "../styles/theme"
 import { usePortalViewOptional } from "../contexts/PortalViewContext"
 import {
@@ -7,9 +8,26 @@ import {
 } from "../lib/portalViewRules"
 import type { UserRole } from "../contexts/AuthContext"
 
+const MIN_KEY = "pv_bar_minimized"
+
 /** Top-of-portal bar: preview role type + specific user within org (admin / corp mgr / OM). */
 export default function PortalViewBar() {
   const pv = usePortalViewOptional()
+  const [minimized, setMinimized] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(MIN_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  const setMin = (v: boolean) => {
+    setMinimized(v)
+    try {
+      sessionStorage.setItem(MIN_KEY, v ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }
   if (!pv?.showViewBar) return null
 
   const {
@@ -33,6 +51,41 @@ export default function PortalViewBar() {
   const selectedUser = usingDefault ? null : usersForCurrentViewRole.find((u) => u.userId === targetUserId)
   const profileSelectValue = usingDefault ? PORTAL_VIEW_DEFAULT_USER : (targetUserId ?? PORTAL_VIEW_DEFAULT_USER)
 
+  const shortLabel = viewingOtherProfile
+    ? selectedUser?.label || labelForViewRoleOption(viewRole, false)
+    : "You"
+
+  if (minimized) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMin(false)}
+        title="Expand the Viewing as bar"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 16,
+          padding: "6px 12px",
+          background: viewingOtherProfile ? "#fffbeb" : "#f8fafc",
+          border: `1px solid ${viewingOtherProfile ? "#f59e0b" : theme.border}`,
+          borderRadius: 999,
+          fontSize: 12.5,
+          fontWeight: 700,
+          color: viewingOtherProfile ? "#b45309" : "#334155",
+          cursor: "pointer",
+        }}
+      >
+        <span aria-hidden>👁</span>
+        <span>
+          Viewing as: {shortLabel}
+          {viewingOtherProfile ? (editMode ? " · Edit mode" : " · View only") : ""}
+        </span>
+        <span aria-hidden style={{ color: "#94a3b8" }}>▸</span>
+      </button>
+    )
+  }
+
   return (
     <div
       style={{
@@ -50,6 +103,29 @@ export default function PortalViewBar() {
       }}
     >
       <span style={{ fontWeight: 700, color: "#334155", whiteSpace: "nowrap" }}>Viewing as</span>
+      <button
+        type="button"
+        onClick={() => setMin(true)}
+        title="Minimize the Viewing as bar"
+        aria-label="Minimize the Viewing as bar"
+        style={{
+          marginLeft: "auto",
+          order: 99,
+          border: `1px solid ${theme.border}`,
+          background: "#fff",
+          color: "#64748b",
+          borderRadius: 8,
+          width: 28,
+          height: 28,
+          fontSize: 16,
+          fontWeight: 800,
+          cursor: "pointer",
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+      >
+        –
+      </button>
       <select
         value={viewRole}
         onChange={(e) => setViewRole(e.target.value as UserRole)}
